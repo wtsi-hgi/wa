@@ -20,8 +20,8 @@ auto-pagination collecting all pages, and partial error returns.
 Implement `PageOptions` query parameter encoding. Test in
 `saga/mlwh_test.go` covering all 4 acceptance tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after 3.1 is reviewed)
 
@@ -33,8 +33,8 @@ Implement `MLWHClient.GetStudy(ctx, studyID)` in `saga/mlwh.go`.
 Calls `GET /integrations/mlwh/studies/{studyID}`. Test in
 `saga/mlwh_test.go` covering all 2 acceptance tests from D2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.3: D3 - List samples (paginated) [parallel with 3.2, 3.4, 3.5, 3.6]
 
@@ -45,8 +45,8 @@ Implement `MLWHClient.ListSamples(ctx, PageOptions)` and
 `total` field; auto-pagination stops on empty page. Test in
 `saga/mlwh_test.go` covering all 3 acceptance tests from D3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.4: D4 - List faculty sponsors [parallel with 3.2, 3.3, 3.5, 3.6]
 
@@ -57,8 +57,8 @@ Implement `MLWHClient.ListFacultySponsors(ctx, PageOptions)` and
 pagination pattern from D1. Test in `saga/mlwh_test.go` covering
 the 1 acceptance test from D4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.5: D5 - List programmes [parallel with 3.2, 3.3, 3.4, 3.6]
 
@@ -68,8 +68,8 @@ Implement `MLWHClient.ListProgrammes(ctx)` in `saga/mlwh.go`.
 Simple array response (no pagination). Test in `saga/mlwh_test.go`
 covering the 1 acceptance test from D5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.6: D6 - List data release strategies [parallel]
 
@@ -79,8 +79,8 @@ Implement `MLWHClient.ListDataReleaseStrategies(ctx)` in
 `saga/mlwh.go`. Simple array response. Test in `saga/mlwh_test.go`
 covering the 1 acceptance test from D6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill
