@@ -23,8 +23,8 @@ type. Depends on MLWH and iRODS sub-clients from Phases 3-4. Test
 in `saga/usecases_test.go` covering all 3 acceptance tests from
 G1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.2: G2 - All samples in a study [parallel with 7.1]
 
@@ -37,8 +37,8 @@ if pagination fails mid-way. Uses `StudySamples` domain type.
 Depends on MLWH sub-client from Phase 3. Test in
 `saga/usecases_test.go` covering all 3 acceptance tests from G2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -53,8 +53,8 @@ map). Uses `SampleFiles` domain type. Depends on iRODS sub-client
 from Phase 4. Test in `saga/usecases_test.go` covering all 4
 acceptance tests from G3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.4: G4 - iRODS files for a study [parallel with 7.3]
 
@@ -68,8 +68,8 @@ client-side `FilterOptions`. Uses `StudyFiles` domain type.
 Depends on iRODS and MLWH sub-clients from Phases 3-4. Test in
 `saga/usecases_test.go` covering all 5 acceptance tests from G4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill
