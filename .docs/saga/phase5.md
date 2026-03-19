@@ -17,8 +17,8 @@ Implement `ProjectsClient.List(ctx) ([]Project, error)` in
 `saga/projects.go`. Calls `GET /projects/`. Test in
 `saga/projects_test.go` covering the 1 acceptance test from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after 5.1 is reviewed)
 
@@ -31,8 +31,8 @@ Implement `ProjectsClient.Add(ctx, name) (*Project, error)` in
 projects list cache. Test in `saga/projects_test.go` covering all
 2 acceptance tests from F2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.3: F3 - Get project [parallel with 5.2, 5.4, 5.5, 5.6]
 
@@ -42,8 +42,8 @@ Implement `ProjectsClient.Get(ctx, projectID) (*Project, error)`
 in `saga/projects.go`. Calls `GET /projects/{id}`. Test in
 `saga/projects_test.go` covering all 2 acceptance tests from F3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.4: F4 - Project samples [parallel with 5.2, 5.3, 5.5, 5.6]
 
@@ -54,8 +54,8 @@ Implement `ProjectsClient.ListSamples`, `AddSample`, and
 project samples cache. Test in `saga/projects_test.go` covering
 all 3 acceptance tests from F4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.5: F5 - Project studies [parallel with 5.2, 5.3, 5.4, 5.6]
 
@@ -66,8 +66,8 @@ Implement `ProjectsClient.ListStudies`, `AddStudy`, and
 project studies cache. Test in `saga/projects_test.go` covering
 all 3 acceptance tests from F5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.6: F6 - Project users [parallel with 5.2, 5.3, 5.4, 5.5]
 
@@ -78,8 +78,8 @@ in `saga/projects.go`. POST/DELETE invalidate the project users
 cache. Test in `saga/projects_test.go` covering all 3 acceptance
 tests from F6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill

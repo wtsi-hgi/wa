@@ -56,12 +56,20 @@ func splitCacheKey(key string) (string, string, error) {
 
 func matchesAnyCacheTarget(cached *url.URL, targets []*url.URL) bool {
 	for _, target := range targets {
-		if cached.Scheme == target.Scheme && cached.Host == target.Host && cached.Path == target.Path {
+		if cached.Scheme == target.Scheme && cached.Host == target.Host && cachePathsMatch(cached.Path, target.Path) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func cachePathsMatch(first string, second string) bool {
+	if first == second {
+		return true
+	}
+
+	return strings.TrimSuffix(first, "/") == strings.TrimSuffix(second, "/")
 }
 
 func (c *Client) loadCachedResponse(key string) ([]byte, error) {
