@@ -18,8 +18,8 @@ Implement `SamplesClient.List(ctx, PageOptions)` and
 pattern from Phase 3. Test in `saga/samples_test.go` covering all
 3 acceptance tests from H1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after 6.1 is reviewed)
 
@@ -33,8 +33,8 @@ Implement `SamplesClient.Create(ctx, source, sourceID)` in
 Test in `saga/samples_test.go` covering all 2 acceptance tests
 from H2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.3: H3 - Get sample by source [parallel with 6.2, 6.4, 6.5]
 
@@ -45,8 +45,8 @@ Implement `SamplesClient.GetBySource(ctx, source, sourceID)` in
 `GET /samples/{source}/{source_id}`. Test in
 `saga/samples_test.go` covering all 2 acceptance tests from H3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.4: H4 - Get samples for study by source [parallel with 6.2, 6.3, 6.5]
 
@@ -57,8 +57,8 @@ in `saga/samples.go`. Calls
 `GET /samples/{source}/studies/{study_source_id}`. Test in
 `saga/samples_test.go` covering all 3 acceptance tests from H4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.5: H5 - List Saga studies [parallel with 6.2, 6.3, 6.4]
 
@@ -68,8 +68,8 @@ Implement `SamplesClient.ListStudies(ctx)` in `saga/samples.go`.
 Calls `GET /samples/studies/` returning `[]SagaStudy`. Test in
 `saga/samples_test.go` covering all 2 acceptance tests from H5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill
