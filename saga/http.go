@@ -96,6 +96,7 @@ func (c *Client) doRequestOnce(
 	reqURL string,
 	payload []byte,
 ) ([]byte, error) {
+	apiKey := apiKeyValue(c.apiKey)
 
 	var body io.Reader = http.NoBody
 	if payload != nil {
@@ -107,8 +108,8 @@ func (c *Client) doRequestOnce(
 		return nil, err
 	}
 
-	req.Header.Set("X-Api-Key", c.apiKey)
-	req.Header.Set("Authorization", authorizationHeaderValue(c.apiKey))
+	req.Header.Set("X-Api-Key", apiKey)
+	req.Header.Set("Authorization", authorizationHeaderValue(apiKey))
 	req.Header.Set("User-Agent", userAgent)
 
 	if method == http.MethodPost {
@@ -138,12 +139,17 @@ func (c *Client) doRequestOnce(
 	return bodyBytes, nil
 }
 
-func authorizationHeaderValue(apiKey string) string {
-	if strings.HasPrefix(strings.ToLower(apiKey), "bearer ") {
-		return apiKey
+func apiKeyValue(apiKey string) string {
+	trimmed := strings.TrimSpace(apiKey)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "bearer ") {
+		return trimmed
 	}
 
-	return "Bearer " + apiKey
+	return strings.TrimSpace(trimmed[len("bearer "):])
+}
+
+func authorizationHeaderValue(apiKey string) string {
+	return "Bearer " + apiKeyValue(apiKey)
 }
 
 func responseMessage(statusCode int, body []byte) string {

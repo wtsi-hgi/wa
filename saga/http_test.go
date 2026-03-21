@@ -66,6 +66,30 @@ func TestRequestHeaders(t *testing.T) {
 		})
 	})
 
+	Convey("Given a client created with a Bearer-prefixed token", t, func() {
+		var receivedAPIKey string
+		var receivedAuthorization string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedAPIKey = r.Header.Get("X-Api-Key")
+			receivedAuthorization = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("Bearer test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		_, err = client.doGet(context.Background(), "/version", nil)
+
+		Convey("when a GET request is made, then the raw API key and bearer auth header are both valid", func() {
+			So(err, ShouldBeNil)
+			So(receivedAPIKey, ShouldEqual, "test-key")
+			So(receivedAuthorization, ShouldEqual, "Bearer test-key")
+		})
+	})
+
 	Convey("Given a mock server accepting POST requests", t, func() {
 		var receivedAPIKey string
 		var receivedAuthorization string
