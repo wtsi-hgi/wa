@@ -533,6 +533,40 @@ func TestStudyIRODSFiles(t *testing.T) {
 		})
 	})
 
+	Convey("Given direct iRODS study matches satisfy the metadata filter but MLWH is unavailable", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/integrations/irods/samples":
+				_, _ = w.Write([]byte(`{"items":[{"id":1,"source":"IRODS","source_id":"626137912","data":{"avu:study_id":["100"],"avu:sample":["S1"]}}],"total":1,"offset":0,"limit":100}`))
+			case "/integrations/mlwh/samples":
+				http.Error(w, "mlwh unavailable", http.StatusInternalServerError)
+			case "/integrations/irods/samples/S1":
+				_, _ = w.Write([]byte(`{"items":[{"id":72,"collection":"/seq/S1","metadata":[{"name":"study_id","value":"100"},{"name":"library_type","value":"Chromium"}]}],"total":1}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		studyFiles, err := client.StudyIRODSFiles(context.Background(), "100", &FilterOptions{
+			Metadata: map[string][]string{
+				"study_id": {"100"},
+			},
+		})
+
+		Convey("when StudyIRODSFiles is called, then direct iRODS matches are still returned", func() {
+			So(err, ShouldBeNil)
+			So(studyFiles, ShouldNotBeNil)
+			So(studyFiles.StudyID, ShouldEqual, "100")
+			So(studyFiles.Files, ShouldHaveLength, 1)
+			So(studyFiles.Files[0].ID, ShouldEqual, 72)
+		})
+	})
+
 	Convey("Given StudyIRODSFiles is called with an analysis type filter", t, func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {

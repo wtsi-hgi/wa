@@ -345,7 +345,26 @@ func irodsSampleSangerIDs(sample IRODSSample) []string {
 }
 
 func filterNeedsMLWHSamples(filter *FilterOptions) bool {
-	return filter != nil && len(filter.Metadata) > 0
+	if filter == nil {
+		return false
+	}
+
+	for key := range filter.Metadata {
+		if filterKeyNeedsMLWHSample(key) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func filterKeyNeedsMLWHSample(key string) bool {
+	switch key {
+	case "id_study_lims", "id_sample_lims", "sanger_id", "sample_name", "taxon_id", "common_name", "study_accession_number", "accession_number":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) studyIRODSFilesForSangerIDs(
