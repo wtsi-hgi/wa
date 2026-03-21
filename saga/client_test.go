@@ -33,8 +33,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/wtsi-hgi/activecache"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/activecache"
 )
 
 func TestNewClient(t *testing.T) {
@@ -107,7 +107,10 @@ func TestClientClose(t *testing.T) {
 				return []byte(strconv.FormatUint(count, 10)), nil
 			})
 
-			client := &Client{cache: cache}
+			client := &Client{
+				cache:     cache,
+				cacheKeys: map[string]struct{}{"GET:https://example.test/version": {}},
+			}
 			Reset(client.Close)
 
 			_, err := client.cache.Get("key")
@@ -123,6 +126,18 @@ func TestClientClose(t *testing.T) {
 
 				time.Sleep(100 * time.Millisecond)
 				So(refreshes.Load(), ShouldEqual, 2)
+			})
+
+			Convey("when Close is called, then cache bookkeeping is released", func() {
+				client.Close()
+
+				client.cacheMu.RLock()
+				cache := client.cache
+				cacheKeys := client.cacheKeys
+				client.cacheMu.RUnlock()
+
+				So(cache, ShouldBeNil)
+				So(cacheKeys, ShouldBeNil)
 			})
 
 			Convey("when Close is called twice, then it does not panic", func() {

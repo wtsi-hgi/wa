@@ -235,6 +235,27 @@ func TestSamplesGetBySource(t *testing.T) {
 		})
 	})
 
+	Convey("Given source path segments containing reserved characters", t, func() {
+		var requestedURI string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedURI = r.RequestURI
+			_, _ = w.Write([]byte(`{"id":7,"name":"sample-7","source":"IRODS/ARCHIVE","source_id":"folder/456","data":{},"curated":{},"parent":null}`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		_, err = client.Samples().GetBySource(context.Background(), "IRODS/ARCHIVE", "folder/456")
+
+		Convey("when GetBySource is called, then it escapes each path segment", func() {
+			So(err, ShouldBeNil)
+			So(requestedURI, ShouldEqual, "/samples/IRODS%2FARCHIVE/folder%2F456")
+		})
+	})
+
 	Convey("Given a mock server returning 404 for a source sample", t, func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
@@ -279,6 +300,27 @@ func TestSamplesGetStudySamples(t *testing.T) {
 			So(samples[0].SourceID, ShouldEqual, "456")
 			So(samples[2].Parent, ShouldNotBeNil)
 			So(*samples[2].Parent, ShouldEqual, 7)
+		})
+	})
+
+	Convey("Given a study source ID containing reserved path characters", t, func() {
+		var requestedURI string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedURI = r.RequestURI
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		_, err = client.Samples().GetStudySamples(context.Background(), "IRODS/ARCHIVE", "study/6568")
+
+		Convey("when GetStudySamples is called, then it escapes each path segment", func() {
+			So(err, ShouldBeNil)
+			So(requestedURI, ShouldEqual, "/samples/IRODS%2FARCHIVE/studies/study%2F6568")
 		})
 	})
 

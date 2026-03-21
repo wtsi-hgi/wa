@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 )
 
 // SagaSample describes a Saga sample returned by the internal samples endpoints.
@@ -115,7 +116,11 @@ func (s *SamplesClient) GetBySource(
 	source string,
 	sourceID string,
 ) (*SagaSample, error) {
-	body, err := s.client.doGet(ctx, fmt.Sprintf("/samples/%s/%s", source, sourceID), nil)
+	body, err := s.client.doGet(ctx, fmt.Sprintf(
+		"/samples/%s/%s",
+		url.PathEscape(source),
+		url.PathEscape(sourceID),
+	), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +141,11 @@ func (s *SamplesClient) GetStudySamples(
 ) ([]SagaSample, error) {
 	body, err := s.client.doGet(
 		ctx,
-		fmt.Sprintf("/samples/%s/studies/%s", source, studySourceID),
+		fmt.Sprintf(
+			"/samples/%s/studies/%s",
+			url.PathEscape(source),
+			url.PathEscape(studySourceID),
+		),
 		nil,
 	)
 	if err != nil {

@@ -26,85 +26,96 @@
 package saga
 
 import (
-"errors"
-"net/http"
-"sync"
-"time"
+	"errors"
+	"net/http"
+	"sync"
+	"time"
 
-"github.com/wtsi-hgi/activecache"
+	"github.com/wtsi-hgi/activecache"
 )
 
 const (
-defaultBaseURL       = "https://saga.cellgeni.sanger.ac.uk/api"
-defaultCacheDuration = 5 * time.Minute
-defaultHTTPTimeout   = 30 * time.Second
+	defaultBaseURL       = "https://saga.cellgeni.sanger.ac.uk/api"
+	defaultCacheDuration = 5 * time.Minute
+	defaultHTTPTimeout   = 30 * time.Second
 )
 
 // ErrNoAPIKey is returned when a client is created without an API key.
 var ErrNoAPIKey = errors.New("saga: API key required")
-
-// Client is the top-level SAGA API client.
-type Client struct {
-apiKey        string
-baseURL       string
-cacheDuration time.Duration
-http          *http.Client
-cache         *activecache.Cache[string, []byte]
-closeOnce     sync.Once
-}
-
-// NewClient creates a SAGA API client using sensible defaults.
-func NewClient(apiKey string, opts ...Option) (*Client, error) {
-if apiKey == "" {
-return nil, ErrNoAPIKey
-}
-
-client := &Client{
-apiKey:        apiKey,
-baseURL:       defaultBaseURL,
-cacheDuration: defaultCacheDuration,
-http: &http.Client{
-Timeout: defaultHTTPTimeout,
-},
-}
-
-for _, opt := range opts {
-if opt == nil {
-continue
-}
-
-opt(client)
-}
-
-return client, nil
-}
-
-// Close releases client resources.
-func (c *Client) Close() {
-if c == nil {
-return
-}
-
-c.closeOnce.Do(func() {
-if c.cache != nil {
-c.cache.Stop()
-}
-})
-}
 
 // Option configures a Client.
 type Option func(*Client)
 
 // WithBaseURL overrides the default SAGA API base URL.
 func WithBaseURL(baseURL string) Option {
-return func(c *Client) {
-c.baseURL = baseURL
-}
+	return func(c *Client) {
+		c.baseURL = baseURL
+	}
 }
 
 // WithCacheDuration overrides the default cache duration.
 func WithCacheDuration(duration time.Duration) Option {
-return func(c *Client) {
-c.cacheDuration = duration
+	return func(c *Client) {
+		c.cacheDuration = duration
+	}
 }
+
+// Client is the top-level SAGA API client.
+type Client struct {
+	apiKey        string
+	baseURL       string
+	cacheDuration time.Duration
+	http          *http.Client
+	cache         *activecache.Cache[string, []byte]
+	cacheKeys     map[string]struct{}
+	cacheMu       sync.RWMutex
+	closeOnce     sync.Once
+}
+
+// NewClient creates a SAGA API client using sensible defaults.
+func NewClient(apiKey string, opts ...Option) (*Client, error) {
+	if apiKey == "" {
+		return nil, ErrNoAPIKey
+	}
+
+	client := &Client{
+		apiKey:        apiKey,
+		baseURL:       defaultBaseURL,
+		cacheDuration: defaultCacheDuration,
+		cacheKeys:     make(map[string]struct{}),
+		http: &http.Client{
+			Timeout: defaultHTTPTimeout,
+		},
+	}
+
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
+		opt(client)
+	}
+
+	client.cache = activecache.New(client.cacheDuration, client.loadCachedResponse)
+
+	return client, nil
+}
+
+// Close releases client resources.
+func (c *Client) Close() {
+	if c == nil {
+		return
+	}
+
+	c.closeOnce.Do(func() {
+		c.cacheMu.Lock()
+		defer c.cacheMu.Unlock()
+
+		if c.cache != nil {
+			c.cache.Stop()
+		}
+
+		c.cache = nil
+		c.cacheKeys = nil
+	})
 }

@@ -32,14 +32,9 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"sync"
-
-	"github.com/wtsi-hgi/activecache"
 )
 
 const cacheKeySeparator = ":"
-
-var cacheStates sync.Map
 
 func makeCacheKey(method string, reqURL string) string {
 	return method + cacheKeySeparator + reqURL
@@ -85,51 +80,34 @@ func (c *Client) loadCachedResponse(key string) ([]byte, error) {
 	return c.doRequestURL(context.Background(), method, reqURL, nil)
 }
 
-type clientCacheState struct {
-	mu   sync.Mutex
-	keys map[string]struct{}
-}
-
-func (c *Client) ensureCache() *clientCacheState {
-	stateAny, _ := cacheStates.LoadOrStore(c, &clientCacheState{keys: make(map[string]struct{})})
-	state := stateAny.(*clientCacheState)
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	if c.cache == nil {
-		cacheDuration := c.cacheDuration
-		if cacheDuration == 0 {
-			cacheDuration = defaultCacheDuration
-		}
-
-		c.cache = activecache.New(cacheDuration, c.loadCachedResponse)
-	}
-
-	return state
-}
-
 func (c *Client) cachedGet(ctx context.Context, path string, query url.Values) ([]byte, error) {
 	if c == nil {
 		return c.doRequest(ctx, http.MethodGet, path, query, nil)
 	}
-
-	state := c.ensureCache()
 
 	reqURL, err := c.requestURL(path, query)
 	if err != nil {
 		return nil, err
 	}
 
+	c.cacheMu.RLock()
+	cache := c.cache
+	c.cacheMu.RUnlock()
+	if cache == nil {
+		return c.doRequest(ctx, http.MethodGet, path, query, nil)
+	}
+
 	key := makeCacheKey(http.MethodGet, reqURL)
-	body, err := c.cache.Get(key)
+	body, err := cache.Get(key)
 	if err != nil {
 		return nil, err
 	}
 
-	state.mu.Lock()
-	state.keys[key] = struct{}{}
-	state.mu.Unlock()
+	c.cacheMu.Lock()
+	if c.cacheKeys != nil {
+		c.cacheKeys[key] = struct{}{}
+	}
+	c.cacheMu.Unlock()
 
 	return body, nil
 }
@@ -139,21 +117,32 @@ func (c *Client) invalidateRelatedCacheEntries(path string, includeParent bool) 
 		return nil
 	}
 
-	state := c.ensureCache()
-
 	targets, err := c.cacheInvalidationTargets(path, includeParent)
 	if err != nil {
 		return err
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	c.cacheMu.RLock()
+	cache := c.cache
+	if cache == nil || len(c.cacheKeys) == 0 {
+		c.cacheMu.RUnlock()
 
-	for key := range state.keys {
+		return nil
+	}
+
+	keys := make([]string, 0, len(c.cacheKeys))
+	for key := range c.cacheKeys {
+		keys = append(keys, key)
+	}
+	c.cacheMu.RUnlock()
+
+	invalidated := make([]string, 0, len(keys))
+
+	for _, key := range keys {
 		method, cachedURL, splitErr := splitCacheKey(key)
 		if splitErr != nil {
-			c.cache.Remove(key)
-			delete(state.keys, key)
+			cache.Remove(key)
+			invalidated = append(invalidated, key)
 
 			continue
 		}
@@ -164,16 +153,31 @@ func (c *Client) invalidateRelatedCacheEntries(path string, includeParent bool) 
 
 		cached, parseErr := url.Parse(cachedURL)
 		if parseErr != nil {
-			c.cache.Remove(key)
-			delete(state.keys, key)
+			cache.Remove(key)
+			invalidated = append(invalidated, key)
 
 			continue
 		}
 
 		if matchesAnyCacheTarget(cached, targets) {
-			c.cache.Remove(key)
-			delete(state.keys, key)
+			cache.Remove(key)
+			invalidated = append(invalidated, key)
 		}
+	}
+
+	if len(invalidated) == 0 {
+		return nil
+	}
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	if c.cacheKeys == nil {
+		return nil
+	}
+
+	for _, key := range invalidated {
+		delete(c.cacheKeys, key)
 	}
 
 	return nil
