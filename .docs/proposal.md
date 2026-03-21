@@ -26,17 +26,30 @@ input files, exact command lines, sequence metadata. The web UI provides
 searchable, filterable results with clickable file paths that render HTML
 inline, display CSVs as tables, and transparently decompress gzipped files.
 
-### 2. seqmeta — Sequence Metadata Cache
+### 2. saga — SAGA API Client Library
 
-**Standalone value:** Replaces ad-hoc MLWH SQL queries for anyone who needs
-sequencing metadata.
+**Standalone value:** Any Go service or tool that needs sequencing metadata or
+iRODS paths can import this library directly, with no SAGA API boilerplate.
 
-CLI and REST API to query the MLWH (MySQL) for study/sample/library/run
-metadata, with caching and "what's new since last check" diffing. Also resolves
-iRODS paths for matched files. Stores watermarks per query in a local database
-so consumers can efficiently poll for new data.
+A Go library wrapping the SAGA REST API, providing typed access to MLWH study,
+sample, library, and run metadata and iRODS file paths. Handles authentication,
+HTTP retries, and in-process response caching to avoid hammering the upstream
+API. Exposes a clean, mockable interface so downstream code can be tested
+without a real SAGA instance.
 
-### 3. notify — Notification Service
+### 3. seqmeta — Sequence Metadata Cache
+
+**Standalone value:** Replaces ad-hoc SAGA API integrations for anyone who needs
+change-tracking and efficient polling over sequencing metadata.
+
+CLI and REST API built on the saga library that adds "what's new since last
+check" diffing over study/sample/library/run metadata and iRODS file paths.
+Stores watermarks per query in a local SQLite database so consumers can
+efficiently poll for new data without re-processing everything. Delegates all
+MLWH and iRODS queries to saga, focusing solely on change detection, watermark
+storage, and exposing a stable polling API.
+
+### 4. notify — Notification Service
 
 **Standalone value:** Generic email notification service usable by any internal
 tool.
@@ -46,7 +59,7 @@ sends templated emails via the institutional SMTP relay. Includes rate limiting
 and deduplication to prevent spam from flapping jobs. Extensible to Slack/Teams
 in future.
 
-### 4. jobrun — Job Submission & Monitoring via wr
+### 5. jobrun — Job Submission & Monitoring via wr
 
 **Standalone value:** Programmatic wr/LSF job submission and tracking, useful
 for any tool that needs to run jobs on the cluster.
@@ -56,7 +69,7 @@ pipelines (bsub'd to the oversubscribed queue) and poll for completion. On job
 completion or failure, can POST results to the results tracker and/or fire a
 webhook.
 
-### 5. watchtower — Watch Configuration & Trigger Engine
+### 6. watchtower — Watch Configuration & Trigger Engine
 
 **Standalone value:** Generic "watch for new sequencing data and do something"
 automation engine.
@@ -67,7 +80,7 @@ config from a template, and submit the pipeline via jobrun." Runs as a daemon
 polling seqmeta, with idempotent trigger tracking to prevent re-runs. Includes a
 web dashboard showing watches, triggered runs, and their statuses.
 
-### 6. samplepicker — Sample Selection Web UI
+### 7. samplepicker — Sample Selection Web UI
 
 **Standalone value:** Scientists can browse available samples, curate subsets,
 add metadata, and export selections as JSON/TSV for use with any tool.
@@ -83,6 +96,10 @@ from spreadsheets.
 
 ```
                     ┌──────────┐
+                    │   saga   │
+                    └────┬─────┘
+                         │
+                    ┌────▼─────┐
                     │ seqmeta  │
                     └────┬─────┘
                          │
@@ -103,7 +120,7 @@ from spreadsheets.
 
 The typical automated flow:
 
-1. **seqmeta** detects new sample data in MLWH/iRODS
+1. **seqmeta** polls **saga** for current MLWH/iRODS state and detects new data against stored watermarks
 2. **watchtower** matches it against registered watches and triggers the
    configured action
 3. **jobrun** submits the pipeline to LSF via wr
@@ -120,11 +137,12 @@ and submits it to **watchtower** (or directly to **jobrun**) for processing.
 | Phase | Sub-product | Rationale |
 |-------|-------------|-----------|
 | 1 | **results** | Immediate need; zero external dependencies; instantly useful |
-| 2 | **seqmeta** | Foundation for automation; replaces ad-hoc queries |
-| 3 | **notify** | Small scope, quick to build, needed by later products |
-| 4 | **jobrun** | Required before watchtower; independently useful |
-| 5 | **watchtower** | Core automation — needs seqmeta + jobrun |
-| 6 | **samplepicker** | Manual curation workflow; needs seqmeta |
+| 2 | **saga** | Library dependency for seqmeta; wraps the SAGA API |
+| 3 | **seqmeta** | Foundation for automation; builds on saga for MLWH/iRODS data |
+| 4 | **notify** | Small scope, quick to build, needed by later products |
+| 5 | **jobrun** | Required before watchtower; independently useful |
+| 6 | **watchtower** | Core automation — needs seqmeta + jobrun |
+| 7 | **samplepicker** | Manual curation workflow; needs seqmeta |
 
 Each phase delivers working software. Phases 1–2 can proceed in parallel if
 resources allow.
