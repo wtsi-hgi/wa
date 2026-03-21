@@ -567,6 +567,38 @@ func TestStudyIRODSFiles(t *testing.T) {
 		})
 	})
 
+	Convey("Given StudyIRODSFiles needs MLWH-only library_type context and MLWH is unavailable", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/integrations/irods/samples":
+				_, _ = w.Write([]byte(`{"items":[{"id":1,"source":"IRODS","source_id":"626137912","data":{"avu:study_id":["100"],"avu:sample":["S1"]}}],"total":1,"offset":0,"limit":100}`))
+			case "/integrations/mlwh/samples":
+				http.Error(w, "mlwh unavailable", http.StatusInternalServerError)
+			case "/integrations/irods/samples/S1":
+				_, _ = w.Write([]byte(`{"items":[{"id":73,"collection":"/seq/S1","metadata":[{"name":"study_id","value":"100"}]}],"total":1}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		studyFiles, err := client.StudyIRODSFiles(context.Background(), "100", &FilterOptions{
+			Metadata: map[string][]string{
+				"library_type": {"Chromium"},
+			},
+		})
+
+		Convey("when StudyIRODSFiles is called, then it returns the MLWH outage instead of silently dropping all direct matches", func() {
+			So(studyFiles, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrServerError), ShouldBeTrue)
+		})
+	})
+
 	Convey("Given StudyIRODSFiles is called with an analysis type filter", t, func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {

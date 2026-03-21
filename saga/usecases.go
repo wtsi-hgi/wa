@@ -360,7 +360,7 @@ func filterNeedsMLWHSamples(filter *FilterOptions) bool {
 
 func filterKeyNeedsMLWHSample(key string) bool {
 	switch key {
-	case "id_study_lims", "id_sample_lims", "sanger_id", "sample_name", "taxon_id", "common_name", "study_accession_number", "accession_number":
+	case "id_study_lims", "id_sample_lims", "sanger_id", "sample_name", "taxon_id", "common_name", "library_type", "study_accession_number", "accession_number":
 		return true
 	default:
 		return false
