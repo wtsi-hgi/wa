@@ -98,13 +98,40 @@ func (c *Client) cachedGet(ctx context.Context, path string, query url.Values) (
 	}
 
 	key := makeCacheKey(http.MethodGet, reqURL)
+	tracked := false
+
 	if contextAwareCacheMiss(ctx) {
 		c.cacheMu.RLock()
-		_, tracked := c.cacheKeys[key]
+		_, tracked = c.cacheKeys[key]
 		c.cacheMu.RUnlock()
 
 		if !tracked {
-			return c.doRequest(ctx, http.MethodGet, path, query, nil)
+			resultCh := make(chan struct {
+				body []byte
+				err  error
+			}, 1)
+
+			go func() {
+				body, err := cache.Get(key)
+				if err == nil {
+					c.trackCacheKey(key)
+				}
+
+				resultCh <- struct {
+					body []byte
+					err  error
+				}{
+					body: body,
+					err:  err,
+				}
+			}()
+
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case result := <-resultCh:
+				return result.body, result.err
+			}
 		}
 	}
 
@@ -113,17 +140,22 @@ func (c *Client) cachedGet(ctx context.Context, path string, query url.Values) (
 		return nil, err
 	}
 
-	c.cacheMu.Lock()
-	if c.cacheKeys != nil {
-		c.cacheKeys[key] = struct{}{}
-	}
-	c.cacheMu.Unlock()
+	c.trackCacheKey(key)
 
 	return body, nil
 }
 
 func contextAwareCacheMiss(ctx context.Context) bool {
 	return ctx != nil && ctx.Done() != nil
+}
+
+func (c *Client) trackCacheKey(key string) {
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	if c.cacheKeys != nil {
+		c.cacheKeys[key] = struct{}{}
+	}
 }
 
 func (c *Client) invalidateRelatedCacheEntries(path string, includeParent bool) error {

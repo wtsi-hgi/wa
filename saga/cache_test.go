@@ -223,3 +223,42 @@ func TestCacheMissesRespectCallerContext(t *testing.T) {
 		})
 	})
 }
+
+func TestContextAwareCacheMissStillPopulatesCache(t *testing.T) {
+	Convey("Given a cancellable first request on a cache miss", t, func() {
+		var requests atomic.Int32
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(80 * time.Millisecond):
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		Reset(cancel)
+
+		_, err = client.doGet(ctx, "/version", nil)
+
+		Convey("when the first caller times out, then a later uncancelled request can still hit the populated cache", func() {
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, context.DeadlineExceeded), ShouldBeTrue)
+
+			time.Sleep(120 * time.Millisecond)
+
+			body, secondErr := client.doGet(context.Background(), "/version", nil)
+			So(secondErr, ShouldBeNil)
+			So(string(body), ShouldEqual, `{"ok":true}`)
+			So(requests.Load(), ShouldEqual, 1)
+		})
+	})
+}
