@@ -108,6 +108,7 @@ func (c *Client) doRequestOnce(
 	}
 
 	req.Header.Set("X-Api-Key", c.apiKey)
+	req.Header.Set("Authorization", authorizationHeaderValue(c.apiKey))
 	req.Header.Set("User-Agent", userAgent)
 
 	if method == http.MethodPost {
@@ -135,6 +136,14 @@ func (c *Client) doRequestOnce(
 	}
 
 	return bodyBytes, nil
+}
+
+func authorizationHeaderValue(apiKey string) string {
+	if strings.HasPrefix(strings.ToLower(apiKey), "bearer ") {
+		return apiKey
+	}
+
+	return "Bearer " + apiKey
 }
 
 func responseMessage(statusCode int, body []byte) string {
@@ -258,7 +267,9 @@ func (c *Client) requestURL(path string, query url.Values) (string, error) {
 		return "", err
 	}
 
-	relativeURL, err := url.Parse(path)
+	baseURL.Path = strings.TrimSuffix(baseURL.Path, "/") + "/"
+
+	relativeURL, err := url.Parse(strings.TrimPrefix(path, "/"))
 	if err != nil {
 		return "", err
 	}

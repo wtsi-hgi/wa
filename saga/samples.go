@@ -153,14 +153,38 @@ func (s *SamplesClient) GetStudySamples(
 
 // ListStudies returns the Saga studies available from the internal samples endpoints.
 func (s *SamplesClient) ListStudies(ctx context.Context) ([]SagaStudy, error) {
-	body, err := s.client.doGet(ctx, "/samples/studies/", nil)
+	body, err := s.client.doGet(ctx, "/studies/", nil)
 	if err != nil {
 		return nil, err
 	}
 
 	studies := []SagaStudy{}
-	if err := json.Unmarshal(body, &studies); err != nil {
+	if err := json.Unmarshal(body, &studies); err == nil {
+		return studies, nil
+	}
+
+	decodeErr := json.Unmarshal(body, &studies)
+
+	var namespaceRoot struct {
+		Studies string `json:"studies"`
+	}
+
+	if err := json.Unmarshal(body, &namespaceRoot); err != nil || namespaceRoot.Studies == "" {
+		return nil, decodeErr
+	}
+
+	mlwhStudies, err := s.client.MLWH().AllStudies(ctx)
+	if err != nil {
 		return nil, err
+	}
+
+	studies = make([]SagaStudy, 0, len(mlwhStudies))
+	for _, study := range mlwhStudies {
+		studies = append(studies, SagaStudy{
+			ID:          study.IDStudyTmp,
+			IDStudyLims: study.IDStudyLims,
+			Name:        study.Name,
+		})
 	}
 
 	return studies, nil

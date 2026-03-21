@@ -23,5 +23,5 @@ endpoints: `Ping`, `Version`, `MLWH().GetStudy("6568")`,
 `Samples().ListStudies()`. Depends on all prior phases. Test
 file covers all 9 acceptance tests from I1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

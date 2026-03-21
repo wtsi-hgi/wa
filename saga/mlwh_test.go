@@ -308,6 +308,38 @@ func TestMLWHAllSamples(t *testing.T) {
 	})
 }
 
+func TestMLWHAllSamplesForStudy(t *testing.T) {
+	Convey("Given MLWH supports a study-scoped filters query for samples", t, func() {
+		var requestedFilters []string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedFilters = append(requestedFilters, r.URL.Query().Get("filters"))
+
+			switch r.URL.Query().Get("page") {
+			case "", "1":
+				_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"3361","id_sample_lims":"S1","sanger_id":"sample-1","sample_name":"Sample 1","id_run":101,"lane":1,"tag_index":10}],"total":2,"offset":0,"limit":1}`))
+			case "2":
+				_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"3361","id_sample_lims":"S2","sanger_id":"sample-2","sample_name":"Sample 2","id_run":102,"lane":2,"tag_index":11}],"total":2,"offset":1,"limit":1}`))
+			default:
+				t.Fatalf("unexpected page request: %s", r.URL.Query().Get("page"))
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().AllSamplesForStudy(context.Background(), "3361")
+
+		Convey("when AllSamplesForStudy is called, then each request includes the server-side study filter", func() {
+			So(err, ShouldBeNil)
+			So(samples, ShouldHaveLength, 2)
+			So(requestedFilters, ShouldResemble, []string{"{\"study_id\":\"3361\"}", "{\"study_id\":\"3361\"}"})
+		})
+	})
+}
+
 func TestMLWHListFacultySponsors(t *testing.T) {
 	Convey("Given a mock server returning two faculty sponsors", t, func() {
 		var requestedPath string

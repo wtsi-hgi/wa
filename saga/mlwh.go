@@ -35,6 +35,8 @@ import (
 
 const defaultPaginationPageSize = 100
 
+const mlwhStudyFilterKey = "study_id"
+
 // PaginatedResponse is the generic paginated response envelope used by SAGA list endpoints.
 type PaginatedResponse[T any] struct {
 	Items  []T  `json:"items"`
@@ -49,6 +51,7 @@ type PageOptions struct {
 	PageSize  int
 	SortField string
 	SortOrder string
+	Filters   map[string]string
 }
 
 func (o PageOptions) queryValues() url.Values {
@@ -68,6 +71,11 @@ func (o PageOptions) queryValues() url.Values {
 
 	if o.SortOrder != "" {
 		values.Set("sortOrder", o.SortOrder)
+	}
+
+	if len(o.Filters) > 0 {
+		filterJSON, _ := json.Marshal(o.Filters)
+		values.Set("filters", string(filterJSON))
 	}
 
 	if len(values) == 0 {
@@ -222,6 +230,15 @@ func (m *MLWHClient) ListSamples(
 // AllSamples returns all MLWH sample rows across every available page.
 func (m *MLWHClient) AllSamples(ctx context.Context) ([]MLWHSample, error) {
 	return collectAllPages(ctx, m.ListSamples)
+}
+
+// AllSamplesForStudy returns all MLWH sample rows for one study across every available page.
+func (m *MLWHClient) AllSamplesForStudy(ctx context.Context, studyID string) ([]MLWHSample, error) {
+	return collectAllPages(ctx, func(ctx context.Context, opts PageOptions) (*PaginatedResponse[MLWHSample], error) {
+		opts.Filters = map[string]string{mlwhStudyFilterKey: studyID}
+
+		return m.ListSamples(ctx, opts)
+	})
 }
 
 // ListFacultySponsors returns one page of MLWH faculty sponsors.

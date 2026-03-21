@@ -100,6 +100,45 @@ func TestSampleAllMetadata(t *testing.T) {
 		})
 	})
 
+	Convey("Given iRODS returns study metadata and MLWH only serves the matching study through filters", t, func() {
+		var requestedFilters []string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/integrations/irods/samples/S1":
+				_, _ = w.Write([]byte(`{"items":[{"id":1,"collection":"/seq/sample/S1","metadata":[{"name":"study_id","value":"100"},{"name":"library_type","value":"Chromium"}]}],"total":1}`))
+			case "/integrations/mlwh/samples":
+				requestedFilters = append(requestedFilters, r.URL.Query().Get("filters"))
+
+				if r.URL.Query().Get("filters") != `{"study_id":"100"}` {
+					http.Error(w, "expected filtered request", http.StatusInternalServerError)
+
+					return
+				}
+
+				_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"100","id_sample_lims":"S1-LIMS","sanger_id":"S1","sample_name":"Sample 1","taxon_id":9606,"common_name":"human","library_type":"Chromium","id_run":101,"lane":1,"tag_index":10},{"id_study_lims":"100","id_sample_lims":"S2-LIMS","sanger_id":"S2","sample_name":"Sample 2","taxon_id":9606,"common_name":"human","library_type":"Chromium","id_run":102,"lane":2,"tag_index":11}],"total":2,"offset":0,"limit":100}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		metadata, err := client.SampleAllMetadata(context.Background(), "S1")
+
+		Convey("when SampleAllMetadata is called, then it uses study-scoped MLWH requests instead of a full scan", func() {
+			So(err, ShouldBeNil)
+			So(metadata, ShouldNotBeNil)
+			So(metadata.SangerID, ShouldEqual, "S1")
+			So(metadata.MLWH, ShouldHaveLength, 1)
+			So(metadata.MLWH[0].SangerID, ShouldEqual, "S1")
+			So(requestedFilters, ShouldResemble, []string{"{\"study_id\":\"100\"}"})
+		})
+	})
+
 	Convey("Given neither MLWH nor iRODS has the sample", t, func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
@@ -155,6 +194,43 @@ func TestStudyAllSamples(t *testing.T) {
 			So(studySamples.Samples[0].IDSampleLims, ShouldEqual, "S1")
 			So(studySamples.Samples[1].IDSampleLims, ShouldEqual, "S3")
 			So(studySamples.Samples[2].IDSampleLims, ShouldEqual, "S5")
+		})
+	})
+
+	Convey("Given MLWH only returns study samples when the study filter is supplied", t, func() {
+		var requestedFilters []string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedFilters = append(requestedFilters, r.URL.Query().Get("filters"))
+
+			if r.URL.Query().Get("filters") != `{"study_id":"100"}` {
+				http.Error(w, "expected filtered request", http.StatusInternalServerError)
+
+				return
+			}
+
+			switch r.URL.Query().Get("page") {
+			case "", "1":
+				_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"100","id_sample_lims":"S1","sanger_id":"sample-1","sample_name":"Sample 1","id_run":101,"lane":1,"tag_index":10},{"id_study_lims":"100","id_sample_lims":"S3","sanger_id":"sample-3","sample_name":"Sample 3","id_run":103,"lane":3,"tag_index":12}],"total":3,"offset":0,"limit":2}`))
+			case "2":
+				_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"100","id_sample_lims":"S5","sanger_id":"sample-5","sample_name":"Sample 5","id_run":105,"lane":5,"tag_index":14}],"total":3,"offset":2,"limit":2}`))
+			default:
+				t.Fatalf("unexpected page request: %s", r.URL.Query().Get("page"))
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		studySamples, err := client.StudyAllSamples(context.Background(), "100")
+
+		Convey("when StudyAllSamples is called, then it paginates the filtered study view instead of the full catalogue", func() {
+			So(err, ShouldBeNil)
+			So(studySamples, ShouldNotBeNil)
+			So(studySamples.Samples, ShouldHaveLength, 3)
+			So(requestedFilters, ShouldResemble, []string{"{\"study_id\":\"100\"}", "{\"study_id\":\"100\"}"})
 		})
 	})
 

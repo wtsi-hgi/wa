@@ -331,15 +331,15 @@ func TestSamplesListStudies(t *testing.T) {
 		}))
 		Reset(server.Close)
 
-		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		client, err := NewClient("test-key", WithBaseURL(server.URL+"/api"))
 		So(err, ShouldBeNil)
 		Reset(client.Close)
 
 		studies, err := client.Samples().ListStudies(context.Background())
 
-		Convey("when ListStudies is called, then it requests the studies endpoint and returns two studies", func() {
+		Convey("when ListStudies is called, then it requests the live studies endpoint and returns two studies", func() {
 			So(err, ShouldBeNil)
-			So(requestedPath, ShouldEqual, "/samples/studies/")
+			So(requestedPath, ShouldEqual, "/api/studies/")
 			So(studies, ShouldHaveLength, 2)
 			So(studies[0].ID, ShouldEqual, 71)
 			So(studies[0].IDStudyLims, ShouldEqual, "study-a")
@@ -356,7 +356,7 @@ func TestSamplesListStudies(t *testing.T) {
 		}))
 		Reset(server.Close)
 
-		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		client, err := NewClient("test-key", WithBaseURL(server.URL+"/api"))
 		So(err, ShouldBeNil)
 		Reset(client.Close)
 
@@ -366,6 +366,45 @@ func TestSamplesListStudies(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(studies, ShouldNotBeNil)
 			So(studies, ShouldHaveLength, 0)
+		})
+	})
+
+	Convey("Given the live studies endpoint returns only its namespace root payload", t, func() {
+		var requestedPaths []string
+		var mlwhPageQuery string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedPaths = append(requestedPaths, r.URL.Path)
+
+			switch r.URL.Path {
+			case "/api/studies/":
+				_, _ = w.Write([]byte(`{"studies":"Saga"}`))
+			case "/api/integrations/mlwh/studies":
+				mlwhPageQuery = r.URL.RawQuery
+				_, _ = w.Write([]byte(`{"items":[{"id_study_tmp":71,"id_study_lims":"study-a","name":"Cell Atlas"},{"id_study_tmp":72,"id_study_lims":"study-b","name":"Spatial Pilot"}],"total":2,"offset":0,"limit":100}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL+"/api"))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		studies, err := client.Samples().ListStudies(context.Background())
+
+		Convey("when ListStudies is called, then it falls back to MLWH studies and maps them into SagaStudy values", func() {
+			So(err, ShouldBeNil)
+			So(requestedPaths, ShouldResemble, []string{"/api/studies/", "/api/integrations/mlwh/studies"})
+			So(mlwhPageQuery, ShouldEqual, "page=1&pageSize=100")
+			So(studies, ShouldHaveLength, 2)
+			So(studies[0].ID, ShouldEqual, 71)
+			So(studies[0].IDStudyLims, ShouldEqual, "study-a")
+			So(studies[0].Name, ShouldEqual, "Cell Atlas")
+			So(studies[1].ID, ShouldEqual, 72)
+			So(studies[1].IDStudyLims, ShouldEqual, "study-b")
+			So(studies[1].Name, ShouldEqual, "Spatial Pilot")
 		})
 	})
 }

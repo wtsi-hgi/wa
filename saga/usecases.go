@@ -450,18 +450,44 @@ func collectIRODSAVUs(files []IRODSFile) map[string][]string {
 	return avus
 }
 
+func irodsFileStudyIDs(files []IRODSFile) []string {
+	seen := make(map[string]struct{})
+	studyIDs := make([]string, 0)
+
+	for _, file := range files {
+		for _, metadata := range file.Metadata {
+			if metadata.Name != "study_id" && metadata.Name != "avu:study_id" {
+				continue
+			}
+
+			if metadata.Value == "" {
+				continue
+			}
+
+			if _, ok := seen[metadata.Value]; ok {
+				continue
+			}
+
+			seen[metadata.Value] = struct{}{}
+			studyIDs = append(studyIDs, metadata.Value)
+		}
+	}
+
+	return studyIDs
+}
+
 func (c *Client) studyIRODSFallbackSamples(
 	ctx context.Context,
 	studyID string,
 	directIDs []string,
 ) ([]string, map[string]MLWHSample, error) {
-	allMLWHSamples, err := c.MLWH().AllSamples(ctx)
+	studySamples, err := c.StudyAllSamples(ctx, studyID)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	studySamples := uniqueMLWHSamplesBySangerID(filterMLWHSamplesByStudyID(allMLWHSamples, studyID))
-	if len(studySamples) == 0 {
+	uniqueStudySamples := uniqueMLWHSamplesBySangerID(studySamples.Samples)
+	if len(uniqueStudySamples) == 0 {
 		return nil, nil, nil
 	}
 
@@ -470,10 +496,10 @@ func (c *Client) studyIRODSFallbackSamples(
 		seen[sangerID] = struct{}{}
 	}
 
-	mlwhSamples := make(map[string]MLWHSample, len(studySamples))
-	fallbackIDs := make([]string, 0, len(studySamples))
+	mlwhSamples := make(map[string]MLWHSample, len(uniqueStudySamples))
+	fallbackIDs := make([]string, 0, len(uniqueStudySamples))
 
-	for _, sample := range studySamples {
+	for _, sample := range uniqueStudySamples {
 		mlwhSamples[sample.SangerID] = sample
 
 		if _, ok := seen[sample.SangerID]; ok {
@@ -501,12 +527,6 @@ type SampleMetadata struct {
 
 // SampleAllMetadata merges MLWH sample rows with iRODS file metadata for a Sanger sample ID.
 func (c *Client) SampleAllMetadata(ctx context.Context, sangerID string) (*SampleMetadata, error) {
-	allSamples, err := c.MLWH().AllSamples(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	mlwhSamples := filterMLWHSamplesBySangerID(allSamples, sangerID)
 	irodsFiles, err := c.IRODS().GetSampleFiles(ctx, sangerID)
 	if err != nil {
 		if !errors.Is(err, ErrNotFound) {
@@ -514,6 +534,11 @@ func (c *Client) SampleAllMetadata(ctx context.Context, sangerID string) (*Sampl
 		}
 
 		irodsFiles = []IRODSFile{}
+	}
+
+	mlwhSamples, err := c.sampleMetadataMLWHSamples(ctx, sangerID, irodsFiles)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(mlwhSamples) == 0 && len(irodsFiles) == 0 {
@@ -539,6 +564,35 @@ func (c *Client) SampleAllMetadata(ctx context.Context, sangerID string) (*Sampl
 	return metadata, nil
 }
 
+func (c *Client) sampleMetadataMLWHSamples(
+	ctx context.Context,
+	sangerID string,
+	irodsFiles []IRODSFile,
+) ([]MLWHSample, error) {
+	studyIDs := irodsFileStudyIDs(irodsFiles)
+	if len(studyIDs) == 0 {
+		allSamples, err := c.MLWH().AllSamples(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return filterMLWHSamplesBySangerID(allSamples, sangerID), nil
+	}
+
+	mlwhSamples := make([]MLWHSample, 0)
+
+	for _, studyID := range studyIDs {
+		studySamples, err := c.StudyAllSamples(ctx, studyID)
+		if err != nil {
+			return nil, err
+		}
+
+		mlwhSamples = append(mlwhSamples, filterMLWHSamplesBySangerID(studySamples.Samples, sangerID)...)
+	}
+
+	return mlwhSamples, nil
+}
+
 // StudySamples holds all MLWH samples associated with one study.
 type StudySamples struct {
 	StudyID string
@@ -547,7 +601,7 @@ type StudySamples struct {
 
 // StudyAllSamples returns all MLWH sample rows associated with a study.
 func (c *Client) StudyAllSamples(ctx context.Context, studyID string) (*StudySamples, error) {
-	allSamples, err := c.MLWH().AllSamples(ctx)
+	allSamples, err := c.MLWH().AllSamplesForStudy(ctx, studyID)
 
 	return &StudySamples{
 		StudyID: studyID,

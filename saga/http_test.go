@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -40,10 +41,12 @@ import (
 func TestRequestHeaders(t *testing.T) {
 	Convey("Given a mock server", t, func() {
 		var receivedAPIKey string
+		var receivedAuthorization string
 		var receivedUserAgent string
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			receivedAPIKey = r.Header.Get("X-Api-Key")
+			receivedAuthorization = r.Header.Get("Authorization")
 			receivedUserAgent = r.Header.Get("User-Agent")
 			w.WriteHeader(http.StatusOK)
 		}))
@@ -58,17 +61,20 @@ func TestRequestHeaders(t *testing.T) {
 		Convey("when a GET request is made, then auth and user-agent headers are sent", func() {
 			So(err, ShouldBeNil)
 			So(receivedAPIKey, ShouldEqual, "test-key")
+			So(receivedAuthorization, ShouldEqual, "Bearer test-key")
 			So(receivedUserAgent, ShouldEqual, "wtsi-hgi/wa")
 		})
 	})
 
 	Convey("Given a mock server accepting POST requests", t, func() {
 		var receivedAPIKey string
+		var receivedAuthorization string
 		var receivedUserAgent string
 		var receivedContentType string
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			receivedAPIKey = r.Header.Get("X-Api-Key")
+			receivedAuthorization = r.Header.Get("Authorization")
 			receivedUserAgent = r.Header.Get("User-Agent")
 			receivedContentType = r.Header.Get("Content-Type")
 			w.WriteHeader(http.StatusCreated)
@@ -84,6 +90,7 @@ func TestRequestHeaders(t *testing.T) {
 		Convey("when a POST request is made, then auth, user-agent, and content-type headers are sent", func() {
 			So(err, ShouldBeNil)
 			So(receivedAPIKey, ShouldEqual, "test-key")
+			So(receivedAuthorization, ShouldEqual, "Bearer test-key")
 			So(receivedUserAgent, ShouldEqual, "wtsi-hgi/wa")
 			So(receivedContentType, ShouldEqual, "application/json")
 		})
@@ -93,10 +100,12 @@ func TestRequestHeaders(t *testing.T) {
 func TestDeleteRequestHeaders(t *testing.T) {
 	Convey("Given a mock server accepting DELETE requests", t, func() {
 		var receivedAPIKey string
+		var receivedAuthorization string
 		var receivedUserAgent string
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			receivedAPIKey = r.Header.Get("X-Api-Key")
+			receivedAuthorization = r.Header.Get("Authorization")
 			receivedUserAgent = r.Header.Get("User-Agent")
 			w.WriteHeader(http.StatusNoContent)
 		}))
@@ -111,7 +120,41 @@ func TestDeleteRequestHeaders(t *testing.T) {
 		Convey("when a DELETE request is made, then auth and user-agent headers are sent", func() {
 			So(err, ShouldBeNil)
 			So(receivedAPIKey, ShouldEqual, "test-key")
+			So(receivedAuthorization, ShouldEqual, "Bearer test-key")
 			So(receivedUserAgent, ShouldEqual, "wtsi-hgi/wa")
+		})
+	})
+}
+
+func TestRequestURLWithBasePath(t *testing.T) {
+	Convey("Given a client configured with a base URL path prefix", t, func() {
+		client, err := NewClient("test-key", WithBaseURL("https://example.com/api"))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		requestURL, err := client.requestURL("/version", url.Values{"page": {"2"}})
+
+		Convey("when requestURL is called with an absolute-style endpoint path, then it preserves the /api prefix", func() {
+			So(err, ShouldBeNil)
+			parsedURL, parseErr := url.Parse(requestURL)
+			So(parseErr, ShouldBeNil)
+			So(parsedURL.Scheme, ShouldEqual, "https")
+			So(parsedURL.Host, ShouldEqual, "example.com")
+			So(parsedURL.Path, ShouldEqual, "/api/version")
+			So(parsedURL.Query().Get("page"), ShouldEqual, "2")
+		})
+	})
+
+	Convey("Given a client configured with a base URL path prefix and the API root endpoint", t, func() {
+		client, err := NewClient("test-key", WithBaseURL("https://example.com/api"))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		requestURL, err := client.requestURL("/", nil)
+
+		Convey("when requestURL is called for the API root, then it stays under the /api prefix", func() {
+			So(err, ShouldBeNil)
+			So(strings.HasPrefix(requestURL, "https://example.com/api"), ShouldBeTrue)
 		})
 	})
 }
