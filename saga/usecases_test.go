@@ -503,6 +503,36 @@ func TestStudyIRODSFiles(t *testing.T) {
 		})
 	})
 
+	Convey("Given iRODS study metadata finds direct matches but MLWH is unavailable", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/integrations/irods/samples":
+				_, _ = w.Write([]byte(`{"items":[{"id":1,"source":"IRODS","source_id":"626137912","data":{"avu:study_id":["100"],"avu:sample":["S1"]}},{"id":2,"source":"IRODS","source_id":"626137913","data":{"avu:study_id":["200"],"avu:sample":["X2"]}}],"total":2,"offset":0,"limit":100}`))
+			case "/integrations/mlwh/samples":
+				http.Error(w, "mlwh unavailable", http.StatusInternalServerError)
+			case "/integrations/irods/samples/S1":
+				_, _ = w.Write([]byte(`{"items":[{"id":71,"collection":"/seq/S1","metadata":[{"name":"study_id","value":"100"}]}],"total":1}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		studyFiles, err := client.StudyIRODSFiles(context.Background(), "100", nil)
+
+		Convey("when StudyIRODSFiles is called, then it still returns the direct iRODS files", func() {
+			So(err, ShouldBeNil)
+			So(studyFiles, ShouldNotBeNil)
+			So(studyFiles.StudyID, ShouldEqual, "100")
+			So(studyFiles.Files, ShouldHaveLength, 1)
+			So(studyFiles.Files[0].ID, ShouldEqual, 71)
+		})
+	})
+
 	Convey("Given StudyIRODSFiles is called with an analysis type filter", t, func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {

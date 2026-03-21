@@ -226,7 +226,12 @@ func (c *Client) StudyIRODSFiles(
 	sangerIDs := irodsStudySampleIDs(allIRODSSamples, studyID)
 	fallbackIDs, mlwhSamples, err := c.studyIRODSFallbackSamples(ctx, studyID, sangerIDs)
 	if err != nil {
-		return nil, err
+		if len(sangerIDs) == 0 || filterNeedsMLWHSamples(filter) {
+			return nil, err
+		}
+
+		fallbackIDs = nil
+		mlwhSamples = nil
 	}
 
 	files, err := c.studyIRODSFilesForSangerIDs(ctx, sangerIDs, filter, mlwhSamples)
@@ -337,6 +342,10 @@ func irodsSampleSangerIDs(sample IRODSSample) []string {
 	}
 
 	return []string{sample.SourceID}
+}
+
+func filterNeedsMLWHSamples(filter *FilterOptions) bool {
+	return filter != nil && len(filter.Metadata) > 0
 }
 
 func (c *Client) studyIRODSFilesForSangerIDs(
