@@ -27,11 +27,13 @@ package saga
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -187,6 +189,37 @@ func TestPostAndDeleteAreNeverServedFromCache(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(postRequests.Load(), ShouldEqual, 2)
 			So(deleteRequests.Load(), ShouldEqual, 2)
+		})
+	})
+}
+
+func TestCacheMissesRespectCallerContext(t *testing.T) {
+	Convey("Given a cache miss and a caller context with a short deadline", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(200 * time.Millisecond):
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		Reset(cancel)
+
+		start := time.Now()
+		_, err = client.doGet(ctx, "/version", nil)
+		elapsed := time.Since(start)
+
+		Convey("when doGet is called, then the cache miss still respects context cancellation", func() {
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, context.DeadlineExceeded), ShouldBeTrue)
+			So(elapsed, ShouldBeLessThan, 150*time.Millisecond)
 		})
 	})
 }

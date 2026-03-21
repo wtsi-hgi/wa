@@ -98,6 +98,16 @@ func (c *Client) cachedGet(ctx context.Context, path string, query url.Values) (
 	}
 
 	key := makeCacheKey(http.MethodGet, reqURL)
+	if contextAwareCacheMiss(ctx) {
+		c.cacheMu.RLock()
+		_, tracked := c.cacheKeys[key]
+		c.cacheMu.RUnlock()
+
+		if !tracked {
+			return c.doRequest(ctx, http.MethodGet, path, query, nil)
+		}
+	}
+
 	body, err := cache.Get(key)
 	if err != nil {
 		return nil, err
@@ -110,6 +120,10 @@ func (c *Client) cachedGet(ctx context.Context, path string, query url.Values) (
 	c.cacheMu.Unlock()
 
 	return body, nil
+}
+
+func contextAwareCacheMiss(ctx context.Context) bool {
+	return ctx != nil && ctx.Done() != nil
 }
 
 func (c *Client) invalidateRelatedCacheEntries(path string, includeParent bool) error {
