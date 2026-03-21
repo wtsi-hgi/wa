@@ -224,23 +224,25 @@ func (c *Client) StudyIRODSFiles(
 	}
 
 	sangerIDs := irodsStudySampleIDs(allIRODSSamples, studyID)
+	conditionalMLWHErr := error(nil)
 	fallbackIDs, mlwhSamples, err := c.studyIRODSFallbackSamples(ctx, studyID, sangerIDs)
 	if err != nil {
 		if len(sangerIDs) == 0 || filterNeedsMLWHSamples(filter) {
 			return nil, err
 		}
 
+		conditionalMLWHErr = err
 		fallbackIDs = nil
 		mlwhSamples = nil
 	}
 
-	files, err := c.studyIRODSFilesForSangerIDs(ctx, sangerIDs, filter, mlwhSamples)
+	files, err := c.studyIRODSFilesForSangerIDs(ctx, sangerIDs, filter, mlwhSamples, conditionalMLWHErr)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(fallbackIDs) > 0 {
-		fallbackFiles, err := c.studyIRODSFilesForSangerIDs(ctx, fallbackIDs, filter, mlwhSamples)
+		fallbackFiles, err := c.studyIRODSFilesForSangerIDs(ctx, fallbackIDs, filter, mlwhSamples, conditionalMLWHErr)
 		if err != nil {
 			return nil, err
 		}
@@ -350,7 +352,7 @@ func filterNeedsMLWHSamples(filter *FilterOptions) bool {
 	}
 
 	for key := range filter.Metadata {
-		if filterKeyNeedsMLWHSample(key) {
+		if filterKeyAlwaysNeedsMLWHSample(key) {
 			return true
 		}
 	}
@@ -358,13 +360,53 @@ func filterNeedsMLWHSamples(filter *FilterOptions) bool {
 	return false
 }
 
-func filterKeyNeedsMLWHSample(key string) bool {
+func filterConditionallyNeedsMLWHSample(filter *FilterOptions) bool {
+	if filter == nil {
+		return false
+	}
+
+	for key := range filter.Metadata {
+		if filterKeyConditionallyNeedsMLWHSample(key) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func filterKeyAlwaysNeedsMLWHSample(key string) bool {
 	switch key {
-	case "id_study_lims", "id_sample_lims", "sanger_id", "sample_name", "taxon_id", "common_name", "library_type", "study_accession_number", "accession_number":
+	case "id_study_lims", "id_sample_lims", "sanger_id", "sample_name", "taxon_id", "common_name", "study_accession_number", "accession_number":
 		return true
 	default:
 		return false
 	}
+}
+
+func filterKeyConditionallyNeedsMLWHSample(key string) bool {
+	return key == "library_type"
+}
+
+func fileMissingAnyMetadataKeys(file IRODSFile, keys []string) bool {
+	for _, key := range keys {
+		if irodsFileHasMetadataKey(file, key) {
+			continue
+		}
+
+		return true
+	}
+
+	return false
+}
+
+func irodsFileHasMetadataKey(file IRODSFile, key string) bool {
+	for _, metadata := range file.Metadata {
+		if metadata.Name == key {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *Client) studyIRODSFilesForSangerIDs(
@@ -372,8 +414,18 @@ func (c *Client) studyIRODSFilesForSangerIDs(
 	sangerIDs []string,
 	filter *FilterOptions,
 	mlwhSamples map[string]MLWHSample,
+	mlwhErr error,
 ) ([]IRODSFile, error) {
 	files := make([]IRODSFile, 0)
+	conditionalKeys := make([]string, 0)
+
+	if mlwhErr != nil && filterConditionallyNeedsMLWHSample(filter) {
+		for key := range filter.Metadata {
+			if filterKeyConditionallyNeedsMLWHSample(key) {
+				conditionalKeys = append(conditionalKeys, key)
+			}
+		}
+	}
 
 	for _, sangerID := range sangerIDs {
 		sampleFiles, err := c.IRODS().GetSampleFiles(ctx, sangerID)
@@ -383,6 +435,14 @@ func (c *Client) studyIRODSFilesForSangerIDs(
 			}
 
 			return nil, err
+		}
+
+		if len(conditionalKeys) > 0 {
+			for _, file := range sampleFiles {
+				if fileMissingAnyMetadataKeys(file, conditionalKeys) {
+					return nil, mlwhErr
+				}
+			}
 		}
 
 		var mlwhSample *MLWHSample
