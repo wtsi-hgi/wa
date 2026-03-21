@@ -65,7 +65,7 @@ in `saga/samples.go`. Calls
 spec.md section: H5
 
 Implement `SamplesClient.ListStudies(ctx)` in `saga/samples.go`.
-Calls `GET /samples/studies/` returning `[]SagaStudy`. Test in
+Calls `GET /studies/` returning `[]SagaStudy`. Test in
 `saga/samples_test.go` covering all 2 acceptance tests from H5.
 
 - [x] implemented
