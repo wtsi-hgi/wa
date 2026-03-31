@@ -161,6 +161,10 @@ Steps 3-7 reuse a single `AllSamples()` call.
 - `GET /diff/sample/{id}` -> `DiffResult[saga.IRODSFile]`
 - `GET /validate/{identifier}` -> `IdentifierResult`
 
+For chi routing, the validate endpoint may need to be registered with a
+wildcard or equivalent catch-all pattern internally so URL-encoded slashes
+such as `foo%2Fbar` are preserved as a single identifier value.
+
 Responses: `application/json`. Error body: `{"error":"<msg>"}`.
 Status codes: 200 success, 404 unknown identifier, 502 saga
 failure, 500 internal error.

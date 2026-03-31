@@ -19,8 +19,8 @@ returned as `Added`. Results are never nil slices. Covering all
 2 acceptance tests from C1. Depends on Phase 1 (SAGAProvider
 types) and Phase 2 (Store).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: C2 - Unchanged data returns empty diff
 
@@ -31,8 +31,8 @@ Extend `Diff[T]` so that a poll with identical data returns empty
 comparison of JSON-marshalled entries. Covering the 1 acceptance
 test from C2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.3: C3 - Detect new, modified, and removed entries
 
@@ -44,8 +44,8 @@ current). Removed entries become tombstones. Re-appeared
 tombstoned entries are reported as added. Covering all 2
 acceptance tests from C3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.4: C4 - Group hashing for shared IDs
 
@@ -56,8 +56,8 @@ are grouped and hashed together. Items within a group are sorted
 by JSON representation before hashing for determinism. Covering
 all 3 acceptance tests from C4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.5: C5 - Tombstone persistence
 
@@ -67,8 +67,8 @@ Ensure removed entries become tombstones that are not re-reported
 on subsequent polls. After removal, `LoadEntries` shows
 `Tombstone == true`. Covering all 2 acceptance tests from C5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after item 3.5 is reviewed)
 
@@ -82,8 +82,8 @@ samples via `SAGAProvider.AllSamplesForStudy`, uses query key
 `MLWHSample.SangerID`. Atomic failure: saga errors prevent store
 update. Covering all 3 acceptance tests from C6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.7: C7 - DiffSampleFiles convenience wrapper [parallel with 3.6]
 
@@ -95,8 +95,8 @@ via `SAGAProvider.GetSampleFiles`, uses query key
 `IRODSFile.Collection`. Atomic failure on saga errors. Covering
 all 3 acceptance tests from C7.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill

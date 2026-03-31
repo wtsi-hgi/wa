@@ -19,8 +19,8 @@ study ID via `GetStudy` first, then study accession via
 `AllStudies`. Depends on Phase 1 (SAGAProvider). Covering all
 2 acceptance tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after item 4.1 is reviewed)
 
@@ -33,8 +33,8 @@ Extend `Validate` to check sample fields using a single
 IDRun (string to int), LibraryType. Study checks take priority.
 Covering all 6 acceptance tests from D2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.3: D3 - Validate project name [parallel with 4.2, 4.4, 4.5]
 
@@ -44,8 +44,8 @@ Extend `Validate` to check project names via `ListProjects` as
 the final fallback after study and sample checks fail. Covering
 the 1 acceptance test from D3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.4: D4 - Unknown identifier [parallel with 4.2, 4.3, 4.5]
 
@@ -55,8 +55,8 @@ Ensure `Validate` returns `ErrUnknownIdentifier` when no SAGA
 entity matches, including for empty string input. Covering all
 2 acceptance tests from D4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.5: D5 - Upstream errors propagate [parallel with 4.2, 4.3, 4.4]
 
@@ -67,8 +67,8 @@ unauthorized, timeout) propagate immediately from `Validate`
 instead of being swallowed. Covering all 4 acceptance tests
 from D5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill

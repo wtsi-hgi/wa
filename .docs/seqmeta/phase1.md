@@ -19,8 +19,8 @@ methods (`GetStudy`, `AllStudies`, `AllSamples`,
 `MockProvider` test helper. Covering all 2 acceptance tests from
 A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: A2 - ClientAdapter
 
@@ -32,5 +32,5 @@ constructor, each method delegates to the corresponding saga
 sub-client. Covering all 5 acceptance tests from A2, including
 interface satisfaction compile check.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

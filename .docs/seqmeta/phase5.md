@@ -21,8 +21,8 @@ Implement `NewServer`, `Server.Handler`, and chi route
 errors with `{"error":"<msg>"}` body. Depends on Phase 3
 (DiffStudySamples). Covering all 4 acceptance tests from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.2: E2 - Sample diff endpoint [parallel with 5.1, 5.3]
 
@@ -32,8 +32,8 @@ Add chi route `GET /diff/sample/{id}` in `seqmeta/server.go`.
 Returns `DiffResult[saga.IRODSFile]` as JSON. Depends on Phase 3
 (DiffSampleFiles). Covering all 3 acceptance tests from E2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.3: E3 - Validate endpoint [parallel with 5.1, 5.2]
 
@@ -41,12 +41,13 @@ spec.md section: E3
 
 Add chi route `GET /validate/{identifier}` in
 `seqmeta/server.go`. Returns `IdentifierResult` as JSON. Status
-404 for unknown identifiers. Handle URL-encoded special
-characters. Depends on Phase 4 (Validate). Covering all 3
-acceptance tests from E3.
+404 for unknown identifiers. Use whatever chi-compatible route
+pattern is needed internally to preserve URL-encoded special
+characters, including encoded slashes. Depends on Phase 4
+(Validate). Covering all 3 acceptance tests from E3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill
@@ -63,5 +64,5 @@ Status 502 for saga provider failures, 500 for store failures.
 Covering all 2 acceptance tests from E4. Depends on items
 5.1-5.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

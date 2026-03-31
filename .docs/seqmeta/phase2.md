@@ -19,8 +19,8 @@ Auto-create the `watermarks` SQLite table on open using
 (`:memory:`) paths. Wrap open failures in `ErrStoreOpen`. Covering
 all 5 acceptance tests from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: B2 - Save and load entries
 
@@ -34,5 +34,5 @@ same query key not present in the new map are left unchanged.
 6 acceptance tests from B2, including tombstone persistence and
 cross-key isolation.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

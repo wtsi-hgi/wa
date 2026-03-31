@@ -73,7 +73,7 @@ Expose the same functionality via a Cobra CLI for ad-hoc use and scripting.
 
 - Identifier validation supports the extended set: Study ID (IDStudyLims),
   Sanger Sample ID, IDSampleLims, Run ID, Library Type, sample accession
-  number, study accession number, and project name/ID.
+  number, study accession number, and project name.
 - Change detection uses hash-based comparison: SHA256 of JSON-marshalled
   entries. The hash is stored as the watermark; entries are flagged as changed
   when the hash differs.
@@ -81,11 +81,13 @@ Expose the same functionality via a Cobra CLI for ad-hoc use and scripting.
   limited to a subset. Any saga call that returns data can be tracked for
   changes.
 - Watermark storage uses fine-grained per-entity tracking: one SQLite row per
-  result entry with (query_hash, entry_id, entry_hash, timestamp). This enables
+  result entry with (query_key, entry_id, entry_hash, timestamp). This enables
   per-entity change detection (new, modified, removed).
 - REST API uses resource-based paths: GET /diff/study/{id},
   GET /diff/sample/{id}, GET /validate/{identifier}, with responses containing
-  added/modified/removed arrays.
+  added/modified/removed arrays. The validate handler must use a wildcard or
+  equivalent catch-all route internally so URL-encoded slashes in identifiers
+  still round-trip correctly.
 - Identifier validation uses live SAGA lookup: call relevant saga endpoints to
   check existence; the identifier type is whichever endpoint succeeds. No regex
   pre-filtering.

@@ -21,8 +21,8 @@ exclusive flags; error if neither or both provided. Depends on
 all prior phases (SAGAProvider, Store, Diff wrappers). Covering
 all 4 acceptance tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.2: F2 - validate subcommand
 
@@ -33,8 +33,8 @@ Add `validate <identifier>` subcommand to Cobra CLI. Prints
 identifier or missing argument. Covering all 3 acceptance tests
 from F2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.3: F3 - serve subcommand
 
@@ -45,5 +45,5 @@ Add `serve` subcommand to Cobra CLI. Starts REST API server on
 together. Invalid port returns non-zero exit. Covering all 3
 acceptance tests from F3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
