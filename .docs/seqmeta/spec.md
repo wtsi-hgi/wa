@@ -11,7 +11,8 @@ Key behaviours:
 
 - Per-entity SHA256 watermarking with tombstones for removals.
 - First poll returns all current results as "added".
-- Atomic failure: saga errors prevent any store update.
+- Atomic failure: saga errors or result delivery failures prevent
+   any store update.
 - Identifier validation via live SAGA lookup returning type + full
   matched object.
 - Generic `Diff[T]` function works with any saga type; REST API
@@ -124,7 +125,7 @@ CREATE TABLE IF NOT EXISTS watermarks (
 ### Entry identity (idFunc per type)
 
 - `saga.MLWHSample` -> `SangerID`
-- `saga.IRODSFile` -> `Collection`
+- `saga.IRODSFile` -> `ID` when non-zero, otherwise `Collection`
 
 Items sharing an ID are grouped; the group hash covers all items
 sorted by their JSON representation.
@@ -166,8 +167,8 @@ wildcard or equivalent catch-all pattern internally so URL-encoded slashes
 such as `foo%2Fbar` are preserved as a single identifier value.
 
 Responses: `application/json`. Error body: `{"error":"<msg>"}`.
-Status codes: 200 success, 404 unknown identifier, 502 saga
-failure, 500 internal error.
+Status codes: 200 success, 404 unknown identifier or upstream not
+found, 502 other saga failure, 500 internal error.
 
 ### CLI (Cobra)
 
@@ -465,7 +466,7 @@ func DiffSampleFiles(
 ```
 
 Uses query key `"sample_files:<sangerID>"` and `idFunc` returning
-`IRODSFile.Collection`.
+`IRODSFile.ID` when non-zero, otherwise `IRODSFile.Collection`.
 
 **Acceptance tests:**
 
@@ -476,7 +477,7 @@ Uses query key `"sample_files:<sangerID>"` and `idFunc` returning
    store is unchanged.
 3. Given a prior diff with 2 files, when mock now returns 1 file
    (the other removed), then `len(Removed) == 1` with the
-   missing file's Collection as the removed ID.
+   missing file's identity key as the removed ID.
 
 ---
 
@@ -639,7 +640,7 @@ changes in iRODS files for a sample.
    `"added"` has 1 file with correct `Collection`.
 2. Given mock now returns 2 files (1 existing + 1 new), when
    polled again, then `"added"` has the new file only.
-3. Given mock returns `saga.ErrNotFound`, then status is 502.
+3. Given mock returns `saga.ErrNotFound`, then status is 404.
 
 ### E3: Validate endpoint
 
@@ -663,8 +664,9 @@ As a consumer, I want consistent JSON error bodies.
 
 **Acceptance tests:**
 
-1. Given saga provider fails on diff, then status 502, body is
-   `{"error":"<message>"}`, `Content-Type` is
+1. Given saga provider fails on diff, then status 404 for upstream
+   not found or 502 for other upstream failures, body is
+   `{"error":"<message>"}`, and `Content-Type` is
    `application/json`.
 2. Given store failure (e.g. closed store), then status 500.
 
@@ -796,9 +798,9 @@ all prior phases. Sequential.
 - **Tombstones permanent:** Removed entries stay in the DB with
   `tombstone=1`. Not re-reported on subsequent diffs. Reappearing
   entries are reported as "added" again.
-- **Atomic failure:** Saga errors in convenience wrappers prevent
-  `Diff` from being called, so the store is never updated on
-  upstream failure.
+- **Atomic failure:** Saga errors in convenience wrappers or result
+   delivery failures prevent watermark updates, so the store is not
+   advanced unless the diff is successfully produced and delivered.
 - **Validation priority:** Study ID first (cheapest single-entity
   lookup), then study accession (reuses `AllStudies` once), then
   all sample fields (reuses `AllSamples` once), then projects.

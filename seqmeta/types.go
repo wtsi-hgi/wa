@@ -28,12 +28,14 @@ package seqmeta
 import (
 	"database/sql"
 	"errors"
+	"sync"
 	"time"
 )
 
 // Store persists seqmeta watermark state in SQLite.
 type Store struct {
 	db *sql.DB
+	mu sync.Mutex
 }
 
 // StoredEntry is one row in the watermarks table.

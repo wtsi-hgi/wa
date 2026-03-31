@@ -39,6 +39,11 @@ type diffTestItem struct {
 	Value string `json:"value"`
 }
 
+type diffBadItem struct {
+	ID      string      `json:"id"`
+	Invalid interface{} `json:"invalid"`
+}
+
 func TestDiff(t *testing.T) {
 	idFunc := func(item diffTestItem) string { return item.ID }
 
@@ -150,6 +155,61 @@ func TestDiff(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(entries["a"].Tombstone, convey.ShouldBeTrue)
 	})
+
+	convey.Convey("Diff returns an error instead of panicking when hashing fails", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
+		_, err = Diff(store, "bad", []diffBadItem{{ID: "a", Invalid: func() {}}}, func(item diffBadItem) string {
+			return item.ID
+		})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "marshal hash item")
+	})
+
+	convey.Convey("Diff preserves deterministic first-seen order for added and modified items", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
+		current := []diffTestItem{{ID: "b", Value: "1"}, {ID: "a", Value: "2"}, {ID: "a", Value: "3"}}
+		result, err := Diff(store, "ordered", current, idFunc)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Added, convey.ShouldResemble, current)
+
+		updated := []diffTestItem{{ID: "b", Value: "4"}, {ID: "a", Value: "5"}, {ID: "a", Value: "6"}}
+		result, err = Diff(store, "ordered", updated, idFunc)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Modified, convey.ShouldResemble, updated)
+	})
+
+	convey.Convey("PreparedDiff can roll back a committed snapshot after output failure", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
+		_, err = Diff(store, "rollback", []diffTestItem{{ID: "a", Value: "1"}}, idFunc)
+		convey.So(err, convey.ShouldBeNil)
+
+		prepared, err := PrepareDiff(store, "rollback", []diffTestItem{{ID: "a", Value: "2"}, {ID: "b", Value: "3"}}, idFunc)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(prepared.Commit(), convey.ShouldBeNil)
+		convey.So(prepared.Rollback(), convey.ShouldBeNil)
+
+		entries, err := store.LoadEntries("rollback")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldHaveLength, 1)
+		convey.So(entries["a"].Tombstone, convey.ShouldBeFalse)
+		convey.So(entries["a"].EntryHash, convey.ShouldNotBeBlank)
+		convey.So(entries, convey.ShouldNotContainKey, "b")
+
+		result, err := Diff(store, "rollback", []diffTestItem{{ID: "a", Value: "2"}, {ID: "b", Value: "3"}}, idFunc)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Added, convey.ShouldResemble, []diffTestItem{{ID: "b", Value: "3"}})
+		convey.So(result.Modified, convey.ShouldResemble, []diffTestItem{{ID: "a", Value: "2"}})
+	})
 }
 
 func TestDiffStudySamples(t *testing.T) {
@@ -246,5 +306,53 @@ func TestDiffSampleFiles(t *testing.T) {
 		result, err = DiffSampleFiles(ctx, provider, store, "SANG1")
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(result.Removed, convey.ShouldResemble, []string{"/b"})
+	})
+
+	convey.Convey("DiffSampleFiles distinguishes files sharing a collection when IDs differ", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
+		provider := &MockProvider{
+			GetSampleFilesFunc: func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
+				return []saga.IRODSFile{{ID: 1, Collection: "/shared"}, {ID: 2, Collection: "/shared"}}, nil
+			},
+		}
+
+		_, err = DiffSampleFiles(ctx, provider, store, "SANG1")
+		convey.So(err, convey.ShouldBeNil)
+
+		provider.GetSampleFilesFunc = func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
+			return []saga.IRODSFile{{ID: 2, Collection: "/shared"}}, nil
+		}
+
+		result, err := DiffSampleFiles(ctx, provider, store, "SANG1")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Removed, convey.ShouldResemble, []string{"1"})
+	})
+
+	convey.Convey("DiffSampleFiles keeps numeric file IDs distinct from numeric collection names", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
+		provider := &MockProvider{
+			GetSampleFilesFunc: func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
+				return []saga.IRODSFile{{ID: 123, Collection: "/files/123"}, {Collection: "123"}}, nil
+			},
+		}
+
+		_, err = DiffSampleFiles(ctx, provider, store, "SANG1")
+		convey.So(err, convey.ShouldBeNil)
+
+		provider.GetSampleFilesFunc = func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
+			return []saga.IRODSFile{{Collection: "123"}}, nil
+		}
+
+		result, err := DiffSampleFiles(ctx, provider, store, "SANG1")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Added, convey.ShouldBeEmpty)
+		convey.So(result.Modified, convey.ShouldBeEmpty)
+		convey.So(result.Removed, convey.ShouldResemble, []string{"123"})
 	})
 }

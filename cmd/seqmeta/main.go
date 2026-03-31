@@ -26,10 +26,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -106,20 +108,62 @@ func newDiffCommand(options *rootOptions) *cobra.Command {
 			}
 
 			if studyID != "" {
-				result, err := seqmeta.DiffStudySamples(ctx, provider, store, studyID)
+				samples, err := provider.AllSamplesForStudy(ctx, studyID)
 				if err != nil {
 					return err
 				}
 
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+				return store.WithLock(func() error {
+					prepared, err := seqmeta.PrepareDiff(store, "study_samples:"+studyID, samples, func(sample saga.MLWHSample) string {
+						return sample.SangerID
+					})
+					if err != nil {
+						return err
+					}
+
+					body, err := marshalCommandJSON(prepared.Result)
+					if err != nil {
+						return err
+					}
+
+					if err := prepared.Commit(); err != nil {
+						return err
+					}
+
+					if err := writeCommandJSON(cmd.OutOrStdout(), body); err != nil {
+						return rollbackPreparedDiff(prepared, err)
+					}
+
+					return nil
+				})
 			}
 
-			result, err := seqmeta.DiffSampleFiles(ctx, provider, store, sampleID)
+			files, err := provider.GetSampleFiles(ctx, sampleID)
 			if err != nil {
 				return err
 			}
 
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			return store.WithLock(func() error {
+				prepared, err := seqmeta.PrepareDiffSampleFiles(ctx, &prefetchedProvider{files: files}, store, sampleID)
+				if err != nil {
+					return err
+				}
+
+				body, err := marshalCommandJSON(prepared.Result)
+				if err != nil {
+					return err
+				}
+
+				if err := prepared.Commit(); err != nil {
+					return err
+				}
+
+				if err := writeCommandJSON(cmd.OutOrStdout(), body); err != nil {
+					return rollbackPreparedDiff(prepared, err)
+				}
+
+				return nil
+			})
 		},
 	}
 
@@ -127,6 +171,34 @@ func newDiffCommand(options *rootOptions) *cobra.Command {
 	command.Flags().StringVar(&sampleID, "sample", "", "Sanger sample ID")
 
 	return command
+}
+
+type prefetchedProvider struct {
+	files []saga.IRODSFile
+}
+
+func (p *prefetchedProvider) GetStudy(context.Context, string) (*saga.Study, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) AllStudies(context.Context) ([]saga.Study, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) AllSamples(context.Context) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) AllSamplesForStudy(context.Context, string) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) GetSampleFiles(context.Context, string) ([]saga.IRODSFile, error) {
+	return p.files, nil
+}
+
+func (p *prefetchedProvider) ListProjects(context.Context) ([]saga.Project, error) {
+	return nil, errors.New("unused prefetched provider method")
 }
 
 func newValidateCommand(options *rootOptions) *cobra.Command {
@@ -221,4 +293,27 @@ func openProvider(options *rootOptions) (seqmeta.SAGAProvider, func(), error) {
 	}
 
 	return seqmeta.NewClientAdapter(client), func() { client.Close() }, nil
+}
+
+func marshalCommandJSON(payload any) ([]byte, error) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
+}
+
+func writeCommandJSON(output io.Writer, body []byte) error {
+	_, err := output.Write(body)
+
+	return err
+}
+
+func rollbackPreparedDiff[T any](prepared *seqmeta.PreparedDiff[T], writeErr error) error {
+	if rollbackErr := prepared.Rollback(); rollbackErr != nil {
+		return errors.Join(writeErr, rollbackErr)
+	}
+
+	return writeErr
 }

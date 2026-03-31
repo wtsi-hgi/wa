@@ -17,8 +17,9 @@ spec.md section: E1
 
 Implement `NewServer`, `Server.Handler`, and chi route
 `GET /diff/study/{id}` in `seqmeta/server.go`. Returns
-`DiffResult[saga.MLWHSample]` as JSON. Status 502 on saga
-errors with `{"error":"<msg>"}` body. Depends on Phase 3
+`DiffResult[saga.MLWHSample]` as JSON. Status 404 on upstream not
+found and 502 on other saga errors, with `{"error":"<msg>"}`
+body. Depends on Phase 3
 (DiffStudySamples). Covering all 4 acceptance tests from E1.
 
 - [x] implemented
@@ -30,7 +31,8 @@ spec.md section: E2
 
 Add chi route `GET /diff/sample/{id}` in `seqmeta/server.go`.
 Returns `DiffResult[saga.IRODSFile]` as JSON. Depends on Phase 3
-(DiffSampleFiles). Covering all 3 acceptance tests from E2.
+(DiffSampleFiles). Upstream not found returns 404. Covering all 3
+acceptance tests from E2.
 
 - [x] implemented
 - [x] reviewed
@@ -60,7 +62,8 @@ spec.md section: E4
 
 Ensure consistent JSON error bodies across all endpoints:
 `{"error":"<message>"}` with `Content-Type: application/json`.
-Status 502 for saga provider failures, 500 for store failures.
+Status 404 for upstream not found, 502 for other saga provider
+failures, and 500 for store failures.
 Covering all 2 acceptance tests from E4. Depends on items
 5.1-5.3.
 

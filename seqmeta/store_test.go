@@ -159,7 +159,7 @@ func TestStoreLoadAndSaveEntries(t *testing.T) {
 			convey.So(entries["e1"].Tombstone, convey.ShouldBeTrue)
 		})
 
-		convey.Convey("when later saves omit an existing entry, then the omitted entry persists", func() {
+		convey.Convey("when later saves omit an existing entry, then the omitted entry is removed", func() {
 			convey.So(store.SaveEntries("q1", map[string]StoredEntry{
 				"e1": {EntryHash: "abc", UpdatedAt: now},
 			}), convey.ShouldBeNil)
@@ -170,8 +170,8 @@ func TestStoreLoadAndSaveEntries(t *testing.T) {
 			entries, err := store.LoadEntries("q1")
 
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(entries, convey.ShouldHaveLength, 2)
-			convey.So(entries["e1"].EntryHash, convey.ShouldEqual, "abc")
+			convey.So(entries, convey.ShouldHaveLength, 1)
+			convey.So(entries, convey.ShouldNotContainKey, "e1")
 			convey.So(entries["e2"].EntryHash, convey.ShouldEqual, "def")
 		})
 	})

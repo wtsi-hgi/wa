@@ -92,7 +92,8 @@ spec.md section: C7
 Implement `DiffSampleFiles` in `seqmeta/diff.go`. Fetches files
 via `SAGAProvider.GetSampleFiles`, uses query key
 `"sample_files:<sangerID>"` and `idFunc` returning
-`IRODSFile.Collection`. Atomic failure on saga errors. Covering
+`IRODSFile.ID` when non-zero, otherwise `IRODSFile.Collection`.
+Atomic failure on saga errors. Covering
 all 3 acceptance tests from C7.
 
 - [x] implemented

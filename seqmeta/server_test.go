@@ -37,6 +37,28 @@ import (
 	"github.com/wtsi-hgi/wa/saga"
 )
 
+type failingResponseWriter struct {
+	header http.Header
+	code   int
+	err    error
+}
+
+func (w *failingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = http.Header{}
+	}
+
+	return w.header
+}
+
+func (w *failingResponseWriter) WriteHeader(statusCode int) {
+	w.code = statusCode
+}
+
+func (w *failingResponseWriter) Write(_ []byte) (int, error) {
+	return 0, w.err
+}
+
 func TestServerStudyDiffEndpoint(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
@@ -125,7 +147,7 @@ func TestServerSampleDiffEndpoint(t *testing.T) {
 		}
 		recorder = httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, request)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
 	})
 }
 
@@ -207,5 +229,32 @@ func TestServerErrorResponses(t *testing.T) {
 		}
 		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/diff/study/100", nil))
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusInternalServerError)
+	})
+}
+
+func TestServerWriteFailureDoesNotAdvanceWatermark(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	provider := &MockProvider{
+		AllSamplesForStudyFunc: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+			return []saga.MLWHSample{{SangerID: "S1"}, {SangerID: "S2"}}, nil
+		},
+	}
+	server := NewServer(provider, store)
+
+	convey.Convey("HTTP diff does not advance the watermark when writing the response fails", t, func() {
+		writer := &failingResponseWriter{err: errors.New("client disconnected")}
+		server.Handler().ServeHTTP(writer, httptest.NewRequest(http.MethodGet, "/diff/study/100", nil))
+
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/diff/study/100", nil))
+
+		var result DiffResult[saga.MLWHSample]
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(result.Added, convey.ShouldHaveLength, 2)
 	})
 }

@@ -26,13 +26,16 @@
 package seqmeta
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/wtsi-hgi/wa/saga"
 )
 
 // Server serves the seqmeta REST API.
@@ -61,32 +64,102 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleStudyDiff(w http.ResponseWriter, r *http.Request) {
-	result, err := DiffStudySamples(r.Context(), s.provider, s.store, chi.URLParam(r, "id"))
+	queryID := chi.URLParam(r, "id")
+	samples, err := s.provider.AllSamplesForStudy(r.Context(), queryID)
 	if err != nil {
 		s.writeDiffError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	err = s.store.WithLock(func() error {
+		prepared, err := prepareDiffStudySamples(s.store, queryID, samples)
+		if err != nil {
+			return err
+		}
+
+		body, err := marshalJSON(prepared.Result)
+		if err != nil {
+			return err
+		}
+
+		if err := prepared.Commit(); err != nil {
+			return err
+		}
+
+		if err := writeJSONBytes(w, http.StatusOK, body); err != nil {
+			log.Printf("seqmeta: write failed for study diff %q: %v", queryID, err)
+			if rollbackErr := prepared.Rollback(); rollbackErr != nil {
+				log.Printf("seqmeta: rollback failed for study diff %q: %v", queryID, rollbackErr)
+
+				return errors.Join(err, rollbackErr)
+			}
+
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		if w.Header().Get("Content-Type") != "" {
+			return
+		}
+
+		s.writeDiffError(w, err)
+	}
 }
 
 func (s *Server) handleSampleDiff(w http.ResponseWriter, r *http.Request) {
-	result, err := DiffSampleFiles(r.Context(), s.provider, s.store, chi.URLParam(r, "id"))
+	queryID := chi.URLParam(r, "id")
+	files, err := s.provider.GetSampleFiles(r.Context(), queryID)
 	if err != nil {
 		s.writeDiffError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	err = s.store.WithLock(func() error {
+		prepared, err := prepareDiffSampleFiles(s.store, queryID, files)
+		if err != nil {
+			return err
+		}
+
+		body, err := marshalJSON(prepared.Result)
+		if err != nil {
+			return err
+		}
+
+		if err := prepared.Commit(); err != nil {
+			return err
+		}
+
+		if err := writeJSONBytes(w, http.StatusOK, body); err != nil {
+			log.Printf("seqmeta: write failed for sample diff %q: %v", queryID, err)
+			if rollbackErr := prepared.Rollback(); rollbackErr != nil {
+				log.Printf("seqmeta: rollback failed for sample diff %q: %v", queryID, rollbackErr)
+
+				return errors.Join(err, rollbackErr)
+			}
+
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		if w.Header().Get("Content-Type") != "" {
+			return
+		}
+
+		s.writeDiffError(w, err)
+	}
 }
 
 func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 	escaped := strings.TrimPrefix(r.URL.EscapedPath(), "/validate/")
 	identifier, err := url.PathUnescape(escaped)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		_ = writeError(w, http.StatusBadRequest, err.Error())
 
 		return
 	}
@@ -94,34 +167,58 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 	result, err := Validate(r.Context(), s.provider, identifier)
 	if err != nil {
 		if errors.Is(err, ErrUnknownIdentifier) {
-			writeError(w, http.StatusNotFound, err.Error())
+			_ = writeError(w, http.StatusNotFound, err.Error())
 
 			return
 		}
 
-		writeError(w, http.StatusBadGateway, err.Error())
+		_ = writeError(w, http.StatusBadGateway, err.Error())
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	_ = writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) writeDiffError(w http.ResponseWriter, err error) {
 	status := http.StatusBadGateway
-	if errors.Is(err, errStoreOperation) {
+	if errors.Is(err, saga.ErrNotFound) {
+		status = http.StatusNotFound
+	} else if errors.Is(err, errStoreOperation) {
 		status = http.StatusInternalServerError
 	}
 
-	writeError(w, status, err.Error())
+	_ = writeError(w, status, err.Error())
 }
 
-func writeJSON(w http.ResponseWriter, status int, payload any) {
+func marshalJSON(payload any) ([]byte, error) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) error {
+	body, err := marshalJSON(payload)
+	if err != nil {
+		return err
+	}
+
+	return writeJSONBytes(w, status, body)
+}
+
+func writeJSONBytes(w http.ResponseWriter, status int, body []byte) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	if _, err := w.Write(body); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+func writeError(w http.ResponseWriter, status int, message string) error {
+	return writeJSON(w, status, map[string]string{"error": message})
 }

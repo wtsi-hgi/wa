@@ -65,10 +65,28 @@ func (s *Store) Close() error {
 		return nil
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.db == nil {
+		return nil
+	}
+
 	err := s.db.Close()
 	s.db = nil
 
 	return err
+}
+
+func (s *Store) WithLock(fn func() error) error {
+	if s == nil {
+		return fmt.Errorf("%w: store is closed", errStoreOperation)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return fn()
 }
 
 // LoadEntries returns all saved entries for one query key.
@@ -121,7 +139,7 @@ func (s *Store) LoadEntries(queryKey string) (map[string]StoredEntry, error) {
 	return entries, nil
 }
 
-// SaveEntries upserts the provided entries for one query key.
+// SaveEntries replaces the saved entry snapshot for one query key.
 func (s *Store) SaveEntries(queryKey string, entries map[string]StoredEntry) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("%w: store is closed", errStoreOperation)
@@ -132,13 +150,15 @@ func (s *Store) SaveEntries(queryKey string, entries map[string]StoredEntry) err
 		return fmt.Errorf("%w: %w", errStoreOperation, err)
 	}
 
+	if _, err := tx.Exec(`DELETE FROM watermarks WHERE query_key = ?`, queryKey); err != nil {
+		_ = tx.Rollback()
+
+		return fmt.Errorf("%w: %w", errStoreOperation, err)
+	}
+
 	stmt, err := tx.Prepare(`
 		INSERT INTO watermarks(query_key, entry_id, entry_hash, updated_at, tombstone)
 		VALUES(?, ?, ?, ?, ?)
-		ON CONFLICT(query_key, entry_id) DO UPDATE SET
-			entry_hash = excluded.entry_hash,
-			updated_at = excluded.updated_at,
-			tombstone = excluded.tombstone
 	`)
 	if err != nil {
 		_ = tx.Rollback()

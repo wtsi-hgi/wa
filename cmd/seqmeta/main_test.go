@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -39,6 +40,12 @@ import (
 	"github.com/wtsi-hgi/wa/saga"
 	"github.com/wtsi-hgi/wa/seqmeta"
 )
+
+type failingWriter struct{}
+
+func (failingWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("broken pipe")
+}
 
 func TestDiffCommand(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +121,36 @@ func TestValidateCommand(t *testing.T) {
 		_, stderr, err = executeCommand(t, []string{"validate", "--token", "test", "--base-url", server.URL})
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "usage")
+	})
+}
+
+func TestDiffCommandWriteFailureDoesNotAdvanceWatermark(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/integrations/mlwh/samples":
+			_, _ = w.Write([]byte(`{"items":[{"sanger_id":"S1"},{"sanger_id":"S2"}],"total":2,"offset":0,"limit":100}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	convey.Convey("CLI diff does not advance the watermark when writing output fails", t, func() {
+		dbPath := t.TempDir() + "/seqmeta.db"
+		cmd := newRootCommand()
+		cmd.SetOut(failingWriter{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"diff", "--study", "100", "--db", dbPath, "--token", "test", "--base-url", server.URL})
+
+		err := cmd.Execute()
+		convey.So(err, convey.ShouldNotBeNil)
+
+		stdout, _, rerunErr := executeCommand(t, []string{"diff", "--study", "100", "--db", dbPath, "--token", "test", "--base-url", server.URL})
+		convey.So(rerunErr, convey.ShouldBeNil)
+
+		var result seqmeta.DiffResult[saga.MLWHSample]
+		convey.So(json.Unmarshal(stdout.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(result.Added, convey.ShouldHaveLength, 2)
 	})
 }
 

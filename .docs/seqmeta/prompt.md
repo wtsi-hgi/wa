@@ -92,8 +92,8 @@ Expose the same functionality via a Cobra CLI for ad-hoc use and scripting.
   check existence; the identifier type is whichever endpoint succeeds. No regex
   pre-filtering.
 - Entry identity for per-entity watermarking uses a single canonical field per
-  type: Study → IDStudyLims, Sample → SangerID, iRODS file → collection path,
-  etc.
+  type: Study → IDStudyLims, Sample → SangerID, iRODS file → numeric ID when
+  available otherwise collection path, etc.
 - CLI uses Cobra subcommands: `seqmeta diff --study <id>`,
   `seqmeta validate <id>`, `seqmeta serve --port 8080`.
 - Saga dependency uses a curated minimal interface defined in the seqmeta
