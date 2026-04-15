@@ -161,7 +161,7 @@ resources allow.
 | Language | Go | Consistent with wr; single language for all backend logic |
 | CLI | Cobra | De-facto Go CLI framework |
 | HTTP routing | chi | Lightweight, idiomatic |
-| Database | SQLite + MySQL | SQLite for test suite and local dev; MySQL for production and integration tests |
+| Database | SQLite + MySQL | SQLite for tests and local dev; shared MySQL instance for production (no self-hosted DB — uses institutional infrastructure) |
 | Job submission | wr Go client library | Native integration with LSF |
 | Testing | GoConvey + interface mocks | BDD-style tests; all external deps behind interfaces |
 | Email | net/smtp | Standard SMTP to institutional relay |
@@ -184,5 +184,6 @@ frontend is built and deployed as a standalone Node.js app alongside the Go
 binary.
 
 This stack keeps every sub-product simple to build, test, and deploy — no
-message queues, no external database servers. Sub-products without a web UI
+message queues, SQLite for local development and testing, and a shared
+institutional MySQL instance for production. Sub-products without a web UI
 (saga, notify, jobrun) are pure Go with zero frontend dependencies.
