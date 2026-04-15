@@ -20,11 +20,14 @@ maintainability.
 **Standalone value:** Any pipeline team can register and browse output files
 today, with no other sub-products required.
 
-A REST API and web UI for recording and searching pipeline outputs. Pipelines
-(or scripts, or humans) POST result metadata — output paths, pipeline name,
-input files, exact command lines, sequence metadata. The web UI provides
-searchable, filterable results with clickable file paths that render HTML
-inline, display CSVs as tables, and transparently decompress gzipped files.
+A REST API and web UI for recording and searching pipeline outputs, providing a
+central answer to "what datasets do we have, what work has been done on them,
+and by whom?" — essential for onboarders and anyone needing an overview of
+current state. Pipelines (or scripts, or humans) POST result metadata — output
+paths, pipeline name, input files, exact command lines, sequence metadata, and
+contacts (operator who ran the work, requestor who asked for it). The web UI
+provides searchable, filterable results with clickable file paths that render
+HTML inline, display CSVs as tables, and transparently decompress gzipped files.
 
 ### 2. saga — SAGA API Client Library
 
