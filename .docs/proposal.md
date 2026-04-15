@@ -8,8 +8,8 @@ others via HTTP APIs. No sub-product has a compile-time dependency on another �
 if a dependency isn't running, the caller degrades gracefully (e.g. logs instead
 of emailing).
 
-All sub-products share a common Go tech stack for consistency, testability, and
-maintainability.
+All sub-products share a common tech stack — Go for backends and CLIs, Next.js +
+shadcn/ui for web UIs — for consistency, testability, and maintainability.
 
 ---
 
@@ -20,11 +20,14 @@ maintainability.
 **Standalone value:** Any pipeline team can register and browse output files
 today, with no other sub-products required.
 
-A REST API and web UI for recording and searching pipeline outputs. Pipelines
-(or scripts, or humans) POST result metadata — output paths, pipeline name,
-input files, exact command lines, sequence metadata. The web UI provides
-searchable, filterable results with clickable file paths that render HTML
-inline, display CSVs as tables, and transparently decompress gzipped files.
+A REST API and web UI for recording and searching pipeline outputs, providing a
+central answer to "what datasets do we have, what work has been done on them,
+and by whom?" — essential for onboarders and anyone needing an overview of
+current state. Pipelines (or scripts, or humans) POST result metadata — output
+paths, pipeline name, input files, exact command lines, sequence metadata, and
+contacts (operator who ran the work, requestor who asked for it). The web UI
+provides searchable, filterable results with clickable file paths that render
+HTML inline, display CSVs as tables, and transparently decompress gzipped files.
 
 ### 2. saga — SAGA API Client Library
 
@@ -151,16 +154,36 @@ resources allow.
 
 ## Tech Stack (all sub-products)
 
+### Backend & CLI
+
 | Concern | Choice | Rationale |
-|---------|--------|-----------|
-| Language | Go | Consistent with wr; single language across everything |
+|---------|--------|----------|
+| Language | Go | Consistent with wr; single language for all backend logic |
 | CLI | Cobra | De-facto Go CLI framework |
 | HTTP routing | chi | Lightweight, idiomatic |
-| Web UI | Go html/template + htmx | Server-rendered, no JS build step, one language end-to-end |
-| Database | SQLite (pure Go driver) | Embedded, zero-ops, in-memory for tests |
+| Database | SQLite + MySQL | SQLite for tests and local dev; shared MySQL instance for production (no self-hosted DB — uses institutional infrastructure) |
 | Job submission | wr Go client library | Native integration with LSF |
 | Testing | GoConvey + interface mocks | BDD-style tests; all external deps behind interfaces |
 | Email | net/smtp | Standard SMTP to institutional relay |
 
+### Web UI
+
+| Concern | Choice | Rationale |
+|---------|--------|----------|
+| Framework | Next.js (App Router) + React | Server Actions call the Go API server-to-server; backend URLs never exposed to browser |
+| Components | shadcn/ui | Accessible, composable primitives (tables, forms, dialogs, comboboxes) with no custom design work |
+| Styling | Tailwind CSS v4 | Utility-first CSS with `@theme` design tokens; dark mode and responsive layout for free |
+| Contracts | Zod | Validates Go API responses on the frontend; catches regressions at the boundary |
+| Testing | Vitest | Unit tests for contracts and component logic; no browser required |
+
+Each sub-product with a web UI follows the same pattern: the Go backend exposes
+a JSON API via chi, and a Next.js frontend consumes it through Server Actions.
+Server Actions run on the Node.js server, so the Go API can live on a private
+network — reducing attack surface and keeping credentials server-side. The
+frontend is built and deployed as a standalone Node.js app alongside the Go
+binary.
+
 This stack keeps every sub-product simple to build, test, and deploy — no
-message queues, no JS toolchains, no external database servers.
+message queues, SQLite for local development and testing, and a shared
+institutional MySQL instance for production. Sub-products without a web UI
+(saga, notify, jobrun) are pure Go with zero frontend dependencies.
