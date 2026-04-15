@@ -1036,6 +1036,153 @@ Flags:
 
 ---
 
+## I. Integration Tests
+
+### I1: MySQL Store Integration
+
+As a developer, I want Store CRUD tests to run against real
+MySQL when a DSN is provided, so that cross-dialect SQL is
+verified against the production database engine.
+
+**Package:** `cmd/`
+**Test file:** `cmd/results_test.go`
+
+Gated by `WA_RESULTS_TEST_MYSQL_DSN` environment variable.
+When unset, all MySQL tests skip with `t.Skip`. When set,
+connect to MySQL using `go-sql-driver/mysql`, DROP the three
+results tables (`result_sets`, `result_files`,
+`result_metadata`) if they exist to ensure a clean slate,
+then call `results.NewStore(db)`. Run the full Store CRUD
+lifecycle: Upsert, Get, Search, GetFiles,
+ReplaceOutputFiles, Delete -- equivalent to C1-C7
+acceptance tests but against real MySQL.
+
+Verify: ON DELETE CASCADE works (MySQL requires InnoDB),
+LIKE-based search works, RFC 3339 timestamps round-trip
+correctly, PRAGMA foreign_keys is silently ignored.
+
+**Acceptance tests:**
+
+1. Given `WA_RESULTS_TEST_MYSQL_DSN` is unset, when any
+   MySQL store test runs, then the test is skipped via
+   `t.Skip`.
+2. Given valid DSN, when `NewStore(db)` is called after
+   DROPping tables, then no error and tables are created.
+3. Given Upsert with a valid Registration, when `Get` is
+   called with the returned ID, then all scalar fields and
+   metadata match.
+4. Given Upsert called twice with the same key but
+   `Requester` changed, then `CreatedAt` is preserved,
+   `UpdatedAt` advances, and `Requester` reflects the
+   second call.
+5. Given 3 result sets with requesters "alice", "alice",
+   "bob", when `Search(ctx,
+   SearchParams{Requester:"alice"})` is called, then
+   `len(results) == 2`.
+6. Given a result set with `metadata={"library":"exon"}`,
+   when `Search(ctx,
+   SearchParams{Meta:map{"library":"exon"}})` is called,
+   then `len(results) == 1`.
+7. Given result sets with output directories `/a/b/c` and
+   `/a/d/e`, when `Search(ctx,
+   SearchParams{OutputDirPrefix:"/a/b"})` is called, then
+   `len(results) == 1`.
+8. Given a result set with 2 output files and 1 input file,
+   when `GetFiles(ctx, id)` is called, then
+   `len(files) == 3` with correct kinds and sizes.
+9. Given `ReplaceOutputFiles` with 2 new output files, when
+   `GetFiles` is called, then old output files are removed
+   and input files are preserved.
+10. Given `Delete(ctx, id)`, when `Get(ctx, id)` is called,
+    then error wraps `ErrNotFound`, and `GetFiles` returns
+    empty (cascade removes result_files and
+    result_metadata rows).
+11. Given a result set created via `Upsert`, when `Get`
+    returns it, then `CreatedAt` and `UpdatedAt` both parse
+    as valid RFC 3339 timestamps via `time.Parse` and are
+    within 1 second of the wall clock at insertion time.
+12. Given `NewStore(db)` called twice on the same MySQL
+    `*sql.DB`, then the second call succeeds without error
+    (`CREATE TABLE IF NOT EXISTS` is idempotent).
+13. Given a DSN with an unreachable host
+    (e.g. `"testuser:pass@tcp(192.0.2.1:3306)/db?timeout=1s"`),
+    when `sql.Open` + `db.Ping` is called, then `db.Ping`
+    returns a non-nil error (verifies the test helper's
+    connection-check logic).
+
+### I2: End-to-End CLI Integration
+
+As a developer, I want end-to-end tests that start a real
+`wa results serve` via Cobra and exercise CLI commands
+through their Cobra command paths, so that the full wiring
+(flag parsing, DSN detection, serve logic) is verified.
+
+**Package:** `cmd/`
+**Test file:** `cmd/results_test.go`
+
+All commands are invoked through Cobra:
+
+- **Server:** `NewRootCommand().SetArgs(["results",
+  "serve", "--port", "0", "--db", "<tempfile>"])`
+  executed in a goroutine. The test captures stdout to
+  extract the actual listen port.
+- **CLI commands:** each exercised via
+  `NewRootCommand().SetArgs(["results", "<sub>", ...])`
+  with `--server http://localhost:<port>`. This verifies
+  flag parsing, argument wiring, and HTTP integration.
+
+SQLite variant: always runs. Server started with
+`--db <tempfile>` (SQLite path, no `@`).
+
+MySQL variant: only runs when `WA_RESULTS_TEST_MYSQL_DSN`
+is set. Server started with `--db <dsn>` where the DSN
+contains `@`, verifying the DSN-to-driver selection logic.
+
+Tests exercise the full round-trip: register -> search ->
+get -> rescan -> delete. Uses `t.TempDir()` for output
+directories with real files.
+
+**Acceptance tests:**
+
+1. Given a server started via
+   `NewRootCommand().SetArgs(["results", "serve",
+   "--port", "0", "--db", "<tempfile>"])` in a
+   goroutine, and a `t.TempDir()` with 2 output files and
+   1 input file, when `NewRootCommand().SetArgs(["results",
+   "register", "--server", "http://localhost:<port>",
+   ...])` is called, then stdout is JSON with correct ID,
+   requester, and file count.
+2. Given a registered result set, when
+   `NewRootCommand().SetArgs(["results", "search",
+   "--server", ..., "--user", "<requester>"])` is
+   called, then stdout JSON array contains the registered
+   result set.
+3. Given a registered result set, when
+   `NewRootCommand().SetArgs(["results", "get",
+   "--server", ..., "<id>"])` is called, then stdout
+   JSON contains full result set with metadata.
+4. Given `NewRootCommand().SetArgs(["results", "get",
+   "--server", ..., "--files", "<id>"])`, then stdout
+   JSON includes file entries with correct kinds and sizes.
+5. Given output directory modified (1 file added), when
+   `NewRootCommand().SetArgs(["results", "rescan",
+   "--server", ..., "<id>", "<dir>"])` is called,
+   then a subsequent `get --files` shows updated output
+   file count.
+6. Given `NewRootCommand().SetArgs(["results", "delete",
+   "--server", ..., "<id>"])`, when a subsequent
+   `get <id>` is called, then exit code is non-zero
+   (not found).
+7. Given `WA_RESULTS_TEST_MYSQL_DSN` is set, when the
+   server is started via `NewRootCommand().SetArgs(
+   ["results", "serve", "--port", "0", "--db",
+   "<dsn>"])` (DSN contains `@`, selecting MySQL
+   driver), then the same 6 tests above pass against the
+   MySQL-backed server. When unset, the MySQL variant is
+   skipped via `t.Skip`.
+
+---
+
 ## Implementation Order
 
 ### Phase 1: Types, Keys, and Scanner
@@ -1085,6 +1232,15 @@ Stories: G1, G2, G3, G4, G5, H1
 CLI subcommands including serve. Depends on Phases 4
 (server) and 5 (root command). H1 first (server needed by
 CLI commands), then G1-G5 parallel.
+
+### Phase 7: Integration Tests
+
+Stories: I1, I2
+
+End-to-end and MySQL integration tests. Depends on Phase 6
+(CLI commands must exist). I1 first (store-level MySQL
+tests), then I2 (end-to-end CLI tests that build on working
+store).
 
 ---
 
@@ -1137,3 +1293,13 @@ CLI commands), then G1-G5 parallel.
   detection for MVP.
 - **Hard delete:** No soft delete. `ON DELETE CASCADE`
   removes files and metadata when a result set is deleted.
+- **Integration testing:** MySQL Store tests gated by
+  `WA_RESULTS_TEST_MYSQL_DSN` environment variable. When
+  set, tests DROP and recreate tables, then run full CRUD
+  suite against real MySQL. End-to-end CLI tests exercise
+  all commands through Cobra command paths
+  (`NewRootCommand().SetArgs(...)`) -- not direct function
+  calls -- verifying flag parsing, DSN-to-driver selection,
+  and serve wiring. SQLite variant always runs; MySQL
+  variant runs when DSN is available. All integration tests
+  live in `cmd/results_test.go`.

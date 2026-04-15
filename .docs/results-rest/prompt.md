@@ -246,3 +246,27 @@ Per `.docs/proposal.md`:
 - SQLite for tests/local dev, MySQL for production
 - GoConvey testing
 - Cobra CLI
+
+## Integration Testing Notes
+
+- The spec must include real MySQL integration tests for the Store layer, not
+  just SQLite. The cross-dialect SQL claim is untested without them. Tests
+  should be gated by a `WA_RESULTS_TEST_MYSQL_DSN` environment variable.
+  When set, the tests connect to that MySQL instance, DROP all results tables
+  (result_sets, result_files, result_metadata) to ensure a clean slate, then
+  run the full Store CRUD test suite (C1-C7 equivalent) against real MySQL.
+  When unset, tests are skipped with `t.Skip`.
+- The spec must include end-to-end integration tests that exercise the compiled
+  `wa` binary through the CLI. These tests should: start a real `wa results
+  serve` server (using SQLite :memory: or a temp file), then exercise the CLI
+  commands (`register`, `search`, `get`, `rescan`, `delete`) against the
+  running server, verifying the full round-trip from CLI to REST to DB and
+  back. These confirm the binary actually works as a deployed unit.
+- When the MySQL DSN env var is set, the end-to-end tests should also run
+  against MySQL (start serve with `--db <dsn>`), verifying the full stack
+  works with the production database engine.
+- All integration tests should live in `cmd/results_test.go` since they test
+  the assembled system (CLI + server + store), not individual packages.
+- The MySQL integration tests should be in a new spec section (e.g. I.
+  Integration Tests) with their own acceptance tests, and included in a
+  new or existing phase that runs after Phase 6.
