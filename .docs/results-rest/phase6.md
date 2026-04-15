@@ -9,13 +9,13 @@ subagents with the `go-implementor` and `go-reviewer` skills.
 
 ## Items
 
-### Item 6.1: H1 - wa serve
+### Item 6.1: H1 - wa results serve
 
 spec.md section: H1
 
-Implement the `serve` subcommand in `cmd/serve.go`. Opens
-database (SQLite for file paths, MySQL for DSNs containing @),
-creates results.NewStore, optionally creates
+Implement the `results serve` subcommand in `cmd/results.go`.
+Opens database (SQLite for file paths, MySQL for DSNs
+containing @), creates results.NewStore, optionally creates
 results.NewSeqmetaValidator, creates results.NewServer, and
 listens on the given port. Flags: --port (int, default 8080),
 --db (string, default "results.db"), --seqmeta-url (string),

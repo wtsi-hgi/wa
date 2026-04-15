@@ -249,8 +249,7 @@ Root `main.go` creates a Cobra root command from package
 ```text
 wa saga inspect <identifier>
 wa seqmeta diff|validate|serve
-wa results register|search|get|delete|rescan
-wa serve [--port] [--db] [--seqmeta-url]
+wa results register|search|get|delete|rescan|serve
 ```
 
 Package `cmd/` (one file per tree):
@@ -259,8 +258,7 @@ Package `cmd/` (one file per tree):
 - `cmd/saga.go` -> saga inspect (migrated from `main.go`)
 - `cmd/seqmeta.go` -> seqmeta subcommands (migrated from
   `cmd/seqmeta/main.go`)
-- `cmd/results.go` -> results client subcommands
-- `cmd/serve.go` -> results server
+- `cmd/results.go` -> results subcommands (including serve)
 
 Migration: `cmd/seqmeta/` directory removed; its code moves
 to `cmd/seqmeta.go`. Root `main.go` saga inspector logic
@@ -816,8 +814,7 @@ Root command `wa` with subcommands:
 - `saga` (with `inspect` sub-subcommand)
 - `seqmeta` (with `diff`, `validate`, `serve`)
 - `results` (with `register`, `search`, `get`, `delete`,
-  `rescan`)
-- `serve` (results REST server)
+  `rescan`, `serve`)
 
 Migration:
 - Move `main.go` inspector logic to `cmd/saga.go`. The
@@ -857,11 +854,12 @@ none (each tree defines its own).
 2. Given args `["seqmeta", "--help"]`, then output contains
    `"diff"` and `"validate"` and `"serve"`.
 3. Given args `["results", "--help"]`, then output contains
-   `"register"`, `"search"`, `"get"`, `"delete"`, `"rescan"`.
-4. Given args `["serve", "--help"]`, then output contains
-   `"--port"`, `"--db"`, `"--seqmeta-url"`.
+   `"register"`, `"search"`, `"get"`, `"delete"`, `"rescan"`,
+   `"serve"`.
+4. Given args `["results", "serve", "--help"]`, then output
+   contains `"--port"`, `"--db"`, `"--seqmeta-url"`.
 5. Given `wa` with no subcommand, then help text lists all
-   four top-level subcommands.
+   three top-level subcommands.
 
 ---
 
@@ -999,17 +997,17 @@ CLI scans `<dir>` locally, builds file list, PUTs to server.
 
 ## H. Server Command
 
-### H1: wa serve
+### H1: wa results serve
 
 As a deployer, I want to start the results REST server from
 the command line.
 
 **Package:** `cmd/`
-**File:** `cmd/serve.go`
-**Test file:** `cmd/serve_test.go`
+**File:** `cmd/results.go`
+**Test file:** `cmd/results_test.go`
 
 ```text
-wa serve [--port 8080] [--db results.db] \
+wa results serve [--port 8080] [--db results.db] \
     [--seqmeta-url http://...]
 ```
 
@@ -1026,14 +1024,15 @@ Flags:
 
 **Acceptance tests:**
 
-1. Given `serve --port 0 --db :memory:`, when started, then
-   server accepts HTTP requests and `POST /results` with
-   valid JSON returns 201.
-2. Given `serve --port 0 --db :memory: --seqmeta-url
+1. Given `results serve --port 0 --db :memory:`, when
+   started, then server accepts HTTP requests and
+   `POST /results` with valid JSON returns 201.
+2. Given `results serve --port 0 --db :memory: --seqmeta-url
    <httptest.URL>`, when a result with `seqmeta_runid` is
    POST'd, then the seqmeta server receives a validation
    request.
-3. Given `serve --port abc`, then exit code is non-zero.
+3. Given `results serve --port abc`, then exit code is
+   non-zero.
 
 ---
 
@@ -1083,7 +1082,7 @@ with Phases 1-4. Must complete before Phase 6.
 
 Stories: G1, G2, G3, G4, G5, H1
 
-CLI commands and serve command wiring. Depends on Phases 4
+CLI subcommands including serve. Depends on Phases 4
 (server) and 5 (root command). H1 first (server needed by
 CLI commands), then G1-G5 parallel.
 

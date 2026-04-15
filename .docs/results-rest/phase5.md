@@ -14,9 +14,9 @@ subagents with the `go-implementor` and `go-reviewer` skills.
 spec.md section: F1
 
 Implement `NewRootCommand() *cobra.Command` in `cmd/root.go`.
-Create Cobra root command `wa` with four subcommand trees:
+Create Cobra root command `wa` with three subcommand trees:
 saga (cmd/saga.go), seqmeta (cmd/seqmeta.go), results
-(cmd/results.go stub), and serve (cmd/serve.go stub).
+(cmd/results.go stub, including serve stub).
 
 Migration tasks:
 - Move main.go inspector logic to cmd/saga.go as `inspect`
