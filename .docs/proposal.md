@@ -161,7 +161,7 @@ resources allow.
 | Language | Go | Consistent with wr; single language for all backend logic |
 | CLI | Cobra | De-facto Go CLI framework |
 | HTTP routing | chi | Lightweight, idiomatic |
-| Database | SQLite (pure Go driver) | Embedded, zero-ops, in-memory for tests |
+| Database | SQLite + MySQL | SQLite for test suite and local dev; MySQL for production and integration tests |
 | Job submission | wr Go client library | Native integration with LSF |
 | Testing | GoConvey + interface mocks | BDD-style tests; all external deps behind interfaces |
 | Email | net/smtp | Standard SMTP to institutional relay |
