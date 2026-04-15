@@ -8,8 +8,8 @@ others via HTTP APIs. No sub-product has a compile-time dependency on another �
 if a dependency isn't running, the caller degrades gracefully (e.g. logs instead
 of emailing).
 
-All sub-products share a common Go tech stack for consistency, testability, and
-maintainability.
+All sub-products share a common tech stack — Go for backends and CLIs, Next.js +
+shadcn/ui for web UIs — for consistency, testability, and maintainability.
 
 ---
 
@@ -154,16 +154,35 @@ resources allow.
 
 ## Tech Stack (all sub-products)
 
+### Backend & CLI
+
 | Concern | Choice | Rationale |
-|---------|--------|-----------|
-| Language | Go | Consistent with wr; single language across everything |
+|---------|--------|----------|
+| Language | Go | Consistent with wr; single language for all backend logic |
 | CLI | Cobra | De-facto Go CLI framework |
 | HTTP routing | chi | Lightweight, idiomatic |
-| Web UI | Go html/template + htmx | Server-rendered, no JS build step, one language end-to-end |
 | Database | SQLite (pure Go driver) | Embedded, zero-ops, in-memory for tests |
 | Job submission | wr Go client library | Native integration with LSF |
 | Testing | GoConvey + interface mocks | BDD-style tests; all external deps behind interfaces |
 | Email | net/smtp | Standard SMTP to institutional relay |
 
+### Web UI
+
+| Concern | Choice | Rationale |
+|---------|--------|----------|
+| Framework | Next.js (App Router) + React | Server Actions call the Go API server-to-server; backend URLs never exposed to browser |
+| Components | shadcn/ui | Accessible, composable primitives (tables, forms, dialogs, comboboxes) with no custom design work |
+| Styling | Tailwind CSS v4 | Utility-first CSS with `@theme` design tokens; dark mode and responsive layout for free |
+| Contracts | Zod | Validates Go API responses on the frontend; catches regressions at the boundary |
+| Testing | Vitest | Unit tests for contracts and component logic; no browser required |
+
+Each sub-product with a web UI follows the same pattern: the Go backend exposes
+a JSON API via chi, and a Next.js frontend consumes it through Server Actions.
+Server Actions run on the Node.js server, so the Go API can live on a private
+network — reducing attack surface and keeping credentials server-side. The
+frontend is built and deployed as a standalone Node.js app alongside the Go
+binary.
+
 This stack keeps every sub-product simple to build, test, and deploy — no
-message queues, no JS toolchains, no external database servers.
+message queues, no external database servers. Sub-products without a web UI
+(saga, notify, jobrun) are pure Go with zero frontend dependencies.
