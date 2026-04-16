@@ -210,16 +210,22 @@ var SeqmetaFieldTypes = map[string]string{
 ### Key Building
 
 - `CompositeKeyID(pipelineIdentifier, runKey)`:
-  `hex(SHA256(pipelineIdentifier + "\x00" + runKey))`.
+   for inputs without embedded NUL bytes,
+   `hex(SHA256(pipelineIdentifier + "\x00" + runKey))`.
+   If either side contains `"\x00"`, use an unambiguous
+   length-prefixed byte serialization before hashing so
+   distinct natural-key pairs cannot collide.
 - `BuildRunKey(runID, additionalUnique)`: URL-query-encoded
   string from sorted key=value pairs. E.g.
   `BuildRunKey("48522", "random_exon")` ->
   `"runid=48522&unique=random_exon"`. Empty additionalUnique
   -> `"runid=48522"`.
 - `DetectPipeline(workflowPath)`: if file is in a git
-  checkout, returns `(remoteOriginURL, repoName,
-  commitHash)`. If no git remote, uses repo root path as
-  identifier. If not in git, returns `(cleanedAbsPath,
+   checkout, returns `(workflowScopedIdentifier, repoName,
+   commitHash)`, where the identifier combines the git remote
+   (or repo root path when no remote exists) with the
+   workflow-relative path so multiple workflows in one repo do
+   not collide. If not in git, returns `(cleanedAbsPath,
   parentDirName, hex(SHA256(fileContents)))`. Never fails
   unless file is unreadable.
 
@@ -287,7 +293,9 @@ func CompositeKeyID(
 ) string
 ```
 
-Returns lowercase hex SHA256 of
+Returns a lowercase hex SHA256 digest of an unambiguous byte
+serialization of the two key parts. For ordinary inputs
+without embedded NUL bytes, that serialization is exactly
 `pipelineIdentifier + "\x00" + runKey`.
 
 **Acceptance tests:**
@@ -301,7 +309,8 @@ Returns lowercase hex SHA256 of
    the same string.
 3. Given `pipelineIdentifier="a\x00b"` and `runKey="c"`, vs
    `pipelineIdentifier="a"` and `runKey="b\x00c"`, then the
-   two IDs differ (null separator prevents ambiguity).
+   two IDs differ because the serialization remains
+   unambiguous even when embedded NUL bytes are present.
 
 ### A2: BuildRunKey
 

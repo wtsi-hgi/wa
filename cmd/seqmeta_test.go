@@ -23,7 +23,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package main
+package cmd
 
 import (
 	"bytes"
@@ -63,27 +63,57 @@ func TestDiffCommand(t *testing.T) {
 	convey.Convey("F1: diff subcommand prints JSON output", t, func() {
 		var stderr *bytes.Buffer
 
-		stdout, _, err := executeCommand(t, []string{"diff", "--study", "100", "--db", t.TempDir() + "/seqmeta.db", "--token", "test", "--base-url", server.URL})
+		stdout, _, err := executeSeqmetaCommand(t, []string{"seqmeta", "diff", "--study", "100", "--db", t.TempDir() + "/seqmeta.db", "--token", "test", "--base-url", server.URL})
 		convey.So(err, convey.ShouldBeNil)
 
 		var result seqmeta.DiffResult[saga.MLWHSample]
 		convey.So(json.Unmarshal(stdout.Bytes(), &result), convey.ShouldBeNil)
 		convey.So(result.Added, convey.ShouldHaveLength, 2)
 
-		stdout, _, err = executeCommand(t, []string{"diff", "--sample", "ABC", "--db", t.TempDir() + "/seqmeta.db", "--token", "test", "--base-url", server.URL})
+		stdout, _, err = executeSeqmetaCommand(t, []string{"seqmeta", "diff", "--sample", "ABC", "--db", t.TempDir() + "/seqmeta.db", "--token", "test", "--base-url", server.URL})
 		convey.So(err, convey.ShouldBeNil)
 
 		var fileResult seqmeta.DiffResult[saga.IRODSFile]
 		convey.So(json.Unmarshal(stdout.Bytes(), &fileResult), convey.ShouldBeNil)
 		convey.So(fileResult.Added, convey.ShouldHaveLength, 1)
 
-		_, stderr, err = executeCommand(t, []string{"diff", "--token", "test", "--base-url", server.URL})
+		_, stderr, err = executeSeqmetaCommand(t, []string{"seqmeta", "diff", "--token", "test", "--base-url", server.URL})
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "usage")
 
-		_, _, err = executeCommand(t, []string{"diff", "--study", "100", "--sample", "ABC", "--token", "test", "--base-url", server.URL})
+		_, _, err = executeSeqmetaCommand(t, []string{"seqmeta", "diff", "--study", "100", "--sample", "ABC", "--token", "test", "--base-url", server.URL})
 		convey.So(err, convey.ShouldNotBeNil)
 	})
+}
+
+func TestSeqmetaCommandTokenFallback(t *testing.T) {
+	t.Setenv("SAGA_API_TOKEN", "")
+	t.Setenv("SAGA_TEST_API_TOKEN", "fallback-token")
+
+	command := newSeqmetaCommand()
+	flag := command.PersistentFlags().Lookup("token")
+	if flag == nil {
+		t.Fatal("expected token flag")
+	}
+
+	convey.Convey("seqmeta falls back to SAGA_TEST_API_TOKEN when SAGA_API_TOKEN is unset", t, func() {
+		convey.So(flag.DefValue, convey.ShouldEqual, "fallback-token")
+	})
+}
+
+func executeSeqmetaCommand(t *testing.T, args []string) (*bytes.Buffer, *bytes.Buffer, error) {
+	t.Helper()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := NewRootCommand()
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs(args)
+
+	err := cmd.Execute()
+
+	return stdout, stderr, err
 }
 
 func TestValidateCommand(t *testing.T) {
@@ -106,7 +136,7 @@ func TestValidateCommand(t *testing.T) {
 	defer server.Close()
 
 	convey.Convey("F2: validate subcommand prints JSON and errors on bad input", t, func() {
-		stdout, _, err := executeCommand(t, []string{"validate", "6568", "--token", "test", "--base-url", server.URL})
+		stdout, _, err := executeSeqmetaCommand(t, []string{"seqmeta", "validate", "6568", "--token", "test", "--base-url", server.URL})
 		convey.So(err, convey.ShouldBeNil)
 
 		var result seqmeta.IdentifierResult
@@ -114,11 +144,11 @@ func TestValidateCommand(t *testing.T) {
 		convey.So(result.Type, convey.ShouldEqual, seqmeta.IdentifierStudyID)
 		convey.So(result.Object, convey.ShouldNotBeNil)
 
-		_, stderr, err := executeCommand(t, []string{"validate", "unknown_id", "--token", "test", "--base-url", server.URL})
+		_, stderr, err := executeSeqmetaCommand(t, []string{"seqmeta", "validate", "unknown_id", "--token", "test", "--base-url", server.URL})
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "unknown identifier")
 
-		_, stderr, err = executeCommand(t, []string{"validate", "--token", "test", "--base-url", server.URL})
+		_, stderr, err = executeSeqmetaCommand(t, []string{"seqmeta", "validate", "--token", "test", "--base-url", server.URL})
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "usage")
 	})
@@ -137,15 +167,15 @@ func TestDiffCommandWriteFailureDoesNotAdvanceWatermark(t *testing.T) {
 
 	convey.Convey("CLI diff does not advance the watermark when writing output fails", t, func() {
 		dbPath := t.TempDir() + "/seqmeta.db"
-		cmd := newRootCommand()
+		cmd := NewRootCommand()
 		cmd.SetOut(failingWriter{})
 		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"diff", "--study", "100", "--db", dbPath, "--token", "test", "--base-url", server.URL})
+		cmd.SetArgs([]string{"seqmeta", "diff", "--study", "100", "--db", dbPath, "--token", "test", "--base-url", server.URL})
 
 		err := cmd.Execute()
 		convey.So(err, convey.ShouldNotBeNil)
 
-		stdout, _, rerunErr := executeCommand(t, []string{"diff", "--study", "100", "--db", dbPath, "--token", "test", "--base-url", server.URL})
+		stdout, _, rerunErr := executeSeqmetaCommand(t, []string{"seqmeta", "diff", "--study", "100", "--db", dbPath, "--token", "test", "--base-url", server.URL})
 		convey.So(rerunErr, convey.ShouldBeNil)
 
 		var result seqmeta.DiffResult[saga.MLWHSample]
@@ -189,10 +219,10 @@ func TestServeCommand(t *testing.T) {
 
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		cmd := newRootCommand()
+		cmd := NewRootCommand()
 		cmd.SetOut(stdout)
 		cmd.SetErr(stderr)
-		cmd.SetArgs([]string{"serve", "--port", "0", "--db", t.TempDir() + "/seqmeta.db", "--token", "test", "--base-url", mockSaga.URL})
+		cmd.SetArgs([]string{"seqmeta", "serve", "--port", "0", "--db", t.TempDir() + "/seqmeta.db", "--token", "test", "--base-url", mockSaga.URL})
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -224,10 +254,10 @@ func TestServeCommand(t *testing.T) {
 		cancel()
 		convey.So(<-errCh, convey.ShouldBeNil)
 
-		cmd = newRootCommand()
+		cmd = NewRootCommand()
 		cmd.SetOut(stdout)
 		cmd.SetErr(stderr)
-		cmd.SetArgs([]string{"serve", "--db", t.TempDir() + "/seqmeta.db", "--token", "test", "--base-url", mockSaga.URL})
+		cmd.SetArgs([]string{"seqmeta", "serve", "--db", t.TempDir() + "/seqmeta.db", "--token", "test", "--base-url", mockSaga.URL})
 		ctx, cancel = context.WithCancel(context.Background())
 		defer cancel()
 		errCh = make(chan error, 1)
@@ -239,22 +269,7 @@ func TestServeCommand(t *testing.T) {
 		convey.So(<-errCh, convey.ShouldBeNil)
 		convey.So(requestedAddr, convey.ShouldEqual, ":8080")
 
-		_, _, err = executeCommand(t, []string{"serve", "--port", "abc", "--token", "test", "--base-url", mockSaga.URL})
+		_, _, err = executeSeqmetaCommand(t, []string{"seqmeta", "serve", "--port", "abc", "--token", "test", "--base-url", mockSaga.URL})
 		convey.So(err, convey.ShouldNotBeNil)
 	})
-}
-
-func executeCommand(t *testing.T, args []string) (*bytes.Buffer, *bytes.Buffer, error) {
-	t.Helper()
-
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	cmd := newRootCommand()
-	cmd.SetOut(stdout)
-	cmd.SetErr(stderr)
-	cmd.SetArgs(args)
-
-	err := cmd.Execute()
-
-	return stdout, stderr, err
 }

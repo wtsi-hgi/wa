@@ -23,7 +23,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package main
+package cmd
 
 import (
 	"bytes"
@@ -34,7 +34,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/wa/saga"
@@ -43,42 +42,35 @@ import (
 
 var listenFunc = net.Listen
 
-type rootOptions struct {
+type seqmetaOptions struct {
 	token   string
 	baseURL string
 	dbPath  string
 }
 
-func main() {
-	cmd := newRootCommand()
-	cmd.SetOut(os.Stdout)
-	cmd.SetErr(os.Stderr)
-
-	if err := cmd.Execute(); err != nil {
-		os.Exit(1)
-	}
-}
-
-func newRootCommand() *cobra.Command {
-	options := &rootOptions{}
+func newSeqmetaCommand() *cobra.Command {
+	options := &seqmetaOptions{}
 
 	command := &cobra.Command{
 		Use:   "seqmeta",
 		Short: "Sequence metadata cache CLI",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 
-	command.PersistentFlags().StringVar(&options.token, "token", os.Getenv("SAGA_API_TOKEN"), "SAGA API token")
+	command.PersistentFlags().StringVar(&options.token, "token", firstEnv("SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN"), "SAGA API token")
 	command.PersistentFlags().StringVar(&options.baseURL, "base-url", "", "SAGA base URL")
 	command.PersistentFlags().StringVar(&options.dbPath, "db", "seqmeta.db", "SQLite database path")
 
-	command.AddCommand(newDiffCommand(options))
-	command.AddCommand(newValidateCommand(options))
-	command.AddCommand(newServeCommand(options))
+	command.AddCommand(newSeqmetaDiffCommand(options))
+	command.AddCommand(newSeqmetaValidateCommand(options))
+	command.AddCommand(newSeqmetaServeCommand(options))
 
 	return command
 }
 
-func newDiffCommand(options *rootOptions) *cobra.Command {
+func newSeqmetaDiffCommand(options *seqmetaOptions) *cobra.Command {
 	var studyID string
 	var sampleID string
 
@@ -173,35 +165,30 @@ func newDiffCommand(options *rootOptions) *cobra.Command {
 	return command
 }
 
-type prefetchedProvider struct {
-	files []saga.IRODSFile
+func marshalCommandJSON(payload any) ([]byte, error) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
 }
 
-func (p *prefetchedProvider) GetStudy(context.Context, string) (*saga.Study, error) {
-	return nil, errors.New("unused prefetched provider method")
+func writeCommandJSON(output io.Writer, body []byte) error {
+	_, err := output.Write(body)
+
+	return err
 }
 
-func (p *prefetchedProvider) AllStudies(context.Context) ([]saga.Study, error) {
-	return nil, errors.New("unused prefetched provider method")
+func rollbackPreparedDiff[T any](prepared *seqmeta.PreparedDiff[T], writeErr error) error {
+	if rollbackErr := prepared.Rollback(); rollbackErr != nil {
+		return errors.Join(writeErr, rollbackErr)
+	}
+
+	return writeErr
 }
 
-func (p *prefetchedProvider) AllSamples(context.Context) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) AllSamplesForStudy(context.Context, string) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) GetSampleFiles(context.Context, string) ([]saga.IRODSFile, error) {
-	return p.files, nil
-}
-
-func (p *prefetchedProvider) ListProjects(context.Context) ([]saga.Project, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func newValidateCommand(options *rootOptions) *cobra.Command {
+func newSeqmetaValidateCommand(options *seqmetaOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate <identifier>",
 		Short: "Validate and classify one identifier",
@@ -231,7 +218,7 @@ func newValidateCommand(options *rootOptions) *cobra.Command {
 	}
 }
 
-func newServeCommand(options *rootOptions) *cobra.Command {
+func newSeqmetaServeCommand(options *seqmetaOptions) *cobra.Command {
 	var port int
 
 	command := &cobra.Command{
@@ -281,7 +268,7 @@ func newServeCommand(options *rootOptions) *cobra.Command {
 	return command
 }
 
-func openProvider(options *rootOptions) (seqmeta.SAGAProvider, func(), error) {
+func openProvider(options *seqmetaOptions) (seqmeta.SAGAProvider, func(), error) {
 	clientOptions := []saga.Option{}
 	if options.baseURL != "" {
 		clientOptions = append(clientOptions, saga.WithBaseURL(options.baseURL))
@@ -295,25 +282,30 @@ func openProvider(options *rootOptions) (seqmeta.SAGAProvider, func(), error) {
 	return seqmeta.NewClientAdapter(client), func() { client.Close() }, nil
 }
 
-func marshalCommandJSON(payload any) ([]byte, error) {
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(payload); err != nil {
-		return nil, err
-	}
-
-	return body.Bytes(), nil
+type prefetchedProvider struct {
+	files []saga.IRODSFile
 }
 
-func writeCommandJSON(output io.Writer, body []byte) error {
-	_, err := output.Write(body)
-
-	return err
+func (p *prefetchedProvider) GetStudy(context.Context, string) (*saga.Study, error) {
+	return nil, errors.New("unused prefetched provider method")
 }
 
-func rollbackPreparedDiff[T any](prepared *seqmeta.PreparedDiff[T], writeErr error) error {
-	if rollbackErr := prepared.Rollback(); rollbackErr != nil {
-		return errors.Join(writeErr, rollbackErr)
-	}
+func (p *prefetchedProvider) AllStudies(context.Context) ([]saga.Study, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
 
-	return writeErr
+func (p *prefetchedProvider) AllSamples(context.Context) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) AllSamplesForStudy(context.Context, string) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) GetSampleFiles(context.Context, string) ([]saga.IRODSFile, error) {
+	return p.files, nil
+}
+
+func (p *prefetchedProvider) ListProjects(context.Context) ([]saga.Project, error) {
+	return nil, errors.New("unused prefetched provider method")
 }

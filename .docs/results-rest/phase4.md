@@ -22,8 +22,8 @@ non-nil), then store.Upsert. Returns 201 on create, 200 on
 upsert. Depends on Phase 2 (Store) and Phase 3 (Validator).
 Covers all 7 acceptance tests from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after item 4.1 is reviewed)
 
@@ -36,8 +36,8 @@ Parses query parameters into SearchParams (including meta_X
 and seqmeta_X patterns), calls store.Search, returns JSON
 array. Covers all 5 acceptance tests from E2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.3: E3 - GET /results/{id} [parallel with 4.2, 4.4, 4.5, 4.6]
 
@@ -47,8 +47,8 @@ Add GET /results/{id} handler in `results/server.go`. Calls
 store.Get, returns JSON result set or 404. Covers all 2
 acceptance tests from E3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.4: E4 - GET /results/{id}/files [parallel with 4.2, 4.3, 4.5, 4.6]
 
@@ -58,8 +58,8 @@ Add GET /results/{id}/files handler in `results/server.go`.
 Calls store.GetFiles, returns JSON file array or 404. Covers
 all 2 acceptance tests from E4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.5: E5 - PUT /results/{id}/files [parallel with 4.2, 4.3, 4.4, 4.6]
 
@@ -70,8 +70,8 @@ Parses JSON array of FileEntry, calls store.ReplaceOutputFiles.
 Returns 200 on success or 404/400 on error. Covers all 3
 acceptance tests from E5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.6: E6 - DELETE /results/{id} [parallel with 4.2, 4.3, 4.4, 4.5]
 
@@ -81,8 +81,8 @@ Add DELETE /results/{id} handler in `results/server.go`. Calls
 store.Delete, returns 204 on success or 404. Covers all 2
 acceptance tests from E6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill

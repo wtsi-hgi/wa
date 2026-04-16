@@ -31,5 +31,5 @@ Migration tasks:
 
 Covers all 5 acceptance tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

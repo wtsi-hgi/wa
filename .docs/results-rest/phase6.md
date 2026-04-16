@@ -23,8 +23,8 @@ listens on the given port. Flags: --port (int, default 8080),
 (Server) and Phase 5 (root command). Covers all 3 acceptance
 tests from H1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after item 6.1 is reviewed)
 
@@ -42,8 +42,8 @@ Registration, POSTs to server. Supports --server, --user,
 and positional output directory. Covers all 4 acceptance
 tests from G1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.3: G2 - wa results search [parallel with 6.2, 6.4, 6.5, 6.6]
 
@@ -55,8 +55,8 @@ Implement the `results search` subcommand in
 Prints JSON array to stdout. Covers all 2 acceptance tests
 from G2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.4: G3 - wa results get [parallel with 6.2, 6.3, 6.5, 6.6]
 
@@ -67,8 +67,8 @@ Takes positional ID argument, optional --files flag to include
 file list. Prints JSON to stdout. Covers all 3 acceptance
 tests from G3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.5: G4 - wa results delete [parallel with 6.2, 6.3, 6.4, 6.6]
 
@@ -78,8 +78,8 @@ Implement the `results delete` subcommand in
 `cmd/results.go`. Takes positional ID argument, sends DELETE
 to server. Covers all 2 acceptance tests from G4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.6: G5 - wa results rescan [parallel with 6.2, 6.3, 6.4, 6.5]
 
@@ -90,8 +90,8 @@ Implement the `results rescan` subcommand in
 optional --include-hidden flag. Scans directory locally, PUTs
 file list to server. Covers all 2 acceptance tests from G5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill

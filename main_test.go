@@ -3,50 +3,21 @@ package main
 import (
 	"testing"
 
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/smartystreets/goconvey/convey"
 )
 
-func TestLooksLikeStudySearch(t *testing.T) {
-	tests := []struct {
-		query string
-		want  bool
-	}{
-		{query: "6568", want: true},
-		{query: "EGAS00001005445", want: true},
-		{query: "my study title", want: true},
-		{query: "AM762808", want: false},
-		{query: "WTSI_wEMB10524782", want: false},
-	}
+func TestRewriteLegacyInspectArgs(t *testing.T) {
+	convey.Convey("single bare identifiers are rewritten to saga inspect", t, func() {
+		convey.So(rewriteLegacyInspectArgs([]string{"6568"}), convey.ShouldResemble, []string{"saga", "inspect", "6568"})
+		convey.So(rewriteLegacyInspectArgs([]string{"AM762808"}), convey.ShouldResemble, []string{"saga", "inspect", "AM762808"})
+		convey.So(rewriteLegacyInspectArgs([]string{"--token", "test", "6568"}), convey.ShouldResemble, []string{"saga", "inspect", "--token", "test", "6568"})
+		convey.So(rewriteLegacyInspectArgs([]string{"6568", "--token", "test"}), convey.ShouldResemble, []string{"saga", "inspect", "6568", "--token", "test"})
+	})
 
-	for _, test := range tests {
-		if got := looksLikeStudySearch(test.query); got != test.want {
-			t.Fatalf("looksLikeStudySearch(%q) = %v, want %v", test.query, got, test.want)
-		}
-	}
-}
-
-func TestIRODSSampleCandidateIDs(t *testing.T) {
-	sample := saga.IRODSSample{
-		SourceID: "1913216340",
-		Data: map[string]any{
-			"avu:sample": []any{"AM762808", "AM762808"},
-		},
-		Curated: map[string]any{
-			"sanger_id": []any{"AM762808"},
-		},
-	}
-
-	ids := irodsSampleCandidateIDs(sample, "AM762808")
-	if len(ids) != 1 || ids[0] != "AM762808" {
-		t.Fatalf("irodsSampleCandidateIDs() = %#v, want [\"AM762808\"]", ids)
-	}
-}
-
-func TestIRODSSampleCandidateIDsIncludesMatchingSourceID(t *testing.T) {
-	sample := saga.IRODSSample{SourceID: "folder-456"}
-
-	ids := irodsSampleCandidateIDs(sample, "folder-456")
-	if len(ids) != 1 || ids[0] != "folder-456" {
-		t.Fatalf("irodsSampleCandidateIDs() = %#v, want [\"folder-456\"]", ids)
-	}
+	convey.Convey("explicit subcommands and flags are left unchanged", t, func() {
+		convey.So(rewriteLegacyInspectArgs([]string{"results", "search"}), convey.ShouldResemble, []string{"results", "search"})
+		convey.So(rewriteLegacyInspectArgs([]string{"--help"}), convey.ShouldResemble, []string{"--help"})
+		convey.So(rewriteLegacyInspectArgs([]string{"saga"}), convey.ShouldResemble, []string{"saga"})
+		convey.So(rewriteLegacyInspectArgs([]string{"delete"}), convey.ShouldResemble, []string{"delete"})
+	})
 }

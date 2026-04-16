@@ -20,8 +20,8 @@ statements. Also define `Store` struct, `ResultSet`,
 `Registration`, `SearchParams` types, and sentinel errors
 in `results/types.go`. Covers all 3 acceptance tests from C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: C2 - Upsert result set
 
@@ -33,8 +33,8 @@ Computes ID via CompositeKeyID, transactional insert-or-update
 preserving created_at on upsert, replaces files and metadata.
 Covers all 5 acceptance tests from C2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after item 2.2 is reviewed)
 
@@ -46,8 +46,8 @@ Implement `(s *Store) Get(ctx context.Context, id string)
 (*ResultSet, error)` in `results/store.go`. Returns result set
 with metadata populated. Covers all 2 acceptance tests from C3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.4: C4 - Search result sets [parallel with 2.3, 2.5, 2.6, 2.7]
 
@@ -59,8 +59,8 @@ params SearchParams) ([]ResultSet, error)` in
 metadata filters, and output_directory prefix matching. All
 filters ANDed. Covers all 6 acceptance tests from C4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.5: C5 - Get files for result set [parallel with 2.3, 2.4, 2.6, 2.7]
 
@@ -71,8 +71,8 @@ resultID string) ([]FileEntry, error)` in `results/store.go`.
 Returns all tracked files for a result set. Covers all 2
 acceptance tests from C5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.6: C6 - Replace output files [parallel with 2.3, 2.4, 2.5, 2.7]
 
@@ -84,8 +84,8 @@ resultID string, files []FileEntry) error` in
 then insert of new output files, preserving input and pipeline
 files. Covers all 3 acceptance tests from C6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.7: C7 - Delete result set [parallel with 2.3, 2.4, 2.5, 2.6]
 
@@ -96,8 +96,8 @@ error` in `results/store.go`. Hard delete relying on
 ON DELETE CASCADE for files and metadata. Covers all 2
 acceptance tests from C7.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill

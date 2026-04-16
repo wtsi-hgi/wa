@@ -24,5 +24,5 @@ appropriate sentinel errors for unknown suffixes, type
 mismatches, and unreachable servers. Covers all 7 acceptance
 tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

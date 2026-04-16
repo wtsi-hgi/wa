@@ -15,11 +15,12 @@ spec.md section: A1
 
 Implement `CompositeKeyID(pipelineIdentifier, runKey) string`
 in `results/types.go`. Returns lowercase hex SHA256 of the two
-inputs joined by a null byte separator. Covers all 3 acceptance
-tests from A1.
+inputs joined by a null byte separator for ordinary inputs,
+with an unambiguous NUL-safe serialization for embedded-NUL
+edge cases. Covers all 3 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: A2 - BuildRunKey
 
@@ -30,8 +31,8 @@ in `results/types.go`. Produces a URL-query-encoded string with
 keys sorted alphabetically, omitting empty values. Covers all
 5 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after item 1.2 is reviewed)
 
@@ -45,8 +46,8 @@ Auto-detects pipeline identity from a workflow file path using
 git metadata or file content hashing. Covers all 5 acceptance
 tests from A3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.4: B1 - ScanDirectory [parallel with 1.3]
 
@@ -59,8 +60,8 @@ and optionally excludes hidden files. Also define the `FileEntry`
 struct in `results/types.go`. Covers all 7 acceptance tests
 from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill
