@@ -49,7 +49,7 @@ func TestResultsSearchCommand(t *testing.T) {
 			reg.Requester = "bob"
 		})
 
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		output, err := executeRootCommandForTest(t, []string{"results", "search", "--server", server.URL, "--user", "alice"})
@@ -70,7 +70,7 @@ func TestResultsSearchCommand(t *testing.T) {
 			reg.Requester = "alice"
 		})
 
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		output, err := executeRootCommandForTest(t, []string{"results", "search", "--server", server.URL, "--user", "nobody"})

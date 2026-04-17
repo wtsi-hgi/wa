@@ -33,8 +33,8 @@ files in `.docs/results-web/fixtures/files/`:
 `results.html`, `plot.svg`, `config.json`. Covering all
 5 acceptance tests from R1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after item 6.1 is reviewed)
 
@@ -53,8 +53,8 @@ real Server Actions (`fetchStats`, `searchResults`,
 `/api/file` route handler against the running Go server.
 Covering all 7 acceptance tests from Q2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.3: Q1 - Playwright E2E tests [parallel with 6.2]
 
@@ -70,8 +70,8 @@ browser), file browsing (expand folder tree), file
 preview (CSV table preview, PNG image rendering).
 Covering all 6 acceptance tests from Q1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer`

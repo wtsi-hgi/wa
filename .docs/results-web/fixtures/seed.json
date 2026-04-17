@@ -1,0 +1,95 @@
+[
+    {
+        "pipeline_identifier": "https://github.com/nf-core/rnaseq",
+        "run_key": "runid=48522&unique=exon_lib",
+        "requester": "alice",
+        "operator": "bob",
+        "command": "nextflow run nf-core/rnaseq -profile singularity",
+        "pipeline_name": "nf-core/rnaseq",
+        "pipeline_version": "3.18.0",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "report.csv",
+                "mtime": "2026-04-16T09:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "image.png",
+                "mtime": "2026-04-16T09:05:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "pipeline.nf",
+                "mtime": "2026-04-16T09:10:00Z",
+                "size": 0,
+                "kind": "pipeline"
+            }
+        ],
+        "metadata": {
+            "seqmeta_sampleid": "SANG001",
+            "library": "exon",
+            "study": "study-alpha"
+        }
+    },
+    {
+        "pipeline_identifier": "https://github.com/nf-core/sarek",
+        "run_key": "runid=59231&unique=tumour_pair",
+        "requester": "carol",
+        "operator": "dan",
+        "command": "nextflow run nf-core/sarek --tools manta,strelka",
+        "pipeline_name": "nf-core/sarek",
+        "pipeline_version": "3.4.2",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "summary.md",
+                "mtime": "2026-04-16T10:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "results.html",
+                "mtime": "2026-04-16T10:05:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "seqmeta_sampleid": "SANG102",
+            "assay": "wgs",
+            "priority": "urgent"
+        }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/nf-amplicon",
+        "run_key": "runid=77123&unique=panel_a",
+        "requester": "erin",
+        "operator": "frank",
+        "command": "nextflow run nf-amplicon -params-file config.json",
+        "pipeline_name": "wtsi/amplicon",
+        "pipeline_version": "1.7.1",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "plot.svg",
+                "mtime": "2026-04-16T11:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "config.json",
+                "mtime": "2026-04-16T11:05:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "seqmeta_sampleid": "SANG205",
+            "panel": "haem",
+            "request_group": "validation"
+        }
+    }
+]

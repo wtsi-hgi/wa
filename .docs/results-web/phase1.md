@@ -30,8 +30,8 @@ detect Content-Type via `mime.TypeByExtension`, decompress
 server.handleGetFile)`. Covering all 12 acceptance tests
 from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after item 1.1 is reviewed)
 
@@ -49,8 +49,8 @@ Add `Store.Stats(ctx, recent, days)` method to
 `days` (default 30). Covering all 7 acceptance tests
 from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.3: C1 - Distinct metadata keys [parallel with 1.2]
 
@@ -64,8 +64,8 @@ meta_key`. Add `handleGetMetaKeys` handler to
 `GET /results/meta-keys` BEFORE `/{id}`. Covering all 3
 acceptance tests from C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill

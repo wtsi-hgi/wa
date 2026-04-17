@@ -1,0 +1,100 @@
+import { defineConfig } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+const frontendRoot = process.cwd();
+const repoRoot = path.resolve(frontendRoot, "..");
+const portsFile = path.join(repoRoot, ".tmp", "playwright-ports.json");
+const portsFileTtlMs = 10 * 60 * 1000;
+
+type ResolvedPorts = {
+    frontendPort: number;
+    resultsPort: number;
+};
+
+function allocatePort(fallback: string): number {
+    const script = [
+        "const net = require('node:net');",
+        "const server = net.createServer();",
+        "server.listen(0, '127.0.0.1', () => {",
+        "  const address = server.address();",
+        "  if (!address || typeof address === 'string') process.exit(1);",
+        "  process.stdout.write(String(address.port));",
+        "  server.close();",
+        "});",
+    ].join(" ");
+
+    const port = execFileSync(process.execPath, ["-e", script], {
+        encoding: "utf8",
+    }).trim();
+
+    return Number.parseInt(port || fallback, 10);
+}
+
+function resolvePorts(): ResolvedPorts {
+    const configuredFrontendPort = process.env.PLAYWRIGHT_FRONTEND_PORT;
+    const configuredResultsPort = process.env.PLAYWRIGHT_RESULTS_PORT;
+
+    if (configuredFrontendPort || configuredResultsPort) {
+        return {
+            frontendPort: Number.parseInt(configuredFrontendPort ?? "3000", 10),
+            resultsPort: Number.parseInt(configuredResultsPort ?? "8090", 10),
+        };
+    }
+
+    try {
+        const stats = statSync(portsFile);
+
+        if (Date.now() - stats.mtimeMs <= portsFileTtlMs) {
+            const parsed = JSON.parse(
+                readFileSync(portsFile, "utf8"),
+            ) as ResolvedPorts;
+
+            if (parsed.frontendPort > 0 && parsed.resultsPort > 0) {
+                return parsed;
+            }
+        }
+    } catch {
+        // Fall through to allocate fresh ports.
+    }
+
+    const allocated = {
+        frontendPort: allocatePort("3000"),
+        resultsPort: allocatePort("8090"),
+    };
+
+    mkdirSync(path.dirname(portsFile), { recursive: true });
+    writeFileSync(portsFile, JSON.stringify(allocated), "utf8");
+
+    return allocated;
+}
+
+const { frontendPort, resultsPort } = resolvePorts();
+const frontendHealthUrl = `http://127.0.0.1:${frontendPort}/`;
+const frontendStartCommand = [
+    `WA_RUN_DEV_FRONTEND_HEALTH_URL=${JSON.stringify(frontendHealthUrl)}`,
+    'WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD="printf \"\""',
+    `WA_RUN_DEV_FRONTEND_DEV_CMD=${JSON.stringify(
+        `pnpm exec next build && pnpm exec next start --port ${frontendPort}`,
+    )}`,
+    `bash ../run-dev.sh --frontend-port ${frontendPort} --results-port ${resultsPort}`,
+].join(" ");
+
+export default defineConfig({
+    testDir: "./e2e",
+    timeout: 60_000,
+    fullyParallel: false,
+    retries: process.env.CI ? 2 : 0,
+    use: {
+        baseURL: `http://127.0.0.1:${frontendPort}`,
+        browserName: "chromium",
+        trace: "on-first-retry",
+    },
+    webServer: {
+        command: frontendStartCommand,
+        port: frontendPort,
+        reuseExistingServer: true,
+        timeout: 180_000,
+    },
+});

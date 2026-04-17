@@ -41,7 +41,7 @@ func TestResultsDeleteCommand(t *testing.T) {
 		stored, err := store.Upsert(t.Context(), resultsDeleteRegistrationForTest())
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		output, err := executeRootCommandForTest(t, []string{"results", "delete", "--server", server.URL, stored.ID})
@@ -57,7 +57,7 @@ func TestResultsDeleteCommand(t *testing.T) {
 
 	convey.Convey("G4.2: Given non-existent ID, then exit code is non-zero", t, func() {
 		store := newResultsDeleteStoreForTest(t)
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		_, err := executeRootCommandForTest(t, []string{"results", "delete", "--server", server.URL, "missing-id"})

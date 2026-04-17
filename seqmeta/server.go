@@ -50,6 +50,8 @@ func NewServer(provider SAGAProvider, store *Store) *Server {
 	server := &Server{provider: provider, store: store}
 
 	router := chi.NewRouter()
+	router.Get("/studies", server.handleListStudies)
+	router.Get("/study/{id}/samples", server.handleStudySamples)
 	router.Get("/diff/study/{id}", server.handleStudyDiff)
 	router.Get("/diff/sample/{id}", server.handleSampleDiff)
 	router.Get("/validate/*", server.handleValidate)
@@ -61,6 +63,34 @@ func NewServer(provider SAGAProvider, store *Store) *Server {
 // Handler returns the configured HTTP handler.
 func (s *Server) Handler() http.Handler {
 	return s.handler
+}
+
+func (s *Server) handleListStudies(w http.ResponseWriter, r *http.Request) {
+	studies, err := s.provider.AllStudies(r.Context())
+	if err != nil {
+		_ = writeError(w, http.StatusBadGateway, err.Error())
+
+		return
+	}
+
+	_ = writeJSON(w, http.StatusOK, studies)
+}
+
+func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
+	studyID := chi.URLParam(r, "id")
+	samples, err := s.provider.AllSamplesForStudy(r.Context(), studyID)
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, saga.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+
+		_ = writeError(w, status, err.Error())
+
+		return
+	}
+
+	_ = writeJSON(w, http.StatusOK, samples)
 }
 
 func (s *Server) handleStudyDiff(w http.ResponseWriter, r *http.Request) {

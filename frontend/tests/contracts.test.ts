@@ -1,0 +1,162 @@
+import { describe, expect, it } from "vitest";
+
+import {
+    errorSchema,
+    fileEntrySchema,
+    healthSchema,
+    identifierResultSchema,
+    metaKeysSchema,
+    pipelineCountSchema,
+    resultSetSchema,
+    sampleSchema,
+    samplesSchema,
+    searchResultSchema,
+    statsResultSchema,
+    studiesSchema,
+    studySchema,
+} from "@/lib/contracts";
+
+describe("H2 contract schemas", () => {
+    it("parses a valid ResultSet JSON object", () => {
+        const parsed = resultSetSchema.parse({
+            id: "result-1",
+            pipeline_identifier: "gh://repo/workflow.nf",
+            run_key: "runid=123",
+            requester: "alice",
+            operator: "bob",
+            command: "nextflow run workflow.nf",
+            pipeline_name: "nf-core/rnaseq",
+            pipeline_version: "3.18.0",
+            output_directory: "/tmp/out",
+            metadata: {
+                seqmeta_sampleid: "SANG123",
+            },
+            created_at: "2026-04-16T09:00:00Z",
+            updated_at: "2026-04-16T10:00:00Z",
+        });
+
+        expect(parsed.id).toBe("result-1");
+        expect(parsed.pipeline_name).toBe("nf-core/rnaseq");
+        expect(parsed.metadata.seqmeta_sampleid).toBe("SANG123");
+    });
+
+    it("rejects a ResultSet missing the id field", () => {
+        const result = resultSetSchema.safeParse({
+            pipeline_identifier: "gh://repo/workflow.nf",
+            run_key: "runid=123",
+            requester: "alice",
+            operator: "bob",
+            command: "nextflow run workflow.nf",
+            pipeline_name: "nf-core/rnaseq",
+            pipeline_version: "3.18.0",
+            output_directory: "/tmp/out",
+            metadata: {},
+            created_at: "2026-04-16T09:00:00Z",
+            updated_at: "2026-04-16T10:00:00Z",
+        });
+
+        expect(result.success).toBe(false);
+    });
+
+    it("parses valid stats and related response collections", () => {
+        const stats = statsResultSchema.parse({
+            total: 2,
+            recent: [
+                {
+                    id: "result-1",
+                    pipeline_identifier: "gh://repo/workflow.nf",
+                    run_key: "runid=123",
+                    requester: "alice",
+                    operator: "bob",
+                    command: "nextflow run workflow.nf",
+                    pipeline_name: "nf-core/rnaseq",
+                    pipeline_version: "3.18.0",
+                    output_directory: "/tmp/out",
+                    metadata: {},
+                    created_at: "2026-04-16T09:00:00Z",
+                    updated_at: "2026-04-16T10:00:00Z",
+                },
+            ],
+            daily: [{ date: "2026-04-16", count: 2 }],
+            pipelines: [{ pipeline_name: "nf-core/rnaseq", count: 2 }],
+        });
+        const search = searchResultSchema.parse({
+            result_set: stats.recent[0],
+            matched_samples: ["SANG123"],
+        });
+        const pipeline = pipelineCountSchema.parse({
+            pipeline_name: "nf-core/rnaseq",
+            count: 2,
+        });
+
+        expect(stats.total).toBe(2);
+        expect(Array.isArray(stats.recent)).toBe(true);
+        expect(Array.isArray(stats.daily)).toBe(true);
+        expect(Array.isArray(stats.pipelines)).toBe(true);
+        expect(search.matched_samples).toEqual(["SANG123"]);
+        expect(pipeline.count).toBe(2);
+    });
+
+    it("accepts known FileEntry kinds and rejects unknown kinds", () => {
+        expect(() =>
+            fileEntrySchema.parse({
+                path: "/tmp/out/report.html",
+                mtime: "2026-04-16T09:00:00Z",
+                size: 100,
+                kind: "output",
+            }),
+        ).not.toThrow();
+
+        expect(
+            fileEntrySchema.safeParse({
+                path: "/tmp/out/report.html",
+                mtime: "2026-04-16T09:00:00Z",
+                size: 100,
+                kind: "unknown",
+            }).success,
+        ).toBe(false);
+    });
+
+    it("accepts study and sample payloads with extra fields via passthrough wrappers", () => {
+        const study = studySchema.parse({
+            id_study_lims: "6568",
+            name: "Cancer Genome Project",
+            programme: "Cancer",
+        });
+        const studies = studiesSchema.parse([study]);
+        const sample = sampleSchema.parse({
+            sanger_id: "SANG123",
+            library_type: "RNA",
+        });
+        const samples = samplesSchema.parse([sample]);
+
+        expect(study.programme).toBe("Cancer");
+        expect(studies).toHaveLength(1);
+        expect(sample.library_type).toBe("RNA");
+        expect(samples).toHaveLength(1);
+    });
+
+    it("parses meta key and basic error and health payloads", () => {
+        expect(metaKeysSchema.parse(["lib", "run"])).toEqual(["lib", "run"]);
+        expect(errorSchema.parse({ error: "not found" }).error).toBe("not found");
+        expect(healthSchema.parse({ status: "healthy" }).status).toBe("healthy");
+    });
+
+    it("accepts identifier results with arbitrary nested object data", () => {
+        const parsed = identifierResultSchema.parse({
+            identifier: "6568",
+            type: "study_id",
+            object: {
+                nested: {
+                    values: [1, 2, 3],
+                },
+            },
+        });
+
+        expect(parsed.object).toEqual({
+            nested: {
+                values: [1, 2, 3],
+            },
+        });
+    });
+});

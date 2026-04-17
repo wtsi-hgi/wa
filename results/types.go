@@ -46,6 +46,10 @@ var (
 
 	ErrInvalidInput = errors.New("results: invalid input")
 
+	ErrFileGone = errors.New("results: file not found on disk")
+
+	ErrFileTooLarge = errors.New("results: file exceeds preview limit")
+
 	ErrSeqmetaFailed = errors.New("results: seqmeta unavailable")
 
 	ErrSeqmetaRejected = errors.New("results: seqmeta validation failed")
@@ -107,6 +111,44 @@ type SearchParams struct {
 	RunKey             string
 	OutputDirPrefix    string
 	Meta               map[string]string
+}
+
+// MultiSearchParams holds parsed query parameters for multi-value filtering.
+type MultiSearchParams struct {
+	Requester          []string
+	Operator           []string
+	PipelineName       []string
+	PipelineVersion    []string
+	PipelineIdentifier []string
+	RunKey             []string
+	OutputDirPrefix    []string
+	Meta               map[string][]string
+}
+
+// DailyCount is registrations per day.
+type DailyCount struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+// PipelineCount is result sets per pipeline.
+type PipelineCount struct {
+	PipelineName string `json:"pipeline_name"`
+	Count        int    `json:"count"`
+}
+
+// StatsResult is returned by GET /results/stats.
+type StatsResult struct {
+	Total     int             `json:"total"`
+	Recent    []ResultSet     `json:"recent"`
+	Daily     []DailyCount    `json:"daily"`
+	Pipelines []PipelineCount `json:"pipelines"`
+}
+
+// SearchResult wraps a ResultSet with optional matched sample IDs.
+type SearchResult struct {
+	ResultSet      ResultSet `json:"result_set"`
+	MatchedSamples []string  `json:"matched_samples,omitempty"`
 }
 
 // Store persists result sets in SQL.

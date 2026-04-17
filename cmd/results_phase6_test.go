@@ -70,7 +70,7 @@ func TestResultsRescanCommand(t *testing.T) {
 
 		createResultsRescanFileForTest(t, dir, "nested/c.txt", "gamma")
 
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, dir})
@@ -97,7 +97,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		createResultsRescanFileForTest(t, dir, "a.txt", "alpha")
 
 		store := newResultsRescanStoreForTest(t)
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		_, err := executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, "missing-id", dir})
@@ -126,7 +126,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, wrongDir})
@@ -161,7 +161,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		stdout := &bytes.Buffer{}
@@ -222,7 +222,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil).Handler())
+		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, aliasRoot})

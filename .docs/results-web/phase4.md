@@ -28,8 +28,8 @@ when no search params; shows search results when params
 present. Tests in `frontend/tests/dashboard.test.ts`.
 Covering all 5 acceptance tests from J1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after item 4.1 is reviewed)
 
@@ -51,8 +51,8 @@ Tests in `frontend/tests/filter-builder.test.ts` and
 `frontend/tests/search-params.test.ts`. Covering all 7
 acceptance tests from K1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.3: K3 - Studies cache [parallel with 4.2, 4.4]
 
@@ -69,8 +69,8 @@ to `getStudies()`. Tests in
 `frontend/tests/studies-cache.test.ts`. Covering all 5
 acceptance tests from K3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.4: L1 - Results table [parallel with 4.2, 4.3]
 
@@ -90,8 +90,8 @@ when `studyActive` is true. Tests in
 `frontend/tests/results-table.test.ts`. Covering all 7
 acceptance tests from L1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer`
@@ -115,5 +115,5 @@ on fetch failure. Tests in
 `frontend/tests/study-combobox.test.ts`. Covering all 4
 acceptance tests from K2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

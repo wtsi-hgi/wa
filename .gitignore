@@ -27,6 +27,25 @@ go.work.sum
 # env file
 .env
 
+# Generated local SQLite state
+seqmeta.db
+
+# Frontend build and package manager artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.pnpm-store/
+frontend/*.tsbuildinfo
+frontend/pnpm-debug.log*
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.env*.local
+frontend/.vercel/
+
+logs/*
+
 # Editor/IDE
 # .idea/
 # .vscode/

@@ -31,6 +31,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
@@ -194,6 +195,135 @@ func TestServerValidateEndpoint(t *testing.T) {
 		server.Handler().ServeHTTP(recorder, request)
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(received, convey.ShouldEqual, "foo/bar")
+	})
+}
+
+func TestServerStudySamplesEndpoint(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	studyID := "6568"
+	samples := []saga.MLWHSample{
+		{SangerID: "S1"},
+		{SangerID: "S2"},
+		{SangerID: "S3"},
+		{SangerID: "S4"},
+		{SangerID: "S5"},
+	}
+	provider := &MockProvider{
+		AllSamplesForStudyFunc: func(_ context.Context, requestedStudyID string) ([]saga.MLWHSample, error) {
+			if requestedStudyID != studyID {
+				return nil, errors.New("unexpected study id")
+			}
+
+			return samples, nil
+		},
+	}
+	server := NewServer(provider, store)
+
+	convey.Convey("F2: study samples endpoint returns study sample JSON", t, func() {
+		request := httptest.NewRequest(http.MethodGet, "/study/6568/samples", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		var result []saga.MLWHSample
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(recorder.Header().Get("Content-Type"), convey.ShouldContainSubstring, "application/json")
+		convey.So(result, convey.ShouldHaveLength, 5)
+		convey.So(result[0].SangerID, convey.ShouldEqual, "S1")
+		convey.So(result[4].SangerID, convey.ShouldEqual, "S5")
+
+		provider.AllSamplesForStudyFunc = func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+			return nil, saga.ErrNotFound
+		}
+		recorder = httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
+
+		provider.AllSamplesForStudyFunc = func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+			return nil, errors.New("upstream failed")
+		}
+		recorder = httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
+
+		provider.AllSamplesForStudyFunc = func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+			return []saga.MLWHSample{}, nil
+		}
+		recorder = httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(strings.TrimSpace(recorder.Body.String()), convey.ShouldEqual, "[]")
+	})
+}
+
+func TestServerListStudiesEndpoint(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	studies := []saga.Study{
+		{IDStudyLims: "100", Name: "Alpha"},
+		{IDStudyLims: "200", Name: "Beta"},
+		{IDStudyLims: "300", Name: "Gamma"},
+	}
+	provider := &MockProvider{
+		AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+			return studies, nil
+		},
+	}
+	server := NewServer(provider, store)
+
+	convey.Convey("F1: list studies returns JSON studies from the provider", t, func() {
+		request := httptest.NewRequest(http.MethodGet, "/studies", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		var result []map[string]any
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(recorder.Header().Get("Content-Type"), convey.ShouldContainSubstring, "application/json")
+		convey.So(result, convey.ShouldHaveLength, 3)
+		convey.So(result[0]["name"], convey.ShouldEqual, "Alpha")
+		convey.So(result[0]["id_study_lims"], convey.ShouldEqual, "100")
+		convey.So(result[1]["name"], convey.ShouldEqual, "Beta")
+		convey.So(result[2]["id_study_lims"], convey.ShouldEqual, "300")
+	})
+
+	convey.Convey("F1: list studies returns an empty JSON array when no studies are available", t, func() {
+		studies = []saga.Study{}
+
+		request := httptest.NewRequest(http.MethodGet, "/studies", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(recorder.Header().Get("Content-Type"), convey.ShouldContainSubstring, "application/json")
+		convey.So(recorder.Body.String(), convey.ShouldEqual, "[]\n")
+	})
+
+	convey.Convey("F1: list studies returns a JSON error when the provider fails", t, func() {
+		provider.AllStudiesFunc = func(_ context.Context) ([]saga.Study, error) {
+			return nil, errors.New("upstream failed")
+		}
+
+		request := httptest.NewRequest(http.MethodGet, "/studies", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var body map[string]string
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
+		convey.So(recorder.Header().Get("Content-Type"), convey.ShouldContainSubstring, "application/json")
+		convey.So(body, convey.ShouldContainKey, "error")
 	})
 }
 

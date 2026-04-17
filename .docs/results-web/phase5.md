@@ -33,8 +33,8 @@ client-side enrichment caching across navigations. Tests
 in `frontend/tests/seqmeta-badge.test.ts`. Covering all
 6 acceptance tests from M1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.2: N1 - Tabbed folder tree [parallel with 5.1, 5.3]
 
@@ -53,8 +53,8 @@ one. Internal `TreeNode` type with `fileCount` and
 `frontend/tests/file-browser.test.ts`. Covering all 9
 acceptance tests from N1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.3: P1 - File content streaming API route [parallel with 5.1, 5.2]
 
@@ -71,8 +71,8 @@ on 413. Returns 400 for missing `id` or `path`. Tests in
 `frontend/tests/file-proxy.test.ts`. Covering all 6
 acceptance tests from P1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer`
@@ -106,5 +106,5 @@ previewable files. No download for non-previewable
 `frontend/tests/file-preview.test.ts`. Covering all 22
 acceptance tests from O1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

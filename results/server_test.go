@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -36,12 +37,46 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/wa/saga"
 )
+
+type seqmetaStudySamplesResponseForTest struct {
+	status  int
+	samples []saga.MLWHSample
+	body    string
+}
+
+func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySamplesResponseForTest) *httptest.Server {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response, ok := responses[r.PathValue("id")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(response.status)
+
+		if response.body != "" {
+			_, _ = fmt.Fprint(w, response.body)
+
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(response.samples)
+	})
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /study/{id}/samples", handler)
+
+	return httptest.NewServer(mux)
+}
 
 func TestServerPostResults(t *testing.T) {
 	convey.Convey("E1.1: Given an empty store and valid Registration JSON, when POST /results is called, then status is 201 with JSON result fields and application/json content type", t, func() {
 		store := newSQLiteStoreForTest(t)
-		server := NewServer(store, nil)
+		server := NewServer(store, nil, nil)
 
 		response := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, testRegistration()))
 
@@ -58,7 +93,7 @@ func TestServerPostResults(t *testing.T) {
 
 	convey.Convey("E1.2: Given the same Registration POSTed twice, then the second response status is 200 and created_at matches the first", t, func() {
 		store := newSQLiteStoreForTest(t)
-		server := NewServer(store, nil)
+		server := NewServer(store, nil, nil)
 		body := mustJSONBodyForTest(t, testRegistration())
 
 		firstResponse := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", body)
@@ -85,7 +120,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testRegistration()
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
-		response := performResultsRequestForTest(t, NewServer(store, validator).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
 	})
@@ -101,7 +136,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testRegistration()
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
-		response := performResultsRequestForTest(t, NewServer(store, validator).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusUnprocessableEntity)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldNotBeBlank)
@@ -113,7 +148,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testRegistration()
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
-		response := performResultsRequestForTest(t, NewServer(store, validator).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
 	})
@@ -123,7 +158,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testRegistration()
 		reg.PipelineIdentifier = ""
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
 	})
@@ -131,7 +166,7 @@ func TestServerPostResults(t *testing.T) {
 	convey.Convey("E1.7: Given a malformed JSON body, then status is 400", t, func() {
 		store := newSQLiteStoreForTest(t)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodPost, "/results", []byte(`{"pipeline_identifier":`))
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", []byte(`{"pipeline_identifier":`))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
 	})
@@ -146,7 +181,7 @@ func TestServerGetResults(t *testing.T) {
 			reg.Requester = "bob"
 		}))
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results?user=alice", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?user=alice", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
@@ -168,7 +203,7 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"library": "intron", "study": "alpha"}
 		}))
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results?meta_library=exon", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?meta_library=exon", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 
@@ -189,7 +224,7 @@ func TestServerGetResults(t *testing.T) {
 			reg.OutputDirectory = "/lustre/archive/project-b/run-2"
 		}))
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results?output_dir_prefix=/lustre/scratch", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?output_dir_prefix=/lustre/scratch", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 
@@ -207,7 +242,7 @@ func TestServerGetResults(t *testing.T) {
 			reg.PipelineIdentifier = "pipe-2"
 		}))
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 
@@ -221,7 +256,7 @@ func TestServerGetResults(t *testing.T) {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-1", func(reg *Registration) {}))
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results?user=nobody", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?user=nobody", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Body.String(), convey.ShouldEqual, "[]\n")
@@ -237,7 +272,7 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_runid": "99999", "library": "exon"}
 		}))
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results?seqmeta_runid=48522", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?seqmeta_runid=48522", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 
@@ -247,6 +282,396 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results, convey.ShouldHaveLength, 1)
 		convey.So(results[0].Metadata["seqmeta_runid"], convey.ShouldEqual, "48522")
 	})
+
+	convey.Convey("D1.1: Given requesters alice, bob, and carol, when GET /results?user=alice&user=bob, then 2 matching results are returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-alice", func(reg *Registration) {}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-bob", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Requester = "bob"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-carol", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Requester = "carol"
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?user=alice&user=bob", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So([]string{results[0].Requester, results[1].Requester}, convey.ShouldResemble, []string{"alice", "bob"})
+	})
+
+	convey.Convey("D1.2: Given user and pipeline_name filters, when GET /results is called, then different keys are ANDed", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-match", func(reg *Registration) {
+			reg.Requester = "alice"
+			reg.PipelineName = "nf"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-user-only", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Requester = "alice"
+			reg.PipelineName = "other"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-pipeline-only", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Requester = "bob"
+			reg.PipelineName = "nf"
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?user=alice&pipeline_name=nf", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-match")
+	})
+
+	convey.Convey("D1.4: Given a single user filter, when GET /results is called, then behaviour matches the original single-value search", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-alice", func(reg *Registration) {}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-bob", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Requester = "bob"
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?user=alice", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].Requester, convey.ShouldEqual, "alice")
+	})
+
+	convey.Convey("D1.5: Given no query params, when GET /results is called, then all result sets are returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-1", func(reg *Registration) {}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-2", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-3", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 3)
+	})
+
+	convey.Convey("E1.1: Given study_id=6568, when seqmeta resolves SANG1 and SANG2, then matching results are wrapped as SearchResult with matched_samples", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang1", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang3", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG3"}
+		}))
+
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		})
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].ResultSet.Metadata["seqmeta_sampleid"], convey.ShouldEqual, "SANG1")
+		convey.So(results[0].MatchedSamples, convey.ShouldResemble, []string{"SANG1"})
+	})
+
+	convey.Convey("E1.2: Given study_id combined with user=alice, then result sets must satisfy both filters", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-alice", func(reg *Registration) {
+			reg.Requester = "alice"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-bob", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Requester = "bob"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
+		}))
+
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}}},
+		})
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568&user=alice", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].ResultSet.Requester, convey.ShouldEqual, "alice")
+	})
+
+	convey.Convey("E1.3: Given seqmeta returns no samples for a study, then GET /results?study_id=6568 returns an empty array", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang1", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
+		}))
+
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{}},
+		})
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Body.String(), convey.ShouldEqual, "[]\n")
+	})
+
+	convey.Convey("E1.4: Given study_id is requested without seqmeta configured, then status is 400", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?study_id=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, "seqmeta not configured")
+	})
+
+	convey.Convey("E1.5: Given seqmeta returns an error for the study lookup, then status is 502", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusBadGateway, body: `{"error":"upstream failed"}`},
+		})
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
+	})
+
+	convey.Convey("E1.6: Given study_id combined with explicit seqmeta_sampleid, then the sample IDs are merged as a union", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang1", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang9", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG9"}
+		}))
+
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		})
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568&seqmeta_sampleid=SANG9", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So([]string{results[0].ResultSet.Metadata["seqmeta_sampleid"], results[1].ResultSet.Metadata["seqmeta_sampleid"]}, convey.ShouldResemble, []string{"SANG1", "SANG9"})
+	})
+
+	convey.Convey("E1.7: Given seqmeta resolves three samples, then matched_samples contains only the identifiers that matched that result", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang1", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
+		}))
+
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}, {SangerID: "SANG2"}, {SangerID: "SANG3"}}},
+		})
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].MatchedSamples, convey.ShouldResemble, []string{"SANG1"})
+	})
+
+	convey.Convey("E1.8: Given GET /results?user=alice without study_id, then the response remains a plain []ResultSet payload", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-alice", func(reg *Registration) {
+			reg.Requester = "alice"
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?user=alice", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []map[string]any
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0]["id"], convey.ShouldNotBeNil)
+		_, hasWrapper := results[0]["result_set"]
+		_, hasMatchedSamples := results[0]["matched_samples"]
+		convey.So(hasWrapper, convey.ShouldBeFalse)
+		convey.So(hasMatchedSamples, convey.ShouldBeFalse)
+	})
+}
+
+func TestServerGetStats(t *testing.T) {
+	convey.Convey("B1.1/B1.5: Given stored and empty stats data, when GET /results/stats is called, then chi routes to the stats handler and returns aggregated JSON", t, func() {
+		store := newSQLiteStoreForTest(t)
+		now := time.Now().UTC()
+
+		seedStatsResultSetForTest(t, store, "run-server-stats-1", now.Add(-time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-server-stats-1"
+			reg.PipelineName = "nf-core/rnaseq"
+			reg.Metadata = map[string]string{"library": "exon"}
+		})
+		seedStatsResultSetForTest(t, store, "run-server-stats-2", now.Add(-2*time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-server-stats-2"
+			reg.PipelineName = "nf-core/sarek"
+			reg.Metadata = map[string]string{"library": "intron"}
+		})
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/stats", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var stats StatsResult
+		decodeJSONResponseForTest(t, response, &stats)
+
+		convey.So(stats.Total, convey.ShouldEqual, 2)
+		convey.So(stats.Recent, convey.ShouldHaveLength, 2)
+		convey.So(stats.Recent[0].RunKey, convey.ShouldEqual, "run-server-stats-1")
+		convey.So(stats.Recent[0].Metadata, convey.ShouldResemble, map[string]string{"library": "exon"})
+		convey.So(stats.Daily, convey.ShouldHaveLength, 30)
+		convey.So(stats.Pipelines, convey.ShouldResemble, []PipelineCount{
+			{PipelineName: "nf-core/rnaseq", Count: 1},
+			{PipelineName: "nf-core/sarek", Count: 1},
+		})
+
+		emptyResponse := performResultsRequestForTest(t, NewServer(newSQLiteStoreForTest(t), nil, nil).Handler(), http.MethodGet, "/results/stats", nil)
+
+		convey.So(emptyResponse.Code, convey.ShouldEqual, http.StatusOK)
+
+		var emptyStats StatsResult
+		decodeJSONResponseForTest(t, emptyResponse, &emptyStats)
+
+		convey.So(emptyStats.Total, convey.ShouldEqual, 0)
+		convey.So(emptyStats.Recent, convey.ShouldResemble, []ResultSet{})
+		convey.So(emptyStats.Pipelines, convey.ShouldResemble, []PipelineCount{})
+		convey.So(emptyStats.Daily, convey.ShouldHaveLength, 30)
+	})
+
+	convey.Convey("B1.2: Given 15 result sets, when GET /results/stats?recent=3, then only 3 recent results are returned while total remains 15", t, func() {
+		store := newSQLiteStoreForTest(t)
+		now := time.Now().UTC()
+
+		for i := range 15 {
+			seedStatsResultSetForTest(t, store, fmt.Sprintf("run-server-recent-%02d", i), now.Add(-time.Duration(i)*time.Hour), func(reg *Registration) {
+				reg.PipelineIdentifier = fmt.Sprintf("pipe-server-recent-%02d", i)
+			})
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/stats?recent=3", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var stats StatsResult
+		decodeJSONResponseForTest(t, response, &stats)
+
+		convey.So(stats.Total, convey.ShouldEqual, 15)
+		convey.So(stats.Recent, convey.ShouldHaveLength, 3)
+		convey.So(stats.Recent[0].RunKey, convey.ShouldEqual, "run-server-recent-00")
+	})
+
+	convey.Convey("B1.7: Given invalid recent or days query params, when GET /results/stats is called, then status is 400", t, func() {
+		store := newSQLiteStoreForTest(t)
+		server := NewServer(store, nil, nil)
+
+		negativeRecent := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/stats?recent=-1", nil)
+		invalidDays := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/stats?days=abc", nil)
+
+		convey.So(negativeRecent.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(errorResponseBodyForTest(t, negativeRecent), convey.ShouldEqual, "invalid recent query parameter")
+		convey.So(invalidDays.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(errorResponseBodyForTest(t, invalidDays), convey.ShouldEqual, "invalid days query parameter")
+	})
+}
+
+func TestServerGetMetaKeys(t *testing.T) {
+	convey.Convey("C1.1: Given result sets with metadata keys library, seqmeta_runid, and seqmeta_sampleid, when GET /results/meta-keys, then status 200 and the sorted JSON array is returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-meta-1", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_runid": "48522", "library": "exon"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-meta-2", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"library": "intron", "seqmeta_sampleid": "sample-1"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/meta-keys", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
+
+		var keys []string
+		decodeJSONResponseForTest(t, response, &keys)
+		convey.So(keys, convey.ShouldResemble, []string{"library", "seqmeta_runid", "seqmeta_sampleid"})
+	})
+
+	convey.Convey("C1.2: Given no result sets, when GET /results/meta-keys, then status 200 and body is an empty JSON array", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/meta-keys", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Body.String(), convey.ShouldEqual, "[]\n")
+	})
+
+	convey.Convey("C1.3: Given two result sets both having key library, when GET /results/meta-keys, then library appears once", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-meta-1", func(reg *Registration) {
+			reg.Metadata = map[string]string{"library": "exon"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-meta-2", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"library": "intron"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/meta-keys", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var keys []string
+		decodeJSONResponseForTest(t, response, &keys)
+		convey.So(keys, convey.ShouldResemble, []string{"library"})
+	})
 }
 
 func TestServerDeleteResult(t *testing.T) {
@@ -255,7 +680,7 @@ func TestServerDeleteResult(t *testing.T) {
 		result, err := store.Upsert(t.Context(), testRegistration())
 		convey.So(err, convey.ShouldBeNil)
 
-		server := NewServer(store, nil)
+		server := NewServer(store, nil, nil)
 
 		deleteResponse := performResultsRequestForTest(t, server.Handler(), http.MethodDelete, "/results/"+result.ID, nil)
 		getResponse := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+result.ID, nil)
@@ -268,7 +693,7 @@ func TestServerDeleteResult(t *testing.T) {
 
 	convey.Convey("E6.2: Given a non-existent ID, when DELETE /results/{id} is called, then status is 404", t, func() {
 		store := newSQLiteStoreForTest(t)
-		server := NewServer(store, nil)
+		server := NewServer(store, nil, nil)
 
 		response := performResultsRequestForTest(t, server.Handler(), http.MethodDelete, "/results/missing-id", nil)
 
@@ -287,7 +712,7 @@ func TestServerGetResultByID(t *testing.T) {
 		stored, err := store.Upsert(ctx, reg)
 		convey.So(err, convey.ShouldBeNil)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results/"+stored.ID, nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/"+stored.ID, nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
@@ -301,7 +726,7 @@ func TestServerGetResultByID(t *testing.T) {
 	convey.Convey("E3.2: Given a non-existent ID, when GET /results/<id> is called, then status is 404 with an error key", t, func() {
 		store := newSQLiteStoreForTest(t)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results/missing-id", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/missing-id", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusNotFound)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, ErrNotFound.Error()+`: result set "missing-id"`)
@@ -323,7 +748,7 @@ func TestServerGetResultFiles(t *testing.T) {
 		result, err := store.Upsert(t.Context(), reg)
 		convey.So(err, convey.ShouldBeNil)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results/"+result.ID+"/files", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/"+result.ID+"/files", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
@@ -343,7 +768,7 @@ func TestServerGetResultFiles(t *testing.T) {
 	convey.Convey("E4.2: Given non-existent ID, then status is 404", t, func() {
 		store := newSQLiteStoreForTest(t)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil).Handler(), http.MethodGet, "/results/missing-id/files", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/missing-id/files", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusNotFound)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, ErrNotFound.Error()+`: result set "missing-id"`)
@@ -363,7 +788,7 @@ func TestServerPutResultFiles(t *testing.T) {
 		result, err := store.Upsert(context.Background(), reg)
 		convey.So(err, convey.ShouldBeNil)
 
-		server := NewServer(store, nil)
+		server := NewServer(store, nil, nil)
 
 		replacement := []FileEntry{
 			{Path: "/tmp/results/run/out-new-1.txt", Mtime: time.Date(2026, time.April, 2, 12, 0, 0, 0, time.UTC), Size: 404, Kind: "output"},
@@ -401,7 +826,7 @@ func TestServerPutResultFiles(t *testing.T) {
 
 		response := performResultsRequestForTest(
 			t,
-			NewServer(store, nil).Handler(),
+			NewServer(store, nil, nil).Handler(),
 			http.MethodPut,
 			"/results/missing-id/files",
 			mustJSONBodyForTest(t, []FileEntry{{
@@ -421,7 +846,7 @@ func TestServerPutResultFiles(t *testing.T) {
 
 		response := performResultsRequestForTest(
 			t,
-			NewServer(store, nil).Handler(),
+			NewServer(store, nil, nil).Handler(),
 			http.MethodPut,
 			"/results/any-id/files",
 			[]byte(`[{"path":`),

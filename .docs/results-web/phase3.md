@@ -28,8 +28,8 @@ group `(results)/` for results pages. Tests in
 `frontend/tests/scaffold.test.ts`. Covering all 4
 acceptance tests from G1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after item 3.1 is reviewed)
 
@@ -49,8 +49,8 @@ throws `BackendUnavailableError` if URL not configured.
 Tests in `frontend/tests/backend-client.test.ts`. Covering
 all 6 acceptance tests from H1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.3: H2 - Zod contract schemas [parallel with 3.2]
 
@@ -67,8 +67,8 @@ all Go API response types: `fileEntrySchema`,
 types. Tests in `frontend/tests/contracts.test.ts`.
 Covering all 7 acceptance tests from H2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer`
@@ -91,5 +91,5 @@ Create `frontend/app/api/health/route.ts` with
 `frontend/tests/health.test.ts`. Covering all 2
 acceptance tests from I1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

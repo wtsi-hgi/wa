@@ -28,8 +28,8 @@ parser in the search handler. Existing `Search` method and
 `results/store_test.go` and `results/server_test.go`.
 Covering all 8 acceptance tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.2: F1 - List all studies [parallel with 2.1, 2.3]
 
@@ -42,8 +42,8 @@ Calls `provider.AllStudies(ctx)` and returns
 in `seqmeta/server_test.go`. Covering all 4 acceptance
 tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.3: F2 - List samples for a study [parallel with 2.1, 2.2]
 
@@ -58,8 +58,8 @@ server.handleStudySamples)`. Return 404 for
 `seqmeta/server_test.go`. Covering all 5 acceptance tests
 from F2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill
@@ -87,5 +87,5 @@ merge SangerIDs into `MultiSearchParams.Meta` under
 Tests in `results/server_test.go`. Covering all 8
 acceptance tests from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

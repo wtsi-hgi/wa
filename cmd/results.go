@@ -48,6 +48,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 type resultSetWithFiles struct {
 	results.ResultSet
 	Files []results.FileEntry `json:"files"`
@@ -56,8 +58,6 @@ type resultSetWithFiles struct {
 type resultsCommandOptions struct {
 	serverURL string
 }
-
-var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func getResult(ctx context.Context, serverURL, resultID string, includeFiles bool) ([]byte, error) {
 	resultPath := "/results/" + url.PathEscape(resultID)
@@ -729,8 +729,10 @@ func newResultsServeCommand() *cobra.Command {
 			defer func() { _ = store.Close() }()
 
 			var validator *results.SeqmetaValidator
+			var resolver *results.SeqmetaSampleResolver
 			if strings.TrimSpace(seqmetaURL) != "" {
 				validator = results.NewSeqmetaValidator(seqmetaURL, seqmetaTimeout)
+				resolver = results.NewSeqmetaSampleResolver(seqmetaURL, seqmetaTimeout)
 			}
 
 			listener, err := listenFunc("tcp", fmt.Sprintf(":%d", port))
@@ -739,7 +741,7 @@ func newResultsServeCommand() *cobra.Command {
 			}
 			defer func() { _ = listener.Close() }()
 
-			httpServer := &http.Server{Handler: results.NewServer(store, validator).Handler()}
+			httpServer := &http.Server{Handler: results.NewServer(store, validator, resolver).Handler()}
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()

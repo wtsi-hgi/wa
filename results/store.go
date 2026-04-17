@@ -318,6 +318,170 @@ func cloneMetadata(metadata map[string]string) map[string]string {
 	return cloned
 }
 
+func loadDailyStatsCounts(ctx context.Context, conn *sql.Conn, now time.Time, days int) ([]DailyCount, error) {
+	daily := zeroFilledDailyCounts(now, days)
+	if days <= 0 {
+		return daily, nil
+	}
+
+	start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
+	rows, err := conn.QueryContext(
+		ctx,
+		`SELECT substr(created_at, 1, 10) AS day, COUNT(*)
+		 FROM result_sets
+		 WHERE created_at >= ?
+		 GROUP BY day
+		 ORDER BY day`,
+		start.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query stats daily counts: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	countsByDay := make(map[string]int, len(daily))
+
+	for rows.Next() {
+		var day string
+		var count int
+
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, fmt.Errorf("scan stats daily count: %w", err)
+		}
+
+		countsByDay[day] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stats daily counts: %w", err)
+	}
+
+	for i := range daily {
+		daily[i].Count = countsByDay[daily[i].Date]
+	}
+
+	return daily, nil
+}
+
+func zeroFilledDailyCounts(now time.Time, days int) []DailyCount {
+	if days <= 0 {
+		return []DailyCount{}
+	}
+
+	daily := make([]DailyCount, days)
+	start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
+
+	for i := range days {
+		daily[i] = DailyCount{Date: start.AddDate(0, 0, i).Format("2006-01-02")}
+	}
+
+	return daily
+}
+
+func loadRecentStatsResults(ctx context.Context, conn *sql.Conn, recent int) ([]ResultSet, error) {
+	if recent <= 0 {
+		return []ResultSet{}, nil
+	}
+
+	rows, err := conn.QueryContext(
+		ctx,
+		`SELECT id, pipeline_identifier, run_key, requester, operator, command,
+		        pipeline_name, pipeline_version, output_directory, created_at, updated_at
+		 FROM result_sets
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT ?`,
+		recent,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query recent stats result sets: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	results := make([]ResultSet, 0, recent)
+	resultIDs := make([]string, 0, recent)
+
+	for rows.Next() {
+		result, err := scanResultSet(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan recent stats result set: %w", err)
+		}
+
+		results = append(results, result)
+		resultIDs = append(resultIDs, result.ID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent stats result sets: %w", err)
+	}
+
+	metadataByID, err := loadResultMetadataByIDs(ctx, conn, resultIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range results {
+		results[i].Metadata = metadataByID[results[i].ID]
+	}
+
+	return results, nil
+}
+
+func querySearchResults(ctx context.Context, conn *sql.Conn, filters []string, args []any) ([]ResultSet, error) {
+	queryBuilder := strings.Builder{}
+	queryBuilder.WriteString(`SELECT id, pipeline_identifier, run_key, requester, operator, command, pipeline_name, pipeline_version, output_directory, created_at, updated_at FROM result_sets`)
+
+	if len(filters) > 0 {
+		queryBuilder.WriteString(" WHERE ")
+		queryBuilder.WriteString(strings.Join(filters, " AND "))
+	}
+
+	queryBuilder.WriteString(" ORDER BY created_at, id")
+
+	rows, err := conn.QueryContext(ctx, queryBuilder.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("search result sets: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	results := make([]ResultSet, 0)
+	resultIDs := make([]string, 0)
+
+	for rows.Next() {
+		result, err := scanResultSet(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan result set: %w", err)
+		}
+
+		results = append(results, result)
+		resultIDs = append(resultIDs, result.ID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate result set search: %w", err)
+	}
+
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close result set search rows: %w", err)
+	}
+
+	metadataByID, err := loadResultMetadataByIDs(ctx, conn, resultIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range results {
+		results[i].Metadata = metadataByID[results[i].ID]
+	}
+
+	return results, nil
+}
+
 func scanResultSet(rowScanner interface {
 	Scan(dest ...any) error
 }) (ResultSet, error) {
@@ -355,6 +519,40 @@ func scanResultSet(rowScanner interface {
 	result.Metadata = map[string]string{}
 
 	return result, nil
+}
+
+func loadPipelineStatsCounts(ctx context.Context, conn *sql.Conn) ([]PipelineCount, error) {
+	rows, err := conn.QueryContext(
+		ctx,
+		`SELECT pipeline_name, COUNT(*)
+		 FROM result_sets
+		 GROUP BY pipeline_name
+		 ORDER BY COUNT(*) DESC, pipeline_name ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query stats pipeline counts: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	pipelines := make([]PipelineCount, 0)
+
+	for rows.Next() {
+		var pipeline PipelineCount
+
+		if err := rows.Scan(&pipeline.PipelineName, &pipeline.Count); err != nil {
+			return nil, fmt.Errorf("scan stats pipeline count: %w", err)
+		}
+
+		pipelines = append(pipelines, pipeline)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stats pipeline counts: %w", err)
+	}
+
+	return pipelines, nil
 }
 
 func loadResultMetadata(ctx context.Context, querier interface {
@@ -444,15 +642,79 @@ func loadResultMetadataByIDs(ctx context.Context, querier interface {
 	return metadataByID, nil
 }
 
-func appendSearchFilter(filters []string, args []any, clause string, value string) ([]string, []any) {
-	if value == "" {
+func appendMultiValueSearchFilter(filters []string, args []any, field string, values []string) ([]string, []any) {
+	values = nonEmptySearchValues(values)
+	if len(values) == 0 {
 		return filters, args
 	}
 
-	return append(filters, clause), append(args, value)
+	if len(values) == 1 {
+		return append(filters, field+" = ?"), append(args, values[0])
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
+	filters = append(filters, fmt.Sprintf("%s IN (%s)", field, placeholders))
+
+	for _, value := range values {
+		args = append(args, value)
+	}
+
+	return filters, args
 }
 
-func sortedMetadataKeys(metadata map[string]string) []string {
+func appendMultiPrefixFilter(filters []string, args []any, field string, values []string) ([]string, []any) {
+	values = nonEmptySearchValues(values)
+	if len(values) == 0 {
+		return filters, args
+	}
+
+	clauses := make([]string, 0, len(values))
+
+	for _, value := range values {
+		clauses = append(clauses, fmt.Sprintf("substr(%s, 1, length(?)) = ?", field))
+		args = append(args, value, value)
+	}
+
+	if len(clauses) == 1 {
+		return append(filters, clauses[0]), args
+	}
+
+	return append(filters, "("+strings.Join(clauses, " OR ")+")"), args
+}
+
+func appendMultiMetadataSearchFilters(filters []string, args []any, metadata map[string][]string) ([]string, []any) {
+	for _, key := range sortedMultiMetadataKeys(metadata) {
+		values := nonEmptySearchValues(metadata[key])
+		if len(values) == 0 {
+			continue
+		}
+
+		if len(values) == 1 {
+			filters = append(filters, `EXISTS (
+				SELECT 1 FROM result_metadata rm
+				WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value = ?
+			)`)
+			args = append(args, key, values[0])
+
+			continue
+		}
+
+		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
+		filters = append(filters, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM result_metadata rm
+			WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value IN (%s)
+		)`, placeholders))
+		args = append(args, key)
+
+		for _, value := range values {
+			args = append(args, value)
+		}
+	}
+
+	return filters, args
+}
+
+func sortedMultiMetadataKeys(metadata map[string][]string) []string {
 	keys := make([]string, 0, len(metadata))
 
 	for key := range metadata {
@@ -462,6 +724,64 @@ func sortedMetadataKeys(metadata map[string]string) []string {
 	sort.Strings(keys)
 
 	return keys
+}
+
+func nonEmptySearchValues(values []string) []string {
+	filtered := make([]string, 0, len(values))
+
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+
+		filtered = append(filtered, value)
+	}
+
+	return filtered
+}
+
+func multiSearchParamsFromSingle(params SearchParams) MultiSearchParams {
+	multi := MultiSearchParams{
+		Meta: map[string][]string{},
+	}
+
+	if params.Requester != "" {
+		multi.Requester = []string{params.Requester}
+	}
+
+	if params.Operator != "" {
+		multi.Operator = []string{params.Operator}
+	}
+
+	if params.PipelineName != "" {
+		multi.PipelineName = []string{params.PipelineName}
+	}
+
+	if params.PipelineVersion != "" {
+		multi.PipelineVersion = []string{params.PipelineVersion}
+	}
+
+	if params.PipelineIdentifier != "" {
+		multi.PipelineIdentifier = []string{params.PipelineIdentifier}
+	}
+
+	if params.RunKey != "" {
+		multi.RunKey = []string{params.RunKey}
+	}
+
+	if params.OutputDirPrefix != "" {
+		multi.OutputDirPrefix = []string{params.OutputDirPrefix}
+	}
+
+	for key, value := range params.Meta {
+		if value == "" {
+			continue
+		}
+
+		multi.Meta[key] = []string{value}
+	}
+
+	return multi
 }
 
 // Close releases the underlying database handle.
@@ -542,6 +862,11 @@ func (s *Store) Upsert(ctx context.Context, reg *Registration) (*ResultSet, erro
 
 // Search returns all stored result sets matching the supplied filters.
 func (s *Store) Search(ctx context.Context, params SearchParams) ([]ResultSet, error) {
+	return s.SearchMulti(ctx, multiSearchParamsFromSingle(params))
+}
+
+// SearchMulti returns all stored result sets matching multi-value filters.
+func (s *Store) SearchMulti(ctx context.Context, params MultiSearchParams) ([]ResultSet, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
 	}
@@ -555,77 +880,93 @@ func (s *Store) Search(ctx context.Context, params SearchParams) ([]ResultSet, e
 	}()
 
 	filters := make([]string, 0, 7+len(params.Meta))
-	args := make([]any, 0, 7+(2*len(params.Meta)))
+	args := make([]any, 0)
 
-	filters, args = appendSearchFilter(filters, args, "requester = ?", params.Requester)
-	filters, args = appendSearchFilter(filters, args, "operator = ?", params.Operator)
-	filters, args = appendSearchFilter(filters, args, "pipeline_name = ?", params.PipelineName)
-	filters, args = appendSearchFilter(filters, args, "pipeline_version = ?", params.PipelineVersion)
-	filters, args = appendSearchFilter(filters, args, "pipeline_identifier = ?", params.PipelineIdentifier)
-	filters, args = appendSearchFilter(filters, args, "run_key = ?", params.RunKey)
+	filters, args = appendMultiValueSearchFilter(filters, args, "requester", params.Requester)
+	filters, args = appendMultiValueSearchFilter(filters, args, "operator", params.Operator)
+	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_name", params.PipelineName)
+	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_version", params.PipelineVersion)
+	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_identifier", params.PipelineIdentifier)
+	filters, args = appendMultiValueSearchFilter(filters, args, "run_key", params.RunKey)
+	filters, args = appendMultiPrefixFilter(filters, args, "output_directory", params.OutputDirPrefix)
+	filters, args = appendMultiMetadataSearchFilters(filters, args, params.Meta)
 
-	if params.OutputDirPrefix != "" {
-		filters = append(filters, "substr(output_directory, 1, length(?)) = ?")
-		args = append(args, params.OutputDirPrefix, params.OutputDirPrefix)
+	return querySearchResults(ctx, conn, filters, args)
+}
+
+// Stats returns aggregate counts and recent result sets for dashboard loading.
+func (s *Store) Stats(ctx context.Context, recent, days int) (*StatsResult, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
 	}
 
-	for _, key := range sortedMetadataKeys(params.Meta) {
-		filters = append(filters, `EXISTS (
-			SELECT 1 FROM result_metadata rm
-			WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value = ?
-		)`)
-		args = append(args, key, params.Meta[key])
+	if recent < 0 || days < 0 {
+		return nil, fmt.Errorf("%w: stats parameters must be non-negative", ErrInvalidInput)
 	}
 
-	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString(`SELECT id, pipeline_identifier, run_key, requester, operator, command, pipeline_name, pipeline_version, output_directory, created_at, updated_at FROM result_sets`)
-
-	if len(filters) > 0 {
-		queryBuilder.WriteString(" WHERE ")
-		queryBuilder.WriteString(strings.Join(filters, " AND "))
-	}
-
-	queryBuilder.WriteString(" ORDER BY created_at, id")
-
-	rows, err := conn.QueryContext(ctx, queryBuilder.String(), args...)
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("search result sets: %w", err)
+		return nil, fmt.Errorf("acquire stats connection: %w", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	stats := &StatsResult{}
+
+	if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM result_sets`).Scan(&stats.Total); err != nil {
+		return nil, fmt.Errorf("query stats total: %w", err)
+	}
+
+	stats.Recent, err = loadRecentStatsResults(ctx, conn, recent)
+	if err != nil {
+		return nil, err
+	}
+
+	stats.Daily, err = loadDailyStatsCounts(ctx, conn, time.Now().UTC(), days)
+	if err != nil {
+		return nil, err
+	}
+
+	stats.Pipelines, err = loadPipelineStatsCounts(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	return stats, nil
+}
+
+// MetaKeys returns sorted distinct metadata keys used by stored result sets.
+func (s *Store) MetaKeys(ctx context.Context) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT meta_key FROM result_metadata ORDER BY meta_key`)
+	if err != nil {
+		return nil, fmt.Errorf("query metadata keys: %w", err)
 	}
 	defer func() {
 		_ = rows.Close()
 	}()
 
-	results := make([]ResultSet, 0)
-	resultIDs := make([]string, 0)
+	keys := make([]string, 0)
 
 	for rows.Next() {
-		result, err := scanResultSet(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan result set: %w", err)
+		var key string
+
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan metadata key: %w", err)
 		}
 
-		results = append(results, result)
-		resultIDs = append(resultIDs, result.ID)
+		keys = append(keys, key)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate result set search: %w", err)
+		return nil, fmt.Errorf("iterate metadata keys: %w", err)
 	}
 
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close result set search rows: %w", err)
-	}
-
-	metadataByID, err := loadResultMetadataByIDs(ctx, conn, resultIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range results {
-		results[i].Metadata = metadataByID[results[i].ID]
-	}
-
-	return results, nil
+	return keys, nil
 }
 
 // Get retrieves a single result set by ID, including metadata but excluding files.

@@ -29,6 +29,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -367,6 +368,94 @@ func TestStoreSearch(t *testing.T) {
 	})
 }
 
+func TestStoreSearchMulti(t *testing.T) {
+	convey.Convey("D1.3: Given metadata filter values exon and intron, when SearchMulti is called, then result sets matching either metadata value are returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-exon", func(reg *Registration) {
+			reg.Metadata = map[string]string{"library": "exon", "study": "alpha"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-intron", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"library": "intron", "study": "alpha"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-other", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"library": "rna", "study": "alpha"}
+		}))
+
+		results, err := store.SearchMulti(ctx, MultiSearchParams{
+			Meta: map[string][]string{"library": {"exon", "intron"}},
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So([]string{results[0].Metadata["library"], results[1].Metadata["library"]}, convey.ShouldResemble, []string{"exon", "intron"})
+	})
+
+	convey.Convey("D1.6: Given no matching multi-search filters, when SearchMulti is called, then it returns an empty non-nil slice", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-1", func(reg *Registration) {}))
+
+		results, err := store.SearchMulti(ctx, MultiSearchParams{Requester: []string{"nonexistent"}})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldNotBeNil)
+		convey.So(results, convey.ShouldHaveLength, 0)
+	})
+
+	convey.Convey("D1.7: Given multi-value seqmeta_sampleid filters, when SearchMulti is called, then result sets matching either seqmeta value are returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang-1", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1", "library": "exon"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang-2", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG2", "library": "exon"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sang-3", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG3", "library": "exon"}
+		}))
+
+		results, err := store.SearchMulti(ctx, MultiSearchParams{
+			Meta: map[string][]string{"seqmeta_sampleid": {"SANG1", "SANG2"}},
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So([]string{results[0].Metadata["seqmeta_sampleid"], results[1].Metadata["seqmeta_sampleid"]}, convey.ShouldResemble, []string{"SANG1", "SANG2"})
+	})
+
+	convey.Convey("D1.8: Given output directory prefixes /data/a and /data/b, when SearchMulti is called, then result sets matching either prefix are returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-data-a", func(reg *Registration) {
+			reg.OutputDirectory = "/data/a/project-1"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-data-b", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.OutputDirectory = "/data/b/project-2"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-data-c", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.OutputDirectory = "/data/c/project-3"
+		}))
+
+		results, err := store.SearchMulti(ctx, MultiSearchParams{OutputDirPrefix: []string{"/data/a", "/data/b"}})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So([]string{results[0].OutputDirectory, results[1].OutputDirectory}, convey.ShouldResemble, []string{"/data/a/project-1", "/data/b/project-2"})
+	})
+}
+
 func TestStoreGet(t *testing.T) {
 	convey.Convey("C3.1: Given a stored result set with metadata, when Get is called, then metadata and scalar fields are returned", t, func() {
 		store := newSQLiteStoreForTest(t)
@@ -402,6 +491,170 @@ func TestStoreGet(t *testing.T) {
 
 		convey.So(result, convey.ShouldBeNil)
 		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+	})
+}
+
+func TestStoreMetaKeys(t *testing.T) {
+	convey.Convey("MetaKeys returns sorted distinct metadata keys", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-meta-1", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_runid": "48522", "library": "exon"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-meta-2", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"library": "intron", "seqmeta_sampleid": "sample-1"}
+		}))
+
+		keys, err := store.MetaKeys(ctx)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(keys, convey.ShouldResemble, []string{"library", "seqmeta_runid", "seqmeta_sampleid"})
+	})
+
+	convey.Convey("MetaKeys returns an empty slice when no result sets are stored", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		keys, err := store.MetaKeys(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(keys, convey.ShouldResemble, []string{})
+	})
+}
+
+func TestStoreStats(t *testing.T) {
+	convey.Convey("B1.1: Given 5 result sets created on 3 different days, when Stats is called with defaults, then totals, recent ordering, and full result payloads are returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+		now := time.Now().UTC()
+
+		oldest := seedStatsResultSetForTest(t, store, "run-stats-oldest", now.AddDate(0, 0, -2).Add(-2*time.Hour), func(reg *Registration) {
+			reg.Metadata = map[string]string{"library": "oldest"}
+		})
+		middleA := seedStatsResultSetForTest(t, store, "run-stats-middle-a", now.AddDate(0, 0, -1).Add(1*time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-middle-a"
+			reg.Metadata = map[string]string{"library": "middle-a"}
+		})
+		middleB := seedStatsResultSetForTest(t, store, "run-stats-middle-b", now.AddDate(0, 0, -1).Add(2*time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-middle-b"
+			reg.Metadata = map[string]string{"library": "middle-b"}
+		})
+		newer := seedStatsResultSetForTest(t, store, "run-stats-newer", now.Add(-2*time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-newer"
+			reg.Metadata = map[string]string{"library": "newer"}
+		})
+		newest := seedStatsResultSetForTest(t, store, "run-stats-newest", now.Add(-time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-newest"
+			reg.Metadata = map[string]string{"library": "newest"}
+		})
+
+		stats, err := store.Stats(ctx, 10, 30)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stats, convey.ShouldNotBeNil)
+		convey.So(stats.Total, convey.ShouldEqual, 5)
+		convey.So(stats.Recent, convey.ShouldHaveLength, 5)
+		convey.So(stats.Recent[0].ID, convey.ShouldEqual, newest.ID)
+		convey.So(stats.Recent[1].ID, convey.ShouldEqual, newer.ID)
+		convey.So(stats.Recent[2].ID, convey.ShouldEqual, middleB.ID)
+		convey.So(stats.Recent[3].ID, convey.ShouldEqual, middleA.ID)
+		convey.So(stats.Recent[4].ID, convey.ShouldEqual, oldest.ID)
+		convey.So(stats.Recent[0].PipelineIdentifier, convey.ShouldEqual, newest.PipelineIdentifier)
+		convey.So(stats.Recent[0].RunKey, convey.ShouldEqual, newest.RunKey)
+		convey.So(stats.Recent[0].Requester, convey.ShouldEqual, newest.Requester)
+		convey.So(stats.Recent[0].Operator, convey.ShouldEqual, newest.Operator)
+		convey.So(stats.Recent[0].Command, convey.ShouldEqual, newest.Command)
+		convey.So(stats.Recent[0].PipelineName, convey.ShouldEqual, newest.PipelineName)
+		convey.So(stats.Recent[0].PipelineVersion, convey.ShouldEqual, newest.PipelineVersion)
+		convey.So(stats.Recent[0].OutputDirectory, convey.ShouldEqual, newest.OutputDirectory)
+		convey.So(stats.Recent[0].Metadata, convey.ShouldResemble, newest.Metadata)
+		convey.So(stats.Recent[0].CreatedAt, convey.ShouldEqual, newest.CreatedAt)
+		convey.So(stats.Recent[0].UpdatedAt, convey.ShouldEqual, newest.UpdatedAt)
+	})
+
+	convey.Convey("B1.3: Given result sets created today and 2 days ago, when Stats is called with days=3, then daily counts include zero-filled UTC calendar days", t, func() {
+		store := newSQLiteStoreForTest(t)
+		now := time.Now().UTC()
+
+		seedStatsResultSetForTest(t, store, "run-stats-day-old", now.AddDate(0, 0, -2).Add(3*time.Hour), nil)
+		seedStatsResultSetForTest(t, store, "run-stats-day-new", now.Add(-time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-day-new"
+		})
+
+		stats, err := store.Stats(context.Background(), 10, 3)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stats.Daily, convey.ShouldHaveLength, 3)
+		convey.So(stats.Daily[0], convey.ShouldResemble, DailyCount{Date: now.AddDate(0, 0, -2).Format("2006-01-02"), Count: 1})
+		convey.So(stats.Daily[1], convey.ShouldResemble, DailyCount{Date: now.AddDate(0, 0, -1).Format("2006-01-02"), Count: 0})
+		convey.So(stats.Daily[2], convey.ShouldResemble, DailyCount{Date: now.Format("2006-01-02"), Count: 1})
+	})
+
+	convey.Convey("B1.4: Given 3 result sets for one pipeline and 2 for another, when Stats is called, then pipeline counts are grouped and ordered by descending count", t, func() {
+		store := newSQLiteStoreForTest(t)
+		now := time.Now().UTC()
+
+		for i := range 3 {
+			seedStatsResultSetForTest(t, store, fmt.Sprintf("run-rnaseq-%d", i), now.Add(time.Duration(-i)*time.Hour), func(reg *Registration) {
+				reg.PipelineIdentifier = fmt.Sprintf("pipe-rnaseq-%d", i)
+				reg.PipelineName = "nf-core/rnaseq"
+			})
+		}
+
+		for i := range 2 {
+			seedStatsResultSetForTest(t, store, fmt.Sprintf("run-sarek-%d", i), now.AddDate(0, 0, -1).Add(time.Duration(-i)*time.Hour), func(reg *Registration) {
+				reg.PipelineIdentifier = fmt.Sprintf("pipe-sarek-%d", i)
+				reg.PipelineName = "nf-core/sarek"
+			})
+		}
+
+		stats, err := store.Stats(context.Background(), 10, 30)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stats.Pipelines, convey.ShouldResemble, []PipelineCount{
+			{PipelineName: "nf-core/rnaseq", Count: 3},
+			{PipelineName: "nf-core/sarek", Count: 2},
+		})
+	})
+
+	convey.Convey("B1.5: Given an empty store, when Stats is called, then totals are zero, recent and pipelines are empty, and daily contains zero-filled entries", t, func() {
+		store := newSQLiteStoreForTest(t)
+		days := 4
+
+		stats, err := store.Stats(context.Background(), 10, days)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stats, convey.ShouldNotBeNil)
+		convey.So(stats.Total, convey.ShouldEqual, 0)
+		convey.So(stats.Recent, convey.ShouldResemble, []ResultSet{})
+		convey.So(stats.Daily, convey.ShouldHaveLength, days)
+		convey.So(stats.Pipelines, convey.ShouldResemble, []PipelineCount{})
+
+		for _, daily := range stats.Daily {
+			convey.So(daily.Count, convey.ShouldEqual, 0)
+		}
+	})
+
+	convey.Convey("B1.6: Given recent=0, when Stats is called, then recent is empty while total, daily, and pipelines remain populated", t, func() {
+		store := newSQLiteStoreForTest(t)
+		now := time.Now().UTC()
+
+		seedStatsResultSetForTest(t, store, "run-stats-zero-a", now.Add(-time.Hour), func(reg *Registration) {
+			reg.PipelineName = "nf-core/rnaseq"
+		})
+		seedStatsResultSetForTest(t, store, "run-stats-zero-b", now.Add(-2*time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-zero-b"
+			reg.PipelineName = "nf-core/sarek"
+		})
+
+		stats, err := store.Stats(context.Background(), 0, 2)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stats.Total, convey.ShouldEqual, 2)
+		convey.So(stats.Recent, convey.ShouldResemble, []ResultSet{})
+		convey.So(stats.Daily, convey.ShouldHaveLength, 2)
+		convey.So(stats.Pipelines, convey.ShouldHaveLength, 2)
 	})
 }
 
@@ -615,6 +868,29 @@ func newSQLiteStoreForTest(t *testing.T) *Store {
 	})
 
 	return store
+}
+
+func seedStatsResultSetForTest(t *testing.T, store *Store, runKey string, createdAt time.Time, mutate func(*Registration)) ResultSet {
+	t.Helper()
+
+	result := seedResultSetForTest(t, store, searchRegistrationForTest(runKey, mutate))
+	createdAt = createdAt.UTC()
+	updatedAt := createdAt.Add(time.Minute)
+
+	_, err := store.db.Exec(
+		`UPDATE result_sets SET created_at = ?, updated_at = ? WHERE id = ?`,
+		createdAt.Format(time.RFC3339Nano),
+		updatedAt.Format(time.RFC3339Nano),
+		result.ID,
+	)
+	if err != nil {
+		t.Fatalf("update stats test timestamps: %v", err)
+	}
+
+	result.CreatedAt = createdAt
+	result.UpdatedAt = updatedAt
+
+	return result
 }
 
 func seedResultSetForTest(t *testing.T, store *Store, reg *Registration) ResultSet {
