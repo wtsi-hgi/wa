@@ -150,7 +150,7 @@ wait_for_http() {
         return 0
       fi
     else
-      if curl -sS --max-time 2 -o /dev/null "$url"; then
+      if curl -sS --max-time 2 -o /dev/null "$url" 2>/dev/null; then
         return 0
       fi
     fi

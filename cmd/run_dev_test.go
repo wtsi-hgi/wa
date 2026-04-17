@@ -58,7 +58,7 @@ func TestRunDevScript(t *testing.T) {
 		resultsPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 
-		command, waitFn := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			env: map[string]string{
@@ -91,8 +91,8 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "frontend.log")), convey.ShouldBeTrue)
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "seqmeta.log")), convey.ShouldBeTrue)
 
-		convey.So(command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
-		convey.So(waitFn(), convey.ShouldBeNil)
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeFalse)
 	})
 
@@ -103,7 +103,7 @@ func TestRunDevScript(t *testing.T) {
 		seqmetaPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 
-		command, waitFn := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			seqmetaPort:  seqmetaPort,
@@ -124,8 +124,44 @@ func TestRunDevScript(t *testing.T) {
 
 		convey.So(snapshot.SeqmetaBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 
-		convey.So(command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
-		convey.So(waitFn(), convey.ShouldBeNil)
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh waits for seqmeta readiness without printing transient curl probe errors", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		healthPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		startDelayedHTTPServerForTest(t, healthPort, 1500*time.Millisecond)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			env: map[string]string{
+				"SAGA_API_TOKEN":                        "test-token",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+				"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/studies", healthPort),
+			},
+		})
+
+		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "curl:")
+		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "Failed to connect")
+		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "Operation timed out")
 	})
 
 	convey.Convey("R1.7: run-dev.sh skips frontend lint and format checks when no frontend files have changed", t, func() {
@@ -134,7 +170,7 @@ func TestRunDevScript(t *testing.T) {
 		resultsPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 
-		command, waitFn := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			env: map[string]string{
@@ -155,8 +191,8 @@ func TestRunDevScript(t *testing.T) {
 			`test:[]`,
 		})
 
-		convey.So(command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
-		convey.So(waitFn(), convey.ShouldBeNil)
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
 	convey.Convey("R1.8: run-dev.sh ignores generated frontend artifacts when selecting changed files for lint and format", t, func() {
@@ -165,7 +201,7 @@ func TestRunDevScript(t *testing.T) {
 		resultsPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 
-		command, waitFn := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			env: map[string]string{
@@ -188,8 +224,8 @@ func TestRunDevScript(t *testing.T) {
 			`test:[]`,
 		})
 
-		convey.So(command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
-		convey.So(waitFn(), convey.ShouldBeNil)
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
 	convey.Convey("run-dev.sh builds wa from the repository root even when started from frontend/", t, func() {
@@ -198,7 +234,7 @@ func TestRunDevScript(t *testing.T) {
 		resultsPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 
-		command, waitFn := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			startDir:     filepath.Join(repoRoot, "frontend"),
@@ -217,8 +253,8 @@ func TestRunDevScript(t *testing.T) {
 
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
 
-		convey.So(command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
-		convey.So(waitFn(), convey.ShouldBeNil)
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
 	convey.Convey("run-dev.sh passes the frontend port to the default pnpm dev command without an extra separator", t, func() {
@@ -248,7 +284,7 @@ exit 0
 
 		convey.So(os.WriteFile(pnpmPath, []byte(stub), 0o755), convey.ShouldBeNil)
 
-		command, waitFn := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			env: map[string]string{
@@ -269,9 +305,65 @@ exit 0
 			fmt.Sprintf("dev --port %d", frontendPort),
 		})
 
-		convey.So(command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
-		convey.So(waitFn(), convey.ShouldBeNil)
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
+}
+
+func startDelayedHTTPServerForTest(t *testing.T, port int, delay time.Duration) {
+	t.Helper()
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write([]byte("[]"))
+		}),
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		time.Sleep(delay)
+
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		errCh <- server.Serve(listener)
+	}()
+
+	t.Cleanup(func() {
+		_ = server.Close()
+
+		select {
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				t.Errorf("delayed HTTP server failed: %v", err)
+			}
+		default:
+		}
+	})
+}
+
+type runDevProcess struct {
+	Command *exec.Cmd
+	stdout  *bytes.Buffer
+	stderr  *bytes.Buffer
+}
+
+func (process *runDevProcess) Wait() error {
+	err := process.Command.Wait()
+	if err != nil {
+		return fmt.Errorf("%w\nstdout:\n%s\nstderr:\n%s", err, process.stdout.String(), process.stderr.String())
+	}
+
+	return nil
+}
+
+func (process *runDevProcess) Stderr() string {
+	return process.stderr.String()
 }
 
 type runDevStartOptions struct {
@@ -282,7 +374,7 @@ type runDevStartOptions struct {
 	env          map[string]string
 }
 
-func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOptions) (*exec.Cmd, func() error) {
+func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOptions) *runDevProcess {
 	t.Helper()
 
 	args := []string{
@@ -323,13 +415,10 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 		}
 	})
 
-	return command, func() error {
-		err := command.Wait()
-		if err != nil {
-			return fmt.Errorf("%w\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
-		}
-
-		return nil
+	return &runDevProcess{
+		Command: command,
+		stdout:  stdout,
+		stderr:  stderr,
 	}
 }
 
