@@ -57,6 +57,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         headers.set("content-disposition", contentDisposition);
     }
 
+    if (download !== "true") {
+        headers.set("content-security-policy", "sandbox");
+    }
+
     return new NextResponse(response.body, {
         status: response.status,
         headers,

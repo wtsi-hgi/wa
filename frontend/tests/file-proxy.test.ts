@@ -36,6 +36,7 @@ describe("P1 file content streaming API route", () => {
         );
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toBe("image/png");
+        expect(response.headers.get("content-security-policy")).toBe("sandbox");
         expect(new Uint8Array(await response.arrayBuffer())).toEqual(body);
     });
 
@@ -63,6 +64,7 @@ describe("P1 file content streaming API route", () => {
         expect(response.headers.get("content-disposition")).toBe(
             'attachment; filename="data.csv.gz"',
         );
+        expect(response.headers.get("content-security-policy")).toBeNull();
     });
 
     it("forwards error status and JSON when the Go backend rejects access", async () => {
