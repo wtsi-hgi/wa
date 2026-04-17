@@ -56,7 +56,6 @@ export type FilePreviewError = {
 };
 
 export type FilePreviewProps = {
-    resultId: string;
     file: FileEntry;
     content?: { content: string; contentType: string };
     error?: FilePreviewError;

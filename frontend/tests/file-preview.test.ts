@@ -33,7 +33,6 @@ function renderPreview(props: Partial<FilePreviewProps> = {}) {
         createElement(FilePreview, {
             file: buildFile(),
             proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.txt",
-            resultId: "result-1",
             ...props,
         }),
     );

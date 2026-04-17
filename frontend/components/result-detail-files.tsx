@@ -238,7 +238,6 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                             file={selectedFile}
                             isLoading={isLoading}
                             proxyUrl={buildFileUrl(resultId, selectedFile.path)}
-                            resultId={resultId}
                         />
                     </div>
                 ) : (
