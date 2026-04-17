@@ -205,5 +205,9 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 
-	_, _ = io.Copy(w, reader)
+	if download {
+		_, _ = io.Copy(w, reader)
+	} else {
+		_, _ = io.CopyN(w, reader, s.maxPreviewBytes)
+	}
 }

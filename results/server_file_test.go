@@ -202,6 +202,22 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "image/png")
 	})
+
+	convey.Convey("A1.13: Given a gzipped file whose decompressed content exceeds maxPreviewBytes, when previewed, then the response body is truncated to the limit", t, func() {
+		largeContent := bytes.Repeat([]byte("x"), 200)
+		compressed, _ := gzipFileBytesForTest(t, "data.csv", largeContent)
+		server, resultID, path := newFileServerScenarioForTestWithOptions(t, []ServerOption{WithMaxPreviewBytes(50)}, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "data.csv.gz"), compressed)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 11, 0, 0, time.UTC), Size: int64(len(compressed)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Body.Len(), convey.ShouldBeLessThanOrEqualTo, 50)
+		convey.So(response.Body.Bytes(), convey.ShouldResemble, largeContent[:50])
+	})
 }
 
 func newFileServerScenarioForTest(t *testing.T, files func(root string) []FileEntry) (*Server, string, string) {
