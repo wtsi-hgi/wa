@@ -69,6 +69,7 @@ func TestNewRootCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "--port")
 		convey.So(output, convey.ShouldContainSubstring, "--db")
 		convey.So(output, convey.ShouldContainSubstring, "--seqmeta-url")
+		convey.So(output, convey.ShouldContainSubstring, "WA_SEQMETA_BACKEND_URL")
 		convey.So(output, convey.ShouldContainSubstring, "--seqmeta-timeout")
 	})
 

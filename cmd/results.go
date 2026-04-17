@@ -790,7 +790,7 @@ func newResultsServeCommand() *cobra.Command {
 
 	command.Flags().IntVar(&port, "port", 8080, "Port to bind")
 	command.Flags().StringVar(&dbPath, "db", "results.db", "SQLite database path or MySQL DSN")
-	command.Flags().StringVar(&seqmetaURL, "seqmeta-url", "", "Base URL for seqmeta validation")
+	command.Flags().StringVar(&seqmetaURL, "seqmeta-url", firstEnv("WA_SEQMETA_BACKEND_URL"), "Base URL for seqmeta validation (defaults to WA_SEQMETA_BACKEND_URL)")
 	command.Flags().DurationVar(&seqmetaTimeout, "seqmeta-timeout", 30*time.Second, "Timeout for seqmeta validation requests")
 
 	return command

@@ -40,6 +40,20 @@ import (
 	"github.com/wtsi-hgi/wa/results"
 )
 
+func TestResultsServeCommandSeqmetaURLFallback(t *testing.T) {
+	t.Setenv("WA_SEQMETA_BACKEND_URL", "http://seqmeta.example")
+
+	command := newResultsServeCommand()
+	flag := command.Flags().Lookup("seqmeta-url")
+	if flag == nil {
+		t.Fatal("expected seqmeta-url flag")
+	}
+
+	convey.Convey("results serve falls back to WA_SEQMETA_BACKEND_URL when --seqmeta-url is unset", t, func() {
+		convey.So(flag.DefValue, convey.ShouldEqual, "http://seqmeta.example")
+	})
+}
+
 func TestResultsServeCommand(t *testing.T) {
 	originalListen := listenFunc
 	defer func() { listenFunc = originalListen }()
