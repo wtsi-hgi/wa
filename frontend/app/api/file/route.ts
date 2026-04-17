@@ -26,7 +26,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
 
     if (!response.ok) {
-        const body = await response.json();
+        const body = await response
+            .json()
+            .catch(() => ({ error: "unexpected error" }));
         const headers = new Headers();
 
         if (response.status === 413) {
