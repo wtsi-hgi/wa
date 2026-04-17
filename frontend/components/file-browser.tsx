@@ -10,7 +10,7 @@ import {
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { type FileEntry } from "@/lib/contracts";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 
 type FileBrowserProps = {
     files: FileEntry[];
@@ -143,26 +143,6 @@ export function buildFileTree(files: FileEntry[]): TreeNode[] {
     }
 
     return roots.map(aggregateTree).sort(compareNodes);
-}
-
-function formatBytes(size: number | undefined): string {
-    if (size === undefined) {
-        return "Unknown size";
-    }
-
-    if (size < 1024) {
-        return `${size} B`;
-    }
-
-    if (size < 1024 * 1024) {
-        return `${(size / 1024).toFixed(1)} KB`;
-    }
-
-    if (size < 1024 * 1024 * 1024) {
-        return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-    }
-
-    return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function formatMtime(mtime: string | undefined): string {

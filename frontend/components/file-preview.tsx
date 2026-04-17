@@ -19,6 +19,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import type { FileEntry } from "@/lib/contracts";
+import { formatBytes } from "@/lib/utils";
 
 hljs.registerLanguage("json", json);
 hljs.registerLanguage("markdown", markdownLanguage);
@@ -119,26 +120,6 @@ function buildDownloadUrl(proxyUrl: string): string {
     }
 
     return `${proxyUrl}${proxyUrl.includes("?") ? "&" : "?"}download=true`;
-}
-
-function formatBytes(size: number | undefined): string {
-    if (size === undefined) {
-        return "Unknown size";
-    }
-
-    if (size < 1024) {
-        return `${size} B`;
-    }
-
-    if (size < 1024 * 1024) {
-        return `${(size / 1024).toFixed(1)} KB`;
-    }
-
-    if (size < 1024 * 1024 * 1024) {
-        return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-    }
-
-    return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function formatTimestamp(value: string): string {
