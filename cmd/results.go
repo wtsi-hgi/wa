@@ -161,6 +161,33 @@ func newResultsCommand() *cobra.Command {
 	return command
 }
 
+func validateResultsSQLiteDBPath(dsn string) error {
+	trimmedDSN := strings.TrimSpace(dsn)
+	if trimmedDSN == "" || trimmedDSN == ":memory:" || strings.HasPrefix(trimmedDSN, "file:") {
+		return nil
+	}
+
+	dirPath := filepath.Dir(trimmedDSN)
+	if dirPath == "." {
+		return nil
+	}
+
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("results database directory does not exist: %s", dirPath)
+		}
+
+		return fmt.Errorf("results database directory cannot be used: %w", err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("results database directory cannot be used: %s is not a directory", dirPath)
+	}
+
+	return nil
+}
+
 func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var requester string
 	var operator string
@@ -771,6 +798,11 @@ func newResultsServeCommand() *cobra.Command {
 
 func openResultsDB(dsn string) (*sql.DB, error) {
 	driverName := resultsDBDriverName(dsn)
+	if driverName == "sqlite" {
+		if err := validateResultsSQLiteDBPath(dsn); err != nil {
+			return nil, err
+		}
+	}
 
 	db, err := sql.Open(driverName, dsn)
 	if err != nil {

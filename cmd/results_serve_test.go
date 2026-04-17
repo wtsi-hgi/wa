@@ -32,6 +32,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -113,6 +114,16 @@ func TestResultsServeCommand(t *testing.T) {
 		_, err := executeRootCommandForTest(t, []string{"results", "serve", "--port", "abc"})
 
 		convey.So(err, convey.ShouldNotBeNil)
+	})
+
+	convey.Convey("results serve reports a clear error when the SQLite database directory does not exist", t, func() {
+		dbPath := filepath.Join(t.TempDir(), "missing", "results.db")
+
+		output, err := executeRootCommandForTest(t, []string{"results", "serve", "--port", "8725", "--db", dbPath})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "results database directory does not exist")
+		convey.So(output, convey.ShouldContainSubstring, filepath.Dir(dbPath))
 	})
 
 	convey.Convey("SQLite paths containing @ still use the sqlite driver", t, func() {
