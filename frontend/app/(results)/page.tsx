@@ -1,4 +1,4 @@
-import { DailyChart } from "@/components/daily-chart";
+import { DailyChartPanel } from "@/components/daily-chart-panel";
 import { DashboardToast } from "@/components/dashboard-toast";
 import { FilterBuilder } from "@/components/filter-builder";
 import { ResultsTable } from "@/components/results-table";
@@ -179,7 +179,7 @@ export default async function ResultsLandingPage({
         todayCount={todayCount}
       />
 
-      <DailyChart data={stats.daily} />
+      <DailyChartPanel data={stats.daily} />
 
       <ResultsTable
         data={tableData}

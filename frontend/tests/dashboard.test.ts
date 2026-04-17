@@ -1,10 +1,24 @@
+/**
+ * @vitest-environment jsdom
+ */
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, createElement } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToStaticMarkup, renderToString } from "react-dom/server";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import type {
   DailyCount,
@@ -42,6 +56,23 @@ vi.mock("@/app/(results)/actions", () => ({
   fetchFileContent: fetchFileContentMock,
   validateIdentifier: validateIdentifierMock,
 }));
+
+beforeAll(() => {
+  class ResizeObserverStub {
+    observe() {}
+
+    unobserve() {}
+
+    disconnect() {}
+  }
+
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+});
+
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
 
 function buildResultSet(index: number): ResultSet {
   const day = String((index % 9) + 1).padStart(2, "0");
@@ -98,6 +129,7 @@ async function renderDashboard(
 
 describe("J1 dashboard with stats, search, and recent results", () => {
   afterEach(() => {
+    document.body.innerHTML = "";
     vi.clearAllMocks();
     vi.resetModules();
   });
@@ -153,6 +185,78 @@ describe("J1 dashboard with stats, search, and recent results", () => {
     );
 
     expect(countOccurrences(markup, 'data-daily-bar="true"')).toBe(30);
+  });
+
+  it("server-renders a chart shell instead of Recharts markup on the dashboard", async () => {
+    fetchStatsMock.mockResolvedValue(buildStats());
+    searchResultsMock.mockResolvedValue([]);
+
+    const markup = await renderDashboard();
+
+    expect(markup).toContain('data-chart-shell-bar="latest"');
+    expect(markup).not.toContain("recharts-responsive-container");
+  });
+
+  it("hydrates the landing page without recoverable mismatches and keeps Add filter interactive", async () => {
+    fetchStatsMock.mockResolvedValue(
+      buildStats({
+        daily: buildDailyCounts(30, 5),
+        recent: Array.from({ length: 3 }, (_, index) =>
+          buildResultSet(index + 1),
+        ),
+      }),
+    );
+    searchResultsMock.mockResolvedValue([]);
+
+    const pageModule = await import("@/app/(results)/page");
+    const Page = pageModule.default;
+    const serverMarkup = renderToString(
+      await Page({ searchParams: Promise.resolve({}) }),
+    );
+    const container = document.createElement("div");
+    const recoverableErrors: Error[] = [];
+
+    document.body.appendChild(container);
+    container.innerHTML = serverMarkup;
+
+    expect(
+      container.querySelector('[data-chart-shell-bar="latest"]'),
+    ).not.toBeNull();
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+
+    await act(async () => {
+      root = hydrateRoot(
+        container,
+        await Page({ searchParams: Promise.resolve({}) }),
+        {
+          onRecoverableError: (error) => {
+            recoverableErrors.push(error);
+          },
+        },
+      );
+    });
+
+    await waitFor(() => {
+      expect(
+        container.querySelector(".recharts-responsive-container"),
+      ).not.toBeNull();
+    });
+
+    expect(recoverableErrors).toHaveLength(0);
+    expect(
+      screen.queryByRole("dialog", { name: /search builder filter panel/i }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+
+    expect(
+      screen.getByRole("dialog", { name: /search builder filter panel/i }),
+    ).toBeTruthy();
+
+    await act(async () => {
+      root?.unmount();
+    });
   });
 
   it("uses concise end-user copy in the dashboard header and chart", async () => {
