@@ -34,6 +34,29 @@ describe("K2 study combobox", () => {
         expect(screen.queryByRole("button", { name: /cancer study/i })).toBeNull();
     });
 
+    it("shows matching studies when the user types a study LIMS ID", async () => {
+        const { StudyCombobox } = await import("@/components/study-combobox");
+
+        render(
+            createElement(StudyCombobox, {
+                onSelect: vi.fn(),
+                studies: [
+                    { id_study_lims: "6568", name: "RNA Seq" },
+                    { id_study_lims: "7777", name: "Cancer Study" },
+                ],
+            }),
+        );
+
+        const input = screen.getByLabelText(/^study$/i);
+
+        fireEvent.change(input, { target: { value: "6568" } });
+
+        expect(
+            await screen.findByRole("button", { name: /rna seq/i }),
+        ).not.toBeNull();
+        expect(screen.queryByRole("button", { name: /cancer study/i })).toBeNull();
+    });
+
     it("calls onSelect with the selected study id", async () => {
         const { StudyCombobox } = await import("@/components/study-combobox");
         const onSelect = vi.fn();

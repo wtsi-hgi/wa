@@ -18,7 +18,8 @@ export function StudyCombobox({ onSelect, studies = [] }: StudyComboboxProps) {
             studies.filter(
                 (study) =>
                     normalizedQuery.length === 0 ||
-                    study.name.toLowerCase().includes(normalizedQuery),
+                    study.name.toLowerCase().includes(normalizedQuery) ||
+                    study.id_study_lims.toLowerCase().includes(normalizedQuery),
             ),
         [normalizedQuery, studies],
     );
