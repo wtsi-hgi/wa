@@ -7,10 +7,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
-    DailyCount,
-    ResultSet,
-    SearchResult,
-    StatsResult,
+  DailyCount,
+  ResultSet,
+  SearchResult,
+  StatsResult,
 } from "@/lib/contracts";
 
 const fetchStatsMock = vi.fn();
@@ -26,198 +26,230 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(testDir, "..");
 
 vi.mock("next/navigation", () => ({
-    usePathname: () => "/",
-    useRouter: () => ({
-        push: vi.fn(),
-    }),
+  usePathname: () => "/",
+  useRouter: () => ({
+    push: vi.fn(),
+  }),
 }));
 
 vi.mock("@/app/(results)/actions", () => ({
-    fetchStats: fetchStatsMock,
-    searchResults: searchResultsMock,
-    fetchMetaKeys: fetchMetaKeysMock,
-    fetchStudies: fetchStudiesMock,
-    fetchResult: fetchResultMock,
-    fetchFiles: fetchFilesMock,
-    fetchFileContent: fetchFileContentMock,
-    validateIdentifier: validateIdentifierMock,
+  fetchStats: fetchStatsMock,
+  searchResults: searchResultsMock,
+  fetchMetaKeys: fetchMetaKeysMock,
+  fetchStudies: fetchStudiesMock,
+  fetchResult: fetchResultMock,
+  fetchFiles: fetchFilesMock,
+  fetchFileContent: fetchFileContentMock,
+  validateIdentifier: validateIdentifierMock,
 }));
 
 function buildResultSet(index: number): ResultSet {
-    const day = String((index % 9) + 1).padStart(2, "0");
+  const day = String((index % 9) + 1).padStart(2, "0");
 
-    return {
-        id: `result-${index}`,
-        pipeline_identifier: `gh://repo/workflow-${index}.nf`,
-        run_key: `runid=${1000 + index}`,
-        requester: index % 2 === 0 ? "alice" : "bob",
-        operator: "operator-1",
-        command: `nextflow run workflow-${index}.nf`,
-        pipeline_name: `pipeline-${index % 3}`,
-        pipeline_version: `1.${index}.0`,
-        output_directory: `/tmp/results/${index}`,
-        metadata: {
-            seqmeta_sampleid: `SANG${index}`,
-        },
-        created_at: `2026-04-${day}T10:00:00Z`,
-        updated_at: `2026-04-${day}T10:30:00Z`,
-    };
+  return {
+    id: `result-${index}`,
+    pipeline_identifier: `gh://repo/workflow-${index}.nf`,
+    run_key: `runid=${1000 + index}`,
+    requester: index % 2 === 0 ? "alice" : "bob",
+    operator: "operator-1",
+    command: `nextflow run workflow-${index}.nf`,
+    pipeline_name: `pipeline-${index % 3}`,
+    pipeline_version: `1.${index}.0`,
+    output_directory: `/tmp/results/${index}`,
+    metadata: {
+      seqmeta_sampleid: `SANG${index}`,
+    },
+    created_at: `2026-04-${day}T10:00:00Z`,
+    updated_at: `2026-04-${day}T10:30:00Z`,
+  };
 }
 
 function buildDailyCounts(totalDays: number, todayCount: number): DailyCount[] {
-    return Array.from({ length: totalDays }, (_, index) => ({
-        date: `2026-03-${String(index + 1).padStart(2, "0")}`,
-        count: index === totalDays - 1 ? todayCount : index % 4,
-    }));
+  return Array.from({ length: totalDays }, (_, index) => ({
+    date: `2026-03-${String(index + 1).padStart(2, "0")}`,
+    count: index === totalDays - 1 ? todayCount : index % 4,
+  }));
 }
 
 function buildStats(overrides: Partial<StatsResult> = {}): StatsResult {
-    return {
-        total: 0,
-        recent: [],
-        daily: buildDailyCounts(30, 0),
-        pipelines: [],
-        ...overrides,
-    };
+  return {
+    total: 0,
+    recent: [],
+    daily: buildDailyCounts(30, 0),
+    pipelines: [],
+    ...overrides,
+  };
 }
 
 function countOccurrences(markup: string, needle: string): number {
-    return markup.match(new RegExp(needle, "g"))?.length ?? 0;
+  return markup.match(new RegExp(needle, "g"))?.length ?? 0;
 }
 
 async function renderDashboard(
-    searchParams?: Record<string, string | string[]>,
+  searchParams?: Record<string, string | string[]>,
 ) {
-    const pageModule = await import("@/app/(results)/page");
-    const Page = pageModule.default;
+  const pageModule = await import("@/app/(results)/page");
+  const Page = pageModule.default;
 
-    return renderToStaticMarkup(
-        await Page({ searchParams: Promise.resolve(searchParams ?? {}) }),
-    );
+  return renderToStaticMarkup(
+    await Page({ searchParams: Promise.resolve(searchParams ?? {}) }),
+  );
 }
 
 describe("J1 dashboard with stats, search, and recent results", () => {
-    afterEach(() => {
-        vi.clearAllMocks();
-        vi.resetModules();
-    });
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
 
-    it("composes the dashboard page from the shared filter builder and results table components", () => {
-        const pageSource = readFileSync(
-            path.join(frontendRoot, "app", "(results)", "page.tsx"),
-            "utf8",
-        );
+  it("composes the dashboard page from the shared filter builder and results table components", () => {
+    const pageSource = readFileSync(
+      path.join(frontendRoot, "app", "(results)", "page.tsx"),
+      "utf8",
+    );
 
-        expect(pageSource).toContain(
-            'import { FilterBuilder } from "@/components/filter-builder"',
-        );
-        expect(pageSource).toContain(
-            'import { ResultsTable } from "@/components/results-table"',
-        );
-        expect(pageSource).toContain("<FilterBuilder");
-        expect(pageSource).toContain("currentFilters={resolvedSearchParams}");
-        expect(pageSource).toContain("metaKeys={metaKeys}");
-        expect(pageSource).toContain("seqmetaAvailable={seqmetaAvailable}");
-        expect(pageSource).toContain("<ResultsTable");
-        expect(pageSource).not.toContain("function ResultsTable(");
-    });
+    expect(pageSource).toContain(
+      'import { FilterBuilder } from "@/components/filter-builder"',
+    );
+    expect(pageSource).toContain(
+      'import { ResultsTable } from "@/components/results-table"',
+    );
+    expect(pageSource).toContain("<FilterBuilder");
+    expect(pageSource).toContain("currentFilters={resolvedSearchParams}");
+    expect(pageSource).toContain("metaKeys={metaKeys}");
+    expect(pageSource).toContain("seqmetaAvailable={seqmetaAvailable}");
+    expect(pageSource).toContain("<ResultsTable");
+    expect(pageSource).not.toContain("function ResultsTable(");
+  });
 
-    it("shows total result sets, pipeline count, and today's registrations in the stat cards", async () => {
-        fetchStatsMock.mockResolvedValue(
-            buildStats({
-                total: 42,
-                pipelines: [
-                    { pipeline_name: "alpha", count: 10 },
-                    { pipeline_name: "beta", count: 7 },
-                    { pipeline_name: "gamma", count: 4 },
-                ],
-                daily: buildDailyCounts(30, 5),
-            }),
-        );
-        searchResultsMock.mockResolvedValue([]);
+  it("shows total result sets, pipeline count, and today's registrations in the stat cards", async () => {
+    fetchStatsMock.mockResolvedValue(
+      buildStats({
+        total: 42,
+        pipelines: [
+          { pipeline_name: "alpha", count: 10 },
+          { pipeline_name: "beta", count: 7 },
+          { pipeline_name: "gamma", count: 4 },
+        ],
+        daily: buildDailyCounts(30, 5),
+      }),
+    );
+    searchResultsMock.mockResolvedValue([]);
 
-        const markup = await renderDashboard();
+    const markup = await renderDashboard();
 
-        expect(markup).toContain('data-stat-card="total">42<');
-        expect(markup).toContain('data-stat-card="pipelines">3<');
-        expect(markup).toContain('data-stat-card="today">5<');
-    });
+    expect(markup).toContain('data-stat-card="total">42<');
+    expect(markup).toContain('data-stat-card="pipelines">3<');
+    expect(markup).toContain('data-stat-card="today">5<');
+  });
 
-    it("renders 30 daily bars when the chart receives 30 entries", async () => {
-        const { DailyChart } = await import("@/components/daily-chart");
+  it("renders 30 daily bars when the chart receives 30 entries", async () => {
+    const { DailyChart } = await import("@/components/daily-chart");
 
-        const markup = renderToStaticMarkup(
-            createElement(DailyChart, {
-                data: buildDailyCounts(30, 5),
-            }),
-        );
+    const markup = renderToStaticMarkup(
+      createElement(DailyChart, {
+        data: buildDailyCounts(30, 5),
+      }),
+    );
 
-        expect(countOccurrences(markup, 'data-daily-bar="true"')).toBe(30);
-    });
+    expect(countOccurrences(markup, 'data-daily-bar="true"')).toBe(30);
+  });
 
-    it("shows the 10 recent result rows when there are no search params", async () => {
-        fetchStatsMock.mockResolvedValue(
-            buildStats({
-                recent: Array.from({ length: 10 }, (_, index) =>
-                    buildResultSet(index + 1),
-                ),
-            }),
-        );
-        searchResultsMock.mockResolvedValue([]);
+  it("uses concise end-user copy in the dashboard header and chart", async () => {
+    fetchStatsMock.mockResolvedValue(buildStats());
+    searchResultsMock.mockResolvedValue([]);
 
-        const markup = await renderDashboard();
+    const markup = await renderDashboard();
 
-        expect(searchResultsMock).not.toHaveBeenCalled();
-        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(10);
-    });
+    expect(markup).toContain(
+      "Track recent registrations and search result sets.",
+    );
+    expect(markup).toContain(
+      "See the last 30 days of activity, review recent results, or narrow the dashboard with filters.",
+    );
+    expect(markup).toContain(
+      "Keep recent activity in view while you filter and review results.",
+    );
+    expect(markup).toContain(
+      "Daily registrations for the last 30 days, with the newest day highlighted.",
+    );
+    expect(markup).not.toContain(
+      "Registrations, pipeline flow, and search entry in one landing view.",
+    );
+    expect(markup).not.toContain(
+      "Review the last 30 days at a glance, then pivot into recent result sets or a targeted search without leaving the dashboard.",
+    );
+    expect(markup).not.toContain(
+      "The chart and cards below stay visible even during filtered views, so search doesn&apos;t hide the broader system context.",
+    );
+    expect(markup).not.toContain(
+      "Recent throughput stays readable on wide and narrow screens, with the newest day lifted in accent colour.",
+    );
+  });
 
-    it("calls searchResults with repeated string arrays and shows search rows when params are present", async () => {
-        fetchStatsMock.mockResolvedValue(
-            buildStats({
-                recent: Array.from({ length: 10 }, (_, index) =>
-                    buildResultSet(index + 1),
-                ),
-            }),
-        );
-        searchResultsMock.mockResolvedValue([
-            buildResultSet(21),
-            {
-                result_set: buildResultSet(22),
-                matched_samples: ["SANG22", "SANG77"],
-            } satisfies SearchResult,
-        ]);
+  it("shows the 10 recent result rows when there are no search params", async () => {
+    fetchStatsMock.mockResolvedValue(
+      buildStats({
+        recent: Array.from({ length: 10 }, (_, index) =>
+          buildResultSet(index + 1),
+        ),
+      }),
+    );
+    searchResultsMock.mockResolvedValue([]);
 
-        const markup = await renderDashboard({ user: "alice" });
+    const markup = await renderDashboard();
 
-        expect(searchResultsMock).toHaveBeenCalledWith({ user: ["alice"] });
-        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
-        expect(markup).toContain("Showing search results");
-    });
+    expect(searchResultsMock).not.toHaveBeenCalled();
+    expect(countOccurrences(markup, 'data-result-row="true"')).toBe(10);
+  });
 
-    it("shows matched samples for study-driven searches", async () => {
-        fetchStatsMock.mockResolvedValue(buildStats());
-        searchResultsMock.mockResolvedValue([
-            {
-                result_set: buildResultSet(22),
-                matched_samples: ["SANG22", "SANG77"],
-            } satisfies SearchResult,
-        ]);
+  it("calls searchResults with repeated string arrays and shows search rows when params are present", async () => {
+    fetchStatsMock.mockResolvedValue(
+      buildStats({
+        recent: Array.from({ length: 10 }, (_, index) =>
+          buildResultSet(index + 1),
+        ),
+      }),
+    );
+    searchResultsMock.mockResolvedValue([
+      buildResultSet(21),
+      {
+        result_set: buildResultSet(22),
+        matched_samples: ["SANG22", "SANG77"],
+      } satisfies SearchResult,
+    ]);
 
-        const markup = await renderDashboard({ study_id: "6568" });
+    const markup = await renderDashboard({ user: "alice" });
 
-        expect(searchResultsMock).toHaveBeenCalledWith({ study_id: ["6568"] });
-        expect(markup).toContain("Matched Samples");
-        expect(markup).toContain("SANG22, SANG77");
-    });
+    expect(searchResultsMock).toHaveBeenCalledWith({ user: ["alice"] });
+    expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
+    expect(markup).toContain("Showing search results");
+  });
 
-    it("shows an error toast message and empty state when stats loading fails", async () => {
-        fetchStatsMock.mockRejectedValue(new Error("stats failed"));
-        searchResultsMock.mockResolvedValue([]);
+  it("shows matched samples for study-driven searches", async () => {
+    fetchStatsMock.mockResolvedValue(buildStats());
+    searchResultsMock.mockResolvedValue([
+      {
+        result_set: buildResultSet(22),
+        matched_samples: ["SANG22", "SANG77"],
+      } satisfies SearchResult,
+    ]);
 
-        const markup = await renderDashboard();
+    const markup = await renderDashboard({ study_id: "6568" });
 
-        expect(markup).toContain('data-toast-message="stats failed"');
-        expect(markup).toContain("No recent results yet.");
-        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(0);
-    });
+    expect(searchResultsMock).toHaveBeenCalledWith({ study_id: ["6568"] });
+    expect(markup).toContain("Matched Samples");
+    expect(markup).toContain("SANG22, SANG77");
+  });
+
+  it("shows an error toast message and empty state when stats loading fails", async () => {
+    fetchStatsMock.mockRejectedValue(new Error("stats failed"));
+    searchResultsMock.mockResolvedValue([]);
+
+    const markup = await renderDashboard();
+
+    expect(markup).toContain('data-toast-message="stats failed"');
+    expect(markup).toContain("No recent results yet.");
+    expect(countOccurrences(markup, 'data-result-row="true"')).toBe(0);
+  });
 });
