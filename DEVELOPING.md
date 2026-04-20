@@ -43,6 +43,9 @@ seqmeta validation path when enabled, and starts the Next.js dev server:
 # Install frontend dependencies first
 cd frontend && pnpm install && cd ..
 
+# Optional: copy the root env template to override run/test ports locally
+cp .env.example .env
+
 # Start everything
 make run
 ```
@@ -64,6 +67,9 @@ Once ready, the script prints URLs for all services. Logs go to `logs/`.
 Use the top-level `Makefile` for repo-wide development commands:
 
 ```bash
+# Optional: load local overrides for run/test ports and tokens
+cp .env.example .env
+
 # Start the dev environment
 make run
 
@@ -84,10 +90,21 @@ Available targets:
 | `make run` | Calls `./run-dev.sh` to build and start the dev environment |
 | `make lint` | Runs `golangci-lint run ./...` and `pnpm lint` |
 | `make format` | Runs `gofmt`, `cleanorder`, and `prettier --write` |
-| `make test` | Runs `CGO_ENABLED=1 go test -tags netgo --count 1 ./...` and `pnpm test` |
+| `make test` | Runs Go tests, frontend Vitest tests, and frontend Playwright e2e tests |
 
 `run-dev.sh` is intentionally limited to bring-up only. Linting, formatting,
 and testing now live behind `make` targets instead of blocking startup.
+
+The Makefile automatically loads root `.env` if it exists. Use it to pin local
+ports for `make run` and the Playwright-backed portion of `make test`.
+
+Root Makefile environment variables:
+
+| Variable | Default | Used by |
+|----------|---------|---------|
+| `WA_TEST_FRONTEND_PORT` | `3000` | `make run` frontend port and `make test` Playwright frontend port override |
+| `WA_TEST_RESULTS_PORT` | `8090` | `make run` results API port and `make test` Playwright results API port override |
+| `WA_TEST_SEQMETA_PORT` | `8091` | `make run` seqmeta API port and `make test` Playwright seqmeta API port override |
 
 ## Manual Setup
 
@@ -110,10 +127,13 @@ go build -o wa .
 
 ```bash
 cd frontend
-cp .env.example .env.local    # Edit if using non-default ports
+cp .env.example .env.local    # Edit if using non-default backend URLs
 pnpm install
 pnpm dev                      # Starts on http://localhost:3000
 ```
+
+For `make run` and Playwright-backed `make test`, set `WA_TEST_*_PORT` values
+in the repo root `.env` instead.
 
 Frontend environment variables (set in `.env.local` or environment):
 
@@ -165,6 +185,13 @@ For a single entry point across both halves of the repo, use:
 make lint
 make format
 make test
+```
+
+`make test` now includes Playwright e2e coverage in addition to Go and Vitest.
+Install Playwright browsers once before the first run:
+
+```bash
+cd frontend && pnpm exec playwright install
 ```
 
 ### End-to-end tests

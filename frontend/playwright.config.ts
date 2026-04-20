@@ -11,6 +11,7 @@ const portsFileTtlMs = 10 * 60 * 1000;
 type ResolvedPorts = {
     frontendPort: number;
     resultsPort: number;
+    seqmetaPort: number;
 };
 
 function allocatePort(fallback: string): number {
@@ -33,13 +34,19 @@ function allocatePort(fallback: string): number {
 }
 
 function resolvePorts(): ResolvedPorts {
-    const configuredFrontendPort = process.env.PLAYWRIGHT_FRONTEND_PORT;
-    const configuredResultsPort = process.env.PLAYWRIGHT_RESULTS_PORT;
+    const configuredFrontendPort = process.env.WA_TEST_FRONTEND_PORT;
+    const configuredResultsPort = process.env.WA_TEST_RESULTS_PORT;
+    const configuredSeqmetaPort = process.env.WA_TEST_SEQMETA_PORT;
 
-    if (configuredFrontendPort || configuredResultsPort) {
+    if (
+        configuredFrontendPort ||
+        configuredResultsPort ||
+        configuredSeqmetaPort
+    ) {
         return {
             frontendPort: Number.parseInt(configuredFrontendPort ?? "3000", 10),
             resultsPort: Number.parseInt(configuredResultsPort ?? "8090", 10),
+            seqmetaPort: Number.parseInt(configuredSeqmetaPort ?? "8091", 10),
         };
     }
 
@@ -51,7 +58,11 @@ function resolvePorts(): ResolvedPorts {
                 readFileSync(portsFile, "utf8"),
             ) as ResolvedPorts;
 
-            if (parsed.frontendPort > 0 && parsed.resultsPort > 0) {
+            if (
+                parsed.frontendPort > 0 &&
+                parsed.resultsPort > 0 &&
+                parsed.seqmetaPort > 0
+            ) {
                 return parsed;
             }
         }
@@ -62,6 +73,7 @@ function resolvePorts(): ResolvedPorts {
     const allocated = {
         frontendPort: allocatePort("3000"),
         resultsPort: allocatePort("8090"),
+        seqmetaPort: allocatePort("8091"),
     };
 
     mkdirSync(path.dirname(portsFile), { recursive: true });
@@ -70,7 +82,7 @@ function resolvePorts(): ResolvedPorts {
     return allocated;
 }
 
-const { frontendPort, resultsPort } = resolvePorts();
+const { frontendPort, resultsPort, seqmetaPort } = resolvePorts();
 const frontendHealthUrl = `http://127.0.0.1:${frontendPort}/`;
 const frontendStartCommand = [
     `WA_RUN_DEV_FRONTEND_HEALTH_URL=${JSON.stringify(frontendHealthUrl)}`,
@@ -78,7 +90,7 @@ const frontendStartCommand = [
     `WA_RUN_DEV_FRONTEND_DEV_CMD=${JSON.stringify(
         `pnpm exec next build && pnpm exec next start --port ${frontendPort}`,
     )}`,
-    `bash ../run-dev.sh --frontend-port ${frontendPort} --results-port ${resultsPort}`,
+    `bash ../run-dev.sh --frontend-port ${frontendPort} --results-port ${resultsPort} --seqmeta-port ${seqmetaPort}`,
 ].join(" ");
 
 export default defineConfig({

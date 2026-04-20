@@ -3,34 +3,34 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRONTEND_PORT=3000
-RESULTS_PORT=8090
-SEQMETA_PORT=8091
+frontend_port="${WA_TEST_FRONTEND_PORT:-3000}"
+results_port="${WA_TEST_RESULTS_PORT:-8090}"
+seqmeta_port="${WA_TEST_SEQMETA_PORT:-8091}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -f|--frontend-port)
-      FRONTEND_PORT="${2:?missing value for $1}"
+      frontend_port="${2:?missing value for $1}"
       shift 2
       ;;
     --frontend-port=*)
-      FRONTEND_PORT="${1#*=}"
+      frontend_port="${1#*=}"
       shift
       ;;
     -r|--results-port)
-      RESULTS_PORT="${2:?missing value for $1}"
+      results_port="${2:?missing value for $1}"
       shift 2
       ;;
     --results-port=*)
-      RESULTS_PORT="${1#*=}"
+      results_port="${1#*=}"
       shift
       ;;
     -s|--seqmeta-port)
-      SEQMETA_PORT="${2:?missing value for $1}"
+      seqmeta_port="${2:?missing value for $1}"
       shift 2
       ;;
     --seqmeta-port=*)
-      SEQMETA_PORT="${1#*=}"
+      seqmeta_port="${1#*=}"
       shift
       ;;
     -h|--help)
@@ -66,9 +66,13 @@ validate_port() {
   fi
 }
 
-validate_port "$FRONTEND_PORT" "frontend port"
-validate_port "$RESULTS_PORT" "results port"
-validate_port "$SEQMETA_PORT" "seqmeta port"
+validate_port "$frontend_port" "frontend port"
+validate_port "$results_port" "results port"
+validate_port "$seqmeta_port" "seqmeta port"
+
+export WA_TEST_FRONTEND_PORT="$frontend_port"
+export WA_TEST_RESULTS_PORT="$results_port"
+export WA_TEST_SEQMETA_PORT="$seqmeta_port"
 
 TMP_DIR="$REPO_ROOT/.tmp"
 BIN_PATH="$TMP_DIR/wa"
@@ -79,7 +83,7 @@ RESULTS_LOG="$LOG_DIR/results.log"
 SEQMETA_LOG="$LOG_DIR/seqmeta.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
-FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $FRONTEND_PORT}"
+FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $frontend_port}"
 
 find_seqmeta_probe_identifier() {
   node - "$SEED_PATH" <<'NODE'
@@ -120,15 +124,15 @@ default_seqmeta_health_url() {
 
   probe_identifier="$(find_seqmeta_probe_identifier)"
   if [[ -n "$probe_identifier" ]]; then
-    printf 'http://127.0.0.1:%s/validate/%s' "$SEQMETA_PORT" "$probe_identifier"
+    printf 'http://127.0.0.1:%s/validate/%s' "$seqmeta_port" "$probe_identifier"
     return
   fi
 
-  printf 'http://127.0.0.1:%s/studies' "$SEQMETA_PORT"
+  printf 'http://127.0.0.1:%s/studies' "$seqmeta_port"
 }
 
-RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$RESULTS_PORT/results/stats}"
-FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-http://127.0.0.1:$FRONTEND_PORT/api/health}"
+RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$results_port/results/stats}"
+FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-http://127.0.0.1:$frontend_port/api/health}"
 SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-$(default_seqmeta_health_url)}"
 
 cd "$REPO_ROOT"
@@ -263,14 +267,14 @@ go build -o "$BIN_PATH" .
 
 DB_PATH="$(mktemp "$TMP_DIR/results-dev.XXXXXX.sqlite")"
 export WA_RESULTS_DB_PATH="$DB_PATH"
-export WA_RESULTS_BACKEND_URL="http://127.0.0.1:$RESULTS_PORT"
+export WA_RESULTS_BACKEND_URL="http://127.0.0.1:$results_port"
 unset WA_SEQMETA_BACKEND_URL
 
 : >"$RESULTS_LOG"
 : >"$FRONTEND_LOG"
 
 printf 'Starting results server on %s\n' "$WA_RESULTS_BACKEND_URL"
-"$BIN_PATH" results serve --port "$RESULTS_PORT" --db "$DB_PATH" >"$RESULTS_LOG" 2>&1 &
+"$BIN_PATH" results serve --port "$results_port" --db "$DB_PATH" >"$RESULTS_LOG" 2>&1 &
 PIDS+=("$!")
 
 wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict"
@@ -279,10 +283,10 @@ printf 'Seeding fixtures from %s\n' "$SEED_PATH"
 seed_results >>"$RESULTS_LOG" 2>&1
 
 if [[ -n "${SAGA_API_TOKEN:-}" ]]; then
-  export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$SEQMETA_PORT"
+  export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-  "${BIN_PATH}" seqmeta serve --port "$SEQMETA_PORT" >"$SEQMETA_LOG" 2>&1 &
+  "${BIN_PATH}" seqmeta serve --port "$seqmeta_port" >"$SEQMETA_LOG" 2>&1 &
   PIDS+=("$!")
   wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
 else
@@ -290,7 +294,7 @@ else
 fi
 
 printf '\n[dev]\n' >>"$FRONTEND_LOG"
-printf 'Starting frontend dev server on http://127.0.0.1:%s\n' "$FRONTEND_PORT"
+printf 'Starting frontend dev server on http://127.0.0.1:%s\n' "$frontend_port"
 (
   cd "$FRONTEND_DIR"
   eval "$FRONTEND_DEV_CMD"
@@ -305,7 +309,7 @@ printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
 if [[ -n "${WA_SEQMETA_BACKEND_URL:-}" ]]; then
   printf 'Seqmeta: %s\n' "$WA_SEQMETA_BACKEND_URL"
 fi
-printf 'Frontend: http://127.0.0.1:%s\n' "$FRONTEND_PORT"
+printf 'Frontend: http://127.0.0.1:%s\n' "$frontend_port"
 printf 'Logs: %s\n' "$LOG_DIR"
 
 wait "$FRONTEND_PID"

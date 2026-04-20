@@ -53,6 +53,14 @@ describe("G1 scaffold", () => {
         expect(envExample).toContain("WA_STUDIES_CACHE_TTL_SECONDS=");
     });
 
+    it("documents the root run and test port overrides", () => {
+        const envExample = readFileSync(path.join(repoRoot, ".env.example"), "utf8");
+
+        expect(envExample).toContain("WA_TEST_FRONTEND_PORT=");
+        expect(envExample).toContain("WA_TEST_RESULTS_PORT=");
+        expect(envExample).toContain("WA_TEST_SEQMETA_PORT=");
+    });
+
     it("uses the shadcn new-york style and utility alias", () => {
         const componentsConfig = JSON.parse(
             readFileSync(path.join(frontendRoot, "components.json"), "utf8"),
