@@ -308,6 +308,32 @@ exit 0
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
+
+	convey.Convey("run-dev.sh surfaces frontend test failures instead of exiting silently", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			env: map[string]string{
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "console.error('frontend tests blew up'); process.exit(17)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		err := process.Wait()
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(process.Stderr(), convey.ShouldContainSubstring, "Frontend test step failed")
+		convey.So(process.Stderr(), convey.ShouldContainSubstring, "frontend tests blew up")
+		convey.So(process.Stderr(), convey.ShouldContainSubstring, filepath.Join(repoRoot, "logs", "frontend.log"))
+	})
 }
 
 func startDelayedHTTPServerForTest(t *testing.T, port int, delay time.Duration) {

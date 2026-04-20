@@ -166,6 +166,8 @@ wait_for_http() {
 run_frontend_step() {
   local label="$1"
   local command="$2"
+  local exit_code=0
+  local section_start=""
   shift 2
   local quoted_args=""
 
@@ -177,7 +179,22 @@ run_frontend_step() {
   (
     cd "$FRONTEND_DIR"
     eval "$command$quoted_args"
-  ) >>"$FRONTEND_LOG" 2>&1
+  ) >>"$FRONTEND_LOG" 2>&1 || exit_code=$?
+
+  if (( exit_code == 0 )); then
+    return 0
+  fi
+
+  printf 'Frontend %s step failed; see %s\n' "$label" "$FRONTEND_LOG" >&2
+  section_start="$(grep -n -F "[$label]" "$FRONTEND_LOG" | tail -n 1 | cut -d: -f1 || true)"
+
+  if [[ -n "$section_start" ]]; then
+    sed -n "${section_start},\$p" "$FRONTEND_LOG" >&2
+  else
+    tail -n 20 "$FRONTEND_LOG" >&2 || true
+  fi
+
+  return "$exit_code"
 }
 
 quote_shell_args() {
