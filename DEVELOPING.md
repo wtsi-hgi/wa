@@ -36,15 +36,15 @@ wa/
 ## Quick Start
 
 The `run-dev.sh` script builds the Go binary, starts all backend servers with
-a temporary SQLite database, seeds test fixtures, runs frontend checks, and
-starts the Next.js dev server:
+a temporary SQLite database, seeds test fixtures, waits for the required
+seqmeta validation path when enabled, and starts the Next.js dev server:
 
 ```bash
 # Install frontend dependencies first
 cd frontend && pnpm install && cd ..
 
 # Start everything
-./run-dev.sh
+make run
 ```
 
 Default ports (configurable via flags):
@@ -58,6 +58,36 @@ Default ports (configurable via flags):
 The seqmeta server only starts if `SAGA_API_TOKEN` is set.
 
 Once ready, the script prints URLs for all services. Logs go to `logs/`.
+
+## Makefile workflow
+
+Use the top-level `Makefile` for repo-wide development commands:
+
+```bash
+# Start the dev environment
+make run
+
+# Lint Go and frontend code
+make lint
+
+# Apply formatting for Go and frontend code
+make format
+
+# Run Go and frontend tests
+make test
+```
+
+Available targets:
+
+| Target | Description |
+|--------|-------------|
+| `make run` | Calls `./run-dev.sh` to build and start the dev environment |
+| `make lint` | Runs `golangci-lint run ./...` and `pnpm lint` |
+| `make format` | Runs `gofmt`, `cleanorder`, and `prettier --write` |
+| `make test` | Runs `CGO_ENABLED=1 go test -tags netgo --count 1 ./...` and `pnpm test` |
+
+`run-dev.sh` is intentionally limited to bring-up only. Linting, formatting,
+and testing now live behind `make` targets instead of blocking startup.
 
 ## Manual Setup
 
@@ -99,16 +129,16 @@ Frontend environment variables (set in `.env.local` or environment):
 
 ```bash
 # All tests
-go test ./...
+CGO_ENABLED=1 go test -tags netgo --count 1 ./...
 
 # Specific package
-go test ./results/...
-go test ./saga/...
-go test ./seqmeta/...
-go test ./cmd/...
+CGO_ENABLED=1 go test -tags netgo --count 1 ./results/...
+CGO_ENABLED=1 go test -tags netgo --count 1 ./saga/...
+CGO_ENABLED=1 go test -tags netgo --count 1 ./seqmeta/...
+CGO_ENABLED=1 go test -tags netgo --count 1 ./cmd/...
 
 # With verbose output
-go test -v ./results/...
+CGO_ENABLED=1 go test -tags netgo --count 1 -v ./results/...
 ```
 
 Tests use in-memory SQLite — no external database needed. External API calls
@@ -127,6 +157,14 @@ pnpm lint
 
 # Format check
 pnpm format
+```
+
+For a single entry point across both halves of the repo, use:
+
+```bash
+make lint
+make format
+make test
 ```
 
 ### End-to-end tests

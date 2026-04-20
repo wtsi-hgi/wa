@@ -79,14 +79,57 @@ RESULTS_LOG="$LOG_DIR/results.log"
 SEQMETA_LOG="$LOG_DIR/seqmeta.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
-FRONTEND_LINT_CMD="${WA_RUN_DEV_FRONTEND_LINT_CMD:-pnpm exec eslint --no-error-on-unmatched-pattern}"
-FRONTEND_FORMAT_CMD="${WA_RUN_DEV_FRONTEND_FORMAT_CMD:-pnpm exec prettier --check --ignore-unknown}"
-FRONTEND_TEST_CMD="${WA_RUN_DEV_FRONTEND_TEST_CMD:-pnpm test}"
 FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $FRONTEND_PORT}"
+
+find_seqmeta_probe_identifier() {
+  node - "$SEED_PATH" <<'NODE'
+const fs = require("node:fs");
+
+try {
+  const seedPath = process.argv[2];
+  const registrations = JSON.parse(fs.readFileSync(seedPath, "utf8"));
+
+(function emitFirstSeqmetaIdentifier() {
+  for (const registration of registrations) {
+    const metadata = registration && typeof registration === "object" ? registration.metadata : null;
+    if (!metadata || typeof metadata !== "object") {
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(metadata)) {
+      if (!key.startsWith("seqmeta_")) {
+        continue;
+      }
+
+      const identifier = String(value ?? "").trim();
+      if (identifier !== "") {
+        process.stdout.write(encodeURIComponent(identifier));
+        return;
+      }
+    }
+  }
+})();
+} catch {
+  // Fall back to the broader health endpoint if the fixture file is unavailable.
+}
+NODE
+}
+
+default_seqmeta_health_url() {
+  local probe_identifier=""
+
+  probe_identifier="$(find_seqmeta_probe_identifier)"
+  if [[ -n "$probe_identifier" ]]; then
+    printf 'http://127.0.0.1:%s/validate/%s' "$SEQMETA_PORT" "$probe_identifier"
+    return
+  fi
+
+  printf 'http://127.0.0.1:%s/studies' "$SEQMETA_PORT"
+}
 
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$RESULTS_PORT/results/stats}"
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-http://127.0.0.1:$FRONTEND_PORT/api/health}"
-SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$SEQMETA_PORT/studies}"
+SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-$(default_seqmeta_health_url)}"
 
 cd "$REPO_ROOT"
 
@@ -150,7 +193,7 @@ wait_for_http() {
         return 0
       fi
     else
-      if curl -sS --max-time 2 -o /dev/null "$url" 2>/dev/null; then
+      if curl -fsS --max-time 2 -o /dev/null "$url" 2>/dev/null; then
         return 0
       fi
     fi
@@ -161,140 +204,6 @@ wait_for_http() {
 
   printf 'Timed out waiting for %s at %s\n' "$label" "$url" >&2
   return 1
-}
-
-run_frontend_step() {
-  local label="$1"
-  local command="$2"
-  local exit_code=0
-  local section_start=""
-  shift 2
-  local quoted_args=""
-
-  if (( $# > 0 )); then
-    quoted_args=" $(quote_shell_args "$@")"
-  fi
-
-  printf '\n[%s]\n' "$label" >>"$FRONTEND_LOG"
-  (
-    cd "$FRONTEND_DIR"
-    eval "$command$quoted_args"
-  ) >>"$FRONTEND_LOG" 2>&1 || exit_code=$?
-
-  if (( exit_code == 0 )); then
-    return 0
-  fi
-
-  printf 'Frontend %s step failed; see %s\n' "$label" "$FRONTEND_LOG" >&2
-  section_start="$(grep -n -F "[$label]" "$FRONTEND_LOG" | tail -n 1 | cut -d: -f1 || true)"
-
-  if [[ -n "$section_start" ]]; then
-    sed -n "${section_start},\$p" "$FRONTEND_LOG" >&2
-  else
-    tail -n 20 "$FRONTEND_LOG" >&2 || true
-  fi
-
-  return "$exit_code"
-}
-
-quote_shell_args() {
-  local quoted=()
-  local arg
-
-  for arg in "$@"; do
-    quoted+=("$(printf '%q' "$arg")")
-  done
-
-  printf '%s' "${quoted[*]}"
-}
-
-list_changed_frontend_files() {
-  if [[ -n "${WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD:-}" ]]; then
-    eval "$WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD"
-    return
-  fi
-
-  if ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    return
-  fi
-
-  {
-    git -C "$REPO_ROOT" diff --name-only --diff-filter=ACMR -- frontend
-    git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=ACMR -- frontend
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard -- frontend
-  } | sed -n 's#^frontend/##p' | awk 'NF' | sort -u
-}
-
-is_relevant_frontend_changed_file() {
-  local path="$1"
-
-  case "$path" in
-    ""|/*|../*|*/../*|.next/*|node_modules/*|test-results/*|coverage/*|dist/*|out/*|*.tsbuildinfo)
-      return 1
-      ;;
-    app/*|components/*|e2e/*|lib/*|tests/*)
-      return 0
-      ;;
-    .env.example|.gitignore|.prettierignore|components.json|eslint.config.mjs|next-env.d.ts|next.config.ts|package.json|playwright.config.ts|pnpm-lock.yaml|postcss.config.cjs|tsconfig.json|vitest.config.ts)
-      return 0
-      ;;
-  esac
-
-  return 1
-}
-
-filter_relevant_frontend_changed_files() {
-  local path
-
-  for path in "$@"; do
-    if is_relevant_frontend_changed_file "$path"; then
-      printf '%s\n' "$path"
-    fi
-  done
-}
-
-filter_frontend_lint_files() {
-  local path
-
-  for path in "$@"; do
-    case "$path" in
-      *.js|*.cjs|*.mjs|*.jsx|*.ts|*.tsx|*.cts|*.mts)
-        printf '%s\n' "$path"
-        ;;
-    esac
-  done
-}
-
-run_frontend_changed_file_checks() {
-  local changed_frontend_files=()
-  local relevant_frontend_files=()
-  local lint_files=()
-
-  mapfile -t changed_frontend_files < <(list_changed_frontend_files)
-
-  if (( ${#changed_frontend_files[@]} == 0 )); then
-    printf 'No changed frontend files found; skipping frontend lint and format checks.\n'
-    return
-  fi
-
-  mapfile -t relevant_frontend_files < <(filter_relevant_frontend_changed_files "${changed_frontend_files[@]}")
-
-  if (( ${#relevant_frontend_files[@]} == 0 )); then
-    printf 'No relevant changed frontend files found; skipping frontend lint and format checks.\n'
-    return
-  fi
-
-  printf 'Running frontend lint on %d changed file(s)\n' "${#relevant_frontend_files[@]}"
-  mapfile -t lint_files < <(filter_frontend_lint_files "${relevant_frontend_files[@]}")
-
-  if (( ${#lint_files[@]} == 0 )); then
-    printf 'No lintable changed frontend files found; skipping frontend lint.\n'
-  else
-    run_frontend_step "lint" "$FRONTEND_LINT_CMD" "${lint_files[@]}"
-  fi
-
-  printf 'Running frontend format checks on %d changed file(s)\n' "${#relevant_frontend_files[@]}"
-  run_frontend_step "format" "$FRONTEND_FORMAT_CMD" "${relevant_frontend_files[@]}"
 }
 
 seed_results() {
@@ -375,15 +284,10 @@ if [[ -n "${SAGA_API_TOKEN:-}" ]]; then
   printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
   "${BIN_PATH}" seqmeta serve --port "$SEQMETA_PORT" >"$SEQMETA_LOG" 2>&1 &
   PIDS+=("$!")
-  wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "relaxed"
+  wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
 else
   printf 'seqmeta server skipped because SAGA_API_TOKEN is unset\n' >"$SEQMETA_LOG"
 fi
-
-run_frontend_changed_file_checks
-
-printf 'Running frontend tests\n'
-run_frontend_step "test" "$FRONTEND_TEST_CMD"
 
 printf '\n[dev]\n' >>"$FRONTEND_LOG"
 printf 'Starting frontend dev server on http://127.0.0.1:%s\n' "$FRONTEND_PORT"

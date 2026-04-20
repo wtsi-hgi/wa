@@ -73,16 +73,10 @@ func TestRunDevScript(t *testing.T) {
 		})
 
 		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
-		steps := waitForRunDevStepsForTest(t, snapshotPath+".steps", 3)
 		resultsList := waitForSeededResultsForTest(t, resultsPort)
 
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
 		convey.So(resultsList, convey.ShouldHaveLength, 3)
-		convey.So(steps, convey.ShouldResemble, []string{
-			`lint:["app/results/page.tsx"]`,
-			`format:["app/results/page.tsx","package.json"]`,
-			`test:[]`,
-		})
 		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", resultsPort))
 		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
 		convey.So(snapshot.ResultsDBPath, convey.ShouldNotBeBlank)
@@ -101,7 +95,10 @@ func TestRunDevScript(t *testing.T) {
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
 		seqmetaPort := runDevFreePortForTest(t)
+		healthPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		startDelayedHTTPServerForTest(t, healthPort, 0)
 
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
@@ -116,6 +113,7 @@ func TestRunDevScript(t *testing.T) {
 				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
 				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
 				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+				"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/studies", healthPort),
 			},
 		})
 
@@ -164,6 +162,98 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "Operation timed out")
 	})
 
+	convey.Convey("run-dev.sh waits for seqmeta validate readiness derived from seeded metadata before starting the frontend", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		binDir := t.TempDir()
+		curlLogPath := filepath.Join(t.TempDir(), "seqmeta-curl.log")
+		curlStatePath := filepath.Join(t.TempDir(), "seqmeta-curl.state")
+		curlPath := filepath.Join(binDir, "curl")
+		realCurlPath, err := exec.LookPath("curl")
+		convey.So(err, convey.ShouldBeNil)
+
+		stub := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+url="${!#}"
+
+if [[ "$url" == %q ]]; then
+	if [[ ! -f %q ]]; then
+		printf '%%s\n' "$url" > %q
+	fi
+
+	count=0
+	if [[ -f %q ]]; then
+		count="$(cat %q)"
+	fi
+
+	count=$((count + 1))
+	printf '%%s' "$count" > %q
+
+		if (( count < 8 )); then
+		exit 22
+	fi
+
+	exit 0
+fi
+
+if [[ "$url" == %q ]]; then
+	if [[ ! -f %q ]]; then
+		printf '%%s\n' "$url" > %q
+	fi
+
+		exit 22
+fi
+
+exec %q "$@"
+`,
+			fmt.Sprintf("http://127.0.0.1:%d/validate/SANG001", seqmetaPort),
+			curlLogPath,
+			curlLogPath,
+			curlStatePath,
+			curlStatePath,
+			curlStatePath,
+			fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort),
+			curlLogPath,
+			curlLogPath,
+			realCurlPath,
+		)
+
+		convey.So(os.WriteFile(curlPath, []byte(stub), 0o755), convey.ShouldBeNil)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			env: map[string]string{
+				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"SAGA_API_TOKEN":                        "test-token",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		loggedURL := waitForRunDevStepsForTest(t, curlLogPath, 1)
+		convey.So(loggedURL, convey.ShouldResemble, []string{fmt.Sprintf("http://127.0.0.1:%d/validate/SANG001", seqmetaPort)})
+
+		convey.So(runDevPathExistsWithinForTest(snapshotPath, 1400*time.Millisecond), convey.ShouldBeFalse)
+
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+
+		convey.So(snapshot.SeqmetaBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
 	convey.Convey("R1.7: run-dev.sh skips frontend lint and format checks when no frontend files have changed", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
@@ -174,55 +264,13 @@ func TestRunDevScript(t *testing.T) {
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			env: map[string]string{
-				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
-				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
-				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "require('node:fs').appendFileSync(process.env.WA_RUN_DEV_ENV_SNAPSHOT + '.steps', 'lint\n')"`,
-				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "require('node:fs').appendFileSync(process.env.WA_RUN_DEV_ENV_SNAPSHOT + '.steps', 'format\n')"`,
-				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "require('node:fs').appendFileSync(process.env.WA_RUN_DEV_ENV_SNAPSHOT + '.steps', 'test:' + JSON.stringify(process.argv.slice(1)) + '\n')"`,
-				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
-				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+				"WA_RUN_DEV_ENV_SNAPSHOT":        snapshotPath,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":    fmt.Sprintf(`node %q "$FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL": fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
 			},
 		})
 
 		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
-		steps := waitForRunDevStepsForTest(t, snapshotPath+".steps", 1)
-
-		convey.So(steps, convey.ShouldResemble, []string{
-			`test:[]`,
-		})
-
-		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
-		convey.So(process.Wait(), convey.ShouldBeNil)
-	})
-
-	convey.Convey("R1.8: run-dev.sh ignores generated frontend artifacts when selecting changed files for lint and format", t, func() {
-		repoRoot := runDevRepoRootForTest(t)
-		frontendPort := runDevFreePortForTest(t)
-		resultsPort := runDevFreePortForTest(t)
-		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
-
-		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
-			frontendPort: frontendPort,
-			resultsPort:  resultsPort,
-			env: map[string]string{
-				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
-				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `printf '%s\n' 'node_modules/react/index.js' '.next/server/app.js' 'test-results/results.spec.ts' 'tsconfig.tsbuildinfo' 'app/results/page.tsx' 'package.json'`,
-				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "require('node:fs').appendFileSync(process.env.WA_RUN_DEV_ENV_SNAPSHOT + '.steps', 'lint:' + JSON.stringify(process.argv.slice(1)) + '\n')"`,
-				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "require('node:fs').appendFileSync(process.env.WA_RUN_DEV_ENV_SNAPSHOT + '.steps', 'format:' + JSON.stringify(process.argv.slice(1)) + '\n')"`,
-				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "require('node:fs').appendFileSync(process.env.WA_RUN_DEV_ENV_SNAPSHOT + '.steps', 'test:' + JSON.stringify(process.argv.slice(1)) + '\n')"`,
-				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
-				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
-			},
-		})
-
-		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
-		steps := waitForRunDevStepsForTest(t, snapshotPath+".steps", 3)
-
-		convey.So(steps, convey.ShouldResemble, []string{
-			`lint:["app/results/page.tsx"]`,
-			`format:["app/results/page.tsx","package.json"]`,
-			`test:[]`,
-		})
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -309,31 +357,6 @@ exit 0
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
-	convey.Convey("run-dev.sh surfaces frontend test failures instead of exiting silently", t, func() {
-		repoRoot := runDevRepoRootForTest(t)
-		frontendPort := runDevFreePortForTest(t)
-		resultsPort := runDevFreePortForTest(t)
-
-		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
-			frontendPort: frontendPort,
-			resultsPort:  resultsPort,
-			env: map[string]string{
-				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
-				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
-				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
-				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "console.error('frontend tests blew up'); process.exit(17)"`,
-				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
-				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
-			},
-		})
-
-		err := process.Wait()
-
-		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(process.Stderr(), convey.ShouldContainSubstring, "Frontend test step failed")
-		convey.So(process.Stderr(), convey.ShouldContainSubstring, "frontend tests blew up")
-		convey.So(process.Stderr(), convey.ShouldContainSubstring, filepath.Join(repoRoot, "logs", "frontend.log"))
-	})
 }
 
 func startDelayedHTTPServerForTest(t *testing.T, port int, delay time.Duration) {
@@ -371,6 +394,20 @@ func startDelayedHTTPServerForTest(t *testing.T, port int, delay time.Duration) 
 		default:
 		}
 	})
+}
+
+func runDevPathExistsWithinForTest(path string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if runDevPathExistsForTest(path) {
+			return true
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return runDevPathExistsForTest(path)
 }
 
 type runDevProcess struct {
