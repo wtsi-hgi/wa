@@ -61,6 +61,7 @@ func TestRunDevScript(t *testing.T) {
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `printf '%s\n' 'app/results/page.tsx' 'package.json'`,
@@ -162,7 +163,7 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "Operation timed out")
 	})
 
-	convey.Convey("run-dev.sh waits for seqmeta validate readiness derived from seeded metadata before starting the frontend", t, func() {
+	convey.Convey("run-dev.sh waits for seqmeta studies readiness before starting the frontend by default", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -210,13 +211,13 @@ fi
 
 exec %q "$@"
 `,
-			fmt.Sprintf("http://127.0.0.1:%d/validate/SANG001", seqmetaPort),
-			curlLogPath,
-			curlLogPath,
-			curlStatePath,
-			curlStatePath,
-			curlStatePath,
 			fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort),
+			curlLogPath,
+			curlLogPath,
+			curlStatePath,
+			curlStatePath,
+			curlStatePath,
+			fmt.Sprintf("http://127.0.0.1:%d/validate/SANG001", seqmetaPort),
 			curlLogPath,
 			curlLogPath,
 			realCurlPath,
@@ -242,13 +243,44 @@ exec %q "$@"
 		})
 
 		loggedURL := waitForRunDevStepsForTest(t, curlLogPath, 1)
-		convey.So(loggedURL, convey.ShouldResemble, []string{fmt.Sprintf("http://127.0.0.1:%d/validate/SANG001", seqmetaPort)})
+		convey.So(loggedURL, convey.ShouldResemble, []string{fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort)})
 
 		convey.So(runDevPathExistsWithinForTest(snapshotPath, 1400*time.Millisecond), convey.ShouldBeFalse)
 
 		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
 
 		convey.So(snapshot.SeqmetaBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh tests can explicitly disable an inherited SAGA token without changing product behavior", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		t.Setenv("SAGA_API_TOKEN", "inherited-token")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			env: map[string]string{
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+
+		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -263,6 +295,7 @@ exec %q "$@"
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":        snapshotPath,
 				"WA_RUN_DEV_FRONTEND_DEV_CMD":    fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
@@ -286,6 +319,7 @@ exec %q "$@"
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			startDir:     filepath.Join(repoRoot, "frontend"),
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
@@ -335,6 +369,7 @@ exit 0
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
 			env: map[string]string{
 				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
@@ -357,6 +392,29 @@ exit 0
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
+}
+
+func runDevEnvForTest(unsetKeys []string) []string {
+	blocked := make(map[string]struct{}, len(unsetKeys))
+	for _, key := range unsetKeys {
+		blocked[key] = struct{}{}
+	}
+
+	filtered := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, found := strings.Cut(entry, "=")
+		if !found {
+			continue
+		}
+
+		if _, skip := blocked[key]; skip {
+			continue
+		}
+
+		filtered = append(filtered, entry)
+	}
+
+	return filtered
 }
 
 func startDelayedHTTPServerForTest(t *testing.T, port int, delay time.Duration) {
@@ -434,6 +492,7 @@ type runDevStartOptions struct {
 	resultsPort  int
 	seqmetaPort  int
 	startDir     string
+	unsetEnv     []string
 	env          map[string]string
 }
 
@@ -455,7 +514,7 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 	if options.startDir != "" {
 		command.Dir = options.startDir
 	}
-	command.Env = append(os.Environ(), "CI=1")
+	command.Env = append(runDevEnvForTest(options.unsetEnv), "CI=1")
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	command.Stdout = stdout

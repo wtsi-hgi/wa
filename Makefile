@@ -38,4 +38,4 @@ test-frontend:
 	cd $(FRONTEND_DIR) && pnpm test
 
 test-e2e:
-	cd $(FRONTEND_DIR) && pnpm exec playwright test
+	cd $(FRONTEND_DIR) && WA_TEST_FRONTEND_PORT=$(WA_TEST_FRONTEND_PORT) WA_TEST_RESULTS_PORT=$(WA_TEST_RESULTS_PORT) WA_TEST_SEQMETA_PORT=$(WA_TEST_SEQMETA_PORT) pnpm exec playwright test

@@ -96,7 +96,8 @@ Available targets:
 and testing now live behind `make` targets instead of blocking startup.
 
 The Makefile automatically loads root `.env` if it exists. Use it to pin local
-ports for `make run` and the Playwright-backed portion of `make test`.
+ports for `make run` and the Playwright-backed portion of `make test`, and to
+provide `SAGA_API_TOKEN` for seqmeta-backed development runs.
 
 Root Makefile environment variables:
 

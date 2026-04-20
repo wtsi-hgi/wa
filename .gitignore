@@ -30,6 +30,9 @@ go.work.sum
 # Generated local SQLite state
 seqmeta.db
 
+# Local scratch and generated artifacts
+.tmp/
+
 # Frontend build and package manager artifacts
 frontend/node_modules/
 frontend/.next/

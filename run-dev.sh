@@ -85,55 +85,9 @@ FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $frontend_port}"
 
-find_seqmeta_probe_identifier() {
-  node - "$SEED_PATH" <<'NODE'
-const fs = require("node:fs");
-
-try {
-  const seedPath = process.argv[2];
-  const registrations = JSON.parse(fs.readFileSync(seedPath, "utf8"));
-
-(function emitFirstSeqmetaIdentifier() {
-  for (const registration of registrations) {
-    const metadata = registration && typeof registration === "object" ? registration.metadata : null;
-    if (!metadata || typeof metadata !== "object") {
-      continue;
-    }
-
-    for (const [key, value] of Object.entries(metadata)) {
-      if (!key.startsWith("seqmeta_")) {
-        continue;
-      }
-
-      const identifier = String(value ?? "").trim();
-      if (identifier !== "") {
-        process.stdout.write(encodeURIComponent(identifier));
-        return;
-      }
-    }
-  }
-})();
-} catch {
-  // Fall back to the broader health endpoint if the fixture file is unavailable.
-}
-NODE
-}
-
-default_seqmeta_health_url() {
-  local probe_identifier=""
-
-  probe_identifier="$(find_seqmeta_probe_identifier)"
-  if [[ -n "$probe_identifier" ]]; then
-    printf 'http://127.0.0.1:%s/validate/%s' "$seqmeta_port" "$probe_identifier"
-    return
-  fi
-
-  printf 'http://127.0.0.1:%s/studies' "$seqmeta_port"
-}
-
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$results_port/results/stats}"
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-http://127.0.0.1:$frontend_port/api/health}"
-SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-$(default_seqmeta_health_url)}"
+SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$seqmeta_port/studies}"
 
 cd "$REPO_ROOT"
 
