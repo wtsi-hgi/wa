@@ -31,6 +31,16 @@ const seedPath = path.join(
     "seed.json",
 );
 
+export function buildResultsServerEnv(
+    env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+    const serverEnv = { ...env };
+
+    delete serverEnv.WA_SEQMETA_BACKEND_URL;
+
+    return serverEnv;
+}
+
 function createCommandError(
     command: string,
     stderr: string,
@@ -257,7 +267,7 @@ export default async function setup(): Promise<() => Promise<void>> {
         ["results", "serve", "--port", String(port), "--db", dbPath],
         {
             cwd: repoRoot,
-            env: process.env,
+            env: buildResultsServerEnv(process.env),
             stdio: ["ignore", "pipe", "pipe"],
         },
     );
