@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDownToLine, Expand, FileCode2, Search, X } from "lucide-react";
 import hljs from "highlight.js/lib/core";
@@ -412,10 +413,14 @@ function ImagePreview({
         className="group inline-flex overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]"
         onClick={() => setLightboxOpen(true)}
       >
-        <img
+        <Image
           alt={`${fileName} preview`}
           className="rounded-xl object-contain transition duration-200 group-hover:scale-[1.01]"
           src={proxyUrl}
+          unoptimized
+          width={320}
+          height={240}
+          sizes="320px"
           style={{ maxHeight: "240px", maxWidth: "320px" }}
         />
       </button>
@@ -442,10 +447,14 @@ function ImagePreview({
             >
               <X className="size-4" aria-hidden="true" />
             </button>
-            <img
+            <Image
               alt={`${fileName} full preview`}
               className="max-h-[80vh] max-w-full rounded-[1.5rem] object-contain"
               src={proxyUrl}
+              unoptimized
+              width={1600}
+              height={1200}
+              sizes="100vw"
             />
           </div>
         </div>
@@ -572,10 +581,14 @@ export function FilePreview({
 
           {!isLoading && previewable && renderer === "svg" ? (
             <div className="inline-flex overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-              <img
+              <Image
                 alt={`${fileName} preview`}
                 className="rounded-xl object-contain"
                 src={proxyUrl}
+                unoptimized
+                width={1200}
+                height={1200}
+                sizes="100vw"
                 style={{ maxHeight: "480px", maxWidth: "100%" }}
               />
             </div>
