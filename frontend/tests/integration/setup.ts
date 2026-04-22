@@ -89,6 +89,27 @@ async function runCommand(
     });
 }
 
+function signalProcessGroup(
+    child: ServerProcess,
+    signal: NodeJS.Signals,
+): void {
+    if (child.pid === undefined) {
+        return;
+    }
+
+    try {
+        process.kill(-child.pid, signal);
+    } catch (error) {
+        const processError = error as NodeJS.ErrnoException;
+
+        if (processError.code === "ESRCH") {
+            return;
+        }
+
+        throw error;
+    }
+}
+
 async function getFreePort(): Promise<number> {
     return new Promise<number>((resolve, reject) => {
         const server = createServer();
@@ -218,7 +239,7 @@ async function seedResults(baseUrl: string): Promise<void> {
     }
 }
 
-async function stopProcess(child: ServerProcess): Promise<void> {
+export async function stopProcess(child: ServerProcess): Promise<void> {
     if (child.exitCode !== null || child.killed) {
         return;
     }
@@ -236,11 +257,11 @@ async function stopProcess(child: ServerProcess): Promise<void> {
         };
 
         child.once("exit", finish);
-        child.kill("SIGTERM");
+        signalProcessGroup(child, "SIGTERM");
 
         setTimeout(() => {
             if (child.exitCode === null) {
-                child.kill("SIGKILL");
+                signalProcessGroup(child, "SIGKILL");
             }
 
             finish();
@@ -267,6 +288,7 @@ export default async function setup(): Promise<() => Promise<void>> {
         ["results", "serve", "--port", String(port), "--db", dbPath],
         {
             cwd: repoRoot,
+            detached: true,
             env: buildResultsServerEnv(process.env),
             stdio: ["ignore", "pipe", "pipe"],
         },

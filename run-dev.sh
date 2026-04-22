@@ -249,10 +249,9 @@ fi
 
 printf '\n[dev]\n' >>"$FRONTEND_LOG"
 printf 'Starting frontend dev server on http://127.0.0.1:%s\n' "$frontend_port"
-(
-  cd "$FRONTEND_DIR"
-  eval "$FRONTEND_DEV_CMD"
-) >>"$FRONTEND_LOG" 2>&1 &
+WA_RUN_DEV_FRONTEND_DEV_CMD="$FRONTEND_DEV_CMD" \
+  bash -lc 'cd "$1" && eval "exec $WA_RUN_DEV_FRONTEND_DEV_CMD"' -- "$FRONTEND_DIR" \
+  >>"$FRONTEND_LOG" 2>&1 &
 PIDS+=("$!")
 FRONTEND_PID="$!"
 

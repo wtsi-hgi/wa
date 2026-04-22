@@ -417,6 +417,46 @@ func runDevEnvForTest(unsetKeys []string) []string {
 	return filtered
 }
 
+func terminateRunDevCommandForTest(command *exec.Cmd) {
+	if command == nil || command.Process == nil {
+		return
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_ = command.Wait()
+		close(done)
+	}()
+
+	signalRunDevProcessGroupForTest(command, syscall.SIGTERM)
+
+	select {
+	case <-done:
+		return
+	case <-time.After(5 * time.Second):
+	}
+
+	signalRunDevProcessGroupForTest(command, syscall.SIGKILL)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
+}
+
+func signalRunDevProcessGroupForTest(command *exec.Cmd, signal syscall.Signal) {
+	if command == nil || command.Process == nil || command.Process.Pid <= 0 {
+		return
+	}
+
+	err := syscall.Kill(-command.Process.Pid, signal)
+	if err == nil || errors.Is(err, syscall.ESRCH) {
+		return
+	}
+
+	_ = command.Process.Signal(signal)
+}
+
 func startDelayedHTTPServerForTest(t *testing.T, port int, delay time.Duration) {
 	t.Helper()
 
@@ -468,6 +508,61 @@ func runDevPathExistsWithinForTest(path string, timeout time.Duration) bool {
 	return runDevPathExistsForTest(path)
 }
 
+func TestStartRunDevForTestAutoCleanup(t *testing.T) {
+	repoRoot := runDevRepoRootForTest(t)
+	frontendPort := runDevFreePortForTest(t)
+	resultsPort := runDevFreePortForTest(t)
+	snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+	passed := t.Run("cleanup on subtest teardown closes child listeners", func(t *testing.T) {
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			env: map[string]string{
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+		_ = waitForSeededResultsForTest(t, resultsPort)
+		if process.Command.Process == nil {
+			t.Fatal("run-dev.sh did not start a process")
+		}
+	})
+
+	if !passed {
+		t.Fatal("run-dev cleanup regression subtest failed")
+	}
+	waitForTCPPortToCloseForTest(t, frontendPort)
+	waitForTCPPortToCloseForTest(t, resultsPort)
+}
+
+func waitForTCPPortToCloseForTest(t *testing.T, port int) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("tcp", address, 250*time.Millisecond)
+		if err != nil {
+			return
+		}
+
+		_ = connection.Close()
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for TCP listener on %s to stop", address)
+}
+
 type runDevProcess struct {
 	Command *exec.Cmd
 	stdout  *bytes.Buffer
@@ -514,6 +609,7 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 	if options.startDir != "" {
 		command.Dir = options.startDir
 	}
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Env = append(runDevEnvForTest(options.unsetEnv), "CI=1")
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -533,7 +629,7 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 
 	t.Cleanup(func() {
 		if command.ProcessState == nil || !command.ProcessState.Exited() {
-			_ = command.Process.Signal(syscall.SIGTERM)
+			terminateRunDevCommandForTest(command)
 		}
 	})
 
