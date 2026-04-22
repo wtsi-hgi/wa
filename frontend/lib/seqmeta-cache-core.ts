@@ -13,6 +13,21 @@ export interface SeqmetaCacheStore {
     has(value: string): boolean;
 }
 
+function areCacheResultsEqual(
+    left: IdentifierResult | null | undefined,
+    right: IdentifierResult | null,
+): boolean {
+    if (left === right) {
+        return true;
+    }
+
+    if (left == null || right == null) {
+        return left === right;
+    }
+
+    return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export class SeqmetaCache implements SeqmetaCacheStore {
     private cache: Map<string, IdentifierResult | null>;
 
@@ -28,6 +43,10 @@ export class SeqmetaCache implements SeqmetaCacheStore {
     }
 
     set(value: string, result: IdentifierResult | null): void {
+        if (this.cache.has(value) && areCacheResultsEqual(this.cache.get(value), result)) {
+            return;
+        }
+
         this.cache.set(value, result);
         this.onChange?.(this.snapshot());
     }

@@ -28,6 +28,7 @@ const originalDocumentCookie = Object.getOwnPropertyDescriptor(
   "cookie",
 );
 let cookieJar = "";
+let cookieWrites: string[] = [];
 
 vi.mock("next/headers", () => ({
   cookies: cookiesMock,
@@ -68,12 +69,14 @@ function readSeqmetaCookieFromDocument(): string | undefined {
 
 beforeEach(() => {
   cookieJar = "";
+  cookieWrites = [];
   Object.defineProperty(document, "cookie", {
     configurable: true,
     get() {
       return cookieJar;
     },
     set(value: string) {
+      cookieWrites.push(value);
       const [cookiePair = "", ...attributes] = value
         .split(";")
         .map((entry) => entry.trim());
@@ -441,6 +444,38 @@ describe("M1 result detail seqmeta enrichment", () => {
 
     expect(validateIdentifierMock).toHaveBeenCalledTimes(1);
     expect(secondMarkup).toContain("sanger_sample_id: SANG001");
+  });
+
+  it("does not rewrite the seqmeta cookie when mount enrichment matches the existing cache", async () => {
+    const enrichment = buildEnrichment();
+
+    document.cookie = buildSeqmetaCacheCookie({ SANG001: enrichment });
+    const writesBeforeRender = cookieWrites.length;
+
+    const { ResultMetadataEnrichment } =
+      await import("@/components/result-metadata-enrichment");
+
+    render(
+      createElement(ResultMetadataEnrichment, {
+        initialEnrichments: {
+          SANG001: enrichment,
+        },
+        metadata: {
+          seqmeta_sampleid: "SANG001",
+        },
+      }),
+      {
+        wrapper: ({ children }) =>
+          createElement(SeqmetaCacheProvider, null, children),
+      },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+    });
+
+    expect(cookieWrites).toHaveLength(writesBeforeRender);
+    expect(readSeqmetaCookieFromDocument()).toBe(document.cookie);
   });
 
   it("marks seqmeta enrichment as unavailable when server validation fails", async () => {
