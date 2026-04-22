@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { resolveChromiumExecutablePath } from "@/lib/playwright-browser";
+
 const frontendRoot = process.cwd();
 const repoRoot = path.resolve(frontendRoot, "..");
 const portsFile = path.join(repoRoot, ".tmp", "playwright-ports.json");
@@ -84,6 +86,7 @@ function resolvePorts(): ResolvedPorts {
 
 const { frontendPort, resultsPort, seqmetaPort } = resolvePorts();
 const frontendHealthUrl = `http://127.0.0.1:${frontendPort}/`;
+const chromiumExecutablePath = resolveChromiumExecutablePath();
 const frontendStartCommand = [
     `WA_RUN_DEV_FRONTEND_HEALTH_URL=${JSON.stringify(frontendHealthUrl)}`,
     'WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD="printf \"\""',
@@ -101,6 +104,11 @@ export default defineConfig({
     use: {
         baseURL: `http://127.0.0.1:${frontendPort}`,
         browserName: "chromium",
+        launchOptions: chromiumExecutablePath
+            ? {
+                  executablePath: chromiumExecutablePath,
+              }
+            : undefined,
         trace: "on-first-retry",
     },
     webServer: {
