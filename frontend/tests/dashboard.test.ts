@@ -173,6 +173,10 @@ describe("J1 dashboard with stats, search, and recent results", () => {
     expect(markup).toContain('data-stat-card="total">42<');
     expect(markup).toContain('data-stat-card="pipelines">3<');
     expect(markup).toContain('data-stat-card="today">5<');
+    expect(markup).not.toContain("Registered result sets currently tracked by WA.");
+    expect(markup).not.toContain(
+      "Registrations recorded in the latest dashboard day bucket.",
+    );
   });
 
   it("renders 30 daily bars when the chart receives 30 entries", async () => {

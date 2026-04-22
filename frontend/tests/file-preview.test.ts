@@ -170,6 +170,9 @@ describe("O1 file preview", () => {
     expect(screen.getByText("/tmp/results/sample.bam")).toBeTruthy();
     expect(screen.getByText(/1.0 MB/i)).toBeTruthy();
     expect(screen.getByText(/16 Apr 2026/i)).toBeTruthy();
+    expect(
+      screen.queryByText(/metadata remains available for audit and manual retrieval/i),
+    ).toBeNull();
     expect(screen.queryByRole("link", { name: /download file/i })).toBeNull();
   });
 
@@ -207,7 +210,9 @@ describe("O1 file preview", () => {
       proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.json",
     });
 
-    expect(screen.getByText(/inspect the selected asset inline/i)).toBeTruthy();
+    expect(
+      screen.queryByText(/inspect the selected asset inline/i),
+    ).toBeNull();
     expect(screen.getByText(/loading preview/i)).toBeTruthy();
     expect(
       screen.queryByText(/this file type is not previewable in the browser/i),

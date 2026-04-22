@@ -555,11 +555,6 @@ export function FilePreview({
             <h3 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
               {fileName}
             </h3>
-            <p className="mt-2 text-sm leading-7 text-muted-foreground">
-              {previewable
-                ? "Inspect the selected asset inline without leaving the result detail page."
-                : "This file type is not previewable in the browser. Metadata remains available for audit and manual retrieval."}
-            </p>
           </div>
 
           {previewable ? <DownloadButton href={downloadUrl} /> : null}

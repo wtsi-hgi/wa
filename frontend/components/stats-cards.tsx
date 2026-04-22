@@ -9,19 +9,16 @@ const cards = [
         key: "total",
         label: "Total result sets",
         valueKey: "total",
-        description: "Registered result sets currently tracked by WA.",
     },
     {
         key: "pipelines",
         label: "Distinct pipelines",
         valueKey: "pipelines",
-        description: "Unique pipeline names represented in the results store.",
     },
     {
         key: "today",
         label: "Registered today",
         valueKey: "today",
-        description: "Registrations recorded in the latest dashboard day bucket.",
     },
 ] as const;
 
@@ -52,9 +49,6 @@ export function StatsCards({
                         data-stat-card={card.valueKey}
                     >
                         {values[card.valueKey]}
-                    </p>
-                    <p className="mt-3 max-w-xs text-sm leading-6 text-muted-foreground">
-                        {card.description}
                     </p>
                 </article>
             ))}
