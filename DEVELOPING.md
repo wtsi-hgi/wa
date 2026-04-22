@@ -99,6 +99,10 @@ The Makefile automatically loads root `.env` if it exists. Use it to pin local
 ports for `make run` and the Playwright-backed portion of `make test`, and to
 provide `SAGA_API_TOKEN` for seqmeta-backed development runs.
 
+SAGA endpoint overrides are flag-only: use `--base-url` with `wa saga inspect`
+or `wa seqmeta ...` when you need a non-default SAGA host. There is no
+`SAGA_BASE_URL` environment variable.
+
 Root Makefile environment variables:
 
 | Variable | Default | Used by |
