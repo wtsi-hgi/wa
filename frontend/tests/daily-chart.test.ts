@@ -57,6 +57,29 @@ describe("DailyChart hydration", () => {
     expect(markup.match(/data-daily-bar="true"/g) ?? []).toHaveLength(30);
   });
 
+  it("renders zero-count shell days without a visible fallback bar height", () => {
+    const markup = renderToString(
+      createElement(DailyChartShell, {
+        data: [
+          { date: "2026-03-01", count: 0 },
+          { date: "2026-03-02", count: 3 },
+        ],
+      }),
+    );
+
+    expect(markup).toContain('style="height:0px"');
+    expect(markup).toContain('style="height:62px"');
+    expect(markup).not.toContain('style="height:34px"');
+  });
+
+  it("renders an explicit empty state instead of placeholder bars", () => {
+    const markup = renderToString(createElement(DailyChartShell, { data: [] }));
+
+    expect(markup).toContain("No result activity recorded for the last 30 days.");
+    expect(markup).not.toContain('data-chart-shell-bar="');
+    expect(markup).not.toContain('data-daily-bar="true"');
+  });
+
   it("mounts the client chart after hydration completes", async () => {
     const data = buildDailyCounts(30, 5);
     const container = document.createElement("div");

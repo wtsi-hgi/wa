@@ -31,6 +31,34 @@ function formatLabel(date: string): string {
 }
 
 export function DailyChart({ data }: DailyChartProps) {
+  if (data.length === 0) {
+    return (
+      <section className="overflow-hidden rounded-[1.85rem] border border-border/70 bg-card/85 p-6 shadow-[0_26px_90px_-76px_rgba(46,65,90,0.9)]">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+              Daily registrations
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+              Last 30 days of result activity
+            </h2>
+          </div>
+          <p className="max-w-md text-sm leading-6 text-muted-foreground">
+            No result activity recorded for the last 30 days.
+          </p>
+        </div>
+
+        <div className="mt-6 h-[320px] w-full">
+          <div className="flex h-full items-center justify-center rounded-[1.25rem] border border-dashed border-border/70 bg-muted/25 px-6 text-center">
+            <p className="max-w-sm text-sm leading-6 text-muted-foreground">
+              No result activity recorded for the last 30 days.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const chartData = data.map((entry, index) => ({
     ...entry,
     label: formatLabel(entry.date),

@@ -198,7 +198,22 @@ describe("J1 dashboard with stats, search, and recent results", () => {
     const markup = await renderDashboard();
 
     expect(markup).toContain('data-chart-shell-bar="latest"');
+    expect(markup).toContain('style="height:0px"');
     expect(markup).not.toContain("recharts-responsive-container");
+  });
+
+  it("server-renders shell bars from stats data instead of placeholder loading bars", async () => {
+    fetchStatsMock.mockResolvedValue(
+      buildStats({
+        daily: buildDailyCounts(3, 5),
+      }),
+    );
+    searchResultsMock.mockResolvedValue([]);
+
+    const markup = await renderDashboard();
+
+    expect(countOccurrences(markup, 'data-chart-shell-bar="')).toBe(3);
+    expect(markup).toContain("2026-03-03:5");
   });
 
   it("hydrates the landing page without recoverable mismatches and keeps Add filter interactive", async () => {
