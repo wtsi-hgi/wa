@@ -32,7 +32,7 @@ format-frontend:
 test: test-go test-frontend test-e2e
 
 test-go:
-	CGO_ENABLED=1 go test -tags netgo --count 1 ./...
+	go test -tags netgo --count 1 ./...
 
 test-frontend:
 	cd $(FRONTEND_DIR) && pnpm test
