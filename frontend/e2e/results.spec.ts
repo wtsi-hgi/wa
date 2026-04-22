@@ -65,6 +65,7 @@ async function expandFoldersUntilVisible(
 
 test.describe("Q1 critical results flows", () => {
     const rnaseqPipelineName = "nf-core/rnaseq";
+    const ampliconPipelineName = "wtsi/amplicon";
     const fixturesRoot = path.resolve(
         process.cwd(),
         "..",
@@ -73,6 +74,7 @@ test.describe("Q1 critical results flows", () => {
         "fixtures",
         "files",
     );
+    const ampliconConfigPath = path.join(fixturesRoot, "config.json");
     const rnaseqReportPath = path.join(fixturesRoot, "report.csv");
     const rnaseqImagePath = path.join(fixturesRoot, "image.png");
 
@@ -190,5 +192,33 @@ test.describe("Q1 critical results flows", () => {
         const image = page.getByAltText("image.png preview");
         await expect(image).toBeVisible();
         await expect(image).toHaveAttribute("src", /\/api\/file\?/);
+    });
+
+    test("renders seeded JSON file content after the loading state clears", async ({
+        page,
+    }) => {
+        await openResultDetail(page, ampliconPipelineName);
+
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await expandFoldersUntilVisible(page, ampliconConfigPath);
+
+        const preview = page.locator('[data-selected-file-path$="config.json"]');
+        const selectedFile = page.locator(
+            `[data-file-path="${ampliconConfigPath}"]`,
+        );
+
+        await expect(preview).toBeVisible();
+        await expect(
+            preview.getByText("Syntax-highlighted preview"),
+        ).toBeVisible();
+        await expect(preview.getByText(/"panel"/)).toBeVisible();
+        await expect(preview.getByText(/"haem"/)).toBeVisible();
+
+        await selectedFile.click();
+
+        await expect(preview.getByText("Loading preview...")).toHaveCount(0);
+        await expect(
+            preview.getByText("Syntax-highlighted preview"),
+        ).toBeVisible();
     });
 });

@@ -208,6 +208,10 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                 <FileBrowser
                     files={files}
                     onSelectFile={(file) => {
+                        if (selectedFile?.path === file.path) {
+                            return;
+                        }
+
                         setSelectedFile(file);
                         setPreviewState({
                             content: undefined,
