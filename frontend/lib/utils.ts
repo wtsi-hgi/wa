@@ -1,6 +1,21 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+const utcMonthLabels = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+];
+
 export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
@@ -23,4 +38,27 @@ export function formatBytes(size: number | undefined): string {
     }
 
     return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+export function formatUtcDate(value: string): string {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+
+    return `${date.getUTCDate()} ${utcMonthLabels[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
+export function formatUtcDateTime(value: string): string {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+
+    const hours = String(date.getUTCHours()).padStart(2, "0");
+    const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+
+    return `${formatUtcDate(value)}, ${hours}:${minutes}`;
 }

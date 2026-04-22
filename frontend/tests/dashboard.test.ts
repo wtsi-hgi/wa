@@ -278,6 +278,71 @@ describe("J1 dashboard with stats, search, and recent results", () => {
     });
   });
 
+  it("keeps dashboard buttons interactive when client locale formatting differs", async () => {
+    fetchStatsMock.mockResolvedValue(
+      buildStats({
+        daily: buildDailyCounts(30, 5),
+        recent: Array.from({ length: 3 }, (_, index) =>
+          buildResultSet(index + 1),
+        ),
+      }),
+    );
+    searchResultsMock.mockResolvedValue([]);
+
+    const toLocaleDateStringSpy = vi.spyOn(Date.prototype, "toLocaleDateString");
+    toLocaleDateStringSpy.mockImplementation(() => "16 Apr 2026");
+
+    const pageModule = await import("@/app/(results)/page");
+    const Page = pageModule.default;
+    const serverMarkup = renderToString(
+      await Page({ searchParams: Promise.resolve({}) }),
+    );
+    const container = document.createElement("div");
+    const recoverableErrors: Error[] = [];
+
+    document.body.appendChild(container);
+    container.innerHTML = serverMarkup;
+
+    toLocaleDateStringSpy.mockImplementation(() => "17 Apr 2026");
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+
+    await act(async () => {
+      root = hydrateRoot(
+        container,
+        await Page({ searchParams: Promise.resolve({}) }),
+        {
+          onRecoverableError: (error) => {
+            recoverableErrors.push(error);
+          },
+        },
+      );
+    });
+
+    await waitFor(() => {
+      expect(
+        container.querySelector(".recharts-responsive-container"),
+      ).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+    expect(
+      screen.getByRole("dialog", { name: /search builder filter panel/i }),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /toggle column visibility/i }),
+    );
+    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(recoverableErrors).toHaveLength(0);
+
+    toLocaleDateStringSpy.mockRestore();
+
+    await act(async () => {
+      root?.unmount();
+    });
+  });
+
   it("uses concise end-user copy in the dashboard header and chart", async () => {
     fetchStatsMock.mockResolvedValue(buildStats());
     searchResultsMock.mockResolvedValue([]);

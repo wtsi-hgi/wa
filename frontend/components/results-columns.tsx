@@ -4,6 +4,7 @@ import { ArrowUpDown } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 
 import type { ResultSet, SearchResult } from "@/lib/contracts";
+import { formatUtcDate } from "@/lib/utils";
 
 export type ResultsTableRow = {
     id: string;
@@ -33,11 +34,7 @@ function SortableHeader({ columnId, label, onSort }: SortableHeaderProps) {
 }
 
 function formatRegisteredDate(value: string): string {
-    return new Date(value).toLocaleDateString("en-GB", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-    });
+    return formatUtcDate(value);
 }
 
 function linkedCell(id: string, value: string, className: string) {

@@ -19,7 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { FileEntry } from "@/lib/contracts";
-import { formatBytes } from "@/lib/utils";
+import { formatBytes, formatUtcDateTime } from "@/lib/utils";
 
 hljs.registerLanguage("json", json);
 hljs.registerLanguage("markdown", markdownLanguage);
@@ -127,20 +127,7 @@ function buildDownloadUrl(proxyUrl: string): string {
 }
 
 function formatTimestamp(value: string): string {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("en-GB", {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  });
+  return formatUtcDateTime(value);
 }
 
 function parseDelimitedContent(
