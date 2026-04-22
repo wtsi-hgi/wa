@@ -88,6 +88,29 @@ function aggregateTree(node: TreeNode): TreeNode {
     return node;
 }
 
+function collapseDirectoryChain(node: TreeNode): TreeNode {
+    if (!node.isDir) {
+        return node;
+    }
+
+    node.children = node.children.map(collapseDirectoryChain);
+
+    while (node.children.length === 1 && node.children[0]?.isDir) {
+        const child = node.children[0];
+
+        node = {
+            ...node,
+            children: child.children,
+            fileCount: child.fileCount,
+            name: `${node.name}/${child.name}`,
+            path: child.path,
+            typeCounts: child.typeCounts,
+        };
+    }
+
+    return node;
+}
+
 export function buildFileTree(files: FileEntry[]): TreeNode[] {
     const roots: TreeNode[] = [];
 
@@ -142,7 +165,7 @@ export function buildFileTree(files: FileEntry[]): TreeNode[] {
         }
     }
 
-    return roots.map(aggregateTree).sort(compareNodes);
+    return roots.map(aggregateTree).map(collapseDirectoryChain).sort(compareNodes);
 }
 
 function formatMtime(mtime: string | undefined): string {

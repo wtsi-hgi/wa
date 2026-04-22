@@ -171,7 +171,7 @@ describe("N1 file browser", () => {
             buildFile("/out/a/3.png", "output"),
         ]);
 
-        expect(tree[0]?.children[0]?.typeCounts).toEqual({ csv: 2, png: 1 });
+        expect(tree[0]?.typeCounts).toEqual({ csv: 2, png: 1 });
     });
 
     it("aggregates file type counts from all descendant folders", async () => {
@@ -187,6 +187,65 @@ describe("N1 file browser", () => {
         ]);
 
         expect(tree[0]?.typeCounts).toEqual({ csv: 3, png: 1, txt: 2 });
+    });
+
+    it("collapses linear directory chains into a single folder segment", async () => {
+        const { FileBrowser, buildFileTree } = await import(
+            "@/components/file-browser"
+        );
+
+        const tree = buildFileTree([
+            buildFile("/results/run-1/stage-2/sample/report.txt", "output"),
+        ]);
+
+        expect(tree[0]?.name).toBe("results/run-1/stage-2/sample");
+        expect(tree[0]?.path).toBe("/results/run-1/stage-2/sample");
+        expect(tree[0]?.children[0]?.path).toBe(
+            "/results/run-1/stage-2/sample/report.txt",
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile(
+                            "/results/run-1/stage-2/sample/report.txt",
+                            "output",
+                        ),
+                    ],
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        expect(container.textContent).toContain("results/run-1/stage-2/sample");
+        expect(
+            container.querySelector(
+                'button[data-folder-path="/results/run-1/stage-2/sample"]',
+            ),
+        ).not.toBeNull();
+        expect(
+            container.querySelector(
+                'button[data-folder-path="/results/run-1/stage-2"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/run-1/stage-2/sample/report.txt"]',
+            ),
+        ).not.toBeNull();
+
+        await click(
+            container.querySelector(
+                'button[data-folder-path="/results/run-1/stage-2/sample"]',
+            ),
+        );
+
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/run-1/stage-2/sample/report.txt"]',
+            ),
+        ).toBeNull();
     });
 
     it("displays a folder type summary beside the folder name", async () => {
