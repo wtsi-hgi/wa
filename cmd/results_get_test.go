@@ -42,6 +42,24 @@ type resultSetWithFilesForTest struct {
 }
 
 func TestResultsGetCommand(t *testing.T) {
+	convey.Convey("results get falls back to WA_RESULTS_BACKEND_URL when --server is unset", t, func() {
+		result := testResultSetForCommand()
+		server := newResultsGetServerForTest(result, nil)
+		defer server.Close()
+
+		t.Setenv("WA_SERVER_URL", "")
+		t.Setenv("WA_RESULTS_BACKEND_URL", server.URL)
+
+		output, err := executeRootCommandForTest(t, []string{"results", "get", result.ID})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		var got results.ResultSet
+		err = json.Unmarshal([]byte(output), &got)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(got, convey.ShouldResemble, result)
+	})
+
 	convey.Convey("G3.1: Given a valid ID, when get <id> is run, then stdout is valid JSON with the result set", t, func() {
 		result := testResultSetForCommand()
 		server := newResultsGetServerForTest(result, nil)
