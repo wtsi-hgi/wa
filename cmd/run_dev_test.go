@@ -49,6 +49,7 @@ type runDevEnvSnapshot struct {
 	ResultsBackendURL string `json:"WA_RESULTS_BACKEND_URL"`
 	SeqmetaBackendURL string `json:"WA_SEQMETA_BACKEND_URL"`
 	ResultsDBPath     string `json:"WA_RESULTS_DB_PATH"`
+	AllowedDevOrigins string `json:"WA_DEV_ALLOWED_ORIGINS"`
 }
 
 func TestRunDevScript(t *testing.T) {
@@ -462,6 +463,82 @@ exec %q "$@"
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
+	convey.Convey("run-dev.sh exports WA_DEV_ALLOWED_ORIGINS to the frontend including the current hostname so Next.js dev permits cross-origin access", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL", "WA_DEV_ALLOWED_ORIGINS"},
+			env: map[string]string{
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+
+		origins := splitRunDevOriginsForTest(snapshot.AllowedDevOrigins)
+
+		convey.So(origins, convey.ShouldContain, "localhost")
+		convey.So(origins, convey.ShouldContain, "127.0.0.1")
+
+		fqdn := runDevHostnameForTest(t, "-f")
+		short := runDevHostnameForTest(t, "-s")
+
+		if fqdn != "" {
+			convey.So(origins, convey.ShouldContain, fqdn)
+		}
+
+		if short != "" && short != fqdn {
+			convey.So(origins, convey.ShouldContain, short)
+		}
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh appends user-supplied WA_DEV_ALLOWED_ORIGINS values to the defaults", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			env: map[string]string{
+				"WA_DEV_ALLOWED_ORIGINS":                "extra-host.example.com, another.example.com",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		origins := splitRunDevOriginsForTest(snapshot.AllowedDevOrigins)
+
+		convey.So(origins, convey.ShouldContain, "localhost")
+		convey.So(origins, convey.ShouldContain, "extra-host.example.com")
+		convey.So(origins, convey.ShouldContain, "another.example.com")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
 }
 
 func runDevEnvForTest(unsetKeys []string) []string {
@@ -576,6 +653,31 @@ func runDevPathExistsWithinForTest(path string, timeout time.Duration) bool {
 	}
 
 	return runDevPathExistsForTest(path)
+}
+
+func splitRunDevOriginsForTest(raw string) []string {
+	parts := strings.Split(raw, ",")
+	trimmed := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		entry := strings.TrimSpace(part)
+		if entry != "" {
+			trimmed = append(trimmed, entry)
+		}
+	}
+
+	return trimmed
+}
+
+func runDevHostnameForTest(t *testing.T, flag string) string {
+	t.Helper()
+
+	output, err := exec.Command("hostname", flag).Output()
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(output))
 }
 
 func TestStartRunDevForTestAutoCleanup(t *testing.T) {

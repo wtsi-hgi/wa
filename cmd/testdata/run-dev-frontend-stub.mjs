@@ -16,6 +16,7 @@ fs.writeFileSync(
             WA_RESULTS_BACKEND_URL: process.env.WA_RESULTS_BACKEND_URL ?? "",
             WA_SEQMETA_BACKEND_URL: process.env.WA_SEQMETA_BACKEND_URL ?? "",
             WA_RESULTS_DB_PATH: process.env.WA_RESULTS_DB_PATH ?? "",
+            WA_DEV_ALLOWED_ORIGINS: process.env.WA_DEV_ALLOWED_ORIGINS ?? "",
         },
         null,
         2,

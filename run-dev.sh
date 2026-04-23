@@ -74,6 +74,54 @@ export WA_TEST_FRONTEND_PORT="$frontend_port"
 export WA_TEST_RESULTS_PORT="$results_port"
 export WA_TEST_SEQMETA_PORT="$seqmeta_port"
 
+# Assemble the Next.js dev server's allowedDevOrigins so developers hitting the
+# dev server from a non-localhost host (e.g. a farm node or laptop over SSH
+# forwarding) are not blocked from fetching /_next/* chunks, HMR, or RSC
+# payloads. Without this, React never hydrates and onClick handlers are dead.
+# Defaults cover loopback and Sanger-internal hosts; any caller-provided
+# WA_DEV_ALLOWED_ORIGINS entries (comma separated) are appended.
+collect_dev_origins() {
+  local -a origins=(localhost 127.0.0.1 '*.sanger.ac.uk' '*.internal.sanger.ac.uk')
+  local fqdn
+  local short
+
+  if fqdn="$(hostname -f 2>/dev/null)" && [[ -n "$fqdn" ]]; then
+    origins+=("$fqdn")
+  fi
+
+  if short="$(hostname -s 2>/dev/null)" && [[ -n "$short" ]]; then
+    origins+=("$short")
+  fi
+
+  if [[ -n "${WA_DEV_ALLOWED_ORIGINS:-}" ]]; then
+    local entry
+    local IFS=','
+    for entry in $WA_DEV_ALLOWED_ORIGINS; do
+      entry="${entry#"${entry%%[![:space:]]*}"}"
+      entry="${entry%"${entry##*[![:space:]]}"}"
+      if [[ -n "$entry" ]]; then
+        origins+=("$entry")
+      fi
+    done
+  fi
+
+  local -A seen=()
+  local -a unique=()
+  local value
+  for value in "${origins[@]}"; do
+    if [[ -z "${seen[$value]:-}" ]]; then
+      seen[$value]=1
+      unique+=("$value")
+    fi
+  done
+
+  local IFS=','
+  printf '%s' "${unique[*]}"
+}
+
+WA_DEV_ALLOWED_ORIGINS="$(collect_dev_origins)"
+export WA_DEV_ALLOWED_ORIGINS
+
 TMP_DIR="$REPO_ROOT/.tmp"
 BIN_PATH="$TMP_DIR/wa"
 LOG_DIR="$REPO_ROOT/logs"
