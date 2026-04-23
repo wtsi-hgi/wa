@@ -103,4 +103,22 @@ describe("Playwright browser resolution", () => {
             }
         }
     });
+
+    it("extends the web server timeout to cover the larger frontend health wait budget", async () => {
+        const configModule = (await import(
+            `${pathToFileURL(path.join(frontendRoot, "playwright.config.ts")).href}?test=${Date.now()}`
+        )) as {
+            default: {
+                webServer?: {
+                    command?: string;
+                    timeout?: number;
+                };
+            };
+        };
+
+        expect(configModule.default.webServer?.command).toContain(
+            'WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS="720"',
+        );
+        expect(configModule.default.webServer?.timeout).toBe(330_000);
+    });
 });

@@ -392,6 +392,76 @@ exit 0
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
+	convey.Convey("run-dev.sh can extend the frontend health wait budget for slow e2e frontend startup", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		binDir := t.TempDir()
+		curlStatePath := filepath.Join(t.TempDir(), "frontend-health-curl.state")
+		curlPath := filepath.Join(binDir, "curl")
+		sleepPath := filepath.Join(binDir, "sleep")
+		realCurlPath, err := exec.LookPath("curl")
+		convey.So(err, convey.ShouldBeNil)
+
+		curlStub := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+url="${!#}"
+
+if [[ "$url" == %q ]]; then
+	count=0
+	if [[ -f %q ]]; then
+		count="$(cat %q)"
+	fi
+
+	count=$((count + 1))
+	printf '%%s' "$count" > %q
+
+	if (( count <= 200 )); then
+		exit 22
+	fi
+fi
+
+exec %q "$@"
+`,
+			fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			curlStatePath,
+			curlStatePath,
+			curlStatePath,
+			realCurlPath,
+		)
+
+		sleepStub := "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"
+
+		convey.So(os.WriteFile(curlPath, []byte(curlStub), 0o755), convey.ShouldBeNil)
+		convey.So(os.WriteFile(sleepPath, []byte(sleepStub), 0o755), convey.ShouldBeNil)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			env: map[string]string{
+				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS": "240",
+			},
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", resultsPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
 }
 
 func runDevEnvForTest(unsetKeys []string) []string {
@@ -749,6 +819,25 @@ func waitForRunDevStepsForTest(t *testing.T, stepsPath string, expectedCount int
 	t.Fatalf("timed out waiting for frontend steps %s", stepsPath)
 
 	return nil
+}
+
+func waitForRunDevStdoutForTest(t *testing.T, process *runDevProcess, substring string) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(process.stdout.String(), substring) {
+			return true
+		}
+
+		if process.Command.ProcessState != nil && process.Command.ProcessState.Exited() {
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return strings.Contains(process.stdout.String(), substring)
 }
 
 func runDevPathExistsForTest(path string) bool {

@@ -84,10 +84,21 @@ SEQMETA_LOG="$LOG_DIR/seqmeta.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $frontend_port}"
+FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
 
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$results_port/results/stats}"
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-http://127.0.0.1:$frontend_port/api/health}"
 SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$seqmeta_port/studies}"
+
+if [[ ! "$FRONTEND_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
+  printf 'frontend health max attempts must be an integer\n' >&2
+  exit 1
+fi
+
+if (( FRONTEND_HEALTH_MAX_ATTEMPTS < 1 )); then
+  printf 'frontend health max attempts must be at least 1\n' >&2
+  exit 1
+fi
 
 cd "$REPO_ROOT"
 
@@ -143,9 +154,10 @@ wait_for_http() {
   local label="$1"
   local url="$2"
   local mode="$3"
+  local max_attempts="${4:-120}"
   local attempt=0
 
-  while (( attempt < 120 )); do
+  while (( attempt < max_attempts )); do
     if [[ "$mode" == "strict" ]]; then
       if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
         return 0
@@ -255,7 +267,7 @@ WA_RUN_DEV_FRONTEND_DEV_CMD="$FRONTEND_DEV_CMD" \
 PIDS+=("$!")
 FRONTEND_PID="$!"
 
-wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict"
+wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS"
 
 printf 'Development environment is ready.\n'
 printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
