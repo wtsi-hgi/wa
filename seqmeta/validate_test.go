@@ -130,15 +130,41 @@ func TestValidate(t *testing.T) {
 		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeTrue)
 	})
 
+	convey.Convey("a non-404 GetStudy error for a sample identifier falls through to the samples lookup", t, func() {
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) { return nil, nil },
+			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{{SangerID: "SANG205"}}, nil
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) { return nil, nil },
+		}
+
+		result, err := Validate(ctx, provider, "SANG205")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
+		convey.So(result.Object.(saga.MLWHSample).SangerID, convey.ShouldEqual, "SANG205")
+	})
+
+	convey.Convey("a non-404 GetStudy error for an unknown identifier surfaces as ErrUnknownIdentifier", t, func() {
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
+			},
+			AllStudiesFunc:   func(_ context.Context) ([]saga.Study, error) { return nil, nil },
+			AllSamplesFunc:   func(_ context.Context) ([]saga.MLWHSample, error) { return nil, nil },
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) { return nil, nil },
+		}
+
+		_, err := Validate(ctx, provider, "SANG205")
+		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeTrue)
+	})
+
 	convey.Convey("D5: upstream errors propagate immediately", t, func() {
 		provider := &MockProvider{}
-
-		provider.GetStudyFunc = func(_ context.Context, _ string) (*saga.Study, error) {
-			return nil, errors.New("connection refused")
-		}
-		_, err := Validate(ctx, provider, "6568")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "connection refused")
-		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeFalse)
 
 		provider.GetStudyFunc = func(_ context.Context, _ string) (*saga.Study, error) {
 			return nil, saga.ErrNotFound
@@ -146,7 +172,7 @@ func TestValidate(t *testing.T) {
 		provider.AllStudiesFunc = func(_ context.Context) ([]saga.Study, error) {
 			return nil, errors.New("502 bad gateway")
 		}
-		_, err = Validate(ctx, provider, "ERP001")
+		_, err := Validate(ctx, provider, "ERP001")
 		convey.So(err.Error(), convey.ShouldContainSubstring, "502 bad gateway")
 
 		provider.AllStudiesFunc = func(_ context.Context) ([]saga.Study, error) { return nil, nil }

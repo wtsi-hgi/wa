@@ -27,10 +27,7 @@ package seqmeta
 
 import (
 	"context"
-	"errors"
 	"strconv"
-
-	"github.com/wtsi-hgi/wa/saga"
 )
 
 // Validate classifies a sequencing identifier by querying SAGA in priority order.
@@ -39,12 +36,13 @@ func Validate(ctx context.Context, provider SAGAProvider, identifier string) (*I
 		return nil, ErrUnknownIdentifier
 	}
 
-	study, err := provider.GetStudy(ctx, identifier)
-	if err == nil && study != nil {
+	// GetStudy is speculative: most identifiers are not study IDs, and some
+	// SAGA deployments reject non-study-shaped IDs (e.g. "SANG205") with 4xx
+	// statuses rather than 404. Any such error should not prevent us from
+	// continuing the lookup cascade; genuine outages will surface from the
+	// broader AllStudies / AllSamples / ListProjects calls below.
+	if study, err := provider.GetStudy(ctx, identifier); err == nil && study != nil {
 		return &IdentifierResult{Identifier: identifier, Type: IdentifierStudyID, Object: study}, nil
-	}
-	if err != nil && !errors.Is(err, saga.ErrNotFound) {
-		return nil, err
 	}
 
 	studies, err := provider.AllStudies(ctx)
