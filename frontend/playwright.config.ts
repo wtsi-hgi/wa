@@ -85,7 +85,7 @@ function resolvePorts(): ResolvedPorts {
 }
 
 const { frontendPort, resultsPort, seqmetaPort } = resolvePorts();
-const frontendHealthUrl = `http://127.0.0.1:${frontendPort}/`;
+const frontendHealthUrl = `http://127.0.0.1:${frontendPort}/api/health`;
 const chromiumExecutablePath = resolveChromiumExecutablePath();
 const defaultFrontendHealthMaxAttempts = 120;
 const frontendHealthMaxAttempts = 720;
@@ -102,7 +102,9 @@ const frontendStartCommand = [
     `WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS=${JSON.stringify(String(frontendHealthMaxAttempts))}`,
     'WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD="printf \"\""',
     `WA_RUN_DEV_FRONTEND_DEV_CMD=${JSON.stringify(
-        `pnpm exec next build && pnpm exec next start --port ${frontendPort}`,
+        `bash -lc ${JSON.stringify(
+            `pnpm exec next build && exec pnpm exec next start --port ${frontendPort}`,
+        )}`,
     )}`,
     `bash ../run-dev.sh --frontend-port ${frontendPort} --results-port ${resultsPort} --seqmeta-port ${seqmetaPort}`,
 ].join(" ");

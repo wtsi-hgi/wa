@@ -119,6 +119,15 @@ describe("Playwright browser resolution", () => {
         expect(configModule.default.webServer?.command).toContain(
             'WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS="720"',
         );
+        expect(configModule.default.webServer?.command).toContain(
+            'WA_RUN_DEV_FRONTEND_HEALTH_URL="http://127.0.0.1:',
+        );
+        expect(configModule.default.webServer?.command).toContain(
+            '/api/health"',
+        );
+        expect(configModule.default.webServer?.command).toContain(
+            'WA_RUN_DEV_FRONTEND_DEV_CMD="bash -lc \\"pnpm exec next build && exec pnpm exec next start --port ',
+        );
         expect(configModule.default.webServer?.timeout).toBe(330_000);
     });
 });
