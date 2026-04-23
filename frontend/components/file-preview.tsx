@@ -97,6 +97,10 @@ function guessRendererFromPath(path: string): PreviewRenderer {
     return "svg";
   }
 
+  if (extension === "htm" || extension === "html") {
+    return "html";
+  }
+
   if (extension === "json") {
     return "code";
   }

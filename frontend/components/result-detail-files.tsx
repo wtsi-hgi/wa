@@ -26,6 +26,8 @@ const proxyOnlyExtensions = new Set([
     "gif",
     "h5",
     "hdf5",
+    "htm",
+    "html",
     "jpeg",
     "jpg",
     "pdf",

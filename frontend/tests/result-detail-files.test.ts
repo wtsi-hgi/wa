@@ -59,6 +59,27 @@ afterEach(() => {
 });
 
 describe("O1 result detail file integration", () => {
+    it("renders html previews from the proxy without waiting for inline content", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/report.html")],
+                resultId: "result-1",
+            }),
+        );
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByText("Loading preview...")).toBeNull();
+
+        const frame = screen.getByTitle("HTML preview");
+
+        expect(frame.getAttribute("src")).toBe(
+            "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.html",
+        );
+    });
+
     it("uses fetched content type instead of the svg path extension for preview selection", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
