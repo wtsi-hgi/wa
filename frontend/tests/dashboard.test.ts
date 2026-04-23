@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { act } from "react";
+import { act, createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToStaticMarkup, renderToString } from "react-dom/server";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
@@ -20,6 +20,7 @@ import {
   vi,
 } from "vitest";
 
+import { AppProviders } from "@/components/app-providers";
 import type {
   ResultSet,
   SearchResult,
@@ -48,6 +49,16 @@ beforeAll(() => {
   }
 
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  vi.stubGlobal("matchMedia", () => ({
+    addEventListener: vi.fn(),
+    addListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+    matches: false,
+    media: "",
+    onchange: null,
+    removeEventListener: vi.fn(),
+    removeListener: vi.fn(),
+  }));
   window.HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 
@@ -193,9 +204,12 @@ describe("J1 dashboard with search builder and recent results", () => {
 
     const pageModule = await import("@/app/(results)/page");
     const Page = pageModule.default;
-    const serverMarkup = renderToString(
+    const serverTree = createElement(
+      AppProviders,
+      undefined,
       await Page({ searchParams: Promise.resolve({}) }),
     );
+    const serverMarkup = renderToString(serverTree);
     const container = document.createElement("div");
     const recoverableErrors: Error[] = [];
 
@@ -205,15 +219,11 @@ describe("J1 dashboard with search builder and recent results", () => {
     let root: ReturnType<typeof hydrateRoot> | null = null;
 
     await act(async () => {
-      root = hydrateRoot(
-        container,
-        await Page({ searchParams: Promise.resolve({}) }),
-        {
-          onRecoverableError: (error) => {
-            recoverableErrors.push(error);
-          },
+      root = hydrateRoot(container, serverTree, {
+        onRecoverableError: (error) => {
+          recoverableErrors.push(error);
         },
-      );
+      });
     });
 
     expect(recoverableErrors).toHaveLength(0);
@@ -247,9 +257,12 @@ describe("J1 dashboard with search builder and recent results", () => {
 
     const pageModule = await import("@/app/(results)/page");
     const Page = pageModule.default;
-    const serverMarkup = renderToString(
+    const serverTree = createElement(
+      AppProviders,
+      undefined,
       await Page({ searchParams: Promise.resolve({}) }),
     );
+    const serverMarkup = renderToString(serverTree);
     const container = document.createElement("div");
     const recoverableErrors: Error[] = [];
 
@@ -261,15 +274,11 @@ describe("J1 dashboard with search builder and recent results", () => {
     let root: ReturnType<typeof hydrateRoot> | null = null;
 
     await act(async () => {
-      root = hydrateRoot(
-        container,
-        await Page({ searchParams: Promise.resolve({}) }),
-        {
-          onRecoverableError: (error) => {
-            recoverableErrors.push(error);
-          },
+      root = hydrateRoot(container, serverTree, {
+        onRecoverableError: (error) => {
+          recoverableErrors.push(error);
         },
-      );
+      });
     });
 
     fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
