@@ -898,7 +898,7 @@ wa results register \
 ```
 
 Flags:
-- `--server` (persistent, default `$WA_SERVER_URL` or
+- `--server` (persistent, default `$WA_RESULTS_BACKEND_URL` or
   `http://localhost:8080`)
 - `--user`, `--operator`, `--command` (string)
 - `--nextflow-workflow` (path, triggers `DetectPipeline`)

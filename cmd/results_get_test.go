@@ -42,12 +42,19 @@ type resultSetWithFilesForTest struct {
 }
 
 func TestResultsGetCommand(t *testing.T) {
+	convey.Convey("defaultResultsServerURL ignores the legacy server env var and falls back to localhost when the results backend env var is unset", t, func() {
+		legacyServerEnvVar := "WA" + "_SERVER" + "_URL"
+		t.Setenv(legacyServerEnvVar, "http://legacy.example:9999")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "")
+
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "http://localhost:8080")
+	})
+
 	convey.Convey("results get falls back to WA_RESULTS_BACKEND_URL when --server is unset", t, func() {
 		result := testResultSetForCommand()
 		server := newResultsGetServerForTest(result, nil)
 		defer server.Close()
 
-		t.Setenv("WA_SERVER_URL", "")
 		t.Setenv("WA_RESULTS_BACKEND_URL", server.URL)
 
 		output, err := executeRootCommandForTest(t, []string{"results", "get", result.ID})

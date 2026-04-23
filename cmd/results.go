@@ -149,7 +149,7 @@ func newResultsCommand() *cobra.Command {
 		},
 	}
 
-	command.PersistentFlags().StringVar(&options.serverURL, "server", defaultResultsServerURL(), "Results server base URL (defaults to WA_RESULTS_BACKEND_URL, then WA_SERVER_URL)")
+	command.PersistentFlags().StringVar(&options.serverURL, "server", defaultResultsServerURL(), "Results server base URL (defaults to WA_RESULTS_BACKEND_URL)")
 
 	command.AddCommand(newResultsRegisterCommand(options))
 	command.AddCommand(newResultsSearchCommand(options))
@@ -714,7 +714,7 @@ func rescanResults(ctx context.Context, serverURL, resultID string, files []resu
 }
 
 func defaultResultsServerURL() string {
-	if serverURL := firstEnv("WA_RESULTS_BACKEND_URL", "WA_SERVER_URL"); serverURL != "" {
+	if serverURL := firstEnv("WA_RESULTS_BACKEND_URL"); serverURL != "" {
 		return serverURL
 	}
 
