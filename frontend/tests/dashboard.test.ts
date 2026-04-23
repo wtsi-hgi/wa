@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { act, createElement } from "react";
+import { act } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToStaticMarkup, renderToString } from "react-dom/server";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
@@ -21,7 +21,6 @@ import {
 } from "vitest";
 
 import type {
-  DailyCount,
   ResultSet,
   SearchResult,
   StatsResult,
@@ -38,6 +37,19 @@ const validateIdentifierMock = vi.fn();
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(testDir, "..");
+
+beforeAll(() => {
+  class ResizeObserverStub {
+    observe() {}
+
+    unobserve() {}
+
+    disconnect() {}
+  }
+
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+});
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/",
@@ -57,21 +69,9 @@ vi.mock("@/app/(results)/actions", () => ({
   validateIdentifier: validateIdentifierMock,
 }));
 
-beforeAll(() => {
-  class ResizeObserverStub {
-    observe() {}
-
-    unobserve() {}
-
-    disconnect() {}
-  }
-
-  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
-  window.HTMLElement.prototype.scrollIntoView = vi.fn();
-});
-
 afterAll(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function buildResultSet(index: number): ResultSet {
@@ -95,18 +95,11 @@ function buildResultSet(index: number): ResultSet {
   };
 }
 
-function buildDailyCounts(totalDays: number, todayCount: number): DailyCount[] {
-  return Array.from({ length: totalDays }, (_, index) => ({
-    date: `2026-03-${String(index + 1).padStart(2, "0")}`,
-    count: index === totalDays - 1 ? todayCount : index % 4,
-  }));
-}
-
 function buildStats(overrides: Partial<StatsResult> = {}): StatsResult {
   return {
     total: 0,
     recent: [],
-    daily: buildDailyCounts(30, 0),
+    daily: [],
     pipelines: [],
     ...overrides,
   };
@@ -127,7 +120,7 @@ async function renderDashboard(
   );
 }
 
-describe("J1 dashboard with stats, search, and recent results", () => {
+describe("J1 dashboard with search builder and recent results", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     vi.clearAllMocks();
@@ -146,6 +139,8 @@ describe("J1 dashboard with stats, search, and recent results", () => {
     expect(pageSource).toContain(
       'import { ResultsTable } from "@/components/results-table"',
     );
+    expect(pageSource).not.toContain("DailyChartPanel");
+    expect(pageSource).not.toContain("StatsCards");
     expect(pageSource).toContain("<FilterBuilder");
     expect(pageSource).toContain("currentFilters={resolvedSearchParams}");
     expect(pageSource).toContain("metaKeys={metaKeys}");
@@ -154,72 +149,38 @@ describe("J1 dashboard with stats, search, and recent results", () => {
     expect(pageSource).not.toContain("function ResultsTable(");
   });
 
-  it("shows total result sets, pipeline count, and today's registrations in the stat cards", async () => {
+  it("renders only the search builder above recent registrations on the landing page", async () => {
     fetchStatsMock.mockResolvedValue(
       buildStats({
         total: 42,
         pipelines: [
           { pipeline_name: "alpha", count: 10 },
           { pipeline_name: "beta", count: 7 },
-          { pipeline_name: "gamma", count: 4 },
         ],
-        daily: buildDailyCounts(30, 5),
+        recent: Array.from({ length: 3 }, (_, index) =>
+          buildResultSet(index + 1),
+        ),
       }),
     );
     searchResultsMock.mockResolvedValue([]);
 
     const markup = await renderDashboard();
 
-    expect(markup).toContain('data-stat-card="total">42<');
-    expect(markup).toContain('data-stat-card="pipelines">3<');
-    expect(markup).toContain('data-stat-card="today">5<');
-    expect(markup).not.toContain("Registered result sets currently tracked by WA.");
-    expect(markup).not.toContain(
-      "Registrations recorded in the latest dashboard day bucket.",
-    );
-  });
-
-  it("renders 30 daily bars when the chart receives 30 entries", async () => {
-    const { DailyChart } = await import("@/components/daily-chart");
-
-    const markup = renderToStaticMarkup(
-      createElement(DailyChart, {
-        data: buildDailyCounts(30, 5),
-      }),
-    );
-
-    expect(countOccurrences(markup, 'data-daily-bar="true"')).toBe(30);
-  });
-
-  it("server-renders a chart shell instead of Recharts markup on the dashboard", async () => {
-    fetchStatsMock.mockResolvedValue(buildStats());
-    searchResultsMock.mockResolvedValue([]);
-
-    const markup = await renderDashboard();
-
-    expect(markup).toContain('data-chart-shell-bar="latest"');
-    expect(markup).toContain('style="height:0px"');
-    expect(markup).not.toContain("recharts-responsive-container");
-  });
-
-  it("server-renders shell bars from stats data instead of placeholder loading bars", async () => {
-    fetchStatsMock.mockResolvedValue(
-      buildStats({
-        daily: buildDailyCounts(3, 5),
-      }),
-    );
-    searchResultsMock.mockResolvedValue([]);
-
-    const markup = await renderDashboard();
-
-    expect(countOccurrences(markup, 'data-chart-shell-bar="')).toBe(3);
-    expect(markup).toContain("2026-03-03:5");
+    expect(markup).toContain("Search builder");
+    expect(markup).toContain("Recent registrations");
+    expect(markup).toContain("Latest result sets");
+    expect(markup).not.toContain("Dashboard pulse");
+    expect(markup).not.toContain("30-day activity");
+    expect(markup).not.toContain("Total result sets");
+    expect(markup).not.toContain("Distinct pipelines");
+    expect(markup).not.toContain("Registered today");
+    expect(markup).not.toContain("Daily registrations");
+    expect(markup).not.toContain("Last 30 days of result activity");
   });
 
   it("hydrates the landing page without recoverable mismatches and keeps Add filter interactive", async () => {
     fetchStatsMock.mockResolvedValue(
       buildStats({
-        daily: buildDailyCounts(30, 5),
         recent: Array.from({ length: 3 }, (_, index) =>
           buildResultSet(index + 1),
         ),
@@ -238,10 +199,6 @@ describe("J1 dashboard with stats, search, and recent results", () => {
     document.body.appendChild(container);
     container.innerHTML = serverMarkup;
 
-    expect(
-      container.querySelector('[data-chart-shell-bar="latest"]'),
-    ).not.toBeNull();
-
     let root: ReturnType<typeof hydrateRoot> | null = null;
 
     await act(async () => {
@@ -254,12 +211,6 @@ describe("J1 dashboard with stats, search, and recent results", () => {
           },
         },
       );
-    });
-
-    await waitFor(() => {
-      expect(
-        container.querySelector(".recharts-responsive-container"),
-      ).not.toBeNull();
     });
 
     expect(recoverableErrors).toHaveLength(0);
@@ -281,7 +232,6 @@ describe("J1 dashboard with stats, search, and recent results", () => {
   it("keeps dashboard buttons interactive when client locale formatting differs", async () => {
     fetchStatsMock.mockResolvedValue(
       buildStats({
-        daily: buildDailyCounts(30, 5),
         recent: Array.from({ length: 3 }, (_, index) =>
           buildResultSet(index + 1),
         ),
@@ -319,12 +269,6 @@ describe("J1 dashboard with stats, search, and recent results", () => {
       );
     });
 
-    await waitFor(() => {
-      expect(
-        container.querySelector(".recharts-responsive-container"),
-      ).not.toBeNull();
-    });
-
     fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
     expect(
       screen.getByRole("dialog", { name: /search builder filter panel/i }),
@@ -341,38 +285,6 @@ describe("J1 dashboard with stats, search, and recent results", () => {
     await act(async () => {
       root?.unmount();
     });
-  });
-
-  it("uses concise end-user copy in the dashboard header and chart", async () => {
-    fetchStatsMock.mockResolvedValue(buildStats());
-    searchResultsMock.mockResolvedValue([]);
-
-    const markup = await renderDashboard();
-
-    expect(markup).toContain(
-      "Track recent registrations and search result sets.",
-    );
-    expect(markup).toContain(
-      "See the last 30 days of activity, review recent results, or narrow the dashboard with filters.",
-    );
-    expect(markup).toContain(
-      "Keep recent activity in view while you filter and review results.",
-    );
-    expect(markup).toContain(
-      "Daily registrations for the last 30 days, with the newest day highlighted.",
-    );
-    expect(markup).not.toContain(
-      "Registrations, pipeline flow, and search entry in one landing view.",
-    );
-    expect(markup).not.toContain(
-      "Review the last 30 days at a glance, then pivot into recent result sets or a targeted search without leaving the dashboard.",
-    );
-    expect(markup).not.toContain(
-      "The chart and cards below stay visible even during filtered views, so search doesn&apos;t hide the broader system context.",
-    );
-    expect(markup).not.toContain(
-      "Recent throughput stays readable on wide and narrow screens, with the newest day lifted in accent colour.",
-    );
   });
 
   it("shows the 10 recent result rows when there are no search params", async () => {
