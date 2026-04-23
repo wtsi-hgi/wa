@@ -75,13 +75,14 @@ export WA_TEST_RESULTS_PORT="$results_port"
 export WA_TEST_SEQMETA_PORT="$seqmeta_port"
 
 # Assemble the Next.js dev server's allowedDevOrigins so developers hitting the
-# dev server from a non-localhost host (e.g. a farm node or laptop over SSH
-# forwarding) are not blocked from fetching /_next/* chunks, HMR, or RSC
-# payloads. Without this, React never hydrates and onClick handlers are dead.
-# Defaults cover loopback and Sanger-internal hosts; any caller-provided
-# WA_DEV_ALLOWED_ORIGINS entries (comma separated) are appended.
+# dev server from a non-localhost host (e.g. a remote workstation or laptop
+# over SSH forwarding) are not blocked from fetching /_next/* chunks, HMR, or
+# RSC payloads. Without this, React never hydrates and onClick handlers are
+# dead. Defaults cover loopback plus the current `hostname -f`/`hostname -s`;
+# any caller-provided WA_DEV_ALLOWED_ORIGINS entries (comma separated) are
+# appended.
 collect_dev_origins() {
-  local -a origins=(localhost 127.0.0.1 '*.sanger.ac.uk' '*.internal.sanger.ac.uk')
+  local -a origins=(localhost 127.0.0.1)
   local fqdn
   local short
 

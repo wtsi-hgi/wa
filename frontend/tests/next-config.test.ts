@@ -13,26 +13,20 @@ describe("resolveAllowedDevOrigins", () => {
         }
     });
 
-    it("always includes loopback and Sanger wildcard hosts so dev server works for internal users", () => {
+    it("always includes loopback origins so dev server works without extra config", () => {
         const origins = resolveAllowedDevOrigins({} as NodeJS.ProcessEnv);
 
         expect(origins).toEqual(
-            expect.arrayContaining([
-                "localhost",
-                "127.0.0.1",
-                "*.sanger.ac.uk",
-                "*.internal.sanger.ac.uk",
-            ]),
+            expect.arrayContaining(["localhost", "127.0.0.1"]),
         );
     });
 
     it("appends comma-separated WA_DEV_ALLOWED_ORIGINS entries with whitespace trimmed", () => {
         const origins = resolveAllowedDevOrigins({
-            WA_DEV_ALLOWED_ORIGINS:
-                "farm22-wrstat01.internal.sanger.ac.uk, my-laptop.local",
+            WA_DEV_ALLOWED_ORIGINS: "dev-host.example.com, my-laptop.local",
         } as NodeJS.ProcessEnv);
 
-        expect(origins).toContain("farm22-wrstat01.internal.sanger.ac.uk");
+        expect(origins).toContain("dev-host.example.com");
         expect(origins).toContain("my-laptop.local");
     });
 

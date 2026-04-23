@@ -116,17 +116,15 @@ Root Makefile environment variables:
 
 Next.js 16 blocks cross-origin requests to dev resources (`/_next/*`, HMR,
 RSC payloads) by default. If you browse the dev server from a machine whose
-hostname differs from the one running `run-dev.sh` — e.g. opening Chrome on
-your laptop to `http://<farm-host>.internal.sanger.ac.uk:3000` — the browser
-loads the HTML but every JS chunk is blocked, React never hydrates, and
-filters, tabs, file-preview clicks and similar controls silently do nothing.
-Only plain `<a>` links keep working.
+hostname differs from the one running `run-dev.sh` — e.g. opening a browser
+on your laptop to `http://<dev-host>:3000` — the browser loads the HTML but
+every JS chunk is blocked, React never hydrates, and filters, tabs,
+file-preview clicks and similar controls silently do nothing. Only plain
+`<a>` links keep working.
 
-`run-dev.sh` prevents this for typical Sanger setups by auto-populating
-`WA_DEV_ALLOWED_ORIGINS` with:
+`run-dev.sh` prevents this by auto-populating `WA_DEV_ALLOWED_ORIGINS` with:
 
 - `localhost`, `127.0.0.1`
-- `*.sanger.ac.uk`, `*.internal.sanger.ac.uk`
 - the current machine's `hostname -f` and `hostname -s`
 - anything you already set in `WA_DEV_ALLOWED_ORIGINS`
 

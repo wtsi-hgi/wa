@@ -1,11 +1,6 @@
 import type { NextConfig } from "next";
 
-const BASE_DEV_ORIGINS = [
-    "localhost",
-    "127.0.0.1",
-    "*.sanger.ac.uk",
-    "*.internal.sanger.ac.uk",
-];
+const BASE_DEV_ORIGINS = ["localhost", "127.0.0.1"];
 
 export function resolveAllowedDevOrigins(
     env: NodeJS.ProcessEnv = process.env,
