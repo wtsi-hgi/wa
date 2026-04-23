@@ -8,6 +8,7 @@ FRONTEND_DIR := frontend
 WA_TEST_FRONTEND_PORT ?= 3000
 WA_TEST_RESULTS_PORT ?= 8090
 WA_TEST_SEQMETA_PORT ?= 8091
+CGO_ENABLED = 0
 
 run:
 	./run-dev.sh --frontend-port $(WA_TEST_FRONTEND_PORT) --results-port $(WA_TEST_RESULTS_PORT) --seqmeta-port $(WA_TEST_SEQMETA_PORT)
