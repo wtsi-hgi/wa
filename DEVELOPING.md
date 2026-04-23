@@ -110,6 +110,30 @@ Root Makefile environment variables:
 | `WA_TEST_FRONTEND_PORT` | `3000` | `make run` frontend port and `make test` Playwright frontend port override |
 | `WA_TEST_RESULTS_PORT` | `8090` | `make run` results API port and `make test` Playwright results API port override |
 | `WA_TEST_SEQMETA_PORT` | `8091` | `make run` seqmeta API port and `make test` Playwright seqmeta API port override |
+| `WA_DEV_ALLOWED_ORIGINS` | *(empty)* | Extra comma-separated hostnames to allow cross-origin access to Next.js dev resources (`/_next/*`, HMR). See below. |
+
+### Accessing `make run` from a remote host
+
+Next.js 16 blocks cross-origin requests to dev resources (`/_next/*`, HMR,
+RSC payloads) by default. If you browse the dev server from a machine whose
+hostname differs from the one running `run-dev.sh` — e.g. opening Chrome on
+your laptop to `http://<farm-host>.internal.sanger.ac.uk:3000` — the browser
+loads the HTML but every JS chunk is blocked, React never hydrates, and
+filters, tabs, file-preview clicks and similar controls silently do nothing.
+Only plain `<a>` links keep working.
+
+`run-dev.sh` prevents this for typical Sanger setups by auto-populating
+`WA_DEV_ALLOWED_ORIGINS` with:
+
+- `localhost`, `127.0.0.1`
+- `*.sanger.ac.uk`, `*.internal.sanger.ac.uk`
+- the current machine's `hostname -f` and `hostname -s`
+- anything you already set in `WA_DEV_ALLOWED_ORIGINS`
+
+Set `WA_DEV_ALLOWED_ORIGINS` in the root `.env` (comma separated) if you need
+to add hostnames that are not covered by the defaults. Wildcards follow the
+Next.js 16 `allowedDevOrigins` syntax (`*` matches one DNS segment). The
+setting is ignored when `NODE_ENV=production`.
 
 ## Manual Setup
 
@@ -147,6 +171,7 @@ Frontend environment variables (set in `.env.local` or environment):
 | `WA_RESULTS_BACKEND_URL` | `http://localhost:8090` | Results API base URL |
 | `WA_SEQMETA_BACKEND_URL` | *(empty)* | Seqmeta API base URL (omit to disable) |
 | `WA_STUDIES_CACHE_TTL_SECONDS` | `300` | Study list cache lifetime |
+| `WA_DEV_ALLOWED_ORIGINS` | *(empty)* | Dev-only; extra hostnames merged into Next.js `allowedDevOrigins` (see "Accessing `make run` from a remote host" above). Ignored in production builds. |
 
 ## Testing
 
