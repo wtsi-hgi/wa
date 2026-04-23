@@ -147,6 +147,10 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function countOccurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
 describe("M1 result detail seqmeta enrichment", () => {
   afterEach(() => {
     cleanup();
@@ -318,6 +322,18 @@ describe("M1 result detail seqmeta enrichment", () => {
     expect(markup).toContain("Result metadata");
     expect(markup).toContain("sanger_sample_id: SANG001");
     expect(markup).toContain("Registered files");
+    expect(markup).toContain("data-registration-layout=\"compact\"");
+    expect(markup).toContain("Key details");
+    expect(markup).not.toContain("Registration summary");
+    expect(
+      countOccurrences(markup, 'class="border-b border-border/60 pb-3"'),
+    ).toBe(9);
+    expect(
+      countOccurrences(
+        markup,
+        'class="rounded-[1.25rem] border border-border/70 bg-background/60 px-4 py-3"',
+      ),
+    ).toBe(2);
     expect(markup).toContain("1 input");
     expect(markup).toContain("1 output");
     expect(markup).not.toContain(

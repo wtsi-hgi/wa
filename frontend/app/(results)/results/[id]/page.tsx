@@ -5,6 +5,7 @@ import {
 } from "@/app/(results)/actions";
 import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
+import { ResultRegistrationSummary } from "@/components/result-registration-summary";
 import type { FileEntry, ResultSet } from "@/lib/contracts";
 import { enrichSeqmetaMetadata } from "@/lib/seqmeta-enrichment";
 import { getRequestSeqmetaCache } from "@/lib/seqmeta-cache-server";
@@ -56,10 +57,15 @@ function detailFields(result: ResultSet) {
         { label: "Run key", value: result.run_key, mono: true },
         { label: "Requester", value: result.requester },
         { label: "Operator", value: result.operator },
-        { label: "Output directory", value: result.output_directory, mono: true },
+        {
+            label: "Output directory",
+            value: result.output_directory,
+            mono: true,
+            wide: true,
+        },
         { label: "Registered", value: formatTimestamp(result.created_at) },
         { label: "Last updated", value: formatTimestamp(result.updated_at) },
-        { label: "Command", value: result.command, mono: true },
+        { label: "Command", value: result.command, mono: true, wide: true },
     ];
 }
 
@@ -133,38 +139,7 @@ export default async function ResultDetailPage({
                 </div>
             </section>
 
-            <section className="rounded-[1.75rem] border border-border/70 bg-card/85 p-6 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-                <div className="space-y-2">
-                    <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                        Result fields
-                    </p>
-                    <h2 className="text-2xl font-semibold tracking-tight">
-                        Registration summary
-                    </h2>
-                </div>
-
-                <dl className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {detailFields(result).map((field) => (
-                        <div
-                            key={field.label}
-                            className="rounded-[1.5rem] border border-border/70 bg-background/75 p-4"
-                        >
-                            <dt className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                {field.label}
-                            </dt>
-                            <dd
-                                className={
-                                    field.mono
-                                        ? "mt-2 break-all font-mono text-sm text-foreground"
-                                        : "mt-2 text-sm leading-6 text-foreground"
-                                }
-                            >
-                                {field.value}
-                            </dd>
-                        </div>
-                    ))}
-                </dl>
-            </section>
+            <ResultRegistrationSummary fields={detailFields(result)} />
 
             <ResultDetailFiles files={files} resultId={result.id} />
 
