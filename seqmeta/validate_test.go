@@ -163,6 +163,39 @@ func TestValidate(t *testing.T) {
 		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeTrue)
 	})
 
+	convey.Convey("a 5xx GetStudy error propagates without triggering the cascade", t, func() {
+		allStudiesCalls := 0
+		allSamplesCalls := 0
+		listProjectsCalls := 0
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, &saga.APIError{StatusCode: 500, Message: "Server Error"}
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				allStudiesCalls++
+
+				return nil, nil
+			},
+			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
+				allSamplesCalls++
+
+				return nil, nil
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+				listProjectsCalls++
+
+				return nil, nil
+			},
+		}
+
+		_, err := Validate(ctx, provider, "SANG001")
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "HTTP 500")
+		convey.So(allStudiesCalls, convey.ShouldEqual, 0)
+		convey.So(allSamplesCalls, convey.ShouldEqual, 0)
+		convey.So(listProjectsCalls, convey.ShouldEqual, 0)
+	})
+
 	convey.Convey("D5: upstream errors propagate immediately", t, func() {
 		provider := &MockProvider{}
 

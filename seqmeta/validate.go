@@ -27,7 +27,11 @@ package seqmeta
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strconv"
+
+	"github.com/wtsi-hgi/wa/saga"
 )
 
 // Validate classifies a sequencing identifier by querying SAGA in priority order.
@@ -38,11 +42,17 @@ func Validate(ctx context.Context, provider SAGAProvider, identifier string) (*I
 
 	// GetStudy is speculative: most identifiers are not study IDs, and some
 	// SAGA deployments reject non-study-shaped IDs (e.g. "SANG205") with 4xx
-	// statuses rather than 404. Any such error should not prevent us from
-	// continuing the lookup cascade; genuine outages will surface from the
-	// broader AllStudies / AllSamples / ListProjects calls below.
-	if study, err := provider.GetStudy(ctx, identifier); err == nil && study != nil {
+	// statuses rather than 404. 4xx client errors (including 404) are treated
+	// as "not a study" and we fall through to the broader cascade. 5xx,
+	// transport, or other errors indicate a genuine SAGA problem and are
+	// propagated immediately to avoid triggering the expensive AllStudies /
+	// AllSamples / ListProjects cascade against an impaired backend.
+	study, err := provider.GetStudy(ctx, identifier)
+	if err == nil && study != nil {
 		return &IdentifierResult{Identifier: identifier, Type: IdentifierStudyID, Object: study}, nil
+	}
+	if err != nil && !isClientError(err) {
+		return nil, err
 	}
 
 	studies, err := provider.AllStudies(ctx)
@@ -101,4 +111,27 @@ func Validate(ctx context.Context, provider SAGAProvider, identifier string) (*I
 	}
 
 	return nil, ErrUnknownIdentifier
+}
+
+// isClientError reports whether err is a SAGA API error with a 4xx status
+// code (or the sentinel saga.ErrNotFound). Such errors indicate the
+// identifier simply isn't a study on this backend, so the validation
+// cascade may safely continue. All other errors (5xx, transport failures,
+// context deadline) indicate a real SAGA problem and should be propagated.
+func isClientError(err error) bool {
+	if errors.Is(err, saga.ErrNotFound) {
+		return true
+	}
+
+	var apiErr saga.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= http.StatusBadRequest && apiErr.StatusCode < http.StatusInternalServerError
+	}
+
+	apiErrPtr := &saga.APIError{}
+	if errors.As(err, &apiErrPtr) {
+		return apiErrPtr.StatusCode >= http.StatusBadRequest && apiErrPtr.StatusCode < http.StatusInternalServerError
+	}
+
+	return false
 }
