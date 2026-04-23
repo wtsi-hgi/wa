@@ -229,4 +229,23 @@ describe("L1 results table", () => {
             container.querySelector('a[href="/results/result-1"]'),
         ).not.toBeNull();
     });
+
+    it("preserves the dashboard query state in detail links for search results", async () => {
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, {
+                    data: [buildSearchResult(1, ["SANG1"])],
+                    mode: "search",
+                    returnHref: "/?user=alice",
+                    studyActive: true,
+                }),
+            );
+        });
+
+        expect(
+            container.querySelector(
+                'a[href="/results/result-1?returnTo=%2F%3Fuser%3Dalice"]',
+            ),
+        ).not.toBeNull();
+    });
 });

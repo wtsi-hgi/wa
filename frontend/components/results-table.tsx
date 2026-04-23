@@ -30,6 +30,7 @@ type ResultsTableProps = {
     data: ResultSet[] | SearchResult[];
     emptyMessage?: string;
     mode?: "recent" | "search";
+    returnHref?: string;
     studyActive?: boolean;
 };
 
@@ -46,14 +47,15 @@ export function ResultsTable({
     data,
     emptyMessage = "No results found.",
     mode = "recent",
+    returnHref = "/",
     studyActive = false,
 }: ResultsTableProps) {
     const rows = useMemo(() => toResultsTableRows(data), [data]);
     const showMatchedSamples =
         studyActive && rows.some((row) => row.searchResult);
     const columns = useMemo<ColumnDef<ResultsTableRow>[]>(
-        () => getResultsColumns(showMatchedSamples),
-        [showMatchedSamples],
+        () => getResultsColumns(showMatchedSamples, returnHref),
+        [returnHref, showMatchedSamples],
     );
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnVisibility, setColumnVisibility] =

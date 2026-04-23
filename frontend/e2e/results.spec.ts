@@ -2,18 +2,24 @@ import path from "node:path";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-function parseInteger(value: string | null): number {
-    const numeric = Number.parseInt(value?.trim() ?? "", 10);
-
-    if (Number.isNaN(numeric)) {
-        throw new Error(`Expected an integer but received: ${value ?? "<null>"}`);
-    }
-
-    return numeric;
-}
-
 function recentRows(page: Page): Locator {
     return page.locator('tbody tr[data-result-row="true"]');
+}
+
+async function addRequesterFilter(page: Page, requester: string): Promise<void> {
+    const searchBuilder = page.locator('[data-search-builder="true"]');
+
+    await expect(searchBuilder).toBeVisible();
+    await searchBuilder.getByRole("button", { name: "Add filter" }).click();
+
+    const filterPopover = page.locator('[data-search-builder-popover="true"]');
+
+    await expect(filterPopover).toBeVisible();
+    await filterPopover.locator('[data-filter-field-option="user"]').click();
+    await filterPopover
+        .locator('[data-filter-value-input="user"]')
+        .fill(requester);
+    await filterPopover.getByRole("button", { name: "Add" }).click();
 }
 
 async function openResultDetail(
@@ -78,17 +84,17 @@ test.describe("Q1 critical results flows", () => {
     const rnaseqReportPath = path.join(fixturesRoot, "report.csv");
     const rnaseqImagePath = path.join(fixturesRoot, "image.png");
 
-    test("shows seeded stats and recent rows on the dashboard", async ({
+    test("shows the search builder above recent registrations on the dashboard", async ({
         page,
     }) => {
         await page.goto("/");
 
-        await expect(page.locator('[data-stat-card="total"]')).toBeVisible();
-
-        const total = parseInteger(
-            await page.locator('[data-stat-card="total"]').textContent(),
-        );
-        expect(total).toBeGreaterThanOrEqual(3);
+        await expect(page.locator('[data-search-builder="true"]')).toBeVisible();
+        await expect(
+            page.getByRole("heading", { level: 2, name: "Latest result sets" }),
+        ).toBeVisible();
+        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.locator('[data-stat-card="total"]')).toHaveCount(0);
 
         const rows = recentRows(page);
         await expect(rows).toHaveCount(3);
@@ -99,19 +105,7 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await page.goto("/");
 
-        const searchBuilder = page.locator('[data-search-builder="true"]');
-        await expect(searchBuilder).toBeVisible();
-
-        await searchBuilder.getByRole("button", { name: "Add filter" }).click();
-
-        const filterPopover = page.locator('[data-search-builder-popover="true"]');
-
-        await expect(filterPopover).toBeVisible();
-        await filterPopover.locator('[data-filter-field-option="user"]').click();
-        await filterPopover
-            .locator('[data-filter-value-input="user"]')
-            .fill("alice");
-        await filterPopover.getByRole("button", { name: "Add" }).click();
+        await addRequesterFilter(page, "alice");
 
         await expect(page).toHaveURL(/\?user=alice/);
         await expect(page.getByText("Showing search results")).toBeVisible();
@@ -121,6 +115,52 @@ test.describe("Q1 critical results flows", () => {
         await expect(rows.first()).toContainText("alice");
         await expect(rows.first()).not.toContainText("carol");
         await expect(rows.first()).not.toContainText("erin");
+    });
+
+    test("returns to the dashboard state that opened a result detail", async ({
+        page,
+    }) => {
+        await page.goto("/");
+
+        const recentResultLink = page
+            .getByRole("link", { name: rnaseqPipelineName })
+            .first();
+
+        await recentResultLink.click();
+
+        const backToDashboard = page.getByRole("link", {
+            name: "Back to dashboard",
+        });
+
+        await expect(backToDashboard).toBeVisible();
+        await backToDashboard.click();
+
+        await expect(page).toHaveURL(/\/$/);
+        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(recentRows(page)).toHaveCount(3);
+
+        await addRequesterFilter(page, "alice");
+        await expect(page).toHaveURL(/\?user=alice/);
+
+        const searchResultLink = page
+            .getByRole("link", { name: rnaseqPipelineName })
+            .first();
+
+        await searchResultLink.click();
+
+        const backToSearch = page.getByRole("link", {
+            name: "Back to search results",
+        });
+
+        await expect(page).toHaveURL(/\/results\/[^?]+\?returnTo=/);
+        await expect(backToSearch).toHaveAttribute("href", "/?user=alice");
+
+        await backToSearch.click();
+
+        await expect(page).toHaveURL(/\?user=alice$/);
+        await expect(page.getByText("Showing search results")).toBeVisible();
+        await expect(recentRows(page)).toHaveCount(1);
+        await expect(recentRows(page).first()).toContainText("alice");
     });
 
     test("navigates to result detail and shows registration metadata", async ({

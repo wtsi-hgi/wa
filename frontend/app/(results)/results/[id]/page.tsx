@@ -1,3 +1,7 @@
+import Link from "next/link";
+
+import { ChevronLeft } from "lucide-react";
+
 import {
     fetchFiles,
     fetchResult,
@@ -12,6 +16,10 @@ import { getRequestSeqmetaCache } from "@/lib/seqmeta-cache-server";
 
 type DetailPageParams = {
     id: string;
+};
+
+type DetailPageSearchParams = {
+    returnTo?: string | string[];
 };
 
 function formatTimestamp(value: string): string {
@@ -69,14 +77,31 @@ function detailFields(result: ResultSet) {
     ];
 }
 
+function resolveReturnHref(searchParams: DetailPageSearchParams): string {
+    const returnTo = Array.isArray(searchParams.returnTo)
+        ? searchParams.returnTo[0]
+        : searchParams.returnTo;
+
+    if (!returnTo || !returnTo.startsWith("/") || returnTo.startsWith("//")) {
+        return "/";
+    }
+
+    return returnTo;
+}
+
 export const dynamic = "force-dynamic";
 
 export default async function ResultDetailPage({
     params,
+    searchParams,
 }: {
     params: Promise<DetailPageParams>;
+    searchParams?: Promise<DetailPageSearchParams>;
 }) {
     const { id } = await params;
+    const returnHref = resolveReturnHref((await searchParams) ?? {});
+    const returnLabel =
+        returnHref === "/" ? "Back to dashboard" : "Back to search results";
     const resultPromise = fetchResult(id);
     const filesPromise = fetchFiles(id);
     const requestCachePromise = getRequestSeqmetaCache();
@@ -95,6 +120,14 @@ export default async function ResultDetailPage({
             <section className="overflow-hidden rounded-[2rem] border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_88%,white_12%),color-mix(in_oklab,var(--accent)_12%,var(--card)_88%))] shadow-[0_36px_120px_-72px_rgba(41,58,85,0.85)]">
                 <div className="grid gap-8 px-6 py-8 sm:px-8 lg:grid-cols-[1.35fr_0.85fr] lg:px-10 lg:py-10">
                     <div className="space-y-4">
+                        <Link
+                            href={returnHref}
+                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/85 px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+                            data-return-link="true"
+                        >
+                            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                            <span>{returnLabel}</span>
+                        </Link>
                         <p className="text-sm font-semibold uppercase tracking-[0.32em] text-muted-foreground">
                             Result detail
                         </p>

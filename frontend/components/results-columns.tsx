@@ -37,9 +37,24 @@ function formatRegisteredDate(value: string): string {
     return formatUtcDate(value);
 }
 
-function linkedCell(id: string, value: string, className: string) {
+function detailHref(id: string, returnHref: string): string {
+    if (!returnHref || returnHref === "/") {
+        return `/results/${id}`;
+    }
+
+    const searchParams = new URLSearchParams({ returnTo: returnHref });
+
+    return `/results/${id}?${searchParams.toString()}`;
+}
+
+function linkedCell(
+    id: string,
+    value: string,
+    className: string,
+    returnHref: string,
+) {
     return (
-        <Link href={`/results/${id}`} className={className}>
+        <Link href={detailHref(id, returnHref)} className={className}>
             {value}
         </Link>
     );
@@ -69,6 +84,7 @@ export function toResultsTableRows(
 
 export function getResultsColumns(
     showMatchedSamples: boolean,
+    returnHref = "/",
 ): ColumnDef<ResultsTableRow>[] {
     const columns: ColumnDef<ResultsTableRow>[] = [
         {
@@ -87,6 +103,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.pipeline_name,
                     "font-medium text-foreground transition hover:text-primary",
+                    returnHref,
                 ),
         },
         {
@@ -105,6 +122,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.requester,
                     "text-foreground",
+                    returnHref,
                 ),
         },
         {
@@ -123,6 +141,7 @@ export function getResultsColumns(
                     row.original.id,
                     formatRegisteredDate(row.original.result.created_at),
                     "text-muted-foreground",
+                    returnHref,
                 ),
         },
         {
@@ -141,6 +160,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.output_directory,
                     "font-mono text-xs text-muted-foreground",
+                    returnHref,
                 ),
         },
         {
@@ -159,6 +179,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.operator,
                     "text-muted-foreground",
+                    returnHref,
                 ),
         },
         {
@@ -177,6 +198,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.command,
                     "font-mono text-xs text-muted-foreground",
+                    returnHref,
                 ),
         },
         {
@@ -195,6 +217,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.pipeline_version,
                     "text-muted-foreground",
+                    returnHref,
                 ),
         },
         {
@@ -213,6 +236,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.pipeline_identifier,
                     "font-mono text-xs text-muted-foreground",
+                    returnHref,
                 ),
         },
         {
@@ -231,6 +255,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.run_key,
                     "font-mono text-xs text-muted-foreground",
+                    returnHref,
                 ),
         },
         {
@@ -249,6 +274,7 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.id,
                     "font-mono text-xs text-muted-foreground",
+                    returnHref,
                 ),
         },
     ];
@@ -267,7 +293,7 @@ export function getResultsColumns(
             ),
             cell: ({ row }) => (
                 <Link
-                    href={`/results/${row.original.id}`}
+                    href={detailHref(row.original.id, returnHref)}
                     className="text-muted-foreground"
                 >
                     {row.original.matchedSamples.length > 0

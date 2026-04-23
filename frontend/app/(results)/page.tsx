@@ -40,6 +40,22 @@ function normalizeSearchParams(
   return parseSearchFilters(params);
 }
 
+function buildReturnHref(searchParams: SearchParams): string {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(searchParams)) {
+    const values = Array.isArray(value) ? value : value ? [value] : [];
+
+    for (const entry of values) {
+      params.append(key, entry);
+    }
+  }
+
+  const query = params.toString();
+
+  return query ? `/?${query}` : "/";
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
@@ -55,9 +71,9 @@ export default async function ResultsLandingPage({
 }: {
   searchParams?: Promise<SearchParams>;
 }) {
-  const resolvedSearchParams = normalizeSearchParams(
-    (await searchParams) ?? {},
-  );
+  const rawSearchParams = (await searchParams) ?? {};
+  const resolvedSearchParams = normalizeSearchParams(rawSearchParams);
+  const returnHref = buildReturnHref(rawSearchParams);
   const hasSearch = Object.keys(resolvedSearchParams).length > 0;
   const studyActive = (resolvedSearchParams.study_id?.length ?? 0) > 0;
 
@@ -125,6 +141,7 @@ export default async function ResultsLandingPage({
         data={tableData}
         emptyMessage={tableEmptyMessage}
         mode={tableMode}
+        returnHref={returnHref}
         studyActive={studyActive}
       />
     </main>
