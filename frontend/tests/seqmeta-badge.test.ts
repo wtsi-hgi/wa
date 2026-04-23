@@ -394,6 +394,35 @@ describe("M1 result detail seqmeta enrichment", () => {
     expect(validateIdentifierMock).not.toHaveBeenCalled();
   });
 
+  it("prefers available enrichment details over a stale unavailable marker", async () => {
+    const enrichment = buildEnrichment();
+
+    const { ResultMetadataEnrichment } =
+      await import("@/components/result-metadata-enrichment");
+
+    render(
+      createElement(ResultMetadataEnrichment, {
+        initialEnrichments: {
+          SANG001: enrichment,
+        },
+        initialErrors: {
+          SANG001: true,
+        },
+        metadata: {
+          seqmeta_sampleid: "SANG001",
+        },
+      }),
+      {
+        wrapper: ({ children }) =>
+          createElement(SeqmetaCacheProvider, null, children),
+      },
+    );
+
+    expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+    expect(screen.getByText("RNA Seq")).toBeTruthy();
+    expect(screen.queryByLabelText("enrichment unavailable")).toBeNull();
+  });
+
   it("mirrors the client cache to a cookie and reuses it on the next detail render", async () => {
     fetchFilesMock.mockResolvedValue([]);
     fetchResultMock

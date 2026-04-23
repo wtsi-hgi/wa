@@ -32,11 +32,19 @@ export function ResultMetadataEnrichment({
         ...cachedState.enrichments,
         ...initialEnrichments,
     };
+    const errors = {
+        ...cachedState.errors,
+        ...initialErrors,
+    };
+
+    for (const value of Object.keys(enrichments)) {
+        delete errors[value];
+    }
 
     return (
         <ResultMetadata
             enrichments={enrichments}
-            errors={initialErrors}
+            errors={errors}
             metadata={metadata}
         />
     );
