@@ -320,6 +320,12 @@ describe("M1 result detail seqmeta enrichment", () => {
     expect(markup).toContain("Registered files");
     expect(markup).toContain("1 input");
     expect(markup).toContain("1 output");
+    expect(markup).not.toContain(
+      "Review the full registration envelope, inspect seqmeta-linked values, and confirm the registered file footprint before opening previews.",
+    );
+    expect(markup).not.toContain(
+      "Browse the registered inventory directly on this page, pivot by source, and open the selected asset through the existing file proxy route.",
+    );
   });
 
   it("primes the client cache with server enrichments so remounts reuse them", async () => {

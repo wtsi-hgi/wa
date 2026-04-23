@@ -214,10 +214,6 @@ export function FilterBuilder({
                         <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                             Search builder
                         </p>
-                        <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                            Stack repeated values as OR filters, combine fields as AND
-                            filters, and keep the search encoded in the URL.
-                        </p>
                     </div>
 
                     <div className="relative">

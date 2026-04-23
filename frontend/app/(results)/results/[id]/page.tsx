@@ -96,11 +96,6 @@ export default async function ResultDetailPage({
                             <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
                                 {result.pipeline_name}
                             </h1>
-                            <p className="max-w-3xl text-base leading-7 text-muted-foreground sm:text-lg">
-                                Review the full registration envelope, inspect seqmeta-linked
-                                values, and confirm the registered file footprint before opening
-                                previews.
-                            </p>
                         </div>
                         <div className="inline-flex rounded-full border border-border/70 bg-background/85 px-4 py-2 text-sm text-muted-foreground">
                             <span className="font-mono text-xs uppercase tracking-[0.24em]">
@@ -115,11 +110,6 @@ export default async function ResultDetailPage({
                         </p>
                         <p className="mt-3 text-3xl font-semibold tracking-tight">
                             {files.length}
-                        </p>
-                        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                            Browse the registered inventory directly on this page, pivot by
-                            source, and open the selected asset through the existing file
-                            proxy route.
                         </p>
                         <div className="mt-6 grid gap-3 sm:grid-cols-3">
                             {fileGroups.map((group) => (

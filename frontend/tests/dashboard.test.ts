@@ -169,6 +169,9 @@ describe("J1 dashboard with search builder and recent results", () => {
     expect(markup).toContain("Search builder");
     expect(markup).toContain("Recent registrations");
     expect(markup).toContain("Latest result sets");
+    expect(markup).not.toContain(
+      "Stack repeated values as OR filters, combine fields as AND filters, and keep the search encoded in the URL.",
+    );
     expect(markup).not.toContain("Dashboard pulse");
     expect(markup).not.toContain("30-day activity");
     expect(markup).not.toContain("Total result sets");
