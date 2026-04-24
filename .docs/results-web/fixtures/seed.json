@@ -29,7 +29,7 @@
             }
         ],
         "metadata": {
-            "seqmeta_sampleid": "SANG001",
+            "seqmeta_studyid": "5993",
             "library": "exon",
             "study": "study-alpha"
         }
@@ -58,7 +58,7 @@
             }
         ],
         "metadata": {
-            "seqmeta_sampleid": "SANG102",
+            "seqmeta_studyid": "5994",
             "assay": "wgs",
             "priority": "urgent"
         }
@@ -87,7 +87,7 @@
             }
         ],
         "metadata": {
-            "seqmeta_sampleid": "SANG205",
+            "seqmeta_studyid": "6591",
             "panel": "haem",
             "request_group": "validation"
         }

@@ -171,8 +171,8 @@ test.describe("Q1 critical results flows", () => {
             page.getByRole("heading", { level: 1, name: rnaseqPipelineName }),
         ).toBeVisible();
         await expect(
-            page.locator('[data-metadata-row="seqmeta_sampleid"]'),
-        ).toContainText("SANG001");
+            page.locator('[data-metadata-row="seqmeta_studyid"]'),
+        ).toContainText("5993");
         await expect(page.locator('[data-metadata-row="library"]')).toContainText(
             "exon",
         );
