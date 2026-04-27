@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { act } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "@/components/app-providers";
@@ -53,7 +53,7 @@ function buildResultSet(): ResultSet {
     return {
         command: "nextflow run workflow.nf",
         created_at: "2026-04-16T10:15:00Z",
-        id: "result-1",
+        id: "result-2026-04-16-operator-1-pipeline-run-abcdef1234567890",
         metadata: {
             seqmeta_sampleid: "SANG001",
         },
@@ -151,8 +151,14 @@ describe("O1 result detail hydration", () => {
         const files = [buildFile("/results/sample.bam")];
         const result = buildResultSet();
         const toLocaleStringSpy = vi.spyOn(Date.prototype, "toLocaleString");
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
 
         vi.stubGlobal("matchMedia", matchMediaStub);
+        vi.stubGlobal("navigator", {
+            clipboard: {
+                writeText: writeTextMock,
+            },
+        });
         fetchFilesMock.mockResolvedValue(files);
         fetchResultMock.mockResolvedValue(result);
         validateIdentifierMock.mockResolvedValue(true);
@@ -217,6 +223,20 @@ describe("O1 result detail hydration", () => {
                     'button[data-file-path="/results/sample.bam"]',
                 ),
             ).toBeNull();
+        });
+
+        const copyButton = screen.getByRole("button", {
+            name: `Copy result ID ${result.id}`,
+        });
+
+        expect(copyButton.getAttribute("data-result-id-copy")).toBe(result.id);
+        expect(copyButton.textContent).not.toContain(result.id);
+        expect(copyButton.textContent).toContain("...");
+
+        fireEvent.click(copyButton);
+
+        await waitFor(() => {
+            expect(writeTextMock).toHaveBeenCalledWith(result.id);
         });
 
         expect(recoverableErrors).toHaveLength(0);
