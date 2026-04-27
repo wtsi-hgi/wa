@@ -367,10 +367,13 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
         fetchFilesMock.mockResolvedValue([
-            buildFileEntry(),
+            buildFileEntry({
+                size: 1536,
+            }),
             buildFileEntry({
                 path: "/tmp/results/42/input.cram",
                 kind: "input",
+                size: 512,
             }),
         ]);
         enrichIdentifierMock.mockResolvedValue(buildEnrichment());
@@ -405,8 +408,18 @@ describe("M1 result detail seqmeta enrichment", () => {
                 'class="rounded-[1.25rem] border border-border/70 bg-background/60 px-4 py-3"',
             ),
         ).toBe(2);
-        expect(markup).toContain("1 input");
-        expect(markup).toContain("1 output");
+        expect(markup).toContain("2 files");
+        expect(markup).toContain("2.0 KB");
+        expect(markup).toContain("Output");
+        expect(markup).toContain("Input");
+        expect(markup).toContain("Pipeline");
+        expect(markup).toContain("1 file");
+        expect(markup).toContain("1.5 KB");
+        expect(markup).toContain("512 B");
+        expect(markup).toContain("0 files");
+        expect(markup).toContain("0 B");
+        expect(markup).not.toContain("1 input");
+        expect(markup).not.toContain("1 output");
         expect(markup).not.toContain(
             "Review the full registration envelope, inspect seqmeta-linked values, and confirm the registered file footprint before opening previews.",
         );

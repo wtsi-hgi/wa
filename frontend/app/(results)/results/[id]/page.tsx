@@ -14,6 +14,7 @@ import { ResultRegistrationSummary } from "@/components/result-registration-summ
 import type { FileEntry, ResultSet } from "@/lib/contracts";
 import { enrichSeqmetaMetadata } from "@/lib/seqmeta-enrichment";
 import { getRequestSeqmetaCache } from "@/lib/seqmeta-cache-server";
+import { formatBytes } from "@/lib/utils";
 
 type DetailPageParams = {
     id: string;
@@ -34,23 +35,54 @@ function formatTimestamp(value: string): string {
     });
 }
 
-function groupFiles(
-    files: FileEntry[],
-): Array<{ label: string; count: number }> {
-    return [
-        {
-            label: "output",
-            count: files.filter((file) => file.kind === "output").length,
-        },
-        {
-            label: "input",
-            count: files.filter((file) => file.kind === "input").length,
-        },
-        {
-            label: "pipeline",
-            count: files.filter((file) => file.kind === "pipeline").length,
-        },
+type FileSummary = {
+    count: number;
+    label: string;
+    size: number;
+};
+
+function summarizeFiles(files: FileEntry[]): {
+    categories: FileSummary[];
+    total: FileSummary;
+} {
+    const categories: Array<{
+        count: number;
+        key: FileEntry["kind"];
+        label: string;
+        size: number;
+    }> = [
+        { key: "output", label: "Output", count: 0, size: 0 },
+        { key: "input", label: "Input", count: 0, size: 0 },
+        { key: "pipeline", label: "Pipeline", count: 0, size: 0 },
     ];
+
+    for (const file of files) {
+        const category = categories.find((entry) => entry.key === file.kind);
+
+        if (!category) {
+            continue;
+        }
+
+        category.count += 1;
+        category.size += file.size;
+    }
+
+    return {
+        total: {
+            label: "Total",
+            count: files.length,
+            size: files.reduce((total, file) => total + file.size, 0),
+        },
+        categories: categories.map(({ count, label, size }) => ({
+            count,
+            label,
+            size,
+        })),
+    };
+}
+
+function formatFileCount(count: number): string {
+    return `${count} file${count === 1 ? "" : "s"}`;
 }
 
 function detailFields(result: ResultSet) {
@@ -114,7 +146,7 @@ export default async function ResultDetailPage({
         filesPromise,
         enrichmentPromise,
     ]);
-    const fileGroups = groupFiles(files);
+    const fileSummary = summarizeFiles(files);
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
@@ -147,24 +179,36 @@ export default async function ResultDetailPage({
                         <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                             Registered files
                         </p>
-                        <p className="mt-3 text-3xl font-semibold tracking-tight">
-                            {files.length}
-                        </p>
-                        <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                            {fileGroups.map((group) => (
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-2xl border border-border/70 bg-card/85 px-4 py-4 sm:col-span-2">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                    {fileSummary.total.label}
+                                </p>
+                                <div className="mt-2 flex items-baseline justify-between gap-3">
+                                    <p className="text-lg font-semibold text-foreground sm:text-xl">
+                                        {formatFileCount(fileSummary.total.count)}
+                                    </p>
+                                    <p className="text-sm text-muted-foreground sm:text-base">
+                                        {formatBytes(fileSummary.total.size)}
+                                    </p>
+                                </div>
+                            </div>
+                            {fileSummary.categories.map((group) => (
                                 <div
                                     key={group.label}
-                                    className="rounded-2xl border border-border/70 bg-card/80 p-4"
+                                    className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3"
                                 >
-                                    <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                                         {group.label}
                                     </p>
-                                    <p className="mt-2 text-2xl font-semibold text-foreground">
-                                        {group.count}
-                                    </p>
-                                    <p className="mt-1 text-sm text-muted-foreground">
-                                        {group.count} {group.label}
-                                    </p>
+                                    <div className="mt-2 flex items-baseline justify-between gap-3">
+                                        <p className="text-sm font-medium text-foreground sm:text-base">
+                                            {formatFileCount(group.count)}
+                                        </p>
+                                        <p className="text-sm text-muted-foreground">
+                                            {formatBytes(group.size)}
+                                        </p>
+                                    </div>
                                 </div>
                             ))}
                         </div>
