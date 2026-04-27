@@ -35,6 +35,7 @@ const fetchResultMock = vi.fn();
 const fetchFilesMock = vi.fn();
 const fetchFileContentMock = vi.fn();
 const validateIdentifierMock = vi.fn();
+const pushMock = vi.fn();
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(testDir, "..");
@@ -65,7 +66,7 @@ beforeAll(() => {
 vi.mock("next/navigation", () => ({
   usePathname: () => "/",
   useRouter: () => ({
-    push: vi.fn(),
+    push: pushMock,
   }),
 }));
 
@@ -136,6 +137,7 @@ describe("J1 dashboard with search builder and recent results", () => {
     document.body.innerHTML = "";
     vi.clearAllMocks();
     vi.resetModules();
+    pushMock.mockReset();
   });
 
   it("composes the dashboard page from the shared filter builder and results table components", () => {
@@ -236,6 +238,115 @@ describe("J1 dashboard with search builder and recent results", () => {
     expect(
       screen.getByRole("dialog", { name: /search builder filter panel/i }),
     ).toBeTruthy();
+
+    await act(async () => {
+      root?.unmount();
+    });
+  });
+
+  it("derives non-study filter suggestions from loaded result data", async () => {
+    fetchStatsMock.mockResolvedValue(
+      buildStats({
+        recent: [
+          {
+            ...buildResultSet(1),
+            pipeline_name: "nf-core/rnaseq",
+            pipeline_version: "3.18.0",
+            pipeline_identifier: "gh://repo/rnaseq/main.nf",
+            requester: "carol",
+            operator: "operator-42",
+            output_directory: "/tmp/results/rnaseq",
+            metadata: {
+              seqmeta_sampleid: "SANG1001",
+              library: "RNA",
+            },
+          },
+        ],
+      }),
+    );
+    searchResultsMock.mockResolvedValue([]);
+
+    const pageModule = await import("@/app/(results)/page");
+    const Page = pageModule.default;
+    const serverTree = createElement(
+      AppProviders,
+      undefined,
+      await Page({ searchParams: Promise.resolve({}) }),
+    );
+    const container = document.createElement("div");
+    const rootMarkup = renderToString(serverTree);
+
+    document.body.appendChild(container);
+    container.innerHTML = rootMarkup;
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+
+    await act(async () => {
+      root = hydrateRoot(container, serverTree);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+    fireEvent.click(screen.getByRole("option", { name: /pipeline name/i }));
+    fireEvent.change(screen.getByLabelText(/pipeline name value/i), {
+      target: { value: "rna" },
+    });
+
+    expect(
+      await screen.findByRole("button", { name: /use nf-core\/rnaseq/i }),
+    ).toBeTruthy();
+
+    await act(async () => {
+      root?.unmount();
+    });
+  });
+
+  it("hydrates requester suggestions derived on the server and applies the selected value", async () => {
+    fetchStatsMock.mockResolvedValue(
+      buildStats({
+        recent: [
+          {
+            ...buildResultSet(1),
+            requester: "carol",
+          },
+          {
+            ...buildResultSet(2),
+            requester: "dave",
+          },
+        ],
+      }),
+    );
+    searchResultsMock.mockResolvedValue([]);
+
+    const pageModule = await import("@/app/(results)/page");
+    const Page = pageModule.default;
+    const serverTree = createElement(
+      AppProviders,
+      undefined,
+      await Page({ searchParams: Promise.resolve({}) }),
+    );
+    const container = document.createElement("div");
+    const rootMarkup = renderToString(serverTree);
+
+    document.body.appendChild(container);
+    container.innerHTML = rootMarkup;
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+
+    await act(async () => {
+      root = hydrateRoot(container, serverTree);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^requester$/i }));
+    fireEvent.change(screen.getByLabelText(/requester value/i), {
+      target: { value: "car" },
+    });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /use carol/i }),
+    );
+
+    expect(pushMock).toHaveBeenCalledWith("/?user=carol");
 
     await act(async () => {
       root?.unmount();

@@ -23,7 +23,10 @@ type FilterBuilderProps = {
     seqmetaAvailable: boolean;
     studies: Study[];
     currentFilters: Record<string, string[]>;
+    suggestionValues?: FilterSuggestionMap;
 };
+
+export type FilterSuggestionMap = Record<string, string[]>;
 
 type FieldOption = {
     key: string;
@@ -142,10 +145,34 @@ function removeFilterValue(
     };
 }
 
+function getVisibleSuggestions(
+    currentFilters: SearchFilters,
+    suggestionValues: FilterSuggestionMap,
+    fieldKey: string | null,
+    draftValue: string,
+): string[] {
+    if (!fieldKey) {
+        return [];
+    }
+
+    const existingValues = new Set(currentFilters[fieldKey] ?? []);
+    const normalizedDraft = draftValue.trim().toLowerCase();
+
+    return (suggestionValues[fieldKey] ?? [])
+        .filter((value) => !existingValues.has(value))
+        .filter(
+            (value) =>
+                normalizedDraft.length === 0 ||
+                value.toLowerCase().includes(normalizedDraft),
+        )
+        .slice(0, 8);
+}
+
 export function FilterBuilder({
     currentFilters,
     metaKeys,
     seqmetaAvailable,
+    suggestionValues = {},
     studies,
 }: FilterBuilderProps) {
     const pathname = usePathname();
@@ -158,11 +185,29 @@ export function FilterBuilder({
 
     const selectedField =
         fieldOptions.find((option) => option.key === selectedFieldKey) ?? null;
+    const visibleSuggestions = getVisibleSuggestions(
+        currentFilters,
+        suggestionValues,
+        selectedFieldKey,
+        draftValue,
+    );
 
     function pushFilters(filters: SearchFilters) {
         const renderedQuery = buildSearchQuery(filters).toString();
 
         router.push(renderedQuery ? `${pathname}?${renderedQuery}` : pathname);
+    }
+
+    function applyFilterValue(fieldKey: string, value: string) {
+        const nextFilters = createNextFilters(currentFilters, fieldKey, value);
+        if (nextFilters === currentFilters) {
+            return;
+        }
+
+        pushFilters(nextFilters);
+        setDraftValue("");
+        setSelectedFieldKey(null);
+        setIsPopoverOpen(false);
     }
 
     function handleFieldSelect(fieldKey: string) {
@@ -176,31 +221,15 @@ export function FilterBuilder({
             return;
         }
 
-        const nextFilters = createNextFilters(
-            currentFilters,
-            selectedField.key,
-            draftValue,
-        );
-        if (nextFilters === currentFilters) {
+        if (!draftValue.trim()) {
             return;
         }
 
-        pushFilters(nextFilters);
-        setDraftValue("");
-        setSelectedFieldKey(null);
-        setIsPopoverOpen(false);
+        applyFilterValue(selectedField.key, draftValue);
     }
 
     function handleStudySelect(studyId: string) {
-        const nextFilters = createNextFilters(currentFilters, "study_id", studyId);
-        if (nextFilters === currentFilters) {
-            return;
-        }
-
-        pushFilters(nextFilters);
-        setDraftValue("");
-        setSelectedFieldKey(null);
-        setIsPopoverOpen(false);
+        applyFilterValue("study_id", studyId);
     }
 
     return (
@@ -296,6 +325,36 @@ export function FilterBuilder({
                                                                 className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/30"
                                                             />
                                                         </div>
+                                                        {visibleSuggestions.length > 0 ? (
+                                                            <div className="space-y-2">
+                                                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                                                    Suggestions
+                                                                </p>
+                                                                <div className="max-h-44 space-y-2 overflow-y-auto rounded-xl border border-border/70 bg-muted/20 p-2">
+                                                                    {visibleSuggestions.map((suggestion) => (
+                                                                        <button
+                                                                            key={suggestion}
+                                                                            type="button"
+                                                                            aria-label={`Use ${suggestion}`}
+                                                                            onClick={() =>
+                                                                                applyFilterValue(
+                                                                                    selectedField.key,
+                                                                                    suggestion,
+                                                                                )
+                                                                            }
+                                                                            className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition hover:bg-accent/45"
+                                                                        >
+                                                                            <span className="font-medium text-foreground">
+                                                                                {suggestion}
+                                                                            </span>
+                                                                            <span className="text-xs text-muted-foreground">
+                                                                                Autofill
+                                                                            </span>
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        ) : null}
                                                         <button
                                                             type="submit"
                                                             className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-95"

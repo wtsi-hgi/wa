@@ -1,6 +1,7 @@
 import { DashboardToast } from "@/components/dashboard-toast";
 import { FilterBuilder } from "@/components/filter-builder";
 import { ResultsTable } from "@/components/results-table";
+import type { FilterSuggestionMap } from "@/components/filter-builder";
 import {
   fetchStudies,
   fetchMetaKeys,
@@ -23,6 +24,81 @@ const emptyStats: StatsResult = {
   daily: [],
   pipelines: [],
 };
+
+function appendSuggestion(
+  suggestions: FilterSuggestionMap,
+  key: string,
+  value: string,
+) {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return;
+  }
+
+  const entries = suggestions[key] ?? [];
+  const alreadyPresent = entries.some(
+    (entry) => entry.toLowerCase() === trimmedValue.toLowerCase(),
+  );
+
+  if (!alreadyPresent) {
+    suggestions[key] = [...entries, trimmedValue];
+  }
+}
+
+function toSuggestionResult(entry: ResultSet | SearchResult): SearchResult | null {
+  return "result_set" in entry ? entry : null;
+}
+
+function toResultSet(entry: ResultSet | SearchResult): ResultSet {
+  return "result_set" in entry ? entry.result_set : entry;
+}
+
+function toMetaSuggestionKey(metaKey: string): string {
+  return metaKey.startsWith("seqmeta_") ? metaKey : `meta_${metaKey}`;
+}
+
+function buildSuggestionValues(
+  stats: StatsResult,
+  tableData: ResultSet[] | SearchResult[],
+): FilterSuggestionMap {
+  const suggestions: FilterSuggestionMap = {};
+  const entries = [...stats.recent, ...tableData];
+
+  for (const pipeline of stats.pipelines) {
+    appendSuggestion(suggestions, "pipeline_name", pipeline.pipeline_name);
+  }
+
+  for (const entry of entries) {
+    const result = toResultSet(entry);
+    const searchResult = toSuggestionResult(entry);
+
+    appendSuggestion(suggestions, "user", result.requester);
+    appendSuggestion(suggestions, "operator", result.operator);
+    appendSuggestion(suggestions, "pipeline_name", result.pipeline_name);
+    appendSuggestion(suggestions, "pipeline_version", result.pipeline_version);
+    appendSuggestion(
+      suggestions,
+      "pipeline_identifier",
+      result.pipeline_identifier,
+    );
+    appendSuggestion(suggestions, "run_key", result.run_key);
+    appendSuggestion(
+      suggestions,
+      "output_dir_prefix",
+      result.output_directory,
+    );
+
+    for (const [metaKey, metaValue] of Object.entries(result.metadata)) {
+      appendSuggestion(suggestions, toMetaSuggestionKey(metaKey), metaValue);
+    }
+
+    for (const sampleId of searchResult?.matched_samples ?? []) {
+      appendSuggestion(suggestions, "seqmeta_sampleid", sampleId);
+    }
+  }
+
+  return suggestions;
+}
 
 function normalizeSearchParams(
   searchParams: SearchParams,
@@ -124,6 +200,8 @@ export default async function ResultsLandingPage({
     }
   }
 
+  const suggestionValues = buildSuggestionValues(stats, tableData);
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
       <DashboardToast message={statsError} />
@@ -133,6 +211,7 @@ export default async function ResultsLandingPage({
           currentFilters={resolvedSearchParams}
           metaKeys={metaKeys}
           seqmetaAvailable={seqmetaAvailable}
+          suggestionValues={suggestionValues}
           studies={studies}
         />
       </section>

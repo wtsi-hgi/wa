@@ -145,6 +145,37 @@ describe("K1 filter builder component", () => {
         expect(pushMock).toHaveBeenCalledWith("/?study_id=6568");
     });
 
+    it("shows cached suggestions for non-study fields and applies a selected value", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["library"],
+                seqmetaAvailable: false,
+                studies: [],
+                suggestionValues: {
+                    pipeline_name: ["nf-core/rnaseq", "nf-core/sarek"],
+                    meta_library: ["RNA", "WGS"],
+                },
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(screen.getByRole("option", { name: /pipeline name/i }));
+        fireEvent.change(screen.getByLabelText(/pipeline name value/i), {
+            target: { value: "rna" },
+        });
+
+        fireEvent.click(
+            await screen.findByRole("button", {
+                name: /use nf-core\/rnaseq/i,
+            }),
+        );
+
+        expect(pushMock).toHaveBeenCalledWith("/?pipeline_name=nf-core%2Frnaseq");
+    });
+
     it("shows only friendly field names in the add filter dropdown", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
