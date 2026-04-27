@@ -252,13 +252,8 @@ export function FilterBuilder({
                                                         value={`${field.label} ${field.key}`}
                                                         onSelect={() => handleFieldSelect(field.key)}
                                                     >
-                                                        <span>
-                                                            <span className="font-medium text-foreground">
-                                                                {field.label}
-                                                            </span>
-                                                            <span className="block text-xs text-muted-foreground">
-                                                                {field.key}
-                                                            </span>
+                                                        <span className="font-medium text-foreground">
+                                                            {field.label}
                                                         </span>
                                                         <Check
                                                             className={cn(

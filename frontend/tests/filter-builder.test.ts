@@ -144,4 +144,26 @@ describe("K1 filter builder component", () => {
 
         expect(pushMock).toHaveBeenCalledWith("/?study_id=6568");
     });
+
+    it("shows only friendly field names in the add filter dropdown", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["library"],
+                seqmetaAvailable: false,
+                studies: [],
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+
+        const pipelineNameOption = screen.getByRole("option", {
+            name: /pipeline name/i,
+        });
+
+        expect(pipelineNameOption.textContent?.trim()).toBe("Pipeline name");
+        expect(screen.queryByText("pipeline_name")).toBeNull();
+    });
 });
