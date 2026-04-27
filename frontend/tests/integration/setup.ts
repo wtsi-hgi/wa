@@ -83,7 +83,11 @@ async function runCommand(
             }
 
             reject(
-                createCommandError(`${command} ${args.join(" ")}`, stderr, stdout),
+                createCommandError(
+                    `${command} ${args.join(" ")}`,
+                    stderr,
+                    stdout,
+                ),
             );
         });
     });

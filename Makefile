@@ -28,7 +28,7 @@ format-go:
 	git ls-files '*.go' | xargs -r cleanorder -min-diff
 
 format-frontend:
-	cd $(FRONTEND_DIR) && pnpm exec prettier --write .
+	cd $(FRONTEND_DIR) && pnpm format
 
 test: test-go test-frontend test-e2e
 

@@ -82,12 +82,16 @@ html.dark {
 body {
     min-height: 100vh;
     background:
-        radial-gradient(circle at top left,
+        radial-gradient(
+            circle at top left,
             color-mix(in oklab, var(--accent) 28%, transparent),
-            transparent 36%),
-        linear-gradient(180deg,
+            transparent 36%
+        ),
+        linear-gradient(
+            180deg,
             color-mix(in oklab, var(--background) 92%, white 8%),
-            var(--background));
+            var(--background)
+        );
     color: var(--foreground);
     font-family: var(--font-inter), sans-serif;
 }

@@ -64,7 +64,9 @@ function getFreePortForTest(): Promise<number> {
         server.listen(0, "127.0.0.1", () => {
             const address = server.address();
             if (!address || typeof address === "string") {
-                server.close(() => reject(new Error("Unable to determine a free port")));
+                server.close(() =>
+                    reject(new Error("Unable to determine a free port")),
+                );
 
                 return;
             }
@@ -82,7 +84,10 @@ function getFreePortForTest(): Promise<number> {
     });
 }
 
-async function waitForPortForTest(port: number, expectedOpen: boolean): Promise<void> {
+async function waitForPortForTest(
+    port: number,
+    expectedOpen: boolean,
+): Promise<void> {
     const deadline = Date.now() + 10_000;
 
     while (Date.now() < deadline) {

@@ -31,7 +31,9 @@ describe("K2 study combobox", () => {
         expect(
             await screen.findByRole("button", { name: /rna seq/i }),
         ).not.toBeNull();
-        expect(screen.queryByRole("button", { name: /cancer study/i })).toBeNull();
+        expect(
+            screen.queryByRole("button", { name: /cancer study/i }),
+        ).toBeNull();
     });
 
     it("shows matching studies when the user types a study LIMS ID", async () => {
@@ -54,7 +56,9 @@ describe("K2 study combobox", () => {
         expect(
             await screen.findByRole("button", { name: /rna seq/i }),
         ).not.toBeNull();
-        expect(screen.queryByRole("button", { name: /cancer study/i })).toBeNull();
+        expect(
+            screen.queryByRole("button", { name: /cancer study/i }),
+        ).toBeNull();
     });
 
     it("calls onSelect with the selected study id", async () => {
@@ -76,7 +80,9 @@ describe("K2 study combobox", () => {
     it("shows a disabled unavailable placeholder when studies cannot be loaded", async () => {
         const { StudyCombobox } = await import("@/components/study-combobox");
 
-        render(createElement(StudyCombobox, { onSelect: vi.fn(), studies: [] }));
+        render(
+            createElement(StudyCombobox, { onSelect: vi.fn(), studies: [] }),
+        );
 
         const input = screen.getByPlaceholderText(/no studies available/i);
 

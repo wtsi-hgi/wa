@@ -186,7 +186,9 @@ export default async function ResultDetailPage({
                                 </p>
                                 <div className="mt-2 flex items-baseline justify-between gap-3">
                                     <p className="text-lg font-semibold text-foreground sm:text-xl">
-                                        {formatFileCount(fileSummary.total.count)}
+                                        {formatFileCount(
+                                            fileSummary.total.count,
+                                        )}
                                     </p>
                                     <p className="text-sm text-muted-foreground sm:text-base">
                                         {formatBytes(fileSummary.total.size)}

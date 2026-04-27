@@ -42,7 +42,11 @@ const coreFieldOptions: FieldOption[] = [
         label: "Pipeline name",
         placeholder: "nf-core/rnaseq",
     },
-    { key: "pipeline_version", label: "Pipeline version", placeholder: "3.18.0" },
+    {
+        key: "pipeline_version",
+        label: "Pipeline version",
+        placeholder: "3.18.0",
+    },
     {
         key: "pipeline_identifier",
         label: "Pipeline identifier",
@@ -90,7 +94,8 @@ function getFieldOptions(
         }))
         .filter(
             (option, index, entries) =>
-                entries.findIndex((entry) => entry.key === option.key) === index,
+                entries.findIndex((entry) => entry.key === option.key) ===
+                index,
         );
 
     return [...options, ...dynamicOptions];
@@ -180,7 +185,9 @@ export function FilterBuilder({
     const fieldOptions = getFieldOptions(metaKeys, seqmetaAvailable);
 
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
-    const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(null);
+    const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(
+        null,
+    );
     const [draftValue, setDraftValue] = useState("");
 
     const selectedField =
@@ -250,7 +257,9 @@ export function FilterBuilder({
                             type="button"
                             aria-expanded={isPopoverOpen}
                             aria-haspopup="dialog"
-                            onClick={() => setIsPopoverOpen((current) => !current)}
+                            onClick={() =>
+                                setIsPopoverOpen((current) => !current)
+                            }
                             className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border/80 bg-card px-4 text-sm font-medium text-foreground transition hover:border-primary/40 hover:bg-accent/35"
                         >
                             <Plus className="size-4" />
@@ -267,19 +276,29 @@ export function FilterBuilder({
                                 <Command>
                                     <CommandInput placeholder="Find a field" />
                                     <CommandList>
-                                        <CommandEmpty>No matching fields.</CommandEmpty>
+                                        <CommandEmpty>
+                                            No matching fields.
+                                        </CommandEmpty>
                                         <CommandGroup>
                                             {fieldOptions.map((field) => {
-                                                const isSelected = field.key === selectedFieldKey;
+                                                const isSelected =
+                                                    field.key ===
+                                                    selectedFieldKey;
 
                                                 return (
                                                     <CommandItem
                                                         key={field.key}
                                                         aria-label={field.label}
                                                         className="flex w-full items-center justify-between gap-3 text-left"
-                                                        data-filter-field-option={field.key}
+                                                        data-filter-field-option={
+                                                            field.key
+                                                        }
                                                         value={`${field.label} ${field.key}`}
-                                                        onSelect={() => handleFieldSelect(field.key)}
+                                                        onSelect={() =>
+                                                            handleFieldSelect(
+                                                                field.key,
+                                                            )
+                                                        }
                                                     >
                                                         <span className="font-medium text-foreground">
                                                             {field.label}
@@ -287,7 +306,9 @@ export function FilterBuilder({
                                                         <Check
                                                             className={cn(
                                                                 "ml-auto size-4 text-primary",
-                                                                isSelected ? "opacity-100" : "opacity-0",
+                                                                isSelected
+                                                                    ? "opacity-100"
+                                                                    : "opacity-0",
                                                             )}
                                                         />
                                                     </CommandItem>
@@ -297,61 +318,90 @@ export function FilterBuilder({
                                         <CommandSeparator />
                                         <div className="p-3">
                                             {selectedField ? (
-                                                selectedField.key === "study_id" ? (
+                                                selectedField.key ===
+                                                "study_id" ? (
                                                     <StudyCombobox
-                                                        onSelect={handleStudySelect}
+                                                        onSelect={
+                                                            handleStudySelect
+                                                        }
                                                         studies={studies}
                                                     />
                                                 ) : (
                                                     <form
                                                         className="space-y-3"
-                                                        onSubmit={handleAddFilter}
+                                                        onSubmit={
+                                                            handleAddFilter
+                                                        }
                                                     >
                                                         <div className="space-y-2">
                                                             <label
                                                                 htmlFor="filter-value"
                                                                 className="text-sm font-medium text-foreground"
                                                             >
-                                                                {selectedField.label} value
+                                                                {
+                                                                    selectedField.label
+                                                                }{" "}
+                                                                value
                                                             </label>
                                                             <input
-                                                                data-filter-value-input={selectedField.key}
-                                                                id="filter-value"
-                                                                value={draftValue}
-                                                                onChange={(event) =>
-                                                                    setDraftValue(event.target.value)
+                                                                data-filter-value-input={
+                                                                    selectedField.key
                                                                 }
-                                                                placeholder={selectedField.placeholder}
+                                                                id="filter-value"
+                                                                value={
+                                                                    draftValue
+                                                                }
+                                                                onChange={(
+                                                                    event,
+                                                                ) =>
+                                                                    setDraftValue(
+                                                                        event
+                                                                            .target
+                                                                            .value,
+                                                                    )
+                                                                }
+                                                                placeholder={
+                                                                    selectedField.placeholder
+                                                                }
                                                                 className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/30"
                                                             />
                                                         </div>
-                                                        {visibleSuggestions.length > 0 ? (
+                                                        {visibleSuggestions.length >
+                                                        0 ? (
                                                             <div className="space-y-2">
                                                                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                                                                     Suggestions
                                                                 </p>
                                                                 <div className="max-h-44 space-y-2 overflow-y-auto rounded-xl border border-border/70 bg-muted/20 p-2">
-                                                                    {visibleSuggestions.map((suggestion) => (
-                                                                        <button
-                                                                            key={suggestion}
-                                                                            type="button"
-                                                                            aria-label={`Use ${suggestion}`}
-                                                                            onClick={() =>
-                                                                                applyFilterValue(
-                                                                                    selectedField.key,
-                                                                                    suggestion,
-                                                                                )
-                                                                            }
-                                                                            className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition hover:bg-accent/45"
-                                                                        >
-                                                                            <span className="font-medium text-foreground">
-                                                                                {suggestion}
-                                                                            </span>
-                                                                            <span className="text-xs text-muted-foreground">
-                                                                                Autofill
-                                                                            </span>
-                                                                        </button>
-                                                                    ))}
+                                                                    {visibleSuggestions.map(
+                                                                        (
+                                                                            suggestion,
+                                                                        ) => (
+                                                                            <button
+                                                                                key={
+                                                                                    suggestion
+                                                                                }
+                                                                                type="button"
+                                                                                aria-label={`Use ${suggestion}`}
+                                                                                onClick={() =>
+                                                                                    applyFilterValue(
+                                                                                        selectedField.key,
+                                                                                        suggestion,
+                                                                                    )
+                                                                                }
+                                                                                className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition hover:bg-accent/45"
+                                                                            >
+                                                                                <span className="font-medium text-foreground">
+                                                                                    {
+                                                                                        suggestion
+                                                                                    }
+                                                                                </span>
+                                                                                <span className="text-xs text-muted-foreground">
+                                                                                    Autofill
+                                                                                </span>
+                                                                            </button>
+                                                                        ),
+                                                                    )}
                                                                 </div>
                                                             </div>
                                                         ) : null}
@@ -365,7 +415,8 @@ export function FilterBuilder({
                                                 )
                                             ) : (
                                                 <p className="text-sm leading-6 text-muted-foreground">
-                                                    Choose a field, then enter a value to append it to the
+                                                    Choose a field, then enter a
+                                                    value to append it to the
                                                     current search.
                                                 </p>
                                             )}
@@ -379,8 +430,8 @@ export function FilterBuilder({
 
                 {Object.keys(currentFilters).length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-border/80 bg-muted/35 px-4 py-5 text-sm text-muted-foreground">
-                        No filters applied. Start with Requester, Pipeline name, or any
-                        metadata key exposed by the results service.
+                        No filters applied. Start with Requester, Pipeline name,
+                        or any metadata key exposed by the results service.
                     </div>
                 ) : (
                     <div className="flex flex-wrap gap-3">
@@ -393,7 +444,10 @@ export function FilterBuilder({
                                     {getFieldLabel(fieldOptions, key)}
                                 </span>
                                 {values.map((value) => {
-                                    const fieldLabel = getFieldLabel(fieldOptions, key);
+                                    const fieldLabel = getFieldLabel(
+                                        fieldOptions,
+                                        key,
+                                    );
 
                                     return (
                                         <button
@@ -401,7 +455,11 @@ export function FilterBuilder({
                                             type="button"
                                             onClick={() =>
                                                 pushFilters(
-                                                    removeFilterValue(currentFilters, key, value),
+                                                    removeFilterValue(
+                                                        currentFilters,
+                                                        key,
+                                                        value,
+                                                    ),
                                                 )
                                             }
                                             aria-label={`Remove ${fieldLabel} ${value}`}

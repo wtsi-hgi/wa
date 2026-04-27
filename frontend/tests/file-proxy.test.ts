@@ -83,9 +83,7 @@ describe("P1 file content streaming API route", () => {
         const { GET } = await import("@/app/api/file/route");
 
         const response = await GET(
-            makeRequest(
-                "id=abc&path=%2Fout%2Fimg.png&thumb=true&w=320&h=180",
-            ),
+            makeRequest("id=abc&path=%2Fout%2Fimg.png&thumb=true&w=320&h=180"),
         );
 
         expect(resultsRawMock).toHaveBeenCalledWith(
@@ -119,9 +117,7 @@ describe("P1 file content streaming API route", () => {
         const { GET } = await import("@/app/api/file/route");
 
         const response = await GET(
-            makeRequest(
-                "id=abc&path=%2Fout%2Fimg.png&thumb=true&w=320&h=180",
-            ),
+            makeRequest("id=abc&path=%2Fout%2Fimg.png&thumb=true&w=320&h=180"),
         );
 
         expect(response.status).toBe(200);
@@ -150,7 +146,9 @@ describe("P1 file content streaming API route", () => {
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toBe("image/png");
         expect(response.headers.get("content-security-policy")).toBe("sandbox");
-        expect(new Uint8Array(await response.arrayBuffer())).toEqual(invalidImage);
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+            invalidImage,
+        );
     });
 
     it("forwards error status and JSON when the Go backend rejects access", async () => {

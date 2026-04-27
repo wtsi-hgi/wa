@@ -91,9 +91,9 @@ describe("Playwright browser resolution", () => {
                 };
             };
 
-            expect(configModule.default.use?.launchOptions?.executablePath).toBe(
-                "/bin/true",
-            );
+            expect(
+                configModule.default.use?.launchOptions?.executablePath,
+            ).toBe("/bin/true");
         } finally {
             if (previousExecutablePath === undefined) {
                 delete process.env.WA_PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;

@@ -52,11 +52,7 @@ function chromiumBundleExecutableNames(platform: NodeJS.Platform): string[] {
 function chromiumPathExecutableNames(platform: NodeJS.Platform): string[] {
     switch (platform) {
         case "darwin":
-            return [
-                "Chromium",
-                "Google Chrome for Testing",
-                "Google Chrome",
-            ];
+            return ["Chromium", "Google Chrome for Testing", "Google Chrome"];
         case "win32":
             return ["chrome.exe", "msedge.exe"];
         default:
@@ -80,7 +76,9 @@ function chromiumBundleDirectories(
                 /^chromium-\d+$/.test(entry) ||
                 /^chromium_headless_shell-\d+$/.test(entry),
         )
-        .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+        .sort((left, right) =>
+            right.localeCompare(left, undefined, { numeric: true }),
+        );
 }
 
 export function resolveChromiumExecutablePath(
@@ -103,8 +101,14 @@ export function resolveChromiumExecutablePath(
             browsersPath,
             listDirectory,
         )) {
-            for (const executableName of chromiumBundleExecutableNames(platform)) {
-                const candidate = path.join(browsersPath, directory, executableName);
+            for (const executableName of chromiumBundleExecutableNames(
+                platform,
+            )) {
+                const candidate = path.join(
+                    browsersPath,
+                    directory,
+                    executableName,
+                );
 
                 if (isExecutable(candidate)) {
                     return candidate;

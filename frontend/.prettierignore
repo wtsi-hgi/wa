@@ -1,4 +1,8 @@
+pnpm-lock.yaml
 .next
+coverage
+test-results
+next-env.d.ts.next
 coverage
 node_modules
 test-results

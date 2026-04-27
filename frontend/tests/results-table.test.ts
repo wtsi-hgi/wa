@@ -105,13 +105,17 @@ describe("L1 results table", () => {
 
     it("hides the requester column when toggled from the column visibility menu", async () => {
         await act(async () => {
-            root.render(createElement(ResultsTable, { data: [buildResultSet(1)] }));
+            root.render(
+                createElement(ResultsTable, { data: [buildResultSet(1)] }),
+            );
         });
 
         expect(getHeaderLabels(container)).toContain("Requester");
 
         await click(
-            container.querySelector('button[aria-label="Toggle column visibility"]'),
+            container.querySelector(
+                'button[aria-label="Toggle column visibility"]',
+            ),
         );
         await click(
             container.querySelector(
@@ -125,12 +129,14 @@ describe("L1 results table", () => {
     });
 
     it("sorts by pipeline name ascending and descending when the header is clicked", async () => {
-        const data = [buildResultSet(1), buildResultSet(2), buildResultSet(3)].map(
-            (row, index) => ({
-                ...row,
-                pipeline_name: ["gamma", "alpha", "beta"][index],
-            }),
-        );
+        const data = [
+            buildResultSet(1),
+            buildResultSet(2),
+            buildResultSet(3),
+        ].map((row, index) => ({
+            ...row,
+            pipeline_name: ["gamma", "alpha", "beta"][index],
+        }));
 
         await act(async () => {
             root.render(createElement(ResultsTable, { data }));
@@ -169,7 +175,9 @@ describe("L1 results table", () => {
 
     it("keeps command, pipeline version, pipeline identifier, run key, operator, and id hidden by default", async () => {
         await act(async () => {
-            root.render(createElement(ResultsTable, { data: [buildResultSet(1)] }));
+            root.render(
+                createElement(ResultsTable, { data: [buildResultSet(1)] }),
+            );
         });
 
         const headers = getHeaderLabels(container);
@@ -189,7 +197,9 @@ describe("L1 results table", () => {
         ];
 
         await act(async () => {
-            root.render(createElement(ResultsTable, { data, studyActive: true }));
+            root.render(
+                createElement(ResultsTable, { data, studyActive: true }),
+            );
         });
 
         expect(getHeaderLabels(container)).toContain("Matched Samples");
@@ -203,7 +213,9 @@ describe("L1 results table", () => {
         ];
 
         await act(async () => {
-            root.render(createElement(ResultsTable, { data, studyActive: false }));
+            root.render(
+                createElement(ResultsTable, { data, studyActive: false }),
+            );
         });
 
         expect(getHeaderLabels(container)).not.toContain("Matched Samples");

@@ -21,7 +21,8 @@ vi.mock("@/components/file-browser", () => ({
         const groups = new Map<string, FileEntry[]>();
 
         for (const file of files) {
-            const directoryPath = file.path.split("/").slice(0, -1).join("/") || "/";
+            const directoryPath =
+                file.path.split("/").slice(0, -1).join("/") || "/";
             const current = groups.get(directoryPath) ?? [];
 
             current.push(file);
@@ -32,7 +33,10 @@ vi.mock("@/components/file-browser", () => ({
             fileCount: groupedFiles.length,
             files: groupedFiles,
             path,
-            totalSize: groupedFiles.reduce((total, file) => total + file.size, 0),
+            totalSize: groupedFiles.reduce(
+                (total, file) => total + file.size,
+                0,
+            ),
             typeCounts: {},
         }));
     },
@@ -71,7 +75,14 @@ vi.mock("@/components/file-browser", () => ({
                 "data-selected-directory": selectedDirectory ?? "",
                 "data-selected-path": selectedPath ?? "",
             },
-            [...new Set(files.map((file) => file.path.split("/").slice(0, -1).join("/") || "/"))].map((directoryPath) =>
+            [
+                ...new Set(
+                    files.map(
+                        (file) =>
+                            file.path.split("/").slice(0, -1).join("/") || "/",
+                    ),
+                ),
+            ].map((directoryPath) =>
                 createElement(
                     "button",
                     {
@@ -118,7 +129,12 @@ vi.mock("@/components/file-browser", () => ({
                 {
                     key: "next-page",
                     onClick: () =>
-                        onPreviewPageChange?.(Math.min((previewPage ?? 1) + 1, previewPageCount ?? 1)),
+                        onPreviewPageChange?.(
+                            Math.min(
+                                (previewPage ?? 1) + 1,
+                                previewPageCount ?? 1,
+                            ),
+                        ),
                     type: "button",
                 },
                 "next-page",
@@ -148,13 +164,7 @@ vi.mock("@/components/file-preview", () => ({
             },
             file.path,
         ),
-    FilePreview: ({
-        file,
-        proxyUrl,
-    }: {
-        file: FileEntry;
-        proxyUrl: string;
-    }) =>
+    FilePreview: ({ file, proxyUrl }: { file: FileEntry; proxyUrl: string }) =>
         createElement(
             "div",
             { "data-preview-url": proxyUrl },
@@ -193,7 +203,9 @@ describe("O1 result detail file integration", () => {
         );
 
         expect(screen.queryByText("File focus")).toBeNull();
-        expect(screen.getByText("preview:/tmp/results/a/first.png")).toBeTruthy();
+        expect(
+            screen.getByText("preview:/tmp/results/a/first.png"),
+        ).toBeTruthy();
         expect(screen.getByText("Selected file")).toBeTruthy();
     });
 
@@ -212,9 +224,7 @@ describe("O1 result detail file integration", () => {
             }),
         );
 
-        fireEvent.click(
-            screen.getByRole("button", { name: "/tmp/results/b" }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: "/tmp/results/b" }));
 
         await waitFor(() => {
             expect(
@@ -227,7 +237,9 @@ describe("O1 result detail file integration", () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
         const files = Array.from({ length: 101 }, (_, index) =>
-            buildFile(`/tmp/results/a/plot-${String(index + 1).padStart(3, "0")}.png`),
+            buildFile(
+                `/tmp/results/a/plot-${String(index + 1).padStart(3, "0")}.png`,
+            ),
         );
 
         render(
@@ -240,13 +252,15 @@ describe("O1 result detail file integration", () => {
         fireEvent.click(screen.getByRole("button", { name: "show-grid" }));
 
         await waitFor(() => {
-            expect(screen.getAllByTestId("thumbnail-preview")).toHaveLength(100);
+            expect(screen.getAllByTestId("thumbnail-preview")).toHaveLength(
+                100,
+            );
         });
 
         expect(
-            screen.getAllByTestId("thumbnail-preview")[0]?.getAttribute(
-                "data-thumbnail-url",
-            ),
+            screen
+                .getAllByTestId("thumbnail-preview")[0]
+                ?.getAttribute("data-thumbnail-url"),
         ).toContain("thumb=true");
 
         fireEvent.click(screen.getByRole("button", { name: "next-page" }));
@@ -385,7 +399,9 @@ describe("O1 result detail file integration", () => {
 
         fireEvent.click(screen.getByRole("button", { name: file.path }));
 
-        expect(screen.getByText("preview:/tmp/results/report.json")).toBeTruthy();
+        expect(
+            screen.getByText("preview:/tmp/results/report.json"),
+        ).toBeTruthy();
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 

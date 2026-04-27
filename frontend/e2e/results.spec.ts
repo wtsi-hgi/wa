@@ -49,7 +49,9 @@ async function selectDirectoryForFile(
 
     await expect(directoryButton).toBeVisible();
     await directoryButton.click();
-    await expect(page.locator(`[data-file-path="${filePath}"]`).first()).toBeVisible();
+    await expect(
+        page.locator(`[data-file-path="${filePath}"]`).first(),
+    ).toBeVisible();
 }
 
 test.describe("Q1 critical results flows", () => {

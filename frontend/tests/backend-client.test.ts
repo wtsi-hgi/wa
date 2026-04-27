@@ -27,7 +27,9 @@ describe("H1 dual backend client", () => {
 
         const statsSchema = z.object({ total: z.number() });
 
-        await expect(resultsJson("/results/stats", statsSchema)).resolves.toEqual({
+        await expect(
+            resultsJson("/results/stats", statsSchema),
+        ).resolves.toEqual({
             total: 5,
         });
         expect(fetchMock).toHaveBeenCalledWith(
@@ -45,7 +47,9 @@ describe("H1 dual backend client", () => {
 
         const statsSchema = z.object({ total: z.number() });
 
-        await expect(resultsJson("/results/stats", statsSchema)).resolves.toEqual({
+        await expect(
+            resultsJson("/results/stats", statsSchema),
+        ).resolves.toEqual({
             total: 5,
         });
         expect(fetchMock).toHaveBeenCalledWith(
@@ -83,7 +87,9 @@ describe("H1 dual backend client", () => {
             "fetch",
             vi
                 .fn()
-                .mockResolvedValue(Response.json({ bad: "shape" }, { status: 200 })),
+                .mockResolvedValue(
+                    Response.json({ bad: "shape" }, { status: 200 }),
+                ),
         );
 
         const statsSchema = z.object({ total: z.number() });
@@ -96,9 +102,9 @@ describe("H1 dual backend client", () => {
     it("throws BackendUnavailableError when the seqmeta backend URL is not configured", async () => {
         const studiesSchema = z.array(z.object({ id: z.string() }));
 
-        await expect(seqmetaJson("/studies", studiesSchema)).rejects.toBeInstanceOf(
-            BackendUnavailableError,
-        );
+        await expect(
+            seqmetaJson("/studies", studiesSchema),
+        ).rejects.toBeInstanceOf(BackendUnavailableError);
     });
 
     it("returns validated seqmeta JSON from the configured seqmeta backend", async () => {
@@ -106,7 +112,9 @@ describe("H1 dual backend client", () => {
 
         const fetchMock = vi
             .fn()
-            .mockResolvedValue(Response.json([{ id: "study-1" }], { status: 200 }));
+            .mockResolvedValue(
+                Response.json([{ id: "study-1" }], { status: 200 }),
+            );
         vi.stubGlobal("fetch", fetchMock);
 
         const studiesSchema = z.array(z.object({ id: z.string() }));
@@ -122,7 +130,9 @@ describe("H1 dual backend client", () => {
 
         const fetchMock = vi
             .fn()
-            .mockResolvedValue(Response.json([{ id: "study-1" }], { status: 200 }));
+            .mockResolvedValue(
+                Response.json([{ id: "study-1" }], { status: 200 }),
+            );
         vi.stubGlobal("fetch", fetchMock);
 
         const studiesSchema = z.array(z.object({ id: z.string() }));
@@ -130,7 +140,9 @@ describe("H1 dual backend client", () => {
         await expect(seqmetaJson("/studies", studiesSchema)).resolves.toEqual([
             { id: "study-1" },
         ]);
-        expect(fetchMock).toHaveBeenCalledWith("https://host/seqmeta-api/studies");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://host/seqmeta-api/studies",
+        );
     });
 
     it("returns the raw response for results file requests", async () => {
@@ -152,7 +164,9 @@ describe("H1 dual backend client", () => {
         );
         expect(rawResponse.status).toBe(200);
         expect(rawResponse.headers.get("content-type")).toBe("image/png");
-        expect(new Uint8Array(await rawResponse.arrayBuffer())).toEqual(binaryBody);
+        expect(new Uint8Array(await rawResponse.arrayBuffer())).toEqual(
+            binaryBody,
+        );
     });
 
     it("preserves a path prefix and query string for raw results file requests", async () => {

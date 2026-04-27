@@ -132,7 +132,9 @@ describe("O1 result detail hydration", () => {
         ).not.toBeNull();
 
         fireEvent.click(
-            container.querySelector('button[data-directory-path="/results/b"]')!,
+            container.querySelector(
+                'button[data-directory-path="/results/b"]',
+            )!,
         );
 
         await waitFor(() => {
@@ -220,7 +222,9 @@ describe("O1 result detail hydration", () => {
         });
 
         fireEvent.click(
-            container.querySelector('button[data-directory-path="/results/b"]')!,
+            container.querySelector(
+                'button[data-directory-path="/results/b"]',
+            )!,
         );
 
         await waitFor(() => {

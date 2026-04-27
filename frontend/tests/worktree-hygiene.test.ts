@@ -10,7 +10,10 @@ const repoRoot = path.resolve(frontendRoot, "..");
 
 describe("worktree hygiene", () => {
     it("keeps Next's generated next-env.d.ts ignored and untracked", () => {
-        const gitignore = readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
+        const gitignore = readFileSync(
+            path.join(repoRoot, ".gitignore"),
+            "utf8",
+        );
 
         expect(gitignore).toContain("frontend/next-env.d.ts");
 

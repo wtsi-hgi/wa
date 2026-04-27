@@ -70,7 +70,9 @@ export function StudyCombobox({ onSelect, studies = [] }: StudyComboboxProps) {
                             onClick={() => onSelect(study.id_study_lims)}
                             className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition hover:bg-accent/45"
                         >
-                            <span className="font-medium text-foreground">{study.name}</span>
+                            <span className="font-medium text-foreground">
+                                {study.name}
+                            </span>
                             <span className="text-xs text-muted-foreground">
                                 {study.id_study_lims}
                             </span>

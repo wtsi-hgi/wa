@@ -25,11 +25,11 @@ vi.mock("next/navigation", () => ({
 
 beforeAll(() => {
     class ResizeObserverStub {
-        observe() { }
+        observe() {}
 
-        unobserve() { }
+        unobserve() {}
 
-        disconnect() { }
+        disconnect() {}
     }
 
     vi.stubGlobal("ResizeObserver", ResizeObserverStub);
@@ -140,7 +140,9 @@ describe("K1 filter builder component", () => {
             target: { value: "RNA" },
         });
 
-        fireEvent.click(await screen.findByRole("button", { name: /rna seq/i }));
+        fireEvent.click(
+            await screen.findByRole("button", { name: /rna seq/i }),
+        );
 
         expect(pushMock).toHaveBeenCalledWith("/?study_id=6568");
     });
@@ -173,7 +175,9 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        expect(pushMock).toHaveBeenCalledWith("/?pipeline_name=nf-core%2Frnaseq");
+        expect(pushMock).toHaveBeenCalledWith(
+            "/?pipeline_name=nf-core%2Frnaseq",
+        );
     });
 
     it("shows only friendly field names in the add filter dropdown", async () => {

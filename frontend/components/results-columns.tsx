@@ -95,7 +95,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="pipeline_name"
                     label="Pipeline Name"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -114,7 +116,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="requester"
                     label="Requester"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -133,7 +137,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="created_at"
                     label="Registered"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -152,7 +158,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="output_directory"
                     label="Output Directory"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -171,7 +179,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="operator"
                     label="Operator"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -190,7 +200,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="command"
                     label="Command"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -209,7 +221,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="pipeline_version"
                     label="Pipeline Version"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -228,7 +242,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="pipeline_identifier"
                     label="Pipeline Identifier"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -247,7 +263,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="run_key"
                     label="Run Key"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -266,7 +284,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="id"
                     label="ID"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) =>
@@ -288,7 +308,9 @@ export function getResultsColumns(
                 <SortableHeader
                     columnId="matched_samples"
                     label="Matched Samples"
-                    onSort={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
                 />
             ),
             cell: ({ row }) => (

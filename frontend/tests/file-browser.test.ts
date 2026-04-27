@@ -73,7 +73,9 @@ describe("N1 file browser", () => {
         expect(container.textContent).toContain("2.txt");
         expect(container.textContent).not.toContain("/out/b/3.txt");
 
-        await click(container.querySelector('button[data-directory-path="/out/b"]'));
+        await click(
+            container.querySelector('button[data-directory-path="/out/b"]'),
+        );
 
         expect(container.textContent).toContain("3.txt");
         expect(container.textContent).not.toContain("1.txt");
@@ -96,9 +98,8 @@ describe("N1 file browser", () => {
     });
 
     it("builds flat directory summaries instead of a nested tree", async () => {
-        const { buildDirectoryGroups } = await import(
-            "@/components/file-browser"
-        );
+        const { buildDirectoryGroups } =
+            await import("@/components/file-browser");
 
         const groups = buildDirectoryGroups([
             buildFile("/out/a/1.csv", "output"),
@@ -158,7 +159,9 @@ describe("N1 file browser", () => {
         });
 
         await click(
-            container.querySelector('button[data-file-path="/results/report.txt"]'),
+            container.querySelector(
+                'button[data-file-path="/results/report.txt"]',
+            ),
         );
 
         expect(handleSelectFile).toHaveBeenCalledWith(file);
@@ -170,7 +173,9 @@ describe("N1 file browser", () => {
         await act(async () => {
             root.render(
                 createElement(FileBrowser, {
-                    files: [buildFile("/results/report.txt", "output", 1048576)],
+                    files: [
+                        buildFile("/results/report.txt", "output", 1048576),
+                    ],
                     onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
                 }),
@@ -181,9 +186,8 @@ describe("N1 file browser", () => {
     });
 
     it("keeps directory summaries ordered by path", async () => {
-        const { buildDirectoryGroups } = await import(
-            "@/components/file-browser"
-        );
+        const { buildDirectoryGroups } =
+            await import("@/components/file-browser");
 
         const groups = buildDirectoryGroups([
             buildFile("/out/z/1.csv", "output"),

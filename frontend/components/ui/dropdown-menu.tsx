@@ -29,7 +29,9 @@ function useDropdownMenuContext(): DropdownMenuContextValue {
     const context = useContext(DropdownMenuContext);
 
     if (!context) {
-        throw new Error("DropdownMenu components must be used within DropdownMenu");
+        throw new Error(
+            "DropdownMenu components must be used within DropdownMenu",
+        );
     }
 
     return context;

@@ -48,11 +48,15 @@ describe("Q2 API-level integration", () => {
 
         expect(rows.length).toBeGreaterThan(0);
         expect(
-            rows.map((row) => extractResultSet(row as SearchResultRow).requester),
+            rows.map(
+                (row) => extractResultSet(row as SearchResultRow).requester,
+            ),
         ).toEqual(expect.arrayContaining(["alice"]));
         expect(
             rows.every(
-                (row) => extractResultSet(row as SearchResultRow).requester === "alice",
+                (row) =>
+                    extractResultSet(row as SearchResultRow).requester ===
+                    "alice",
             ),
         ).toBe(true);
     });
@@ -110,6 +114,8 @@ describe("Q2 API-level integration", () => {
     });
 
     it("returns no rows for unmatched requester searches", async () => {
-        await expect(searchResults({ user: ["nonexistent"] })).resolves.toEqual([]);
+        await expect(searchResults({ user: ["nonexistent"] })).resolves.toEqual(
+            [],
+        );
     });
 });

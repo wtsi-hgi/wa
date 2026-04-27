@@ -145,9 +145,8 @@ describe("O1 file preview", () => {
     });
 
     it("renders a reusable thumbnail preview with the thumbnail source", async () => {
-        const { FileImageThumbnail } = await import(
-            "@/components/file-preview"
-        );
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
 
         render(
             createElement(FileImageThumbnail, {
@@ -166,9 +165,8 @@ describe("O1 file preview", () => {
     });
 
     it("opens the lightbox from the reusable thumbnail with the full-size source", async () => {
-        const { FileImageThumbnail } = await import(
-            "@/components/file-preview"
-        );
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
 
         render(
             createElement(FileImageThumbnail, {
@@ -181,12 +179,14 @@ describe("O1 file preview", () => {
             }),
         );
 
-        fireEvent.click(screen.getByRole("button", { name: /open image lightbox/i }));
+        fireEvent.click(
+            screen.getByRole("button", { name: /open image lightbox/i }),
+        );
 
         expect(screen.getByRole("dialog")).toBeTruthy();
-        expect(screen.getByAltText("plot.png full preview").getAttribute("src")).toBe(
-            "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
-        );
+        expect(
+            screen.getByAltText("plot.png full preview").getAttribute("src"),
+        ).toBe("/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png");
     });
 
     it("shows a file too large message with download link on 413", () => {

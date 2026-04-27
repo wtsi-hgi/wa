@@ -97,7 +97,9 @@ export function ResultsTable({
                             : "Recent registrations"}
                     </p>
                     <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                        {mode === "search" ? "Matching result sets" : "Latest result sets"}
+                        {mode === "search"
+                            ? "Matching result sets"
+                            : "Latest result sets"}
                     </h2>
                 </div>
                 <div className="flex items-center gap-3">
@@ -107,7 +109,10 @@ export function ResultsTable({
                             className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 py-2 text-sm text-muted-foreground transition hover:text-foreground"
                         >
                             <span>Columns</span>
-                            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                            <ChevronDown
+                                className="h-4 w-4"
+                                aria-hidden="true"
+                            />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
                             {visibleColumns.map((column) => (
@@ -122,12 +127,15 @@ export function ResultsTable({
                                     {column.id === "id"
                                         ? "ID"
                                         : column.id
-                                            .split("_")
-                                            .map(
-                                                (segment) =>
-                                                    segment.charAt(0).toUpperCase() + segment.slice(1),
-                                            )
-                                            .join(" ")}
+                                              .split("_")
+                                              .map(
+                                                  (segment) =>
+                                                      segment
+                                                          .charAt(0)
+                                                          .toUpperCase() +
+                                                      segment.slice(1),
+                                              )
+                                              .join(" ")}
                                 </DropdownMenuCheckboxItem>
                             ))}
                         </DropdownMenuContent>
@@ -150,13 +158,17 @@ export function ResultsTable({
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
                                     {headerGroup.headers.map((header) => (
-                                        <th key={header.id} className="px-6 py-4 font-medium">
+                                        <th
+                                            key={header.id}
+                                            className="px-6 py-4 font-medium"
+                                        >
                                             {header.isPlaceholder
                                                 ? null
                                                 : flexRender(
-                                                    header.column.columnDef.header,
-                                                    header.getContext(),
-                                                )}
+                                                      header.column.columnDef
+                                                          .header,
+                                                      header.getContext(),
+                                                  )}
                                         </th>
                                     ))}
                                 </tr>
@@ -164,9 +176,16 @@ export function ResultsTable({
                         </thead>
                         <tbody className="divide-y divide-border/60">
                             {table.getRowModel().rows.map((row) => (
-                                <tr key={row.id} data-result-row="true" className="bg-card/60">
+                                <tr
+                                    key={row.id}
+                                    data-result-row="true"
+                                    className="bg-card/60"
+                                >
                                     {row.getVisibleCells().map((cell) => (
-                                        <td key={cell.id} className="px-6 py-4 align-top">
+                                        <td
+                                            key={cell.id}
+                                            className="px-6 py-4 align-top"
+                                        >
                                             {flexRender(
                                                 cell.column.columnDef.cell,
                                                 cell.getContext(),
@@ -211,7 +230,10 @@ export function ResultsTable({
                                 disabled={!table.getCanPreviousPage()}
                                 onClick={() => table.previousPage()}
                             >
-                                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                                <ChevronLeft
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                />
                                 <span className="sr-only">Previous page</span>
                             </button>
                             <button
@@ -220,7 +242,10 @@ export function ResultsTable({
                                 disabled={!table.getCanNextPage()}
                                 onClick={() => table.nextPage()}
                             >
-                                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                                <ChevronRight
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                />
                                 <span className="sr-only">Next page</span>
                             </button>
                         </div>

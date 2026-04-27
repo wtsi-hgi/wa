@@ -6,9 +6,8 @@ import { describe, expect, it } from "vitest";
 
 describe("ResultRegistrationSummary", () => {
     it("renders registration details in a compact summary layout", async () => {
-        const { ResultRegistrationSummary } = await import(
-            "@/components/result-registration-summary"
-        );
+        const { ResultRegistrationSummary } =
+            await import("@/components/result-registration-summary");
 
         const { container } = render(
             createElement(ResultRegistrationSummary, {
@@ -38,7 +37,9 @@ describe("ResultRegistrationSummary", () => {
             '[data-registration-layout="compact"]',
         );
         const compactFields = Array.from(
-            container.querySelectorAll<HTMLElement>("[data-registration-field]"),
+            container.querySelectorAll<HTMLElement>(
+                "[data-registration-field]",
+            ),
         );
         const wideFields = Array.from(
             container.querySelectorAll<HTMLElement>(

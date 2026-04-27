@@ -19,7 +19,10 @@ export function TableHeader({ className, ...props }: ComponentProps<"thead">) {
 
 export function TableBody({ className, ...props }: ComponentProps<"tbody">) {
     return (
-        <tbody className={cn("[&_tr:last-child]:border-0", className)} {...props} />
+        <tbody
+            className={cn("[&_tr:last-child]:border-0", className)}
+            {...props}
+        />
     );
 }
 

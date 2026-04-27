@@ -48,7 +48,8 @@ async function buildThumbnailResponse(
             (metadata.height ?? height + 1) <= height
         ) {
             const headers = new Headers({
-                "cache-control": "private, max-age=300, stale-while-revalidate=3600",
+                "cache-control":
+                    "private, max-age=300, stale-while-revalidate=3600",
                 "content-security-policy": "sandbox",
             });
 
@@ -75,7 +76,8 @@ async function buildThumbnailResponse(
 
         return new NextResponse(new Uint8Array(thumbnail), {
             headers: {
-                "cache-control": "private, max-age=300, stale-while-revalidate=3600",
+                "cache-control":
+                    "private, max-age=300, stale-while-revalidate=3600",
                 "content-security-policy": "sandbox",
                 "content-type": "image/webp",
             },

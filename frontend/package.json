@@ -5,8 +5,9 @@
         "dev": "next dev",
         "build": "next build",
         "start": "next start",
-        "lint": "eslint .",
-        "format": "prettier --check .",
+        "lint": "prettier --check . && eslint .",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
         "test": "vitest run"
     },
     "dependencies": {

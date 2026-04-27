@@ -92,7 +92,8 @@ function formatTypeSummary(typeCounts: Record<string, number>): string {
 
     return entries
         .sort(
-            (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+            (left, right) =>
+                right[1] - left[1] || left[0].localeCompare(right[0]),
         )
         .map(([type, count]) => `${count} ${type}`)
         .join(", ");
@@ -122,10 +123,11 @@ export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
         groups.set(directoryPath, current);
     }
 
-    return [...groups.values()].sort((left, right) =>
-        fileKindOrder[left.files[0]?.kind ?? "pipeline"] -
-            fileKindOrder[right.files[0]?.kind ?? "pipeline"] ||
-        left.path.localeCompare(right.path),
+    return [...groups.values()].sort(
+        (left, right) =>
+            fileKindOrder[left.files[0]?.kind ?? "pipeline"] -
+                fileKindOrder[right.files[0]?.kind ?? "pipeline"] ||
+            left.path.localeCompare(right.path),
     );
 }
 
@@ -146,54 +148,50 @@ export function FileBrowser({
     const [uncontrolledDirectory, setUncontrolledDirectory] = useState<
         string | undefined
     >(selectedDirectory);
-    const [uncontrolledPath, setUncontrolledPath] = useState<string | undefined>(
-        selectedPath,
-    );
+    const [uncontrolledPath, setUncontrolledPath] = useState<
+        string | undefined
+    >(selectedPath);
     const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
-    const effectiveSelectedDirectory = selectedDirectory ?? uncontrolledDirectory;
-    const effectiveSelectedPath = selectedPath ?? uncontrolledPath;
-
+    const preferredDirectory = selectedDirectory ?? uncontrolledDirectory;
     const activeDirectory =
-        directoryGroups.find(
-            (group) => group.path === effectiveSelectedDirectory,
-        ) ??
+        directoryGroups.find((group) => group.path === preferredDirectory) ??
         directoryGroups[0];
     const activeFiles = activeDirectory?.files ?? [];
+    const effectiveSelectedDirectory = activeDirectory?.path;
+    const preferredSelectedPath = selectedPath ?? uncontrolledPath;
     const activeFile =
-        activeFiles.find((file) => file.path === effectiveSelectedPath) ??
+        activeFiles.find((file) => file.path === preferredSelectedPath) ??
         activeFiles[0];
+    const effectiveSelectedPath = activeFile?.path;
 
     useEffect(() => {
         if (!activeDirectory) {
             return;
         }
 
-        if (selectedDirectory === undefined) {
-            setUncontrolledDirectory((current) => current ?? activeDirectory.path);
-        }
-
-        if (effectiveSelectedDirectory === activeDirectory.path) {
+        if (preferredDirectory === activeDirectory.path) {
             return;
         }
 
         onSelectDirectory?.(activeDirectory.path);
-    }, [activeDirectory, effectiveSelectedDirectory, onSelectDirectory, selectedDirectory]);
+    }, [
+        activeDirectory,
+        preferredDirectory,
+        onSelectDirectory,
+        selectedDirectory,
+    ]);
 
     useEffect(() => {
         if (!activeFile) {
             return;
         }
 
-        if (selectedPath === undefined) {
-            setUncontrolledPath((current) => current ?? activeFile.path);
-        }
-
-        if (effectiveSelectedPath === activeFile.path) {
+        if (preferredSelectedPath === activeFile.path) {
             return;
         }
 
         onSelectFile(activeFile);
-    }, [activeFile, effectiveSelectedPath, onSelectFile, selectedPath]);
+    }, [activeFile, onSelectFile, preferredSelectedPath, selectedPath]);
 
     if (directoryGroups.length === 0) {
         return (
@@ -213,7 +211,10 @@ export function FileBrowser({
             <div className="grid gap-5 xl:grid-cols-[17rem_minmax(0,1fr)]">
                 <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4">
                     <div className="flex items-center gap-3">
-                        <FolderTree className="size-4 text-primary" aria-hidden="true" />
+                        <FolderTree
+                            className="size-4 text-primary"
+                            aria-hidden="true"
+                        />
                         <div>
                             <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                                 Directories
@@ -226,7 +227,8 @@ export function FileBrowser({
 
                     <ul className="mt-5 space-y-2">
                         {directoryGroups.map((group) => {
-                            const isSelected = group.path === activeDirectory?.path;
+                            const isSelected =
+                                group.path === activeDirectory?.path;
 
                             return (
                                 <li key={group.path}>
@@ -240,8 +242,12 @@ export function FileBrowser({
                                         )}
                                         data-directory-path={group.path}
                                         onClick={() => {
-                                            if (selectedDirectory === undefined) {
-                                                setUncontrolledDirectory(group.path);
+                                            if (
+                                                selectedDirectory === undefined
+                                            ) {
+                                                setUncontrolledDirectory(
+                                                    group.path,
+                                                );
                                             }
 
                                             onSelectDirectory?.(group.path);
@@ -251,10 +257,16 @@ export function FileBrowser({
                                             {group.path}
                                         </p>
                                         <p className="mt-2 text-sm text-muted-foreground">
-                                            {group.fileCount} file{group.fileCount === 1 ? "" : "s"} · {formatBytes(group.totalSize)}
+                                            {group.fileCount} file
+                                            {group.fileCount === 1
+                                                ? ""
+                                                : "s"} ·{" "}
+                                            {formatBytes(group.totalSize)}
                                         </p>
                                         <p className="mt-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                                            {formatTypeSummary(group.typeCounts)}
+                                            {formatTypeSummary(
+                                                group.typeCounts,
+                                            )}
                                         </p>
                                     </button>
                                 </li>
@@ -273,7 +285,9 @@ export function FileBrowser({
                                 {activeDirectory?.path}
                             </h2>
                             <p className="mt-2 text-sm text-muted-foreground">
-                                Showing {activeFiles.length} file{activeFiles.length === 1 ? "" : "s"} in this directory.
+                                Showing {activeFiles.length} file
+                                {activeFiles.length === 1 ? "" : "s"} in this
+                                directory.
                             </p>
                         </div>
 
@@ -285,19 +299,27 @@ export function FileBrowser({
                                         className="size-4 accent-primary"
                                         onChange={(event) =>
                                             onPreviewModeChange?.(
-                                                event.target.checked ? "grid" : "single",
+                                                event.target.checked
+                                                    ? "grid"
+                                                    : "single",
                                             )
                                         }
                                         type="checkbox"
                                     />
                                     <span className="inline-flex items-center gap-2">
-                                        <Eye className="size-4 text-primary" aria-hidden="true" />
+                                        <Eye
+                                            className="size-4 text-primary"
+                                            aria-hidden="true"
+                                        />
                                         Preview first 100 files
                                     </span>
                                 </label>
 
                                 <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-sm text-muted-foreground">
-                                    <ListFilter className="size-4 text-primary" aria-hidden="true" />
+                                    <ListFilter
+                                        className="size-4 text-primary"
+                                        aria-hidden="true"
+                                    />
                                     {previewMode === "grid"
                                         ? `Page ${previewPage} of ${previewPageCount}`
                                         : "Single preview"}
@@ -306,8 +328,12 @@ export function FileBrowser({
 
                             <label className="block rounded-[1.25rem] border border-border/70 bg-background/75 px-4 py-3 text-sm text-foreground">
                                 <div className="flex items-center justify-between gap-3">
-                                    <span className="font-medium">Preview height</span>
-                                    <span className="text-muted-foreground">{previewHeight}px</span>
+                                    <span className="font-medium">
+                                        Preview height
+                                    </span>
+                                    <span className="text-muted-foreground">
+                                        {previewHeight}px
+                                    </span>
                                 </div>
                                 <input
                                     aria-label="Preview height"
@@ -315,7 +341,9 @@ export function FileBrowser({
                                     max={420}
                                     min={120}
                                     onChange={(event) =>
-                                        onPreviewHeightChange?.(Number(event.target.value))
+                                        onPreviewHeightChange?.(
+                                            Number(event.target.value),
+                                        )
                                     }
                                     step={20}
                                     type="range"
@@ -330,7 +358,9 @@ export function FileBrowser({
                                         className="rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
                                         disabled={previewPage <= 1}
                                         onClick={() =>
-                                            onPreviewPageChange?.(previewPage - 1)
+                                            onPreviewPageChange?.(
+                                                previewPage - 1,
+                                            )
                                         }
                                     >
                                         Previous
@@ -338,9 +368,13 @@ export function FileBrowser({
                                     <button
                                         type="button"
                                         className="rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-                                        disabled={previewPage >= previewPageCount}
+                                        disabled={
+                                            previewPage >= previewPageCount
+                                        }
                                         onClick={() =>
-                                            onPreviewPageChange?.(previewPage + 1)
+                                            onPreviewPageChange?.(
+                                                previewPage + 1,
+                                            )
                                         }
                                     >
                                         Next
@@ -375,8 +409,12 @@ export function FileBrowser({
                                             {fileName(file.path)}
                                         </span>
                                         <span className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                                            <span>{formatBytes(file.size)}</span>
-                                            <span>{formatMtime(file.mtime)}</span>
+                                            <span>
+                                                {formatBytes(file.size)}
+                                            </span>
+                                            <span>
+                                                {formatMtime(file.mtime)}
+                                            </span>
                                             <span className="uppercase tracking-[0.18em]">
                                                 {file.kind}
                                             </span>

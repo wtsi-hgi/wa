@@ -115,7 +115,10 @@ function buildFileUrl(
 
     if (options.thumbnail) {
         query.set("thumb", "true");
-        query.set("w", String(options.width ?? Math.round(defaultPreviewHeight * 1.6)));
+        query.set(
+            "w",
+            String(options.width ?? Math.round(defaultPreviewHeight * 1.6)),
+        );
         query.set("h", String(options.height ?? defaultPreviewHeight));
     }
 
@@ -275,9 +278,9 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
     const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
     const [previewMode, setPreviewMode] = useState<PreviewMode>("single");
     const [previewHeight, setPreviewHeight] = useState(defaultPreviewHeight);
-    const [selectedDirectory, setSelectedDirectory] = useState<string | undefined>(
-        directoryGroups[0]?.path,
-    );
+    const [selectedDirectory, setSelectedDirectory] = useState<
+        string | undefined
+    >(directoryGroups[0]?.path);
     const [selectedFile, setSelectedFile] = useState<FileEntry | null>(
         directoryGroups[0]?.files[0] ?? null,
     );
@@ -286,73 +289,64 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         buildPreviewState(directoryGroups[0]?.files[0] ?? null),
     );
 
-    const selectedGroup =
-        directoryGroups.find((group) => group.path === selectedDirectory) ??
-        directoryGroups[0];
-    const selectedDirectoryFiles = selectedGroup?.files ?? [];
+    const selectedGroup = useMemo(
+        () =>
+            directoryGroups.find((group) => group.path === selectedDirectory) ??
+            directoryGroups[0],
+        [directoryGroups, selectedDirectory],
+    );
+    const selectedDirectoryFiles = useMemo(
+        () => selectedGroup?.files ?? [],
+        [selectedGroup],
+    );
+    const effectiveSelectedFile = useMemo(() => {
+        if (!selectedFile) {
+            return selectedDirectoryFiles[0] ?? null;
+        }
+
+        const matchingFile = selectedDirectoryFiles.find(
+            (file) => file.path === selectedFile.path,
+        );
+
+        return matchingFile ?? selectedDirectoryFiles[0] ?? null;
+    }, [selectedDirectoryFiles, selectedFile]);
     const previewPageCount = Math.max(
         1,
         Math.ceil(selectedDirectoryFiles.length / thumbnailsPerPage),
     );
+    const effectivePreviewPage = Math.min(previewPage, previewPageCount);
     const visiblePreviewFiles = selectedDirectoryFiles.slice(
-        (previewPage - 1) * thumbnailsPerPage,
-        previewPage * thumbnailsPerPage,
+        (effectivePreviewPage - 1) * thumbnailsPerPage,
+        effectivePreviewPage * thumbnailsPerPage,
     );
 
     const previewContent =
-        selectedFile && previewState.path === selectedFile.path
+        effectiveSelectedFile &&
+        previewState.path === effectiveSelectedFile.path
             ? previewState.content
             : undefined;
     const previewError =
-        selectedFile && previewState.path === selectedFile.path
+        effectiveSelectedFile &&
+        previewState.path === effectiveSelectedFile.path
             ? previewState.error
             : undefined;
     const isLoading =
-        selectedFile && previewState.path === selectedFile.path
+        effectiveSelectedFile &&
+        previewState.path === effectiveSelectedFile.path
             ? previewState.isLoading
             : false;
 
     useEffect(() => {
-        const fallbackDirectory = directoryGroups[0]?.path;
-
-        if (!selectedDirectory || !selectedGroup) {
-            setSelectedDirectory(fallbackDirectory);
-            setSelectedFile(directoryGroups[0]?.files[0] ?? null);
-            setPreviewPage(1);
-            setPreviewState(buildPreviewState(directoryGroups[0]?.files[0] ?? null));
-            return;
-        }
-
-        const fileStillPresent = selectedFile
-            ? selectedDirectoryFiles.some((file) => file.path === selectedFile.path)
-            : false;
-
-        if (!fileStillPresent) {
-            const nextFile = selectedDirectoryFiles[0] ?? null;
-            setSelectedFile(nextFile);
-            setPreviewState(buildPreviewState(nextFile));
-        }
-    }, [directoryGroups, selectedDirectory, selectedDirectoryFiles, selectedFile, selectedGroup]);
-
-    useEffect(() => {
-        if (previewPage <= previewPageCount) {
-            return;
-        }
-
-        setPreviewPage(previewPageCount);
-    }, [previewPage, previewPageCount]);
-
-    useEffect(() => {
         if (
             previewMode === "grid" ||
-            !selectedFile ||
-            !shouldFetchInlinePreview(selectedFile.path)
+            !effectiveSelectedFile ||
+            !shouldFetchInlinePreview(effectiveSelectedFile.path)
         ) {
             return;
         }
 
         let cancelled = false;
-        const selectedPath = selectedFile.path;
+        const selectedPath = effectiveSelectedFile.path;
 
         void fetchPreviewContent(resultId, selectedPath)
             .then((nextContent) => {
@@ -406,7 +400,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         return () => {
             cancelled = true;
         };
-    }, [previewMode, resultId, selectedFile]);
+    }, [effectiveSelectedFile, previewMode, resultId]);
 
     return (
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(24rem,0.95fr)] 2xl:grid-cols-[minmax(0,1.05fr)_minmax(28rem,0.95fr)]">
@@ -444,10 +438,10 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                     }}
                     previewHeight={previewHeight}
                     previewMode={previewMode}
-                    previewPage={previewPage}
+                    previewPage={effectivePreviewPage}
                     previewPageCount={previewPageCount}
                     selectedDirectory={selectedGroup?.path}
-                    selectedPath={selectedFile?.path}
+                    selectedPath={effectiveSelectedFile?.path}
                 />
             </div>
 
@@ -463,17 +457,22 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                             </h2>
                         </div>
 
-                        {selectedFile ? (
+                        {effectiveSelectedFile ? (
                             <div
                                 className="mt-6"
-                                data-selected-file-path={selectedFile.path}
+                                data-selected-file-path={
+                                    effectiveSelectedFile.path
+                                }
                             >
                                 <FilePreview
                                     content={previewContent}
                                     error={previewError}
-                                    file={selectedFile}
+                                    file={effectiveSelectedFile}
                                     isLoading={isLoading}
-                                    proxyUrl={buildFileUrl(resultId, selectedFile.path)}
+                                    proxyUrl={buildFileUrl(
+                                        resultId,
+                                        effectiveSelectedFile.path,
+                                    )}
                                 />
                             </div>
                         ) : (
@@ -490,34 +489,53 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                                     Preview gallery
                                 </p>
                                 <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                                    {selectedGroup?.path ?? "Selected directory"}
+                                    {selectedGroup?.path ??
+                                        "Selected directory"}
                                 </h2>
                                 <p className="mt-2 text-sm text-muted-foreground">
-                                    {pageSummary(selectedDirectoryFiles.length, previewPage)}
+                                    {pageSummary(
+                                        selectedDirectoryFiles.length,
+                                        effectivePreviewPage,
+                                    )}
                                 </p>
                             </div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-4 py-2 text-sm text-muted-foreground">
-                                <Images className="size-4 text-primary" aria-hidden="true" />
+                                <Images
+                                    className="size-4 text-primary"
+                                    aria-hidden="true"
+                                />
                                 1 preview per row at {previewHeight}px high
                             </div>
                         </div>
 
-                        <div className="mt-6 space-y-4" data-preview-mode="grid">
+                        <div
+                            className="mt-6 space-y-4"
+                            data-preview-mode="grid"
+                        >
                             {visiblePreviewFiles.map((file) =>
                                 isImageFile(file.path) ? (
                                     <FileImageThumbnail
                                         key={file.path}
                                         file={file}
-                                        fullSizeUrl={buildFileUrl(resultId, file.path)}
+                                        fullSizeUrl={buildFileUrl(
+                                            resultId,
+                                            file.path,
+                                        )}
                                         height={previewHeight}
-                                        thumbnailUrl={buildFileUrl(resultId, file.path, {
-                                            height: previewHeight,
-                                            thumbnail: true,
-                                            width: Math.max(
-                                                320,
-                                                Math.round(previewHeight * 1.6),
-                                            ),
-                                        })}
+                                        thumbnailUrl={buildFileUrl(
+                                            resultId,
+                                            file.path,
+                                            {
+                                                height: previewHeight,
+                                                thumbnail: true,
+                                                width: Math.max(
+                                                    320,
+                                                    Math.round(
+                                                        previewHeight * 1.6,
+                                                    ),
+                                                ),
+                                            },
+                                        )}
                                     />
                                 ) : (
                                     <GalleryPreviewRow
