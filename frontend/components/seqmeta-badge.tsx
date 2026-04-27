@@ -1,11 +1,26 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
+import { Copy, Search, X } from "lucide-react";
+
 import type { EnrichmentResult, MissingHop } from "@/lib/contracts";
 import { cn } from "@/lib/utils";
 
 type SeqmetaBadgeProps = {
+    metadataKey: string;
     rawValue: string;
     enrichment: EnrichmentResult | null;
     error?: "not_found" | "upstream_impaired";
     loading?: boolean;
+};
+
+type SeqmetaDetailField = {
+    key: string;
+    label: string;
+    searchKey?: string;
+    value: string;
 };
 
 function asString(value: unknown): string | null {
@@ -86,7 +101,196 @@ function humanizeMissingHop(missing: MissingHop): string {
     return `${missing.hop.replace(/^./, (letter) => letter.toUpperCase())} details unavailable`;
 }
 
-function buildTooltipLines(
+function appendDetailField(
+    fields: SeqmetaDetailField[],
+    field: SeqmetaDetailField | null,
+) {
+    if (!field) {
+        return;
+    }
+
+    const value = field.value.trim();
+
+    if (!value) {
+        return;
+    }
+
+    const duplicate = fields.some(
+        (entry) =>
+            entry.key === field.key &&
+            entry.value.toLowerCase() === value.toLowerCase(),
+    );
+
+    if (!duplicate) {
+        fields.push({ ...field, value });
+    }
+}
+
+function buildDetailFields(
+    metadataKey: string,
+    rawValue: string,
+    enrichment: EnrichmentResult | null,
+): SeqmetaDetailField[] {
+    const fields: SeqmetaDetailField[] = [];
+
+    appendDetailField(fields, {
+        key: metadataKey,
+        label: "Selected metadata value",
+        searchKey: metadataKey,
+        value: rawValue,
+    });
+
+    if (!enrichment) {
+        return fields;
+    }
+
+    appendDetailField(fields, {
+        key: "seqmeta_type",
+        label: "Resolved seqmeta type",
+        value: enrichment.type,
+    });
+
+    appendDetailField(
+        fields,
+        enrichment.graph.study?.name
+            ? {
+                  key: "study_name",
+                  label: "Study name",
+                  value: enrichment.graph.study.name,
+              }
+            : null,
+    );
+    appendDetailField(
+        fields,
+        enrichment.graph.study?.id_study_lims
+            ? {
+                  key: "study_id",
+                  label: "Study identifier",
+                  searchKey: "study_id",
+                  value: enrichment.graph.study.id_study_lims,
+              }
+            : null,
+    );
+    appendDetailField(
+        fields,
+        enrichment.graph.study?.accession_number
+            ? {
+                  key: "study_accession_number",
+                  label: "Study accession",
+                  value: enrichment.graph.study.accession_number,
+              }
+            : null,
+    );
+
+    appendDetailField(
+        fields,
+        enrichment.graph.sample?.sample_name
+            ? {
+                  key: "sample_name",
+                  label: "Sample name",
+                  value: enrichment.graph.sample.sample_name,
+              }
+            : null,
+    );
+    appendDetailField(
+        fields,
+        enrichment.graph.sample?.sanger_id
+            ? {
+                  key: "seqmeta_sampleid",
+                  label: "Sanger sample ID",
+                  searchKey: "seqmeta_sampleid",
+                  value: enrichment.graph.sample.sanger_id,
+              }
+            : null,
+    );
+    appendDetailField(
+        fields,
+        enrichment.graph.sample?.id_sample_lims
+            ? {
+                  key: "seqmeta_sample_lims",
+                  label: "Sample LIMS ID",
+                  searchKey: "seqmeta_sample_lims",
+                  value: enrichment.graph.sample.id_sample_lims,
+              }
+            : null,
+    );
+    appendDetailField(
+        fields,
+        enrichment.graph.sample?.accession_number
+            ? {
+                  key: "sample_accession_number",
+                  label: "Sample accession",
+                  value: enrichment.graph.sample.accession_number,
+              }
+            : null,
+    );
+
+    const libraryTypes = [
+        enrichment.graph.library?.library_type,
+        enrichment.graph.sample?.library_type,
+        ...(enrichment.graph.libraries ?? []).map((library) =>
+            asString(library.library_type),
+        ),
+    ].filter((value): value is string => Boolean(value));
+
+    for (const libraryType of libraryTypes) {
+        appendDetailField(fields, {
+            key: "seqmeta_library",
+            label: "Library type",
+            searchKey: "seqmeta_library",
+            value: libraryType,
+        });
+    }
+
+    appendDetailField(
+        fields,
+        enrichment.graph.project?.name
+            ? {
+                  key: "project_name",
+                  label: "Project",
+                  value: enrichment.graph.project.name,
+              }
+            : null,
+    );
+    appendDetailField(
+        fields,
+        enrichment.graph.users && enrichment.graph.users.length > 0
+            ? {
+                  key: "project_users",
+                  label: "Project users",
+                  value: enrichment.graph.users
+                      .map((user) => asString(user.username))
+                      .filter((value): value is string => Boolean(value))
+                      .join(", "),
+              }
+            : null,
+    );
+    appendDetailField(
+        fields,
+        enrichment.graph.samples && enrichment.graph.samples.length > 0
+            ? {
+                  key: "linked_samples",
+                  label: "Linked samples",
+                  value: enrichment.graph.samples
+                      .slice(0, 5)
+                      .map((sample) => {
+                          const sampleName = asString(sample.sample_name);
+                          const sangerId = asString(sample.sanger_id);
+
+                          return [sampleName, sangerId]
+                              .filter(Boolean)
+                              .join(" / ");
+                      })
+                      .filter(Boolean)
+                      .join(", "),
+              }
+            : null,
+    );
+
+    return fields;
+}
+
+function buildStatusLines(
     enrichment: EnrichmentResult | null,
     error: SeqmetaBadgeProps["error"],
     loading: boolean,
@@ -110,32 +314,101 @@ function buildTooltipLines(
     return primaryDetails(enrichment);
 }
 
+async function writeClipboard(value: string): Promise<boolean> {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+        return false;
+    }
+
+    try {
+        await navigator.clipboard.writeText(value);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export function SeqmetaBadge({
+    metadataKey,
     rawValue,
     enrichment,
     error,
     loading = false,
 }: SeqmetaBadgeProps) {
-    const tooltipLines = buildTooltipLines(enrichment, error, loading);
     const inlineLabel = primaryLabel(rawValue, enrichment);
-    const missingLines = enrichment?.partial
-        ? (enrichment.missing ?? []).map(humanizeMissingHop)
-        : [];
+    const detailFields = useMemo(
+        () => buildDetailFields(metadataKey, rawValue, enrichment),
+        [enrichment, metadataKey, rawValue],
+    );
+    const statusLines = useMemo(
+        () => buildStatusLines(enrichment, error, loading),
+        [enrichment, error, loading],
+    );
+    const missingLines = useMemo(
+        () =>
+            enrichment?.partial
+                ? (enrichment.missing ?? []).map(humanizeMissingHop)
+                : [],
+        [enrichment],
+    );
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!dialogOpen) {
+            return undefined;
+        }
+
+        function handleKeyDown(event: KeyboardEvent) {
+            if (event.key === "Escape") {
+                setDialogOpen(false);
+            }
+        }
+
+        window.addEventListener("keydown", handleKeyDown);
+
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [dialogOpen]);
+
+    useEffect(() => {
+        if (!copiedKey) {
+            return undefined;
+        }
+
+        const timeout = window.setTimeout(() => {
+            setCopiedKey(null);
+        }, 1500);
+
+        return () => {
+            window.clearTimeout(timeout);
+        };
+    }, [copiedKey]);
 
     return (
-        <span className="group relative inline-flex max-w-full flex-col items-start gap-3 align-middle">
-            <span className="inline-flex items-center gap-2">
-                <span
-                    data-testid="seqmeta-badge-label"
+        <>
+            <span className="inline-flex max-w-full items-center gap-2 align-middle">
+                <button
+                    type="button"
+                    aria-expanded={dialogOpen}
+                    aria-haspopup="dialog"
+                    aria-label={`Open ${metadataKey} details`}
+                    data-testid="seqmeta-badge-trigger"
                     className={cn(
-                        "inline-flex items-center rounded-full border border-border/80 px-3 py-1 text-xs font-medium tracking-[0.16em]",
+                        "inline-flex max-w-full items-center rounded-full border border-border/80 px-3 py-1 text-left text-xs font-medium tracking-[0.16em] transition hover:border-primary/45 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                         enrichment
                             ? "bg-accent/20 text-foreground"
                             : "bg-background/80 text-muted-foreground",
                     )}
+                    onClick={() => setDialogOpen(true)}
                 >
-                    {inlineLabel}
-                </span>
+                    <span
+                        data-testid="seqmeta-badge-label"
+                        className="truncate"
+                    >
+                        {inlineLabel}
+                    </span>
+                </button>
 
                 {loading ? (
                     <span
@@ -165,31 +438,161 @@ export function SeqmetaBadge({
                 ) : null}
             </span>
 
-            {missingLines.length > 0 ? (
-                <span className="rounded-2xl border border-dashed border-border/70 bg-background/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                    <span className="block font-medium text-foreground">
-                        Some details unavailable
-                    </span>
-                    <ul className="mt-1 list-disc pl-4">
-                        {missingLines.map((line) => (
-                            <li key={line}>{line}</li>
-                        ))}
-                    </ul>
-                </span>
-            ) : null}
-
-            {tooltipLines.length > 0 ? (
-                <span
-                    role="tooltip"
-                    className="pointer-events-none absolute left-0 top-full z-20 mt-2 hidden min-w-52 rounded-2xl border border-border/80 bg-popover px-3 py-2 text-xs leading-5 text-popover-foreground shadow-[0_20px_80px_-48px_rgba(30,45,63,0.75)] group-hover:block group-focus-within:block"
+            {dialogOpen ? (
+                <div
+                    aria-labelledby={`seqmeta-dialog-title-${metadataKey}`}
+                    aria-modal="true"
+                    className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
+                    role="dialog"
                 >
-                    {tooltipLines.map((line) => (
-                        <span key={line} className="block whitespace-nowrap">
-                            {line}
-                        </span>
-                    ))}
-                </span>
+                    <button
+                        type="button"
+                        aria-label="Close seqmeta details backdrop"
+                        className="absolute inset-0 bg-[color:rgba(15,23,42,0.64)] backdrop-blur-sm"
+                        onClick={() => setDialogOpen(false)}
+                    />
+                    <section className="relative z-10 w-full max-w-4xl overflow-hidden rounded-[2rem] border border-border/80 bg-[linear-gradient(145deg,color-mix(in_oklab,var(--card)_88%,white_12%),color-mix(in_oklab,var(--accent)_14%,var(--card)_86%))] shadow-[0_36px_140px_-72px_rgba(20,31,49,0.9)]">
+                        <div className="flex items-start justify-between gap-4 border-b border-border/70 px-6 py-5 sm:px-7">
+                            <div className="space-y-2">
+                                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted-foreground">
+                                    Seqmeta details
+                                </p>
+                                <h3
+                                    id={`seqmeta-dialog-title-${metadataKey}`}
+                                    className="text-2xl font-semibold tracking-tight text-foreground"
+                                >
+                                    {inlineLabel}
+                                </h3>
+                                <p className="font-mono text-xs text-muted-foreground">
+                                    {metadataKey}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                aria-label="Close seqmeta details"
+                                className="inline-flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground transition hover:border-primary/35 hover:bg-accent/25"
+                                onClick={() => setDialogOpen(false)}
+                            >
+                                <X className="size-4" aria-hidden="true" />
+                            </button>
+                        </div>
+
+                        <div className="grid gap-6 px-6 py-6 sm:px-7 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                            <div className="space-y-3">
+                                {detailFields.map((field) => {
+                                    const href = field.searchKey
+                                        ? `/?${new URLSearchParams({
+                                              [field.searchKey]: field.value,
+                                          }).toString()}`
+                                        : null;
+
+                                    return (
+                                        <article
+                                            key={`${field.key}:${field.value}`}
+                                            data-seqmeta-detail-key={field.key}
+                                            className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                        >
+                                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                        {field.label}
+                                                    </p>
+                                                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                                                        {field.key}
+                                                    </p>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2">
+                                                    <button
+                                                        type="button"
+                                                        aria-label={`Copy ${field.key}`}
+                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                        onClick={() => {
+                                                            void writeClipboard(
+                                                                field.value,
+                                                            ).then((copied) => {
+                                                                if (copied) {
+                                                                    setCopiedKey(
+                                                                        field.key,
+                                                                    );
+                                                                }
+                                                            });
+                                                        }}
+                                                    >
+                                                        <Copy
+                                                            className="size-3.5"
+                                                            aria-hidden="true"
+                                                        />
+                                                        {copiedKey === field.key
+                                                            ? "Copied"
+                                                            : "Copy"}
+                                                    </button>
+                                                    {href ? (
+                                                        <Link
+                                                            aria-label={`Send ${field.key} to search filter`}
+                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                            href={href}
+                                                        >
+                                                            <Search
+                                                                className="size-3.5"
+                                                                aria-hidden="true"
+                                                            />
+                                                            Filter
+                                                        </Link>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                            <p className="mt-3 break-all text-sm leading-6 text-foreground">
+                                                {field.value}
+                                            </p>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+
+                            <aside className="space-y-3 rounded-[1.5rem] border border-border/70 bg-background/66 p-4">
+                                <div>
+                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                        Summary
+                                    </p>
+                                    <p className="mt-2 text-sm leading-6 text-foreground">
+                                        {detailFields.length} field
+                                        {detailFields.length === 1
+                                            ? ""
+                                            : "s"}{" "}
+                                        available for this seqmeta value.
+                                    </p>
+                                </div>
+
+                                {statusLines.length > 0 ? (
+                                    <div>
+                                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                            Status
+                                        </p>
+                                        <div className="mt-2 space-y-2 text-sm leading-6 text-foreground">
+                                            {statusLines.map((line) => (
+                                                <p key={line}>{line}</p>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : null}
+
+                                {missingLines.length > 0 ? (
+                                    <div>
+                                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                            Partial response
+                                        </p>
+                                        <div className="mt-2 space-y-2 text-sm leading-6 text-foreground">
+                                            {missingLines.map((line) => (
+                                                <p key={line}>{line}</p>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : null}
+                            </aside>
+                        </div>
+                    </section>
+                </div>
             ) : null}
-        </span>
+        </>
     );
 }

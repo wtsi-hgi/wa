@@ -5,8 +5,8 @@ const port = Number(
 );
 
 const partialStudy = {
-    identifier: "5993",
-    type: "study_id",
+    identifier: "SANG5993",
+    type: "sanger_sample_id",
     graph: {
         study: {
             id_study_tmp: 42,
@@ -69,23 +69,94 @@ const partialStudy = {
     ],
 };
 
+const degradedSampleLims = {
+    identifier: "SMP5994",
+    type: "sample_lims_id",
+    object: {
+        id_sample_lims: "SMP5994",
+        sanger_id: "SANG5994",
+        id_study_lims: "5994",
+    },
+};
+
+const libraryStudy = {
+    id_study_tmp: 43,
+    id_lims: "SQSCP",
+    id_study_lims: "6591",
+    name: "6591",
+    faculty_sponsor: "Dr Example",
+    state: "active",
+    abstract: "Example study abstract",
+    abbreviation: "RNA",
+    accession_number: "ERP6591",
+    description: "Example study description",
+    data_release_strategy: "managed",
+    study_title: "Example study 6591",
+    data_access_group: "group-b",
+    hmdmc_number: "HMDMC-6591",
+    programme: "Transcriptomics",
+    created: "2026-04-20T09:00:00Z",
+    reference_genome: "GRCh38",
+    ethically_approved: true,
+    study_type: "RNA Sequencing",
+    contains_human_dna: true,
+    contaminated_human_dna: false,
+    study_visibility: "Always Open",
+    ega_dac_accession_number: "EGAC6591",
+    ega_policy_accession_number: "EGAP6591",
+    data_release_timing: "Immediate",
+};
+
+const libraryEnrichment = {
+    identifier: "RNA",
+    type: "library_type",
+    graph: {
+        study: libraryStudy,
+        libraries: [
+            {
+                library_type: "RNA",
+                id_study_lims: "6591",
+            },
+        ],
+        samples: [
+            {
+                id_study_lims: "6591",
+                id_sample_lims: "SMP6591",
+                sanger_id: "SANG6591",
+                sample_name: "Sample 6591",
+                taxon_id: 9606,
+                common_name: "Human",
+                library_type: "RNA",
+                id_run: 77123,
+                lane: 1,
+                tag_index: 3,
+                irods_path: "/irods/6591/SANG6591",
+                study_accession_number: "ERP6591",
+                accession_number: "SAMEA6591",
+            },
+        ],
+    },
+    partial: false,
+};
+
 const validations = new Map([
     [
-        "5993",
+        "SANG5993",
         {
-            identifier: "5993",
-            type: "study_id",
-            object: partialStudy.graph.study,
+            identifier: "SANG5993",
+            type: "sanger_sample_id",
+            object: partialStudy.graph.samples[0],
         },
     ],
+    ["SMP5994", degradedSampleLims],
     [
-        "5994",
+        "RNA",
         {
-            identifier: "5994",
-            type: "study_id",
+            identifier: "RNA",
+            type: "library_type",
             object: {
-                id_study_lims: "5994",
-                name: "5994",
+                library_type: "RNA",
+                id_study_lims: "6591",
             },
         },
     ],
@@ -104,12 +175,12 @@ const server = http.createServer((request, response) => {
         return;
     }
 
-    if (url.pathname === "/enrich/5993") {
+    if (url.pathname === "/enrich/SANG5993") {
         sendJson(response, 200, partialStudy);
         return;
     }
 
-    if (url.pathname === "/enrich/5994") {
+    if (url.pathname === "/enrich/SMP5994") {
         sendJson(response, 502, {
             error: "seqmeta: all enrichment hops failed",
             missing: [
@@ -120,6 +191,11 @@ const server = http.createServer((request, response) => {
                 },
             ],
         });
+        return;
+    }
+
+    if (url.pathname === "/enrich/RNA") {
+        sendJson(response, 200, libraryEnrichment);
         return;
     }
 

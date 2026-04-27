@@ -4,7 +4,13 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EnrichmentResult, FileEntry, ResultSet } from "@/lib/contracts";
@@ -212,18 +218,35 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
-    it("shows the resolved seqmeta type and tooltip details for an enriched badge", async () => {
+    it("opens a modal with structured seqmeta details for an enriched badge", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
         render(
             createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: buildEnrichment(),
             }),
         );
 
         expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+        expect(screen.queryByRole("dialog")).toBeNull();
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+        expect(screen.getByText("Selected metadata value")).toBeTruthy();
+        expect(screen.getByText("Study name")).toBeTruthy();
         expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
+        expect(
+            screen
+                .getByRole("link", {
+                    name: /send study_id to search filter/i,
+                })
+                .getAttribute("href"),
+        ).toBe("/?study_id=6568");
     });
 
     it("uses the study name as the badge label for a full study enrichment", async () => {
@@ -231,6 +254,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         render(
             createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
                     identifier: "6568",
@@ -250,6 +274,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         render(
             createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: null,
                 error: "not_found",
@@ -260,6 +285,11 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(
             screen.getByLabelText("enrichment unavailable").textContent,
         ).toContain("?");
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
         expect(screen.getByText("enrichment unavailable")).toBeTruthy();
     });
 
@@ -279,7 +309,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
     });
 
-    it("keeps seqmeta details visible when rendered inside the metadata table", async () => {
+    it("renders seqmeta metadata as a modal trigger without inline panels", async () => {
         const { ResultMetadata } = await import("@/components/result-metadata");
 
         render(
@@ -297,9 +327,15 @@ describe("M1 result detail seqmeta enrichment", () => {
         const metadataWrapper = metadataTable.parentElement;
 
         expect(metadataWrapper).toBeTruthy();
-        expect(metadataWrapper?.className).toContain("overflow-visible");
-        expect(metadataWrapper?.className).not.toContain("overflow-hidden");
-        expect(screen.getByRole("tooltip")).toBeTruthy();
+        expect(metadataWrapper?.className).toContain("overflow-hidden");
+        expect(screen.queryByRole("tooltip")).toBeNull();
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+        expect(screen.getByText("Study name")).toBeTruthy();
         expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
     });
 
@@ -504,6 +540,11 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
 
         expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
         expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
         expect(screen.queryByLabelText("enrichment unavailable")).toBeNull();
     });

@@ -159,8 +159,8 @@ test.describe("Q1 critical results flows", () => {
             page.getByRole("heading", { level: 1, name: rnaseqPipelineName }),
         ).toBeVisible();
         await expect(
-            page.locator('[data-metadata-row="seqmeta_studyid"]'),
-        ).toContainText("5993");
+            page.locator('[data-metadata-row="seqmeta_sampleid"]'),
+        ).toContainText("SANG5993");
         await expect(
             page.locator('[data-metadata-row="library"]'),
         ).toContainText("exon");
@@ -177,7 +177,7 @@ test.describe("Q1 critical results flows", () => {
         await openResultDetail(page, rnaseqPipelineName);
 
         await expect(
-            page.locator('[data-metadata-row="seqmeta_studyid"]'),
+            page.locator('[data-metadata-row="seqmeta_sampleid"]'),
         ).toContainText("Showing first 1000 samples");
     });
 
@@ -193,7 +193,7 @@ test.describe("Q1 critical results flows", () => {
 
         await expect(
             page
-                .locator('[data-metadata-row="seqmeta_studyid"]')
+                .locator('[data-metadata-row="seqmeta_sample_lims"]')
                 .getByLabel("enrichment backend impaired"),
         ).toBeVisible();
     });
