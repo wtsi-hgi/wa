@@ -48,7 +48,7 @@ describe("N1 file browser", () => {
         container.remove();
     });
 
-    it("shows separate trees for outputs and inputs tabs", async () => {
+    it("groups files by parent directory and flattens file rows within the selected directory", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
         await act(async () => {
@@ -57,73 +57,89 @@ describe("N1 file browser", () => {
                     files: [
                         buildFile("/out/a/1.txt", "output"),
                         buildFile("/out/a/2.txt", "output"),
+                        buildFile("/out/b/3.txt", "output"),
                         buildFile("/in/b.fastq", "input"),
                     ],
+                    onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
                 }),
             );
         });
 
-        expect(container.textContent).toContain("Outputs");
-        expect(container.textContent).toContain("out");
-        expect(container.textContent).toContain("a");
-        expect(container.textContent).toContain("2 txt");
+        expect(container.textContent).toContain("Directories");
+        expect(container.textContent).toContain("/out/a");
+        expect(container.textContent).toContain("2 files");
+        expect(container.textContent).toContain("1.txt");
+        expect(container.textContent).toContain("2.txt");
+        expect(container.textContent).not.toContain("/out/b/3.txt");
 
-        await click(container.querySelector('button[role="tab"][value="input"]'));
+        await click(container.querySelector('button[data-directory-path="/out/b"]'));
 
-        expect(container.textContent).toContain("in");
-        expect(container.textContent).toContain("1 fastq");
+        expect(container.textContent).toContain("3.txt");
+        expect(container.textContent).not.toContain("1.txt");
     });
 
-    it("shows an empty state for pipeline files when that tab has no entries", async () => {
+    it("shows an empty state when there are no registered files", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
         await act(async () => {
             root.render(
                 createElement(FileBrowser, {
-                    files: [buildFile("/out/report.txt", "output")],
+                    files: [],
+                    onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
                 }),
             );
         });
 
-        await click(
-            container.querySelector('button[role="tab"][value="pipeline"]'),
-        );
-
-        expect(container.textContent).toContain("No pipeline files");
+        expect(container.textContent).toContain("No registered files");
     });
 
-    it("builds a tree with aggregated file counts for child folders", async () => {
-        const { buildFileTree } = await import("@/components/file-browser");
+    it("builds flat directory summaries instead of a nested tree", async () => {
+        const { buildDirectoryGroups } = await import(
+            "@/components/file-browser"
+        );
 
-        const tree = buildFileTree([
+        const groups = buildDirectoryGroups([
             buildFile("/out/a/1.csv", "output"),
             buildFile("/out/a/2.csv", "output"),
             buildFile("/out/a/3.png", "output"),
             buildFile("/out/b/4.txt", "output"),
         ]);
 
-        expect(tree).toHaveLength(1);
-        expect(tree[0]?.name).toBe("out");
-        expect(tree[0]?.children).toHaveLength(2);
-        expect(tree[0]?.children[0]?.fileCount).toBe(3);
-        expect(tree[0]?.children[1]?.fileCount).toBe(1);
+        expect(groups).toHaveLength(2);
+        expect(groups[0]?.path).toBe("/out/a");
+        expect(groups[0]?.fileCount).toBe(3);
+        expect(groups[0]?.typeCounts).toEqual({ csv: 2, png: 1 });
+        expect(groups[0]?.files.map((file) => file.path)).toEqual([
+            "/out/a/1.csv",
+            "/out/a/2.csv",
+            "/out/a/3.png",
+        ]);
     });
 
-    it("auto-expands a single root folder on first render", async () => {
+    it("selects the first directory and first file on first render", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
+        const handleSelectDirectory = vi.fn();
+        const handleSelectFile = vi.fn();
 
         await act(async () => {
             root.render(
                 createElement(FileBrowser, {
-                    files: [buildFile("/results/report.txt", "output")],
-                    onSelectFile: vi.fn(),
+                    files: [
+                        buildFile("/results/report.txt", "output"),
+                        buildFile("/results/report-2.txt", "output"),
+                    ],
+                    onSelectDirectory: handleSelectDirectory,
+                    onSelectFile: handleSelectFile,
                 }),
             );
         });
 
-        expect(container.textContent).toContain("report.txt");
+        expect(handleSelectDirectory).toHaveBeenCalledWith("/results");
+        expect(handleSelectFile).toHaveBeenCalledWith(
+            expect.objectContaining({ path: "/results/report.txt" }),
+        );
     });
 
     it("calls onSelectFile with the clicked file entry", async () => {
@@ -135,6 +151,7 @@ describe("N1 file browser", () => {
             root.render(
                 createElement(FileBrowser, {
                     files: [file],
+                    onSelectDirectory: vi.fn(),
                     onSelectFile: handleSelectFile,
                 }),
             );
@@ -154,6 +171,7 @@ describe("N1 file browser", () => {
             root.render(
                 createElement(FileBrowser, {
                     files: [buildFile("/results/report.txt", "output", 1048576)],
+                    onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
                 }),
             );
@@ -162,109 +180,49 @@ describe("N1 file browser", () => {
         expect(container.textContent).toContain("1.0 MB");
     });
 
-    it("buildFileTree counts file types within a folder", async () => {
-        const { buildFileTree } = await import("@/components/file-browser");
-
-        const tree = buildFileTree([
-            buildFile("/out/a/1.csv", "output"),
-            buildFile("/out/a/2.csv", "output"),
-            buildFile("/out/a/3.png", "output"),
-        ]);
-
-        expect(tree[0]?.typeCounts).toEqual({ csv: 2, png: 1 });
-    });
-
-    it("aggregates file type counts from all descendant folders", async () => {
-        const { buildFileTree } = await import("@/components/file-browser");
-
-        const tree = buildFileTree([
-            buildFile("/out/a/1.csv", "output"),
-            buildFile("/out/a/2.csv", "output"),
-            buildFile("/out/a/3.csv", "output"),
-            buildFile("/out/a/4.png", "output"),
-            buildFile("/out/b/5.txt", "output"),
-            buildFile("/out/b/6.txt", "output"),
-        ]);
-
-        expect(tree[0]?.typeCounts).toEqual({ csv: 3, png: 1, txt: 2 });
-    });
-
-    it("collapses linear directory chains into a single folder segment", async () => {
-        const { FileBrowser, buildFileTree } = await import(
+    it("keeps directory summaries ordered by path", async () => {
+        const { buildDirectoryGroups } = await import(
             "@/components/file-browser"
         );
 
-        const tree = buildFileTree([
-            buildFile("/results/run-1/stage-2/sample/report.txt", "output"),
+        const groups = buildDirectoryGroups([
+            buildFile("/out/z/1.csv", "output"),
+            buildFile("/out/a/2.csv", "output"),
+            buildFile("/out/m/3.png", "output"),
         ]);
 
-        expect(tree[0]?.name).toBe("results/run-1/stage-2/sample");
-        expect(tree[0]?.path).toBe("/results/run-1/stage-2/sample");
-        expect(tree[0]?.children[0]?.path).toBe(
-            "/results/run-1/stage-2/sample/report.txt",
-        );
-
-        await act(async () => {
-            root.render(
-                createElement(FileBrowser, {
-                    files: [
-                        buildFile(
-                            "/results/run-1/stage-2/sample/report.txt",
-                            "output",
-                        ),
-                    ],
-                    onSelectFile: vi.fn(),
-                }),
-            );
-        });
-
-        expect(container.textContent).toContain("results/run-1/stage-2/sample");
-        expect(
-            container.querySelector(
-                'button[data-folder-path="/results/run-1/stage-2/sample"]',
-            ),
-        ).not.toBeNull();
-        expect(
-            container.querySelector(
-                'button[data-folder-path="/results/run-1/stage-2"]',
-            ),
-        ).toBeNull();
-        expect(
-            container.querySelector(
-                'button[data-file-path="/results/run-1/stage-2/sample/report.txt"]',
-            ),
-        ).not.toBeNull();
-
-        await click(
-            container.querySelector(
-                'button[data-folder-path="/results/run-1/stage-2/sample"]',
-            ),
-        );
-
-        expect(
-            container.querySelector(
-                'button[data-file-path="/results/run-1/stage-2/sample/report.txt"]',
-            ),
-        ).toBeNull();
+        expect(groups.map((group) => group.path)).toEqual([
+            "/out/a",
+            "/out/m",
+            "/out/z",
+        ]);
     });
 
-    it("displays a folder type summary beside the folder name", async () => {
+    it("surfaces the selected directory and preview controls", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
         await act(async () => {
             root.render(
                 createElement(FileBrowser, {
                     files: [
-                        buildFile("/out/a/1.csv", "output"),
-                        buildFile("/out/a/2.csv", "output"),
-                        buildFile("/out/a/3.csv", "output"),
-                        buildFile("/out/a/4.png", "output"),
+                        buildFile("/results/plot-001.png", "output"),
+                        buildFile("/results/plot-002.png", "output"),
                     ],
+                    onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
+                    previewHeight: 180,
+                    previewMode: "grid",
+                    previewPage: 2,
+                    previewPageCount: 3,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
                 }),
             );
         });
 
-        expect(container.textContent).toContain("3 csv, 1 png");
+        expect(container.textContent).toContain("Preview first 100 files");
+        expect(container.textContent).toContain("Preview height");
+        expect(container.textContent).toContain("Page 2 of 3");
     });
 });

@@ -20,7 +20,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import type { FileEntry } from "@/lib/contracts";
-import { formatBytes, formatUtcDateTime } from "@/lib/utils";
+import { cn, formatBytes, formatUtcDateTime } from "@/lib/utils";
 
 hljs.registerLanguage("json", json);
 hljs.registerLanguage("markdown", markdownLanguage);
@@ -63,6 +63,25 @@ export type FilePreviewProps = {
     error?: FilePreviewError;
     isLoading?: boolean;
     proxyUrl: string;
+};
+
+type LightboxImageProps = {
+    buttonClassName?: string;
+    fileName: string;
+    fullSizeUrl: string;
+    imageClassName?: string;
+    maxHeightPx?: number;
+    sizes?: string;
+    thumbnailHeight?: number;
+    thumbnailUrl: string;
+    thumbnailWidth?: number;
+};
+
+export type FileImageThumbnailProps = {
+    file: FileEntry;
+    fullSizeUrl: string;
+    height?: number;
+    thumbnailUrl: string;
 };
 
 type ParsedTable = {
@@ -395,13 +414,17 @@ function CsvPreview({
     );
 }
 
-function ImagePreview({
+function LightboxImage({
+    buttonClassName,
     fileName,
-    proxyUrl,
-}: {
-    fileName: string;
-    proxyUrl: string;
-}) {
+    fullSizeUrl,
+    imageClassName,
+    maxHeightPx = 240,
+    sizes = "320px",
+    thumbnailHeight = 240,
+    thumbnailUrl,
+    thumbnailWidth = 320,
+}: LightboxImageProps) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
 
     useEffect(() => {
@@ -427,18 +450,29 @@ function ImagePreview({
             <button
                 type="button"
                 aria-label="Open image lightbox"
-                className="group inline-flex overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]"
+                className={
+                    buttonClassName ??
+                    "group inline-flex overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]"
+                }
                 onClick={() => setLightboxOpen(true)}
             >
                 <Image
                     alt={`${fileName} preview`}
-                    className="rounded-xl object-contain transition duration-200 group-hover:scale-[1.01]"
-                    src={proxyUrl}
+                    className={cn(
+                        "rounded-xl object-contain transition duration-200 group-hover:scale-[1.01]",
+                        imageClassName,
+                    )}
+                    decoding="async"
+                    loading="lazy"
+                    src={thumbnailUrl}
                     unoptimized
-                    width={320}
-                    height={240}
-                    sizes="320px"
-                    style={{ maxHeight: "240px", maxWidth: "320px" }}
+                    width={thumbnailWidth}
+                    height={thumbnailHeight}
+                    sizes={sizes}
+                    style={{
+                        maxHeight: `${maxHeightPx}px`,
+                        maxWidth: `${thumbnailWidth}px`,
+                    }}
                 />
             </button>
 
@@ -467,7 +501,7 @@ function ImagePreview({
                         <Image
                             alt={`${fileName} full preview`}
                             className="max-h-[80vh] max-w-full rounded-[1.5rem] object-contain"
-                            src={proxyUrl}
+                            src={fullSizeUrl}
                             unoptimized
                             width={1600}
                             height={1200}
@@ -477,6 +511,63 @@ function ImagePreview({
                 </div>
             ) : null}
         </>
+    );
+}
+
+function ImagePreview({
+    fileName,
+    proxyUrl,
+}: {
+    fileName: string;
+    proxyUrl: string;
+}) {
+    return (
+        <LightboxImage
+            fileName={fileName}
+            fullSizeUrl={proxyUrl}
+            thumbnailUrl={proxyUrl}
+        />
+    );
+}
+
+export function FileImageThumbnail({
+    file,
+    fullSizeUrl,
+    height = 220,
+    thumbnailUrl,
+}: FileImageThumbnailProps) {
+    const fileName = file.path.split("/").pop() ?? file.path;
+
+    return (
+        <article className="rounded-[1.5rem] border border-border/70 bg-background/70 p-4 shadow-[0_20px_80px_-68px_rgba(48,67,98,0.8)]">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                        Image preview
+                    </p>
+                    <h3 className="mt-2 break-all text-sm font-medium text-foreground">
+                        {fileName}
+                    </h3>
+                </div>
+                <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    {formatBytes(file.size)}
+                </span>
+            </div>
+
+            <div className="mt-4">
+                <LightboxImage
+                    buttonClassName="group inline-flex w-full justify-center overflow-hidden rounded-[1.25rem] border border-border/70 bg-background/80 p-2 shadow-[0_16px_48px_-44px_rgba(48,67,98,0.7)]"
+                    fileName={fileName}
+                    fullSizeUrl={fullSizeUrl}
+                    imageClassName="w-full"
+                    maxHeightPx={height}
+                    sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
+                    thumbnailHeight={height}
+                    thumbnailUrl={thumbnailUrl}
+                    thumbnailWidth={Math.max(320, Math.round(height * 1.6))}
+                />
+            </div>
+        </article>
     );
 }
 
@@ -592,7 +683,7 @@ export function FilePreview({
                         </h3>
                     </div>
 
-                    {previewable ? <DownloadButton href={downloadUrl} /> : null}
+                    <DownloadButton href={downloadUrl} />
                 </div>
 
                 <div className="mt-5">

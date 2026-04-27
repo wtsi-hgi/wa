@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import sharp from "sharp";
 
 const resultsRawMock = vi.fn();
+const onePixelPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7foAAAAASUVORK5CYII=",
+    "base64",
+);
 
 vi.mock("@/lib/backend-client", () => ({
     resultsRaw: resultsRawMock,
@@ -65,6 +70,87 @@ describe("P1 file content streaming API route", () => {
             'attachment; filename="data.csv.gz"',
         );
         expect(response.headers.get("content-security-policy")).toBeNull();
+    });
+
+    it("passes through the original image when it is already smaller than the requested thumbnail", async () => {
+        resultsRawMock.mockResolvedValue(
+            new Response(onePixelPng, {
+                status: 200,
+                headers: { "content-type": "image/png" },
+            }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                "id=abc&path=%2Fout%2Fimg.png&thumb=true&w=320&h=180",
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            "/results/abc/file?path=%2Fout%2Fimg.png",
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/png");
+        expect(response.headers.get("content-security-policy")).toBe("sandbox");
+        expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    });
+
+    it("returns resized thumbnail responses for large image thumbnail requests", async () => {
+        const largePng = await sharp({
+            create: {
+                background: { alpha: 1, b: 16, g: 24, r: 32 },
+                channels: 4,
+                height: 720,
+                width: 1280,
+            },
+        })
+            .png()
+            .toBuffer();
+
+        resultsRawMock.mockResolvedValue(
+            new Response(largePng, {
+                status: 200,
+                headers: { "content-type": "image/png" },
+            }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                "id=abc&path=%2Fout%2Fimg.png&thumb=true&w=320&h=180",
+            ),
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/webp");
+        expect(response.headers.get("content-security-policy")).toBe("sandbox");
+        expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    });
+
+    it("falls back to the original streamed response when thumbnail generation fails", async () => {
+        const invalidImage = new Uint8Array([137, 80, 78, 71, 0, 1, 2, 3]);
+        resultsRawMock.mockResolvedValue(
+            new Response(invalidImage, {
+                status: 200,
+                headers: { "content-type": "image/png" },
+            }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                "id=abc&path=%2Fout%2Fbroken.png&thumb=true&w=320&h=180",
+            ),
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/png");
+        expect(response.headers.get("content-security-policy")).toBe("sandbox");
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(invalidImage);
     });
 
     it("forwards error status and JSON when the Go backend rejects access", async () => {

@@ -1,171 +1,55 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-    ChevronDown,
-    ChevronRight,
-    File as FileIcon,
-    FolderTree,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Eye, FolderTree, ListFilter } from "lucide-react";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { type FileEntry } from "@/lib/contracts";
 import { cn, formatBytes } from "@/lib/utils";
 
-type FileBrowserProps = {
-    files: FileEntry[];
-    onSelectFile: (file: FileEntry) => void;
-    selectedPath?: string;
-};
+export type PreviewMode = "single" | "grid";
 
-type FileKind = FileEntry["kind"];
-
-type TreeNode = {
-    children: TreeNode[];
+export type DirectoryGroup = {
     fileCount: number;
-    isDir: boolean;
-    mtime?: string;
-    name: string;
+    files: FileEntry[];
     path: string;
-    size?: number;
+    totalSize: number;
     typeCounts: Record<string, number>;
 };
 
-const fileKindOrder: FileKind[] = ["output", "input", "pipeline"];
-
-const fileKindLabels: Record<FileKind, string> = {
-    input: "Inputs",
-    output: "Outputs",
-    pipeline: "Pipeline",
+const fileKindOrder: Record<FileEntry["kind"], number> = {
+    output: 0,
+    input: 1,
+    pipeline: 2,
 };
 
-function compareNodes(left: TreeNode, right: TreeNode): number {
-    if (left.isDir !== right.isDir) {
-        return left.isDir ? -1 : 1;
+type FileBrowserProps = {
+    files: FileEntry[];
+    onPreviewHeightChange?: (value: number) => void;
+    onPreviewModeChange?: (mode: PreviewMode) => void;
+    onPreviewPageChange?: (page: number) => void;
+    onSelectDirectory?: (path: string) => void;
+    onSelectFile: (file: FileEntry) => void;
+    previewHeight?: number;
+    previewMode?: PreviewMode;
+    previewPage?: number;
+    previewPageCount?: number;
+    selectedDirectory?: string;
+    selectedPath?: string;
+};
+
+function parentDirectory(path: string): string {
+    const normalized = path.trim();
+    const index = normalized.lastIndexOf("/");
+
+    if (index <= 0) {
+        return "/";
     }
 
-    return left.name.localeCompare(right.name);
+    return normalized.slice(0, index);
 }
 
-function toTypeKey(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    const extensionIndex = name.lastIndexOf(".");
-
-    if (extensionIndex <= 0 || extensionIndex === name.length - 1) {
-        return "file";
-    }
-
-    return name.slice(extensionIndex + 1).toLowerCase();
-}
-
-function joinPath(parentPath: string, segment: string): string {
-    return `${parentPath}/${segment}`.replace(/\/+/g, "/");
-}
-
-function mergeTypeCounts(
-    target: Record<string, number>,
-    source: Record<string, number>,
-) {
-    for (const [type, count] of Object.entries(source)) {
-        target[type] = (target[type] ?? 0) + count;
-    }
-}
-
-function aggregateTree(node: TreeNode): TreeNode {
-    if (!node.isDir) {
-        return node;
-    }
-
-    node.children = node.children.map(aggregateTree).sort(compareNodes);
-    node.fileCount = 0;
-    node.typeCounts = {};
-
-    for (const child of node.children) {
-        node.fileCount += child.fileCount;
-        mergeTypeCounts(node.typeCounts, child.typeCounts);
-    }
-
-    return node;
-}
-
-function collapseDirectoryChain(node: TreeNode): TreeNode {
-    if (!node.isDir) {
-        return node;
-    }
-
-    node.children = node.children.map(collapseDirectoryChain);
-
-    while (node.children.length === 1 && node.children[0]?.isDir) {
-        const child = node.children[0];
-
-        node = {
-            ...node,
-            children: child.children,
-            fileCount: child.fileCount,
-            name: `${node.name}/${child.name}`,
-            path: child.path,
-            typeCounts: child.typeCounts,
-        };
-    }
-
-    return node;
-}
-
-export function buildFileTree(files: FileEntry[]): TreeNode[] {
-    const roots: TreeNode[] = [];
-
-    for (const file of [...files].sort((left, right) =>
-        left.path.localeCompare(right.path),
-    )) {
-        const segments = file.path.split("/").filter(Boolean);
-
-        if (segments.length === 0) {
-            continue;
-        }
-
-        let currentChildren = roots;
-        let parentPath = "";
-
-        for (const [index, segment] of segments.entries()) {
-            const path = joinPath(parentPath, segment);
-            const isLeaf = index === segments.length - 1;
-
-            if (isLeaf) {
-                currentChildren.push({
-                    children: [],
-                    fileCount: 1,
-                    isDir: false,
-                    mtime: file.mtime,
-                    name: segment,
-                    path,
-                    size: file.size,
-                    typeCounts: { [toTypeKey(file.path)]: 1 },
-                });
-                break;
-            }
-
-            let folderNode = currentChildren.find(
-                (node) => node.isDir && node.path === path,
-            );
-
-            if (!folderNode) {
-                folderNode = {
-                    children: [],
-                    fileCount: 0,
-                    isDir: true,
-                    name: segment,
-                    path,
-                    typeCounts: {},
-                };
-                currentChildren.push(folderNode);
-            }
-
-            currentChildren = folderNode.children;
-            parentPath = path;
-        }
-    }
-
-    return roots.map(aggregateTree).map(collapseDirectoryChain).sort(compareNodes);
+function fileName(path: string): string {
+    return path.split("/").pop() ?? path;
 }
 
 function formatMtime(mtime: string | undefined): string {
@@ -188,6 +72,17 @@ function formatMtime(mtime: string | undefined): string {
     return `${year}-${month}-${day} ${hours}:${minutes} UTC`;
 }
 
+function toTypeKey(path: string): string {
+    const name = fileName(path);
+    const extensionIndex = name.lastIndexOf(".");
+
+    if (extensionIndex <= 0 || extensionIndex === name.length - 1) {
+        return "file";
+    }
+
+    return name.slice(extensionIndex + 1).toLowerCase();
+}
+
 function formatTypeSummary(typeCounts: Record<string, number>): string {
     const entries = Object.entries(typeCounts);
 
@@ -203,259 +98,296 @@ function formatTypeSummary(typeCounts: Record<string, number>): string {
         .join(", ");
 }
 
-function collectAutoExpandedPaths(nodes: TreeNode[]): string[] {
-    const expandedPaths: string[] = [];
+export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
+    const groups = new Map<string, DirectoryGroup>();
 
-    for (const node of nodes) {
-        if (!node.isDir) {
-            continue;
-        }
+    for (const file of files) {
+        const directoryPath = parentDirectory(file.path);
+        const current =
+            groups.get(directoryPath) ??
+            ({
+                fileCount: 0,
+                files: [],
+                path: directoryPath,
+                totalSize: 0,
+                typeCounts: {},
+            } satisfies DirectoryGroup);
 
-        if (node.children.length === 1) {
-            expandedPaths.push(node.path);
-        }
+        current.files.push(file);
+        current.fileCount += 1;
+        current.totalSize += file.size;
 
-        expandedPaths.push(...collectAutoExpandedPaths(node.children));
+        const typeKey = toTypeKey(file.path);
+        current.typeCounts[typeKey] = (current.typeCounts[typeKey] ?? 0) + 1;
+        groups.set(directoryPath, current);
     }
 
-    return expandedPaths;
-}
-
-type TreeBranchProps = {
-    depth?: number;
-    expandedPaths: Set<string>;
-    filesByPath: Map<string, FileEntry>;
-    onSelectFile: (file: FileEntry) => void;
-    onToggleFolder: (path: string) => void;
-    selectedPath?: string;
-    nodes: TreeNode[];
-};
-
-function TreeBranch({
-    depth = 0,
-    expandedPaths,
-    filesByPath,
-    onSelectFile,
-    onToggleFolder,
-    selectedPath,
-    nodes,
-}: TreeBranchProps) {
-    return (
-        <ul className="space-y-2">
-            {nodes.map((node) => {
-                if (node.isDir) {
-                    const isExpanded = expandedPaths.has(node.path);
-
-                    return (
-                        <li key={node.path}>
-                            <button
-                                type="button"
-                                aria-expanded={isExpanded}
-                                className="flex w-full items-start gap-3 rounded-2xl border border-border/60 bg-background/70 px-4 py-3 text-left transition hover:border-primary/35 hover:bg-background"
-                                data-folder-path={node.path}
-                                onClick={() => onToggleFolder(node.path)}
-                            >
-                                <span
-                                    className="mt-0.5 text-muted-foreground"
-                                    aria-hidden="true"
-                                >
-                                    {isExpanded ? (
-                                        <ChevronDown className="size-4" />
-                                    ) : (
-                                        <ChevronRight className="size-4" />
-                                    )}
-                                </span>
-                                <span className="mt-0.5 text-primary" aria-hidden="true">
-                                    <FolderTree className="size-4" />
-                                </span>
-                                <span className="min-w-0 flex-1">
-                                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                        <span className="font-medium text-foreground">
-                                            {node.name}
-                                        </span>
-                                        <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                                            {node.fileCount} file{node.fileCount === 1 ? "" : "s"}
-                                        </span>
-                                        <span className="text-sm text-muted-foreground">
-                                            {formatTypeSummary(node.typeCounts)}
-                                        </span>
-                                    </span>
-                                </span>
-                            </button>
-
-                            {isExpanded ? (
-                                <div
-                                    className="mt-2 pl-4"
-                                    style={{ paddingLeft: `${(depth + 1) * 0.85}rem` }}
-                                >
-                                    <TreeBranch
-                                        depth={depth + 1}
-                                        expandedPaths={expandedPaths}
-                                        filesByPath={filesByPath}
-                                        nodes={node.children}
-                                        onSelectFile={onSelectFile}
-                                        onToggleFolder={onToggleFolder}
-                                        selectedPath={selectedPath}
-                                    />
-                                </div>
-                            ) : null}
-                        </li>
-                    );
-                }
-
-                const file = filesByPath.get(node.path);
-
-                return (
-                    <li key={node.path}>
-                        <button
-                            type="button"
-                            className={cn(
-                                "flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition",
-                                selectedPath === node.path
-                                    ? "border-primary/45 bg-primary/10"
-                                    : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
-                            )}
-                            data-file-path={node.path}
-                            onClick={() => {
-                                if (file) {
-                                    onSelectFile(file);
-                                }
-                            }}
-                        >
-                            <span className="mt-0.5 text-primary" aria-hidden="true">
-                                <FileIcon className="size-4" />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                                <span className="block truncate font-medium text-foreground">
-                                    {node.name}
-                                </span>
-                                <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                                    <span>{formatBytes(node.size)}</span>
-                                    <span>{formatMtime(node.mtime)}</span>
-                                </span>
-                            </span>
-                        </button>
-                    </li>
-                );
-            })}
-        </ul>
+    return [...groups.values()].sort((left, right) =>
+        fileKindOrder[left.files[0]?.kind ?? "pipeline"] -
+            fileKindOrder[right.files[0]?.kind ?? "pipeline"] ||
+        left.path.localeCompare(right.path),
     );
 }
 
 export function FileBrowser({
     files,
+    onPreviewHeightChange,
+    onPreviewModeChange,
+    onPreviewPageChange,
+    onSelectDirectory,
     onSelectFile,
+    previewHeight = 220,
+    previewMode = "single",
+    previewPage = 1,
+    previewPageCount = 1,
+    selectedDirectory,
     selectedPath,
 }: FileBrowserProps) {
-    const [activeTab, setActiveTab] = useState<FileKind>("output");
-
-    const filesByKind = useMemo<Record<FileKind, FileEntry[]>>(
-        () => ({
-            input: files.filter((file) => file.kind === "input"),
-            output: files.filter((file) => file.kind === "output"),
-            pipeline: files.filter((file) => file.kind === "pipeline"),
-        }),
-        [files],
+    const [uncontrolledDirectory, setUncontrolledDirectory] = useState<
+        string | undefined
+    >(selectedDirectory);
+    const [uncontrolledPath, setUncontrolledPath] = useState<string | undefined>(
+        selectedPath,
     );
+    const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
+    const effectiveSelectedDirectory = selectedDirectory ?? uncontrolledDirectory;
+    const effectiveSelectedPath = selectedPath ?? uncontrolledPath;
 
-    const treesByKind = useMemo<Record<FileKind, TreeNode[]>>(
-        () => ({
-            input: buildFileTree(filesByKind.input),
-            output: buildFileTree(filesByKind.output),
-            pipeline: buildFileTree(filesByKind.pipeline),
-        }),
-        [filesByKind],
-    );
+    const activeDirectory =
+        directoryGroups.find(
+            (group) => group.path === effectiveSelectedDirectory,
+        ) ??
+        directoryGroups[0];
+    const activeFiles = activeDirectory?.files ?? [];
+    const activeFile =
+        activeFiles.find((file) => file.path === effectiveSelectedPath) ??
+        activeFiles[0];
 
-    const autoExpandedPaths = useMemo(
-        () =>
-            fileKindOrder
-                .map((kind) => treesByKind[kind])
-                .flatMap((nodes) => collectAutoExpandedPaths(nodes)),
-        [treesByKind],
-    );
-
-    const [expansionOverrides, setExpansionOverrides] = useState<
-        Record<string, boolean>
-    >({});
-
-    const expandedPaths = useMemo(() => {
-        const next = new Set(autoExpandedPaths);
-
-        for (const [path, isExpanded] of Object.entries(expansionOverrides)) {
-            if (isExpanded) {
-                next.add(path);
-            } else {
-                next.delete(path);
-            }
+    useEffect(() => {
+        if (!activeDirectory) {
+            return;
         }
 
-        return next;
-    }, [autoExpandedPaths, expansionOverrides]);
+        if (selectedDirectory === undefined) {
+            setUncontrolledDirectory((current) => current ?? activeDirectory.path);
+        }
 
-    function toggleFolder(path: string) {
-        setExpansionOverrides((current) => ({
-            ...current,
-            [path]: !expandedPaths.has(path),
-        }));
+        if (effectiveSelectedDirectory === activeDirectory.path) {
+            return;
+        }
+
+        onSelectDirectory?.(activeDirectory.path);
+    }, [activeDirectory, effectiveSelectedDirectory, onSelectDirectory, selectedDirectory]);
+
+    useEffect(() => {
+        if (!activeFile) {
+            return;
+        }
+
+        if (selectedPath === undefined) {
+            setUncontrolledPath((current) => current ?? activeFile.path);
+        }
+
+        if (effectiveSelectedPath === activeFile.path) {
+            return;
+        }
+
+        onSelectFile(activeFile);
+    }, [activeFile, effectiveSelectedPath, onSelectFile, selectedPath]);
+
+    if (directoryGroups.length === 0) {
+        return (
+            <section className="rounded-[1.75rem] border border-border/70 bg-card/85 p-5 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)]">
+                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Directories
+                </p>
+                <div className="mt-5 rounded-[1.5rem] border border-dashed border-border/70 bg-background/40 px-5 py-8 text-sm text-muted-foreground">
+                    No registered files
+                </div>
+            </section>
+        );
     }
 
     return (
         <section className="rounded-[1.75rem] border border-border/70 bg-card/85 p-4 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)] sm:p-5">
-            <Tabs
-                defaultValue="output"
-                value={activeTab}
-                onValueChange={(nextValue) => {
-                    if (fileKindOrder.includes(nextValue as FileKind)) {
-                        setActiveTab(nextValue as FileKind);
-                    }
-                }}
-            >
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            File browser
-                        </p>
-                        <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                            Inspect result assets by source
-                        </h2>
+            <div className="grid gap-5 xl:grid-cols-[17rem_minmax(0,1fr)]">
+                <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4">
+                    <div className="flex items-center gap-3">
+                        <FolderTree className="size-4 text-primary" aria-hidden="true" />
+                        <div>
+                            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                Directories
+                            </p>
+                            <h2 className="mt-1 text-xl font-semibold tracking-tight text-foreground">
+                                Browse by folder
+                            </h2>
+                        </div>
                     </div>
-                    <TabsList className="sm:w-auto">
-                        {fileKindOrder.map((kind) => (
-                            <TabsTrigger key={kind} value={kind}>
-                                {fileKindLabels[kind]}
-                            </TabsTrigger>
-                        ))}
-                    </TabsList>
+
+                    <ul className="mt-5 space-y-2">
+                        {directoryGroups.map((group) => {
+                            const isSelected = group.path === activeDirectory?.path;
+
+                            return (
+                                <li key={group.path}>
+                                    <button
+                                        type="button"
+                                        className={cn(
+                                            "w-full rounded-[1.25rem] border px-4 py-3 text-left transition",
+                                            isSelected
+                                                ? "border-primary/45 bg-primary/10"
+                                                : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
+                                        )}
+                                        data-directory-path={group.path}
+                                        onClick={() => {
+                                            if (selectedDirectory === undefined) {
+                                                setUncontrolledDirectory(group.path);
+                                            }
+
+                                            onSelectDirectory?.(group.path);
+                                        }}
+                                    >
+                                        <p className="break-all font-medium text-foreground">
+                                            {group.path}
+                                        </p>
+                                        <p className="mt-2 text-sm text-muted-foreground">
+                                            {group.fileCount} file{group.fileCount === 1 ? "" : "s"} · {formatBytes(group.totalSize)}
+                                        </p>
+                                        <p className="mt-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                                            {formatTypeSummary(group.typeCounts)}
+                                        </p>
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ul>
                 </div>
 
-                {fileKindOrder.map((kind) => {
-                    const tree = treesByKind[kind];
-                    const filesForKind = filesByKind[kind];
-                    const filesByPath = new Map(
-                        filesForKind.map((file) => [file.path, file]),
-                    );
+                <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4">
+                    <div className="flex flex-col gap-4 border-b border-border/60 pb-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div>
+                            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                Directory contents
+                            </p>
+                            <h2 className="mt-1 text-xl font-semibold tracking-tight text-foreground">
+                                {activeDirectory?.path}
+                            </h2>
+                            <p className="mt-2 text-sm text-muted-foreground">
+                                Showing {activeFiles.length} file{activeFiles.length === 1 ? "" : "s"} in this directory.
+                            </p>
+                        </div>
 
-                    return (
-                        <TabsContent key={kind} value={kind}>
-                            {tree.length === 0 ? (
-                                <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/40 px-5 py-8 text-sm text-muted-foreground">
-                                    No {kind} files
+                        <div className="space-y-3 xl:min-w-[22rem]">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <label className="inline-flex items-center gap-3 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-sm text-foreground">
+                                    <input
+                                        checked={previewMode === "grid"}
+                                        className="size-4 accent-primary"
+                                        onChange={(event) =>
+                                            onPreviewModeChange?.(
+                                                event.target.checked ? "grid" : "single",
+                                            )
+                                        }
+                                        type="checkbox"
+                                    />
+                                    <span className="inline-flex items-center gap-2">
+                                        <Eye className="size-4 text-primary" aria-hidden="true" />
+                                        Preview first 100 files
+                                    </span>
+                                </label>
+
+                                <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-sm text-muted-foreground">
+                                    <ListFilter className="size-4 text-primary" aria-hidden="true" />
+                                    {previewMode === "grid"
+                                        ? `Page ${previewPage} of ${previewPageCount}`
+                                        : "Single preview"}
                                 </div>
-                            ) : (
-                                <TreeBranch
-                                    expandedPaths={expandedPaths}
-                                    filesByPath={filesByPath}
-                                    nodes={tree}
-                                    onSelectFile={onSelectFile}
-                                    onToggleFolder={toggleFolder}
-                                    selectedPath={selectedPath}
+                            </div>
+
+                            <label className="block rounded-[1.25rem] border border-border/70 bg-background/75 px-4 py-3 text-sm text-foreground">
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="font-medium">Preview height</span>
+                                    <span className="text-muted-foreground">{previewHeight}px</span>
+                                </div>
+                                <input
+                                    aria-label="Preview height"
+                                    className="mt-3 w-full accent-primary"
+                                    max={420}
+                                    min={120}
+                                    onChange={(event) =>
+                                        onPreviewHeightChange?.(Number(event.target.value))
+                                    }
+                                    step={20}
+                                    type="range"
+                                    value={previewHeight}
                                 />
-                            )}
-                        </TabsContent>
-                    );
-                })}
-            </Tabs>
+                            </label>
+
+                            {previewMode === "grid" && previewPageCount > 1 ? (
+                                <div className="flex items-center justify-end gap-2">
+                                    <button
+                                        type="button"
+                                        className="rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
+                                        disabled={previewPage <= 1}
+                                        onClick={() =>
+                                            onPreviewPageChange?.(previewPage - 1)
+                                        }
+                                    >
+                                        Previous
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
+                                        disabled={previewPage >= previewPageCount}
+                                        onClick={() =>
+                                            onPreviewPageChange?.(previewPage + 1)
+                                        }
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+                            ) : null}
+                        </div>
+                    </div>
+
+                    <ul className="mt-5 space-y-3">
+                        {activeFiles.map((file) => (
+                            <li key={file.path}>
+                                <button
+                                    type="button"
+                                    className={cn(
+                                        "flex w-full items-start gap-4 rounded-[1.25rem] border px-4 py-4 text-left transition",
+                                        file.path === activeFile?.path
+                                            ? "border-primary/45 bg-primary/10"
+                                            : "border-border/60 bg-background/65 hover:border-primary/35 hover:bg-background",
+                                    )}
+                                    data-file-path={file.path}
+                                    onClick={() => {
+                                        if (selectedPath === undefined) {
+                                            setUncontrolledPath(file.path);
+                                        }
+
+                                        onSelectFile(file);
+                                    }}
+                                >
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-base font-medium text-foreground">
+                                            {fileName(file.path)}
+                                        </span>
+                                        <span className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                                            <span>{formatBytes(file.size)}</span>
+                                            <span>{formatMtime(file.mtime)}</span>
+                                            <span className="uppercase tracking-[0.18em]">
+                                                {file.kind}
+                                            </span>
+                                        </span>
+                                    </span>
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            </div>
         </section>
     );
 }

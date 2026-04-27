@@ -38,40 +38,18 @@ async function openResultDetail(
     await expect(page).toHaveURL(new RegExp(`${href ?? "/results/"}$`));
 }
 
-async function expandFoldersUntilVisible(
+async function selectDirectoryForFile(
     page: Page,
     filePath: string,
 ): Promise<void> {
-    const outputsPanel = page.getByRole("tabpanel", { name: "Outputs" });
-    await expect(outputsPanel).toBeVisible();
+    const directoryPath = path.dirname(filePath);
+    const directoryButton = page
+        .locator(`[data-directory-path="${directoryPath}"]`)
+        .first();
 
-    const normalizedPath = filePath.replace(/^\/+/, "");
-    const segments = normalizedPath.split("/").filter(Boolean);
-    const target = outputsPanel.locator(
-        `[data-file-path="/${normalizedPath}"]`,
-    );
-
-    let currentPath = "";
-
-    for (const segment of segments.slice(0, -1)) {
-        currentPath = `${currentPath}/${segment}`;
-        const folder = outputsPanel
-            .locator(`[data-folder-path="${currentPath}"]`)
-            .first();
-
-        if ((await folder.count()) === 0) {
-            continue;
-        }
-
-        await expect(folder).toBeVisible();
-        const expanded = await folder.getAttribute("aria-expanded");
-        if (expanded !== "true") {
-            await folder.click({ position: { x: 24, y: 20 } });
-            await expect(folder).toHaveAttribute("aria-expanded", "true");
-        }
-    }
-
-    await expect(target.first()).toBeVisible();
+    await expect(directoryButton).toBeVisible();
+    await directoryButton.click();
+    await expect(page.locator(`[data-file-path="${filePath}"]`).first()).toBeVisible();
 }
 
 test.describe("Q1 critical results flows", () => {
@@ -218,13 +196,12 @@ test.describe("Q1 critical results flows", () => {
         ).toBeVisible();
     });
 
-    test("expands the outputs tree and reveals registered files", async ({
+    test("selects the directory and reveals registered files", async ({
         page,
     }) => {
         await openResultDetail(page, rnaseqPipelineName);
 
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expandFoldersUntilVisible(page, rnaseqReportPath);
+        await selectDirectoryForFile(page, rnaseqReportPath);
 
         await expect(
             page.locator(`[data-file-path="${rnaseqReportPath}"]`),
@@ -237,8 +214,7 @@ test.describe("Q1 critical results flows", () => {
     test("renders a CSV preview table for report outputs", async ({ page }) => {
         await openResultDetail(page, rnaseqPipelineName);
 
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expandFoldersUntilVisible(page, rnaseqReportPath);
+        await selectDirectoryForFile(page, rnaseqReportPath);
         await page.locator(`[data-file-path="${rnaseqReportPath}"]`).click();
 
         const preview = page.locator('[data-selected-file-path$="report.csv"]');
@@ -261,8 +237,7 @@ test.describe("Q1 critical results flows", () => {
     test("renders a PNG preview image for image outputs", async ({ page }) => {
         await openResultDetail(page, rnaseqPipelineName);
 
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expandFoldersUntilVisible(page, rnaseqImagePath);
+        await selectDirectoryForFile(page, rnaseqImagePath);
         await page.locator(`[data-file-path="${rnaseqImagePath}"]`).click();
 
         await expect(
@@ -279,8 +254,7 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await openResultDetail(page, ampliconPipelineName);
 
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expandFoldersUntilVisible(page, ampliconConfigPath);
+        await selectDirectoryForFile(page, ampliconConfigPath);
 
         const preview = page.locator(
             '[data-selected-file-path$="config.json"]',

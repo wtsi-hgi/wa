@@ -390,7 +390,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(fetchResultMock).toHaveBeenCalledWith("result-42");
         expect(fetchFilesMock).toHaveBeenCalledWith("result-42");
         expect(enrichIdentifierMock).toHaveBeenCalledWith("SANG001");
-        expect(markup).toContain("File browser");
+        expect(markup).toContain("Directories");
         expect(markup).toContain("Selected file");
         expect(markup).toContain("/tmp/results/42/report.html");
         expect(markup).toContain("Result metadata");
@@ -426,6 +426,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(markup).not.toContain(
             "Browse the registered inventory directly on this page, pivot by source, and open the selected asset through the existing file proxy route.",
         );
+        expect(markup).not.toContain("File browser");
     });
 
     it("primes the client cache with server enrichments so remounts reuse them", async () => {

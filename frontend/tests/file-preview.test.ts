@@ -144,6 +144,51 @@ describe("O1 file preview", () => {
         ).not.toBeNull();
     });
 
+    it("renders a reusable thumbnail preview with the thumbnail source", async () => {
+        const { FileImageThumbnail } = await import(
+            "@/components/file-preview"
+        );
+
+        render(
+            createElement(FileImageThumbnail, {
+                file: buildFile({ path: "/tmp/results/plot.png" }),
+                fullSizeUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
+                height: 180,
+                thumbnailUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png&thumb=true&w=320&h=180",
+            }),
+        );
+
+        const image = screen.getByAltText("plot.png preview");
+
+        expect(image.getAttribute("src")).toContain("thumb=true");
+    });
+
+    it("opens the lightbox from the reusable thumbnail with the full-size source", async () => {
+        const { FileImageThumbnail } = await import(
+            "@/components/file-preview"
+        );
+
+        render(
+            createElement(FileImageThumbnail, {
+                file: buildFile({ path: "/tmp/results/plot.png" }),
+                fullSizeUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
+                height: 180,
+                thumbnailUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png&thumb=true&w=320&h=180",
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /open image lightbox/i }));
+
+        expect(screen.getByRole("dialog")).toBeTruthy();
+        expect(screen.getByAltText("plot.png full preview").getAttribute("src")).toBe(
+            "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
+        );
+    });
+
     it("shows a file too large message with download link on 413", () => {
         renderPreview({
             error: {
@@ -178,7 +223,7 @@ describe("O1 file preview", () => {
         ).toContain("download=true");
     });
 
-    it("renders binary previews as metadata without a download button", () => {
+    it("renders binary previews as metadata with a download button", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/sample.bam", size: 1048576 }),
             content: {
@@ -198,8 +243,10 @@ describe("O1 file preview", () => {
             ),
         ).toBeNull();
         expect(
-            screen.queryByRole("link", { name: /download file/i }),
-        ).toBeNull();
+            screen
+                .getByRole("link", { name: /download file/i })
+                .getAttribute("href"),
+        ).toContain("download=true");
     });
 
     it("shows the first 100 rows for csv previews with a row count summary", () => {

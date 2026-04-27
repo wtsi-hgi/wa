@@ -85,10 +85,13 @@ describe("O1 result detail hydration", () => {
         vi.restoreAllMocks();
     });
 
-    it("keeps file-browser folder toggles interactive when client locale formatting differs", async () => {
+    it("keeps directory switching interactive when client locale formatting differs", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
-        const files = [buildFile("/results/sample.bam")];
+        const files = [
+            buildFile("/results/a/sample.bam"),
+            buildFile("/results/b/report.txt"),
+        ];
         const toLocaleStringSpy = vi.spyOn(Date.prototype, "toLocaleString");
 
         vi.stubGlobal("matchMedia", matchMediaStub);
@@ -124,18 +127,18 @@ describe("O1 result detail hydration", () => {
 
         expect(
             container.querySelector(
-                'button[data-file-path="/results/sample.bam"]',
+                'button[data-file-path="/results/a/sample.bam"]',
             ),
         ).not.toBeNull();
 
         fireEvent.click(
-            container.querySelector('button[data-folder-path="/results"]')!,
+            container.querySelector('button[data-directory-path="/results/b"]')!,
         );
 
         await waitFor(() => {
             expect(
                 container.querySelector(
-                    'button[data-file-path="/results/sample.bam"]',
+                    'button[data-file-path="/results/a/sample.bam"]',
                 ),
             ).toBeNull();
         });
@@ -147,8 +150,11 @@ describe("O1 result detail hydration", () => {
         });
     });
 
-    it("hydrates the result detail page without mismatches and keeps folder toggles interactive when locale formatting differs", async () => {
-        const files = [buildFile("/results/sample.bam")];
+    it("hydrates the result detail page without mismatches and keeps directory switching interactive when locale formatting differs", async () => {
+        const files = [
+            buildFile("/results/a/sample.bam"),
+            buildFile("/results/b/report.txt"),
+        ];
         const result = buildResultSet();
         const toLocaleStringSpy = vi.spyOn(Date.prototype, "toLocaleString");
         const writeTextMock = vi.fn().mockResolvedValue(undefined);
@@ -214,13 +220,13 @@ describe("O1 result detail hydration", () => {
         });
 
         fireEvent.click(
-            container.querySelector('button[data-folder-path="/results"]')!,
+            container.querySelector('button[data-directory-path="/results/b"]')!,
         );
 
         await waitFor(() => {
             expect(
                 container.querySelector(
-                    'button[data-file-path="/results/sample.bam"]',
+                    'button[data-file-path="/results/a/sample.bam"]',
                 ),
             ).toBeNull();
         });

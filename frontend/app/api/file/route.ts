@@ -1,8 +1,90 @@
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 
 import { resultsRaw } from "@/lib/backend-client";
 
 export const dynamic = "force-dynamic";
+
+const defaultThumbnailHeight = 220;
+const defaultThumbnailWidth = 360;
+
+function clampDimension(value: string | null, fallback: number): number {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+
+    return Math.min(1600, Math.max(64, Math.round(parsed)));
+}
+
+function canThumbnail(contentType: string | null): boolean {
+    if (!contentType) {
+        return false;
+    }
+
+    const normalized = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+
+    return normalized.startsWith("image/") && normalized !== "image/svg+xml";
+}
+
+async function buildThumbnailResponse(
+    response: Response,
+    width: number,
+    height: number,
+): Promise<NextResponse | null> {
+    const contentType = response.headers.get("content-type");
+
+    if (!canThumbnail(contentType)) {
+        return null;
+    }
+
+    try {
+        const sourceBuffer = Buffer.from(await response.arrayBuffer());
+        const metadata = await sharp(sourceBuffer).metadata();
+
+        if (
+            (metadata.width ?? width + 1) <= width &&
+            (metadata.height ?? height + 1) <= height
+        ) {
+            const headers = new Headers({
+                "cache-control": "private, max-age=300, stale-while-revalidate=3600",
+                "content-security-policy": "sandbox",
+            });
+
+            if (contentType) {
+                headers.set("content-type", contentType);
+            }
+
+            return new NextResponse(new Uint8Array(sourceBuffer), {
+                headers,
+                status: response.status,
+            });
+        }
+
+        const thumbnail = await sharp(sourceBuffer)
+            .resize({
+                fit: "inside",
+                height,
+                kernel: sharp.kernel.lanczos3,
+                width,
+                withoutEnlargement: true,
+            })
+            .webp({ quality: 82 })
+            .toBuffer();
+
+        return new NextResponse(new Uint8Array(thumbnail), {
+            headers: {
+                "cache-control": "private, max-age=300, stale-while-revalidate=3600",
+                "content-security-policy": "sandbox",
+                "content-type": "image/webp",
+            },
+            status: response.status,
+        });
+    } catch {
+        return null;
+    }
+}
 
 async function readErrorBody(response: Response): Promise<{ error: string }> {
     const contentType = response.headers.get("content-type") ?? "";
@@ -30,6 +112,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const id = request.nextUrl.searchParams.get("id")?.trim();
     const path = request.nextUrl.searchParams.get("path")?.trim();
     const download = request.nextUrl.searchParams.get("download");
+    const thumbnail = request.nextUrl.searchParams.get("thumb");
+    const thumbnailWidth = clampDimension(
+        request.nextUrl.searchParams.get("w"),
+        defaultThumbnailWidth,
+    );
+    const thumbnailHeight = clampDimension(
+        request.nextUrl.searchParams.get("h"),
+        defaultThumbnailHeight,
+    );
 
     if (!id || !path) {
         return NextResponse.json(
@@ -71,6 +162,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             status: response.status,
             headers,
         });
+    }
+
+    if (thumbnail === "true" && download !== "true") {
+        const thumbnailResponse = await buildThumbnailResponse(
+            response.clone(),
+            thumbnailWidth,
+            thumbnailHeight,
+        );
+
+        if (thumbnailResponse) {
+            return thumbnailResponse;
+        }
     }
 
     const headers = new Headers();
