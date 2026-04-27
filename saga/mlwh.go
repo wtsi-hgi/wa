@@ -37,7 +37,7 @@ const defaultPaginationPageSize = 100
 
 const mlwhStudyFilterKey = "study_id"
 
-const mlwhFilterSangerID = "sanger_id"
+const mlwhFilterSangerID = "sample_id"
 
 const mlwhFilterIDSampleLims = "id_sample_lims"
 
@@ -45,7 +45,7 @@ const mlwhFilterAccessionNumber = "accession_number"
 
 const mlwhFilterLibraryType = "library_type"
 
-const mlwhFilterIDRun = "id_run"
+const mlwhFilterIDRun = "run_id"
 
 // PaginatedResponse is the generic paginated response envelope used by SAGA list endpoints.
 type PaginatedResponse[T any] struct {
@@ -61,7 +61,7 @@ type PageOptions struct {
 	PageSize  int
 	SortField string
 	SortOrder string
-	Filters   map[string]string
+	Filters   map[string]any
 }
 
 func (o PageOptions) queryValues() url.Values {
@@ -85,7 +85,7 @@ func (o PageOptions) queryValues() url.Values {
 
 	if len(o.Filters) > 0 {
 		filterJSON, _ := json.Marshal(o.Filters)
-		values.Set("filters", string(filterJSON))
+		values.Set("filters", url.QueryEscape(string(filterJSON)))
 	}
 
 	if len(values) == 0 {
@@ -247,10 +247,19 @@ func (m *MLWHClient) findSamplesByFilter(
 	filterKey, filterValue string,
 ) ([]MLWHSample, error) {
 	return collectAllPages(ctx, func(ctx context.Context, opts PageOptions) (*PaginatedResponse[MLWHSample], error) {
-		opts.Filters = map[string]string{filterKey: filterValue}
+		opts.Filters = map[string]any{filterKey: sampleFilterValue(filterKey, filterValue)}
 
 		return m.ListSamples(ctx, opts)
 	})
+}
+
+func sampleFilterValue(filterKey, filterValue string) any {
+	switch filterKey {
+	case mlwhFilterLibraryType:
+		return []string{filterValue}
+	default:
+		return filterValue
+	}
 }
 
 // FindSamplesBySangerID returns all MLWH sample rows matching one Sanger ID across every available page.

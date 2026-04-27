@@ -28,7 +28,6 @@ package seqmeta
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -67,37 +66,16 @@ var liveEnrichMatrixCases = []enrichMatrixCase{
 	{identifier: "40121", expectedType: IdentifierRunID, expectation: enrichExpectationEndToEnd},
 }
 
-func liveEnrichCasesForSupport(cases []enrichMatrixCase, support map[string]bool) []enrichMatrixCase {
-	updated := make([]enrichMatrixCase, 0, len(cases))
+func sampleLinkedMatrixCases() []enrichMatrixCase {
+	cases := make([]enrichMatrixCase, 0, len(liveEnrichMatrixCases))
 
-	for _, testCase := range cases {
-		updatedCase := testCase
-
-		switch testCase.expectedType {
-		case IdentifierSangerSampleID:
-			if knownUnsupported(support, mlwhFilterSangerID) {
-				updatedCase.expectation = enrichExpectationPartial
-			}
-		case IdentifierRunID:
-			if knownUnsupported(support, mlwhFilterIDRun) {
-				updatedCase.expectation = enrichExpectationPartial
-			}
-		case IdentifierLibraryType:
-			if knownUnsupported(support, mlwhFilterLibraryType) {
-				updatedCase.expectation = enrichExpectationPartial
-			}
+	for _, testCase := range liveEnrichMatrixCases {
+		if testCase.expectedType == IdentifierSangerSampleID {
+			cases = append(cases, testCase)
 		}
-
-		updated = append(updated, updatedCase)
 	}
 
-	return updated
-}
-
-func knownUnsupported(support map[string]bool, filterKey string) bool {
-	supported, ok := support[filterKey]
-
-	return ok && !supported
+	return cases
 }
 
 func assertLiveEnrichment(t *testing.T, result *EnrichmentResult, testCase enrichMatrixCase) {
@@ -158,9 +136,8 @@ func TestIntegrationEnrichMatrix(t *testing.T) {
 	}
 
 	client := mustNewSeqmetaIntegrationClient(t, token)
-	support := probeLiveEnrichFilterSupport(t, client)
-	provider := NewClientAdapter(client, WithSupportedEnrichFilters(support))
-	caseMatrix := liveEnrichCasesForSupport(liveEnrichMatrixCases, support)
+	provider := NewClientAdapter(client)
+	caseMatrix := liveEnrichMatrixCases
 
 	convey.Convey("Given a valid SAGA API token", t, func() {
 		convey.Convey("when each G1 matrix row is fetched through GET /enrich/{identifier}, then the assertion for its tag holds", func() {
@@ -200,6 +177,76 @@ func TestIntegrationEnrichMatrix(t *testing.T) {
 	})
 }
 
+func TestIntegrationEnrichSampleLinkedIdentifiersRemainConsistent(t *testing.T) {
+	token := os.Getenv("SAGA_TEST_API_TOKEN")
+	if token == "" {
+		t.Skip("SAGA_TEST_API_TOKEN not set")
+	}
+
+	client := mustNewSeqmetaIntegrationClient(t, token)
+	provider := NewClientAdapter(client)
+	sampleCases := sampleLinkedMatrixCases()
+
+	convey.Convey("Given live sample identifier enrichments", t, func() {
+		foundSampleLims := false
+		foundSampleAccession := false
+
+		for _, testCase := range sampleCases {
+			testCase := testCase
+
+			convey.Convey(testCase.identifier, func() {
+				status, body, baseResult := fetchLiveEnrichment(t, provider, testCase.identifier, liveEnrichMatrixTimeout)
+				logUnexpectedEnrichmentStatus(t, testCase.identifier, status, body)
+
+				convey.So(status, convey.ShouldEqual, http.StatusOK)
+				assertLiveEnrichment(t, baseResult, testCase)
+				convey.So(baseResult, convey.ShouldNotBeNil)
+				if baseResult == nil {
+					return
+				}
+
+				convey.So(baseResult.Graph.Sample, convey.ShouldNotBeNil)
+				if baseResult.Graph.Sample == nil {
+					return
+				}
+
+				sample := baseResult.Graph.Sample
+
+				if sample.IDSampleLims != "" {
+					foundSampleLims = true
+
+					convey.Convey("sample_lims_id", func() {
+						status, body, alternateResult := fetchLiveEnrichment(t, provider, sample.IDSampleLims, liveEnrichMatrixTimeout)
+						logUnexpectedEnrichmentStatus(t, sample.IDSampleLims, status, body)
+
+						convey.So(status, convey.ShouldEqual, http.StatusOK)
+						convey.So(alternateResult.Type, convey.ShouldEqual, IdentifierSampleLimsID)
+						assertSameSampleContext(t, baseResult, alternateResult)
+					})
+				}
+
+				if sample.AccessionNumber != "" {
+					foundSampleAccession = true
+
+					convey.Convey("sample_accession", func() {
+						status, body, alternateResult := fetchLiveEnrichment(t, provider, sample.AccessionNumber, liveEnrichMatrixTimeout)
+						logUnexpectedEnrichmentStatus(t, sample.AccessionNumber, status, body)
+
+						convey.So(status, convey.ShouldEqual, http.StatusOK)
+						convey.So(alternateResult.Type, convey.ShouldEqual, IdentifierSampleAccession)
+						assertSameSampleContext(t, baseResult, alternateResult)
+					})
+				}
+			})
+		}
+
+		convey.Convey("matrix contains supported sample-linked alternate identifiers", func() {
+			convey.So(foundSampleLims, convey.ShouldBeTrue)
+			convey.So(foundSampleAccession, convey.ShouldBeTrue)
+		})
+	})
+}
+
 func mustNewSeqmetaIntegrationClient(t *testing.T, token string) *saga.Client {
 	t.Helper()
 
@@ -211,45 +258,6 @@ func mustNewSeqmetaIntegrationClient(t *testing.T, token string) *saga.Client {
 	t.Cleanup(client.Close)
 
 	return client
-}
-
-func probeLiveEnrichFilterSupport(t *testing.T, client *saga.Client) map[string]bool {
-	t.Helper()
-
-	ctx := context.Background()
-	support := map[string]bool{
-		mlwhFilterSangerID:    true,
-		mlwhFilterIDRun:       true,
-		mlwhFilterLibraryType: true,
-	}
-
-	if _, err := client.MLWH().FindSamplesBySangerID(ctx, "WTSI_wEMB10524782"); err != nil {
-		support[mlwhFilterSangerID] = mustInterpretFilterProbe(t, mlwhFilterSangerID, err)
-	}
-
-	if _, err := client.MLWH().FindSamplesByRunID(ctx, 34134); err != nil {
-		support[mlwhFilterIDRun] = mustInterpretFilterProbe(t, mlwhFilterIDRun, err)
-	}
-
-	if _, err := client.MLWH().FindSamplesByLibraryType(ctx, "RNA PolyA"); err != nil {
-		support[mlwhFilterLibraryType] = mustInterpretFilterProbe(t, mlwhFilterLibraryType, err)
-	}
-
-	return support
-}
-
-func mustInterpretFilterProbe(t *testing.T, filterKey string, err error) bool {
-	t.Helper()
-
-	if errors.Is(err, saga.ErrServerError) {
-		t.Logf("MLWH filter %s appears unsupported upstream: %v", filterKey, err)
-
-		return false
-	}
-
-	t.Fatalf("MLWH filter probe for %s failed: %v", filterKey, err)
-
-	return false
 }
 
 func fetchLiveEnrichment(t *testing.T, provider SAGAProvider, identifier string, timeout time.Duration) (int, []byte, *EnrichmentResult) {
@@ -296,4 +304,46 @@ func logUnexpectedEnrichmentStatus(t *testing.T, identifier string, status int, 
 	}
 
 	t.Logf("GET /enrich/%s returned %d: %s", identifier, status, string(body))
+}
+
+func assertSameSampleContext(t *testing.T, baseResult, alternateResult *EnrichmentResult) {
+	t.Helper()
+
+	convey.So(baseResult, convey.ShouldNotBeNil)
+	convey.So(alternateResult, convey.ShouldNotBeNil)
+	if baseResult == nil || alternateResult == nil {
+		return
+	}
+
+	convey.So(baseResult.Graph.Sample, convey.ShouldNotBeNil)
+	convey.So(alternateResult.Graph.Sample, convey.ShouldNotBeNil)
+	convey.So(baseResult.Graph.Study, convey.ShouldNotBeNil)
+	convey.So(alternateResult.Graph.Study, convey.ShouldNotBeNil)
+	convey.So(baseResult.Graph.Library, convey.ShouldNotBeNil)
+	convey.So(alternateResult.Graph.Library, convey.ShouldNotBeNil)
+	if baseResult.Graph.Sample == nil || alternateResult.Graph.Sample == nil {
+		return
+	}
+
+	convey.So(alternateResult.Graph.Sample.SangerID, convey.ShouldEqual, baseResult.Graph.Sample.SangerID)
+	convey.So(alternateResult.Graph.Sample.IDSampleLims, convey.ShouldEqual, baseResult.Graph.Sample.IDSampleLims)
+	convey.So(alternateResult.Graph.Sample.AccessionNumber, convey.ShouldEqual, baseResult.Graph.Sample.AccessionNumber)
+	convey.So(alternateResult.Graph.Sample.IDStudyLims, convey.ShouldEqual, baseResult.Graph.Sample.IDStudyLims)
+
+	if baseResult.Graph.Study == nil || alternateResult.Graph.Study == nil {
+		return
+	}
+
+	convey.So(alternateResult.Graph.Study.IDStudyLims, convey.ShouldEqual, baseResult.Graph.Study.IDStudyLims)
+	convey.So(alternateResult.Graph.Study.AccessionNumber, convey.ShouldEqual, baseResult.Graph.Study.AccessionNumber)
+
+	if baseResult.Graph.Library == nil || alternateResult.Graph.Library == nil {
+		return
+	}
+
+	convey.So(alternateResult.Graph.Library.LibraryType, convey.ShouldEqual, baseResult.Graph.Library.LibraryType)
+	convey.So(alternateResult.Graph.Library.IDStudyLims, convey.ShouldEqual, baseResult.Graph.Library.IDStudyLims)
+	convey.So(alternateResult.Graph.Samples, convey.ShouldNotBeEmpty)
+	convey.So(alternateResult.Partial, convey.ShouldBeFalse)
+	convey.So(alternateResult.Missing, convey.ShouldBeEmpty)
 }

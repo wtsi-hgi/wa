@@ -249,7 +249,7 @@ func TestFilterProbes(t *testing.T) {
 		Convey("when FindSamplesBySangerID is called for a known sample, then it returns MLWH samples", func() {
 			samples, err := client.MLWH().FindSamplesBySangerID(ctx, "WTSI_wEMB10524782")
 
-			assertSupportedFilterResult(t, "sanger_id", err)
+			assertSupportedFilterResult(t, "sample_id", err)
 			assertSampleResultShape(samples)
 		})
 
@@ -265,7 +265,7 @@ func TestFilterProbes(t *testing.T) {
 		Convey("when FindSamplesByRunID is called for a known run, then it returns MLWH samples", func() {
 			samples, err := client.MLWH().FindSamplesByRunID(ctx, 34134)
 
-			assertSupportedFilterResult(t, "id_run", err)
+			assertSupportedFilterResult(t, "run_id", err)
 			assertSampleResultShape(samples)
 		})
 
