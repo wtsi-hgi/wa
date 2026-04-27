@@ -6,7 +6,10 @@ function recentRows(page: Page): Locator {
     return page.locator('tbody tr[data-result-row="true"]');
 }
 
-async function addRequesterFilter(page: Page, requester: string): Promise<void> {
+async function addRequesterFilter(
+    page: Page,
+    requester: string,
+): Promise<void> {
     const searchBuilder = page.locator('[data-search-builder="true"]');
 
     await expect(searchBuilder).toBeVisible();
@@ -44,7 +47,9 @@ async function expandFoldersUntilVisible(
 
     const normalizedPath = filePath.replace(/^\/+/, "");
     const segments = normalizedPath.split("/").filter(Boolean);
-    const target = outputsPanel.locator(`[data-file-path="/${normalizedPath}"]`);
+    const target = outputsPanel.locator(
+        `[data-file-path="/${normalizedPath}"]`,
+    );
 
     let currentPath = "";
 
@@ -71,6 +76,7 @@ async function expandFoldersUntilVisible(
 
 test.describe("Q1 critical results flows", () => {
     const rnaseqPipelineName = "nf-core/rnaseq";
+    const sarekPipelineName = "nf-core/sarek";
     const ampliconPipelineName = "wtsi/amplicon";
     const fixturesRoot = path.resolve(
         process.cwd(),
@@ -89,7 +95,9 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await page.goto("/");
 
-        await expect(page.locator('[data-search-builder="true"]')).toBeVisible();
+        await expect(
+            page.locator('[data-search-builder="true"]'),
+        ).toBeVisible();
         await expect(
             page.getByRole("heading", { level: 2, name: "Latest result sets" }),
         ).toBeVisible();
@@ -173,9 +181,31 @@ test.describe("Q1 critical results flows", () => {
         await expect(
             page.locator('[data-metadata-row="seqmeta_studyid"]'),
         ).toContainText("5993");
-        await expect(page.locator('[data-metadata-row="library"]')).toContainText(
-            "exon",
-        );
+        await expect(
+            page.locator('[data-metadata-row="library"]'),
+        ).toContainText("exon");
+    });
+
+    test("shows the truncated-samples enrichment banner for partial seqmeta responses", async ({
+        page,
+    }) => {
+        await openResultDetail(page, rnaseqPipelineName);
+
+        await expect(
+            page.locator('[data-metadata-row="seqmeta_studyid"]'),
+        ).toContainText("Showing first 1000 samples");
+    });
+
+    test("shows the impaired marker when seqmeta enrichment returns 502", async ({
+        page,
+    }) => {
+        await openResultDetail(page, sarekPipelineName);
+
+        await expect(
+            page
+                .locator('[data-metadata-row="seqmeta_studyid"]')
+                .getByLabel("enrichment backend impaired"),
+        ).toBeVisible();
     });
 
     test("expands the outputs tree and reveals registered files", async ({
@@ -242,7 +272,9 @@ test.describe("Q1 critical results flows", () => {
         await page.getByRole("tab", { name: "Outputs" }).click();
         await expandFoldersUntilVisible(page, ampliconConfigPath);
 
-        const preview = page.locator('[data-selected-file-path$="config.json"]');
+        const preview = page.locator(
+            '[data-selected-file-path$="config.json"]',
+        );
         const selectedFile = page.locator(
             `[data-file-path="${ampliconConfigPath}"]`,
         );

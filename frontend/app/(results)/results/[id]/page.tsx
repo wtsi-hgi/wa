@@ -3,9 +3,9 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 
 import {
+    enrichIdentifier,
     fetchFiles,
     fetchResult,
-    validateIdentifier,
 } from "@/app/(results)/actions";
 import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
@@ -107,7 +107,7 @@ export default async function ResultDetailPage({
     const requestCachePromise = getRequestSeqmetaCache();
     const result = await resultPromise;
     const enrichmentPromise = requestCachePromise.then((cache) =>
-        enrichSeqmetaMetadata(result.metadata, cache, validateIdentifier),
+        enrichSeqmetaMetadata(result.metadata, cache, enrichIdentifier),
     );
     const [files, enrichmentState] = await Promise.all([
         filesPromise,
@@ -125,7 +125,10 @@ export default async function ResultDetailPage({
                             className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/85 px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
                             data-return-link="true"
                         >
-                            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                            <ChevronLeft
+                                className="h-4 w-4"
+                                aria-hidden="true"
+                            />
                             <span>{returnLabel}</span>
                         </Link>
                         <p className="text-sm font-semibold uppercase tracking-[0.32em] text-muted-foreground">

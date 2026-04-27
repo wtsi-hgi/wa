@@ -21,8 +21,8 @@ Implement `FindSamplesBySangerID(ctx, sangerID string)
 including pagination. Establishes the filter-key pattern for
 A2-A5. Covers all 4 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.2: A6 - StudyForSample helper
 
@@ -33,8 +33,8 @@ on `saga.Client` which calls `GetStudy(sample.IDStudyLims)` or
 returns `saga.ErrNotFound` when the sample has no study id.
 Independent of A1-A5. Covers all 2 acceptance tests from A6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -46,8 +46,8 @@ Implement `FindSamplesByIDSampleLims(ctx, lims string)
 ([]MLWHSample, error)` using filter key `id_sample_lims`. Covers
 all 2 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.4: A3 - FindSamplesByRunID
 
@@ -57,8 +57,8 @@ Implement `FindSamplesByRunID(ctx, runID int) ([]MLWHSample,
 error)` using filter key `id_run` (value encoded as JSON string).
 Covers all 2 acceptance tests from A3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.5: A4 - FindSamplesByLibraryType
 
@@ -68,8 +68,8 @@ Implement `FindSamplesByLibraryType(ctx, libraryType string)
 ([]MLWHSample, error)` using filter key `library_type`. Covers
 the 1 acceptance test from A4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.6: A5 - FindSamplesByAccessionNumber
 
@@ -79,8 +79,8 @@ Implement `FindSamplesByAccessionNumber(ctx, acc string)
 ([]MLWHSample, error)` using filter key `accession_number`.
 Covers the 1 acceptance test from A5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

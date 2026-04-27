@@ -19,8 +19,8 @@ Add the `enrich_cache` SQLite table (or equivalent) to
 `WithLock`. Establishes the cache primitives D2 and D3 build on.
 Covers all 5 acceptance tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -34,8 +34,8 @@ spec.md section: D2
 entries are treated as absent and never served. Covers the 1
 acceptance test from D2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.3: D3 - Invalidation on diff mutations [parallel with 3.2]
 
@@ -49,8 +49,8 @@ identifier equals `queryID`. Wiring into the HTTP diff handlers
 (`handleStudyDiff`/`handleSampleDiff`) is out of scope here and
 belongs to phase 5. Covers all 4 acceptance tests from D3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

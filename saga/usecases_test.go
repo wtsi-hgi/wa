@@ -291,6 +291,55 @@ func TestStudyAllSamples(t *testing.T) {
 	})
 }
 
+func TestStudyForSample(t *testing.T) {
+	Convey("Given a sample with study ID 6568 and MLWH returns that study", t, func() {
+		var requestedPath string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedPath = r.URL.Path
+			_, _ = w.Write([]byte(`{"id_study_tmp":1,"id_lims":"SQSCP","id_study_lims":"6568","name":"Study 6568"}`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		study, err := client.StudyForSample(context.Background(), MLWHSample{IDStudyLims: "6568"})
+
+		Convey("when StudyForSample is called, then it returns the fetched study", func() {
+			So(err, ShouldBeNil)
+			So(requestedPath, ShouldEqual, "/integrations/mlwh/studies/6568")
+			So(study, ShouldNotBeNil)
+			So(study.IDStudyLims, ShouldEqual, "6568")
+			So(study.Name, ShouldEqual, "Study 6568")
+		})
+	})
+
+	Convey("Given a sample without a study ID", t, func() {
+		requestCount := 0
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			http.NotFound(w, r)
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		study, err := client.StudyForSample(context.Background(), MLWHSample{})
+
+		Convey("when StudyForSample is called, then it returns ErrNotFound without making a request", func() {
+			So(study, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrNotFound), ShouldBeTrue)
+			So(requestCount, ShouldEqual, 0)
+		})
+	})
+}
+
 func TestSampleIRODSFiles(t *testing.T) {
 	Convey("Given iRODS returns three files where two have analysis_type cellranger count", t, func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

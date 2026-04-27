@@ -79,14 +79,42 @@ func TestValidate(t *testing.T) {
 			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
 				allSamplesCalls++
 
-				return []saga.MLWHSample{
-					{SangerID: "SANG123"},
-					{IDSampleLims: "LIMS456"},
-					{AccessionNumber: "SAM789"},
-					{IDRun: 12345},
-					{LibraryType: "Chromium single cell"},
-					{SangerID: "6568"},
-				}, nil
+				return nil, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				if identifier != "SANG123" {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{SangerID: "SANG123"}}, nil
+			},
+			FindSamplesByIDSampleLimsFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				if identifier != "LIMS456" {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{IDSampleLims: "LIMS456"}}, nil
+			},
+			FindSamplesByAccessionNumberFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				if identifier != "SAM789" {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{AccessionNumber: "SAM789"}}, nil
+			},
+			FindSamplesByRunIDFn: func(_ context.Context, identifier int) ([]saga.MLWHSample, error) {
+				if identifier != 12345 {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{IDRun: 12345}}, nil
+			},
+			FindSamplesByLibraryTypeFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				if identifier != "Chromium single cell" {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{LibraryType: "Chromium single cell"}}, nil
 			},
 			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
 				return []saga.Project{{Name: "MyProject"}}, nil
@@ -116,7 +144,7 @@ func TestValidate(t *testing.T) {
 		result, err = Validate(ctx, provider, "6568")
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(result.Type, convey.ShouldEqual, IdentifierStudyID)
-		convey.So(allSamplesCalls, convey.ShouldEqual, 5)
+		convey.So(allSamplesCalls, convey.ShouldEqual, 0)
 
 		provider.GetStudyFunc = func(_ context.Context, _ string) (*saga.Study, error) { return nil, saga.ErrNotFound }
 		result, err = Validate(ctx, provider, "MyProject")
@@ -136,7 +164,11 @@ func TestValidate(t *testing.T) {
 				return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
 			},
 			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) { return nil, nil },
-			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
+			FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				if identifier != "SANG205" {
+					return nil, nil
+				}
+
 				return []saga.MLWHSample{{SangerID: "SANG205"}}, nil
 			},
 			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) { return nil, nil },
@@ -147,6 +179,180 @@ func TestValidate(t *testing.T) {
 		convey.So(result, convey.ShouldNotBeNil)
 		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
 		convey.So(result.Object.(saga.MLWHSample).SangerID, convey.ShouldEqual, "SANG205")
+	})
+
+	convey.Convey("E6: sample validation uses the targeted Sanger sample lookup without changing the object shape", t, func() {
+		allSamplesCalls := 0
+		findSamplesBySangerIDCalls := 0
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, nil
+			},
+			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
+				allSamplesCalls++
+
+				return []saga.MLWHSample{{SangerID: "S1"}}, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				findSamplesBySangerIDCalls++
+				if identifier != "S1" {
+					return nil, saga.ErrNotFound
+				}
+
+				return []saga.MLWHSample{{SangerID: "S1", IDSampleLims: "L1"}}, nil
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+				return nil, nil
+			},
+		}
+
+		result, err := Validate(ctx, provider, "S1")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
+		convey.So(result.Object, convey.ShouldHaveSameTypeAs, saga.MLWHSample{})
+		sample, ok := result.Object.(saga.MLWHSample)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(sample.SangerID, convey.ShouldEqual, "S1")
+		convey.So(sample.IDSampleLims, convey.ShouldEqual, "L1")
+		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 1)
+		convey.So(allSamplesCalls, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("validate uses targeted sample-like lookups for the remaining identifier types without calling AllSamples", t, func() {
+		allSamplesCalls := 0
+		findSamplesByIDSampleLimsCalls := 0
+		findSamplesByAccessionNumberCalls := 0
+		findSamplesByRunIDCalls := 0
+		findSamplesByLibraryTypeCalls := 0
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, nil
+			},
+			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
+				allSamplesCalls++
+
+				return []saga.MLWHSample{{SangerID: "fallback"}}, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return nil, nil
+			},
+			FindSamplesByIDSampleLimsFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				findSamplesByIDSampleLimsCalls++
+				if identifier != "L1" {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{IDSampleLims: "L1", SangerID: "S1"}}, nil
+			},
+			FindSamplesByAccessionNumberFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				findSamplesByAccessionNumberCalls++
+				if identifier != "SAM1" {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{AccessionNumber: "SAM1", SangerID: "S2"}}, nil
+			},
+			FindSamplesByRunIDFn: func(_ context.Context, identifier int) ([]saga.MLWHSample, error) {
+				findSamplesByRunIDCalls++
+				if identifier != 42 {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{IDRun: 42, SangerID: "S3"}}, nil
+			},
+			FindSamplesByLibraryTypeFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				findSamplesByLibraryTypeCalls++
+				if identifier != "RNA PolyA" {
+					return nil, nil
+				}
+
+				return []saga.MLWHSample{{LibraryType: "RNA PolyA", SangerID: "S4"}}, nil
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+				return nil, nil
+			},
+		}
+
+		limsResult, limsErr := Validate(ctx, provider, "L1")
+		accessionResult, accessionErr := Validate(ctx, provider, "SAM1")
+		runResult, runErr := Validate(ctx, provider, "42")
+		libraryResult, libraryErr := Validate(ctx, provider, "RNA PolyA")
+
+		convey.So(limsErr, convey.ShouldBeNil)
+		convey.So(limsResult.Type, convey.ShouldEqual, IdentifierSampleLimsID)
+		convey.So(limsResult.Object.(saga.MLWHSample).IDSampleLims, convey.ShouldEqual, "L1")
+
+		convey.So(accessionErr, convey.ShouldBeNil)
+		convey.So(accessionResult.Type, convey.ShouldEqual, IdentifierSampleAccession)
+		convey.So(accessionResult.Object.(saga.MLWHSample).AccessionNumber, convey.ShouldEqual, "SAM1")
+
+		convey.So(runErr, convey.ShouldBeNil)
+		convey.So(runResult.Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(runResult.Object.(saga.MLWHSample).IDRun, convey.ShouldEqual, 42)
+
+		convey.So(libraryErr, convey.ShouldBeNil)
+		convey.So(libraryResult.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(libraryResult.Object.(saga.MLWHSample).LibraryType, convey.ShouldEqual, "RNA PolyA")
+
+		convey.So(findSamplesByIDSampleLimsCalls, convey.ShouldEqual, 4)
+		convey.So(findSamplesByAccessionNumberCalls, convey.ShouldEqual, 3)
+		convey.So(findSamplesByRunIDCalls, convey.ShouldEqual, 1)
+		convey.So(findSamplesByLibraryTypeCalls, convey.ShouldEqual, 1)
+		convey.So(allSamplesCalls, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("validate falls back to AllSamples when a targeted filter is known unsupported", t, func() {
+		allSamplesCalls := 0
+		findSamplesBySangerIDCalls := 0
+		provider := &filterSupportProvider{
+			MockProvider: &MockProvider{
+				GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+					return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
+				},
+				AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+					return nil, nil
+				},
+				AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
+					allSamplesCalls++
+
+					return []saga.MLWHSample{{SangerID: "S1", IDSampleLims: "L1"}}, nil
+				},
+				FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+					findSamplesBySangerIDCalls++
+					convey.So(identifier, convey.ShouldEqual, "S1")
+
+					return nil, saga.ErrServerError
+				},
+				ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+					return nil, nil
+				},
+			},
+			supported: map[string]bool{mlwhFilterSangerID: false},
+		}
+
+		result, err := Validate(ctx, provider, "S1")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
+		convey.So(result.Object.(saga.MLWHSample).SangerID, convey.ShouldEqual, "S1")
+		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 1)
+		convey.So(allSamplesCalls, convey.ShouldEqual, 1)
 	})
 
 	convey.Convey("a non-404 GetStudy error for an unknown identifier surfaces as ErrUnknownIdentifier", t, func() {
@@ -209,14 +415,18 @@ func TestValidate(t *testing.T) {
 		convey.So(err.Error(), convey.ShouldContainSubstring, "502 bad gateway")
 
 		provider.AllStudiesFunc = func(_ context.Context) ([]saga.Study, error) { return nil, nil }
-		provider.AllSamplesFunc = func(_ context.Context) ([]saga.MLWHSample, error) {
+		provider.FindSamplesBySangerIDFn = func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+			if identifier != "SANG123" {
+				return nil, nil
+			}
+
 			return nil, errors.New("unauthorized")
 		}
 		_, err = Validate(ctx, provider, "SANG123")
 		convey.So(err.Error(), convey.ShouldContainSubstring, "unauthorized")
 		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeFalse)
 
-		provider.AllSamplesFunc = func(_ context.Context) ([]saga.MLWHSample, error) { return nil, nil }
+		provider.FindSamplesBySangerIDFn = func(_ context.Context, _ string) ([]saga.MLWHSample, error) { return nil, nil }
 		provider.ListProjectsFunc = func(_ context.Context) ([]saga.Project, error) {
 			return nil, errors.New("timeout")
 		}

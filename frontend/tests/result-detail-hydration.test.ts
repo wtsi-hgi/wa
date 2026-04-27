@@ -13,190 +13,216 @@ import type { FileEntry, ResultSet } from "@/lib/contracts";
 const fetchFilesMock = vi.fn();
 const fetchResultMock = vi.fn();
 const validateIdentifierMock = vi.fn();
+const enrichIdentifierMock = vi.fn();
 const enrichSeqmetaMetadataMock = vi.fn();
 const getRequestSeqmetaCacheMock = vi.fn();
 const buildCachedEnrichmentStateMock = vi.fn();
+const collectSeqmetaValuesMock = vi.fn();
+const mergeSeqmetaEnrichmentStateMock = vi.fn();
 const primeSeqmetaCacheMock = vi.fn();
 
 vi.mock("@/app/(results)/actions", () => ({
-  fetchFiles: fetchFilesMock,
-  fetchResult: fetchResultMock,
-  validateIdentifier: validateIdentifierMock,
+    fetchFiles: fetchFilesMock,
+    fetchResult: fetchResultMock,
+    enrichIdentifier: enrichIdentifierMock,
+    validateIdentifier: validateIdentifierMock,
 }));
 
 vi.mock("@/lib/seqmeta-enrichment", () => ({
-  buildCachedEnrichmentState: buildCachedEnrichmentStateMock,
-  enrichSeqmetaMetadata: enrichSeqmetaMetadataMock,
-  primeSeqmetaCache: primeSeqmetaCacheMock,
+    buildCachedEnrichmentState: buildCachedEnrichmentStateMock,
+    collectSeqmetaValues: collectSeqmetaValuesMock,
+    enrichSeqmetaMetadata: enrichSeqmetaMetadataMock,
+    mergeSeqmetaEnrichmentState: mergeSeqmetaEnrichmentStateMock,
+    primeSeqmetaCache: primeSeqmetaCacheMock,
 }));
 
 vi.mock("@/lib/seqmeta-cache-server", () => ({
-  getRequestSeqmetaCache: getRequestSeqmetaCacheMock,
+    getRequestSeqmetaCache: getRequestSeqmetaCacheMock,
 }));
 
 function buildFile(path: string): FileEntry {
-  return {
-    kind: "output",
-    mtime: "2026-04-16T10:15:00Z",
-    path,
-    size: 512,
-  };
+    return {
+        kind: "output",
+        mtime: "2026-04-16T10:15:00Z",
+        path,
+        size: 512,
+    };
 }
 
 function buildResultSet(): ResultSet {
-  return {
-    command: "nextflow run workflow.nf",
-    created_at: "2026-04-16T10:15:00Z",
-    id: "result-1",
-    metadata: {
-      seqmeta_sampleid: "SANG001",
-    },
-    operator: "operator-1",
-    output_directory: "/results",
-    pipeline_identifier: "gh://repo/workflow.nf",
-    pipeline_name: "nf-core/rnaseq",
-    pipeline_version: "3.18.0",
-    requester: "alice",
-    run_key: "runid=1001",
-    updated_at: "2026-04-16T10:45:00Z",
-  };
+    return {
+        command: "nextflow run workflow.nf",
+        created_at: "2026-04-16T10:15:00Z",
+        id: "result-1",
+        metadata: {
+            seqmeta_sampleid: "SANG001",
+        },
+        operator: "operator-1",
+        output_directory: "/results",
+        pipeline_identifier: "gh://repo/workflow.nf",
+        pipeline_name: "nf-core/rnaseq",
+        pipeline_version: "3.18.0",
+        requester: "alice",
+        run_key: "runid=1001",
+        updated_at: "2026-04-16T10:45:00Z",
+    };
 }
 
 describe("O1 result detail hydration", () => {
-  const matchMediaStub = () => ({
-    addEventListener: vi.fn(),
-    addListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-    matches: false,
-    media: "",
-    onchange: null,
-    removeEventListener: vi.fn(),
-    removeListener: vi.fn(),
-  });
-
-  afterEach(() => {
-    document.body.innerHTML = "";
-    vi.restoreAllMocks();
-  });
-
-  it("keeps file-browser folder toggles interactive when client locale formatting differs", async () => {
-    const { ResultDetailFiles } = await import("@/components/result-detail-files");
-    const files = [buildFile("/results/sample.bam")];
-    const toLocaleStringSpy = vi.spyOn(Date.prototype, "toLocaleString");
-
-    vi.stubGlobal("matchMedia", matchMediaStub);
-
-    toLocaleStringSpy.mockImplementation(() => "16 Apr 2026, 10:15");
-
-    const serverTree = createElement(
-      AppProviders,
-      undefined,
-      createElement(ResultDetailFiles, {
-        files,
-        resultId: "result-1",
-      }),
-    );
-    const serverMarkup = renderToString(serverTree);
-    const container = document.createElement("div");
-    const recoverableErrors: Error[] = [];
-
-    document.body.appendChild(container);
-    container.innerHTML = serverMarkup;
-
-    toLocaleStringSpy.mockImplementation(() => "17 Apr 2026, 10:15");
-
-    let root: ReturnType<typeof hydrateRoot> | null = null;
-
-    await act(async () => {
-      root = hydrateRoot(container, serverTree, {
-        onRecoverableError: (error) => {
-          recoverableErrors.push(error);
-        },
-      });
+    const matchMediaStub = () => ({
+        addEventListener: vi.fn(),
+        addListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+        matches: false,
+        media: "",
+        onchange: null,
+        removeEventListener: vi.fn(),
+        removeListener: vi.fn(),
     });
 
-    expect(
-      container.querySelector('button[data-file-path="/results/sample.bam"]'),
-    ).not.toBeNull();
-
-    fireEvent.click(
-      container.querySelector('button[data-folder-path="/results"]')!,
-    );
-
-    await waitFor(() => {
-      expect(
-        container.querySelector('button[data-file-path="/results/sample.bam"]'),
-      ).toBeNull();
+    afterEach(() => {
+        document.body.innerHTML = "";
+        vi.restoreAllMocks();
     });
 
-    expect(recoverableErrors).toHaveLength(0);
+    it("keeps file-browser folder toggles interactive when client locale formatting differs", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+        const files = [buildFile("/results/sample.bam")];
+        const toLocaleStringSpy = vi.spyOn(Date.prototype, "toLocaleString");
 
-    await act(async () => {
-      root?.unmount();
-    });
-  });
+        vi.stubGlobal("matchMedia", matchMediaStub);
 
-  it("hydrates the result detail page without mismatches and keeps folder toggles interactive when locale formatting differs", async () => {
-    const files = [buildFile("/results/sample.bam")];
-    const result = buildResultSet();
-    const toLocaleStringSpy = vi.spyOn(Date.prototype, "toLocaleString");
+        toLocaleStringSpy.mockImplementation(() => "16 Apr 2026, 10:15");
 
-    vi.stubGlobal("matchMedia", matchMediaStub);
-    fetchFilesMock.mockResolvedValue(files);
-    fetchResultMock.mockResolvedValue(result);
-    validateIdentifierMock.mockResolvedValue(true);
-    enrichSeqmetaMetadataMock.mockResolvedValue({
-      enrichments: {},
-      errors: {},
-    });
-    buildCachedEnrichmentStateMock.mockReturnValue({
-      enrichments: {},
-      errors: {},
-    });
-    getRequestSeqmetaCacheMock.mockResolvedValue({});
+        const serverTree = createElement(
+            AppProviders,
+            undefined,
+            createElement(ResultDetailFiles, {
+                files,
+                resultId: "result-1",
+            }),
+        );
+        const serverMarkup = renderToString(serverTree);
+        const container = document.createElement("div");
+        const recoverableErrors: Error[] = [];
 
-    toLocaleStringSpy.mockImplementation(() => "16 Apr 2026, 10:15");
+        document.body.appendChild(container);
+        container.innerHTML = serverMarkup;
 
-    const pageModule = await import("@/app/(results)/results/[id]/page");
-    const Page = pageModule.default;
-    const serverTree = createElement(
-      AppProviders,
-      undefined,
-      await Page({ params: Promise.resolve({ id: "result-1" }) }),
-    );
-    const serverMarkup = renderToString(serverTree);
-    const container = document.createElement("div");
-    const recoverableErrors: Error[] = [];
+        toLocaleStringSpy.mockImplementation(() => "17 Apr 2026, 10:15");
 
-    document.body.appendChild(container);
-    container.innerHTML = serverMarkup;
+        let root: ReturnType<typeof hydrateRoot> | null = null;
 
-    toLocaleStringSpy.mockImplementation(() => "17 Apr 2026, 10:15");
+        await act(async () => {
+            root = hydrateRoot(container, serverTree, {
+                onRecoverableError: (error) => {
+                    recoverableErrors.push(error);
+                },
+            });
+        });
 
-    let root: ReturnType<typeof hydrateRoot> | null = null;
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/sample.bam"]',
+            ),
+        ).not.toBeNull();
 
-    await act(async () => {
-      root = hydrateRoot(container, serverTree, {
-        onRecoverableError: (error) => {
-          recoverableErrors.push(error);
-        },
-      });
-    });
+        fireEvent.click(
+            container.querySelector('button[data-folder-path="/results"]')!,
+        );
 
-    fireEvent.click(
-      container.querySelector('button[data-folder-path="/results"]')!,
-    );
+        await waitFor(() => {
+            expect(
+                container.querySelector(
+                    'button[data-file-path="/results/sample.bam"]',
+                ),
+            ).toBeNull();
+        });
 
-    await waitFor(() => {
-      expect(
-        container.querySelector('button[data-file-path="/results/sample.bam"]'),
-      ).toBeNull();
+        expect(recoverableErrors).toHaveLength(0);
+
+        await act(async () => {
+            root?.unmount();
+        });
     });
 
-    expect(recoverableErrors).toHaveLength(0);
+    it("hydrates the result detail page without mismatches and keeps folder toggles interactive when locale formatting differs", async () => {
+        const files = [buildFile("/results/sample.bam")];
+        const result = buildResultSet();
+        const toLocaleStringSpy = vi.spyOn(Date.prototype, "toLocaleString");
 
-    await act(async () => {
-      root?.unmount();
+        vi.stubGlobal("matchMedia", matchMediaStub);
+        fetchFilesMock.mockResolvedValue(files);
+        fetchResultMock.mockResolvedValue(result);
+        validateIdentifierMock.mockResolvedValue(true);
+        enrichSeqmetaMetadataMock.mockResolvedValue({
+            enrichments: {},
+            errors: {},
+        });
+        buildCachedEnrichmentStateMock.mockReturnValue({
+            enrichments: {},
+            errors: {},
+        });
+        collectSeqmetaValuesMock.mockReturnValue(["SANG001"]);
+        mergeSeqmetaEnrichmentStateMock.mockImplementation(
+            (base, override) => ({
+                enrichments: {
+                    ...base.enrichments,
+                    ...override?.enrichments,
+                },
+                errors: {
+                    ...base.errors,
+                    ...override?.errors,
+                },
+            }),
+        );
+        getRequestSeqmetaCacheMock.mockResolvedValue({});
+
+        toLocaleStringSpy.mockImplementation(() => "16 Apr 2026, 10:15");
+
+        const pageModule = await import("@/app/(results)/results/[id]/page");
+        const Page = pageModule.default;
+        const serverTree = createElement(
+            AppProviders,
+            undefined,
+            await Page({ params: Promise.resolve({ id: "result-1" }) }),
+        );
+        const serverMarkup = renderToString(serverTree);
+        const container = document.createElement("div");
+        const recoverableErrors: Error[] = [];
+
+        document.body.appendChild(container);
+        container.innerHTML = serverMarkup;
+
+        toLocaleStringSpy.mockImplementation(() => "17 Apr 2026, 10:15");
+
+        let root: ReturnType<typeof hydrateRoot> | null = null;
+
+        await act(async () => {
+            root = hydrateRoot(container, serverTree, {
+                onRecoverableError: (error) => {
+                    recoverableErrors.push(error);
+                },
+            });
+        });
+
+        fireEvent.click(
+            container.querySelector('button[data-folder-path="/results"]')!,
+        );
+
+        await waitFor(() => {
+            expect(
+                container.querySelector(
+                    'button[data-file-path="/results/sample.bam"]',
+                ),
+            ).toBeNull();
+        });
+
+        expect(recoverableErrors).toHaveLength(0);
+
+        await act(async () => {
+            root?.unmount();
+        });
     });
-  });
 });

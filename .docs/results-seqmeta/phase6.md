@@ -21,8 +21,8 @@ Add an early integration probe that, when
 endpoint for each of the five supported filter keys and asserts
 the response shape. Covers all 6 acceptance tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.2: G1 - Real-API enrichment matrix
 
@@ -33,5 +33,5 @@ through each classification hop against live MLWH/iRODS with
 `SAGA_TEST_API_TOKEN`. Depends on item 6.1. Covers all 3
 acceptance tests from G1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

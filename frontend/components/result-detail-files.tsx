@@ -51,6 +51,27 @@ class PreviewRequestError extends Error {
     }
 }
 
+function extractPreviewErrorMessage(body: unknown): string | undefined {
+    if (typeof body === "string") {
+        const trimmed = body.trim();
+
+        return trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    if (
+        body &&
+        typeof body === "object" &&
+        "error" in body &&
+        typeof body.error === "string"
+    ) {
+        const trimmed = body.error.trim();
+
+        return trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    return undefined;
+}
+
 function pickInitialFile(files: FileEntry[]): FileEntry | null {
     for (const kind of ["output", "input", "pipeline"] as const) {
         const match = files.find((file) => file.kind === kind);
@@ -100,9 +121,11 @@ async function fetchPreviewContent(
             response.status,
             response.status === 413
                 ? {
-                    body,
-                    fileSize: fileSizeHeader ? Number(fileSizeHeader) : undefined,
-                }
+                      body,
+                      fileSize: fileSizeHeader
+                          ? Number(fileSizeHeader)
+                          : undefined,
+                  }
                 : body,
         );
     }
@@ -174,13 +197,14 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                         body?: unknown;
                         fileSize?: number;
                     } | null;
+                    const body =
+                        error.status === 413 ? payload?.body : error.body;
 
                     setPreviewState({
                         content: undefined,
                         error: {
                             fileSize: payload?.fileSize,
-                            message:
-                                typeof payload?.body === "string" ? payload.body : undefined,
+                            message: extractPreviewErrorMessage(body),
                             status: error.status,
                         },
                         isLoading: false,
@@ -237,7 +261,10 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                 </div>
 
                 {selectedFile ? (
-                    <div className="mt-6" data-selected-file-path={selectedFile.path}>
+                    <div
+                        className="mt-6"
+                        data-selected-file-path={selectedFile.path}
+                    >
                         <FilePreview
                             content={previewContent}
                             error={previewError}

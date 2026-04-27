@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+    enrichmentResultSchema,
     errorSchema,
     fileEntrySchema,
     healthSchema,
@@ -16,7 +17,7 @@ import {
     studySchema,
 } from "@/lib/contracts";
 
-describe("H2 contract schemas", () => {
+describe("contract schemas", () => {
     it("parses a valid ResultSet JSON object", () => {
         const parsed = resultSetSchema.parse({
             id: "result-1",
@@ -138,8 +139,12 @@ describe("H2 contract schemas", () => {
 
     it("parses meta key and basic error and health payloads", () => {
         expect(metaKeysSchema.parse(["lib", "run"])).toEqual(["lib", "run"]);
-        expect(errorSchema.parse({ error: "not found" }).error).toBe("not found");
-        expect(healthSchema.parse({ status: "healthy" }).status).toBe("healthy");
+        expect(errorSchema.parse({ error: "not found" }).error).toBe(
+            "not found",
+        );
+        expect(healthSchema.parse({ status: "healthy" }).status).toBe(
+            "healthy",
+        );
     });
 
     it("accepts identifier results with arbitrary nested object data", () => {
@@ -158,5 +163,100 @@ describe("H2 contract schemas", () => {
                 values: [1, 2, 3],
             },
         });
+    });
+
+    it("parses a valid enrichment result payload for a study graph", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "6568",
+            type: "study_id",
+            graph: {
+                study: {
+                    id_study_tmp: 42,
+                    id_lims: "SQSCP",
+                    id_study_lims: "6568",
+                    name: "Cancer Programme",
+                    faculty_sponsor: "Dr Example",
+                    state: "active",
+                    abstract: "Study abstract",
+                    abbreviation: "CP",
+                    accession_number: "ERP123456",
+                    description: "Study description",
+                    data_release_strategy: "managed",
+                    study_title: "Cancer Programme Cohort",
+                    data_access_group: "group-a",
+                    hmdmc_number: "HMDMC-1",
+                    programme: "Cancer",
+                    created: "2026-04-20T09:00:00Z",
+                    reference_genome: "GRCh38",
+                    ethically_approved: true,
+                    study_type: "Whole Genome Sequencing",
+                    contains_human_dna: true,
+                    contaminated_human_dna: false,
+                    study_visibility: "Always Open",
+                    ega_dac_accession_number: "EGAC00001",
+                    ega_policy_accession_number: "EGAP00001",
+                    data_release_timing: "Immediate",
+                },
+                libraries: [
+                    {
+                        library_type: "RNA",
+                        id_study_lims: "6568",
+                    },
+                ],
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+    });
+
+    it("preserves missing hop reasons for partial enrichment results", () => {
+        const parsed = enrichmentResultSchema.parse({
+            identifier: "RNA",
+            type: "library_type",
+            graph: {
+                library: {
+                    library_type: "RNA",
+                    id_study_lims: "6568",
+                },
+                samples: [
+                    {
+                        id_study_lims: "6568",
+                        id_sample_lims: "SMP001",
+                        sanger_id: "SANG001",
+                        sample_name: "sample-1",
+                        taxon_id: 9606,
+                        common_name: "Human",
+                        library_type: "RNA",
+                        id_run: 1234,
+                        lane: 1,
+                        tag_index: 7,
+                        irods_path: "/seq/1234",
+                        study_accession_number: "ERP123456",
+                        accession_number: "ERS123456",
+                    },
+                ],
+            },
+            partial: true,
+            missing: [
+                {
+                    hop: "samples",
+                    reason: "samples_truncated",
+                    status: 206,
+                },
+            ],
+        });
+
+        expect(parsed.missing?.[0]?.reason).toBe("samples_truncated");
+    });
+
+    it("rejects enrichment results that omit the graph envelope", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "6568",
+            type: "study_id",
+            partial: false,
+        });
+
+        expect(result.success).toBe(false);
     });
 });

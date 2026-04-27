@@ -1,0 +1,3 @@
+{"Time":"2026-04-27T11:09:13.178329649+01:00","Action":"start","Package":"github.com/wtsi-hgi/wa/seqmeta"}
+{"Time":"2026-04-27T11:09:13.182179713+01:00","Action":"run","Package":"github.com/wtsi-hgi/wa/seqmeta","Test":"TestIntegrationEnrichMatrix"}
+{"Time":"2026-04-27T11:09:13.182229044+01:00","Action":"output","Package":"github.com/wtsi-hgi/wa/seqmeta","Test":"TestIntegrationEnrichMatrix","Output":"=== RUN   TestIntegrationEnrichMatrix\n"}

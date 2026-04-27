@@ -27,12 +27,89 @@ package saga
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+type filterProbeReporter interface {
+	Helper()
+	Logf(format string, args ...any)
+	Fatalf(format string, args ...any)
+}
+
+func assertSupportedFilterResultWithReporter(reporter filterProbeReporter, filterKey string, err error) {
+	reporter.Helper()
+
+	if err == nil {
+		return
+	}
+
+	if errors.Is(err, ErrServerError) {
+		reporter.Logf("MLWH filter %s appears unsupported upstream: %v", filterKey, err)
+	}
+
+	reporter.Fatalf("MLWH filter probe for %s failed: %v", filterKey, err)
+}
+
+type probeReporterStub struct {
+	logs     []string
+	failures []string
+}
+
+func (p *probeReporterStub) Helper() {}
+
+func (p *probeReporterStub) Logf(format string, args ...any) {
+	p.logs = append(p.logs, fmt.Sprintf(format, args...))
+}
+
+func (p *probeReporterStub) Fatalf(format string, args ...any) {
+	p.failures = append(p.failures, fmt.Sprintf(format, args...))
+}
+
+func TestAssertSupportedFilterResult(t *testing.T) {
+	Convey("Given the MLWH filter probe failure handler", t, func() {
+		Convey("when the upstream probe fails with ErrServerError, then it logs the unsupported-filter hint and still fails the probe", func() {
+			reporter := &probeReporterStub{}
+
+			assertSupportedFilterResultWithReporter(reporter, "library_type", ErrServerError)
+
+			So(reporter.logs, ShouldHaveLength, 1)
+			So(reporter.logs[0], ShouldContainSubstring, "MLWH filter library_type appears unsupported upstream")
+			So(reporter.failures, ShouldHaveLength, 1)
+			So(reporter.failures[0], ShouldContainSubstring, "MLWH filter probe for library_type failed")
+		})
+	})
+}
+
+func mustHarvestSeedStudySample(t *testing.T, ctx context.Context, client *Client) MLWHSample {
+	t.Helper()
+
+	samples, err := client.MLWH().AllSamplesForStudy(ctx, "3361")
+	assertSupportedFilterResult(t, "study_id", err)
+
+	for _, sample := range samples {
+		if sample.IDSampleLims != "" && sample.AccessionNumber != "" {
+			return sample
+		}
+	}
+
+	t.Fatalf("study 3361 did not yield a sample with id_sample_lims and accession_number populated")
+
+	return MLWHSample{}
+}
+
+func assertSupportedFilterResult(t *testing.T, filterKey string, err error) {
+	t.Helper()
+	assertSupportedFilterResultWithReporter(t, filterKey, err)
+	if err != nil {
+		t.FailNow()
+	}
+}
 
 func TestIntegration(t *testing.T) {
 	token := os.Getenv("SAGA_TEST_API_TOKEN")
@@ -157,4 +234,62 @@ func studyNameLooksKnown(name string) bool {
 	lowerName := strings.ToLower(name)
 
 	return strings.Contains(lowerName, "hca") || strings.Contains(lowerName, "embryo")
+}
+
+func TestFilterProbes(t *testing.T) {
+	token := os.Getenv("SAGA_TEST_API_TOKEN")
+	if token == "" {
+		t.Skip("SAGA_TEST_API_TOKEN not set")
+	}
+
+	Convey("Given a valid SAGA API token", t, func() {
+		ctx := context.Background()
+		client := mustNewIntegrationClient(t, token)
+
+		Convey("when FindSamplesBySangerID is called for a known sample, then it returns MLWH samples", func() {
+			samples, err := client.MLWH().FindSamplesBySangerID(ctx, "WTSI_wEMB10524782")
+
+			assertSupportedFilterResult(t, "sanger_id", err)
+			assertSampleResultShape(samples)
+		})
+
+		Convey("when FindSamplesByIDSampleLims is called for a sample harvested from study 3361, then it returns MLWH samples", func() {
+			seed := mustHarvestSeedStudySample(t, ctx, client)
+
+			samples, err := client.MLWH().FindSamplesByIDSampleLims(ctx, seed.IDSampleLims)
+
+			assertSupportedFilterResult(t, "id_sample_lims", err)
+			assertSampleResultShape(samples)
+		})
+
+		Convey("when FindSamplesByRunID is called for a known run, then it returns MLWH samples", func() {
+			samples, err := client.MLWH().FindSamplesByRunID(ctx, 34134)
+
+			assertSupportedFilterResult(t, "id_run", err)
+			assertSampleResultShape(samples)
+		})
+
+		Convey("when FindSamplesByLibraryType is called for a known library type, then it returns MLWH samples", func() {
+			samples, err := client.MLWH().FindSamplesByLibraryType(ctx, "RNA PolyA")
+
+			assertSupportedFilterResult(t, "library_type", err)
+			assertSampleResultShape(samples)
+		})
+
+		Convey("when FindSamplesByAccessionNumber is called for a sample harvested from study 3361, then it returns MLWH samples", func() {
+			seed := mustHarvestSeedStudySample(t, ctx, client)
+
+			samples, err := client.MLWH().FindSamplesByAccessionNumber(ctx, seed.AccessionNumber)
+
+			assertSupportedFilterResult(t, "accession_number", err)
+			assertSampleResultShape(samples)
+		})
+	})
+}
+
+func assertSampleResultShape(samples []MLWHSample) {
+	So(samples, ShouldNotBeEmpty)
+	So(samples[0].IDStudyLims, ShouldNotBeBlank)
+	So(samples[0].IDSampleLims, ShouldNotBeBlank)
+	So(samples[0].SangerID, ShouldNotBeBlank)
 }

@@ -133,6 +133,7 @@ SEQMETA_LOG="$LOG_DIR/seqmeta.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $frontend_port}"
+SEQMETA_CMD="${WA_RUN_DEV_SEQMETA_CMD:-}"
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
 
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$results_port/results/stats}"
@@ -297,7 +298,16 @@ wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict"
 printf 'Seeding fixtures from %s\n' "$SEED_PATH"
 seed_results >>"$RESULTS_LOG" 2>&1
 
-if [[ -n "${SAGA_API_TOKEN:-}" ]]; then
+if [[ -n "$SEQMETA_CMD" ]]; then
+  export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
+  : >"$SEQMETA_LOG"
+  printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
+  WA_RUN_DEV_SEQMETA_CMD="$SEQMETA_CMD" \
+    bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"' \
+    >>"$SEQMETA_LOG" 2>&1 &
+  PIDS+=("$!")
+  wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
+elif [[ -n "${SAGA_API_TOKEN:-}" ]]; then
   export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"

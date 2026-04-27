@@ -40,6 +40,8 @@ func Validate(ctx context.Context, provider SAGAProvider, identifier string) (*I
 		return nil, ErrUnknownIdentifier
 	}
 
+	fallbackToAllSamples := false
+
 	// GetStudy is speculative: most identifiers are not study IDs, and some
 	// SAGA deployments reject non-study-shaped IDs (e.g. "SANG205") with 4xx
 	// statuses rather than 404. 4xx client errors (including 404) are treated
@@ -65,38 +67,97 @@ func Validate(ctx context.Context, provider SAGAProvider, identifier string) (*I
 		}
 	}
 
-	samples, err := provider.AllSamples(ctx)
+	targetedSamples, err := provider.FindSamplesBySangerID(ctx, identifier)
 	if err != nil {
-		return nil, err
+		if isUnsupportedFilterError(provider, mlwhFilterSangerID, err) {
+			fallbackToAllSamples = true
+		} else if !isClientError(err) {
+			return nil, err
+		}
+	} else if len(targetedSamples) > 0 {
+		return &IdentifierResult{Identifier: identifier, Type: IdentifierSangerSampleID, Object: targetedSamples[0]}, nil
 	}
 
-	for _, candidate := range samples {
-		if candidate.SangerID == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierSangerSampleID, Object: candidate}, nil
+	targetedSamples, err = provider.FindSamplesByIDSampleLims(ctx, identifier)
+	if err != nil {
+		if isUnsupportedFilterError(provider, mlwhFilterIDSampleLims, err) {
+			fallbackToAllSamples = true
+		} else if !isClientError(err) {
+			return nil, err
 		}
+	} else if len(targetedSamples) > 0 {
+		return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleLimsID, Object: targetedSamples[0]}, nil
 	}
-	for _, candidate := range samples {
-		if candidate.IDSampleLims == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleLimsID, Object: candidate}, nil
+
+	targetedSamples, err = provider.FindSamplesByAccessionNumber(ctx, identifier)
+	if err != nil {
+		if isUnsupportedFilterError(provider, mlwhFilterAccessionNumber, err) {
+			fallbackToAllSamples = true
+		} else if !isClientError(err) {
+			return nil, err
 		}
-	}
-	for _, candidate := range samples {
-		if candidate.AccessionNumber == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleAccession, Object: candidate}, nil
-		}
+	} else if len(targetedSamples) > 0 {
+		return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleAccession, Object: targetedSamples[0]}, nil
 	}
 
 	if runID, convErr := strconv.Atoi(identifier); convErr == nil {
-		for _, candidate := range samples {
-			if candidate.IDRun == runID {
-				return &IdentifierResult{Identifier: identifier, Type: IdentifierRunID, Object: candidate}, nil
+		targetedSamples, err = provider.FindSamplesByRunID(ctx, runID)
+		if err != nil {
+			if isUnsupportedFilterError(provider, mlwhFilterIDRun, err) {
+				fallbackToAllSamples = true
+			} else if !isClientError(err) {
+				return nil, err
 			}
+		} else if len(targetedSamples) > 0 {
+			return &IdentifierResult{Identifier: identifier, Type: IdentifierRunID, Object: targetedSamples[0]}, nil
 		}
 	}
 
-	for _, candidate := range samples {
-		if candidate.LibraryType == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierLibraryType, Object: candidate}, nil
+	targetedSamples, err = provider.FindSamplesByLibraryType(ctx, identifier)
+	if err != nil {
+		if isUnsupportedFilterError(provider, mlwhFilterLibraryType, err) {
+			fallbackToAllSamples = true
+		} else if !isClientError(err) {
+			return nil, err
+		}
+	} else if len(targetedSamples) > 0 {
+		return &IdentifierResult{Identifier: identifier, Type: IdentifierLibraryType, Object: targetedSamples[0]}, nil
+	}
+
+	if fallbackToAllSamples {
+		allSamples, allSamplesErr := provider.AllSamples(ctx)
+		if allSamplesErr != nil {
+			return nil, allSamplesErr
+		}
+
+		for _, candidate := range allSamples {
+			if candidate.SangerID == identifier {
+				return &IdentifierResult{Identifier: identifier, Type: IdentifierSangerSampleID, Object: candidate}, nil
+			}
+		}
+		for _, candidate := range allSamples {
+			if candidate.IDSampleLims == identifier {
+				return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleLimsID, Object: candidate}, nil
+			}
+		}
+		for _, candidate := range allSamples {
+			if candidate.AccessionNumber == identifier {
+				return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleAccession, Object: candidate}, nil
+			}
+		}
+
+		if runID, convErr := strconv.Atoi(identifier); convErr == nil {
+			for _, candidate := range allSamples {
+				if candidate.IDRun == runID {
+					return &IdentifierResult{Identifier: identifier, Type: IdentifierRunID, Object: candidate}, nil
+				}
+			}
+		}
+
+		for _, candidate := range allSamples {
+			if candidate.LibraryType == identifier {
+				return &IdentifierResult{Identifier: identifier, Type: IdentifierLibraryType, Object: candidate}, nil
+			}
 		}
 	}
 

@@ -39,8 +39,17 @@ type MockProvider struct {
 	AllStudiesFunc         func(ctx context.Context) ([]saga.Study, error)
 	AllSamplesFunc         func(ctx context.Context) ([]saga.MLWHSample, error)
 	AllSamplesForStudyFunc func(ctx context.Context, studyID string) ([]saga.MLWHSample, error)
+	FindSamplesBySangerIDFn func(ctx context.Context, sangerID string) ([]saga.MLWHSample, error)
+	FindSamplesByIDSampleLimsFn func(ctx context.Context, idSampleLims string) ([]saga.MLWHSample, error)
+	FindSamplesByRunIDFn func(ctx context.Context, idRun int) ([]saga.MLWHSample, error)
+	FindSamplesByLibraryTypeFn func(ctx context.Context, libraryType string) ([]saga.MLWHSample, error)
+	FindSamplesByAccessionNumberFn func(ctx context.Context, accessionNumber string) ([]saga.MLWHSample, error)
+	StudyForSampleFn       func(ctx context.Context, sample saga.MLWHSample) (*saga.Study, error)
 	GetSampleFilesFunc     func(ctx context.Context, sangerID string) ([]saga.IRODSFile, error)
 	ListProjectsFunc       func(ctx context.Context) ([]saga.Project, error)
+	ListProjectStudiesFn   func(ctx context.Context, projectID int) ([]saga.ProjectStudy, error)
+	ListProjectSamplesFn   func(ctx context.Context, projectID int) ([]saga.ProjectSample, error)
+	ListProjectUsersFn     func(ctx context.Context, projectID int) ([]saga.ProjectUser, error)
 }
 
 func (m *MockProvider) GetStudy(ctx context.Context, studyID string) (*saga.Study, error) {
@@ -75,6 +84,54 @@ func (m *MockProvider) AllSamplesForStudy(ctx context.Context, studyID string) (
 	return nil, nil
 }
 
+func (m *MockProvider) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]saga.MLWHSample, error) {
+	if m != nil && m.FindSamplesBySangerIDFn != nil {
+		return m.FindSamplesBySangerIDFn(ctx, sangerID)
+	}
+
+	return []saga.MLWHSample{}, nil
+}
+
+func (m *MockProvider) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]saga.MLWHSample, error) {
+	if m != nil && m.FindSamplesByIDSampleLimsFn != nil {
+		return m.FindSamplesByIDSampleLimsFn(ctx, idSampleLims)
+	}
+
+	return []saga.MLWHSample{}, nil
+}
+
+func (m *MockProvider) FindSamplesByRunID(ctx context.Context, idRun int) ([]saga.MLWHSample, error) {
+	if m != nil && m.FindSamplesByRunIDFn != nil {
+		return m.FindSamplesByRunIDFn(ctx, idRun)
+	}
+
+	return []saga.MLWHSample{}, nil
+}
+
+func (m *MockProvider) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]saga.MLWHSample, error) {
+	if m != nil && m.FindSamplesByLibraryTypeFn != nil {
+		return m.FindSamplesByLibraryTypeFn(ctx, libraryType)
+	}
+
+	return []saga.MLWHSample{}, nil
+}
+
+func (m *MockProvider) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]saga.MLWHSample, error) {
+	if m != nil && m.FindSamplesByAccessionNumberFn != nil {
+		return m.FindSamplesByAccessionNumberFn(ctx, accessionNumber)
+	}
+
+	return []saga.MLWHSample{}, nil
+}
+
+func (m *MockProvider) StudyForSample(ctx context.Context, sample saga.MLWHSample) (*saga.Study, error) {
+	if m != nil && m.StudyForSampleFn != nil {
+		return m.StudyForSampleFn(ctx, sample)
+	}
+
+	return nil, nil
+}
+
 func (m *MockProvider) GetSampleFiles(ctx context.Context, sangerID string) ([]saga.IRODSFile, error) {
 	if m != nil && m.GetSampleFilesFunc != nil {
 		return m.GetSampleFilesFunc(ctx, sangerID)
@@ -89,4 +146,28 @@ func (m *MockProvider) ListProjects(ctx context.Context) ([]saga.Project, error)
 	}
 
 	return nil, nil
+}
+
+func (m *MockProvider) ListProjectStudies(ctx context.Context, projectID int) ([]saga.ProjectStudy, error) {
+	if m != nil && m.ListProjectStudiesFn != nil {
+		return m.ListProjectStudiesFn(ctx, projectID)
+	}
+
+	return []saga.ProjectStudy{}, nil
+}
+
+func (m *MockProvider) ListProjectSamples(ctx context.Context, projectID int) ([]saga.ProjectSample, error) {
+	if m != nil && m.ListProjectSamplesFn != nil {
+		return m.ListProjectSamplesFn(ctx, projectID)
+	}
+
+	return []saga.ProjectSample{}, nil
+}
+
+func (m *MockProvider) ListProjectUsers(ctx context.Context, projectID int) ([]saga.ProjectUser, error) {
+	if m != nil && m.ListProjectUsersFn != nil {
+		return m.ListProjectUsersFn(ctx, projectID)
+	}
+
+	return []saga.ProjectUser{}, nil
 }

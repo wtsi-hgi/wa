@@ -172,4 +172,26 @@ describe("O1 result detail file integration", () => {
         expect(screen.getByText("Syntax-highlighted preview")).toBeTruthy();
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+
+    it("surfaces backend JSON error messages in the preview state", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        fetchMock.mockResolvedValue(
+            Response.json({ error: "file not found on disk" }, { status: 410 }),
+        );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/report.txt")],
+                resultId: "result-1",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText(/unable to load preview/i)).toBeTruthy();
+        });
+
+        expect(screen.getByText(/file not found on disk/i)).toBeTruthy();
+    });
 });

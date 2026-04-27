@@ -74,7 +74,9 @@ describe("P1 file content streaming API route", () => {
 
         const { GET } = await import("@/app/api/file/route");
 
-        const response = await GET(makeRequest("id=abc&path=%2Fout%2Fsecret.txt"));
+        const response = await GET(
+            makeRequest("id=abc&path=%2Fout%2Fsecret.txt"),
+        );
 
         expect(response.status).toBe(403);
         await expect(response.json()).resolves.toEqual({ error: "forbidden" });
@@ -87,7 +89,9 @@ describe("P1 file content streaming API route", () => {
 
         const { GET } = await import("@/app/api/file/route");
 
-        const response = await GET(makeRequest("id=abc&path=%2Fout%2Fmissing.txt"));
+        const response = await GET(
+            makeRequest("id=abc&path=%2Fout%2Fmissing.txt"),
+        );
 
         expect(response.status).toBe(410);
         await expect(response.json()).resolves.toEqual({
@@ -108,7 +112,9 @@ describe("P1 file content streaming API route", () => {
 
         const { GET } = await import("@/app/api/file/route");
 
-        const response = await GET(makeRequest("id=abc&path=%2Fout%2Flarge.bin"));
+        const response = await GET(
+            makeRequest("id=abc&path=%2Fout%2Flarge.bin"),
+        );
 
         expect(response.status).toBe(413);
         expect(response.headers.get("x-file-size")).toBe("20971520");
@@ -131,6 +137,37 @@ describe("P1 file content streaming API route", () => {
         });
         await expect(missingPath.json()).resolves.toEqual({
             error: "missing required query params: id, path",
+        });
+    });
+
+    it("returns 503 JSON when the results backend request throws", async () => {
+        resultsRawMock.mockRejectedValue(new Error("socket closed"));
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(makeRequest("id=abc&path=%2Fout%2Fimg.png"));
+
+        expect(response.status).toBe(503);
+        await expect(response.json()).resolves.toEqual({
+            error: "results backend request failed",
+        });
+    });
+
+    it("preserves plain-text backend error messages", async () => {
+        resultsRawMock.mockResolvedValue(
+            new Response("backend timed out", {
+                status: 504,
+                headers: { "content-type": "text/plain" },
+            }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(makeRequest("id=abc&path=%2Fout%2Fimg.png"));
+
+        expect(response.status).toBe(504);
+        await expect(response.json()).resolves.toEqual({
+            error: "backend timed out",
         });
     });
 });

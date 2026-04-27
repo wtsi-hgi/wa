@@ -20,8 +20,8 @@ related study/library/sample shapes to
 (including `omitempty` pointer/slice fields). Covers all 3
 acceptance tests from H1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 7.2: H2 - enrichIdentifier action
 
@@ -33,5 +33,5 @@ Implement an `enrichIdentifier` server action in
 and surfaces partial / 404 / 502 distinctly. Depends on item 7.1.
 Covers all 3 acceptance tests from H2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

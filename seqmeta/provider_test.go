@@ -71,3 +71,57 @@ func TestMockProviderGetStudyNotFound(t *testing.T) {
 		})
 	})
 }
+
+func TestMockProviderFindSamplesBySangerIDZeroValue(t *testing.T) {
+	convey.Convey("Given a zero-value MockProvider", t, func() {
+		provider := &MockProvider{}
+
+		samples, err := provider.FindSamplesBySangerID(context.Background(), "x")
+
+		convey.Convey("when FindSamplesBySangerID is called, then an empty slice and nil error are returned", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldNotBeNil)
+			convey.So(samples, convey.ShouldBeEmpty)
+		})
+	})
+}
+
+func TestMockProviderFindSamplesByRunID(t *testing.T) {
+	convey.Convey("Given a MockProvider with FindSamplesByRunIDFn returning one sample for run 42", t, func() {
+		provider := &MockProvider{
+			FindSamplesByRunIDFn: func(_ context.Context, id int) ([]saga.MLWHSample, error) {
+				convey.So(id, convey.ShouldEqual, 42)
+
+				return []saga.MLWHSample{{IDRun: 42, SangerID: "SANG42"}}, nil
+			},
+		}
+
+		samples, err := provider.FindSamplesByRunID(context.Background(), 42)
+
+		convey.Convey("when FindSamplesByRunID is called, then the configured sample is returned", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldHaveLength, 1)
+			convey.So(samples[0].IDRun, convey.ShouldEqual, 42)
+			convey.So(samples[0].SangerID, convey.ShouldEqual, "SANG42")
+		})
+	})
+}
+
+func TestMockProviderStudyForSampleNotFound(t *testing.T) {
+	convey.Convey("Given a MockProvider with StudyForSampleFn returning saga.ErrNotFound", t, func() {
+		provider := &MockProvider{
+			StudyForSampleFn: func(_ context.Context, sample saga.MLWHSample) (*saga.Study, error) {
+				convey.So(sample.SangerID, convey.ShouldEqual, "SANG1")
+
+				return nil, saga.ErrNotFound
+			},
+		}
+
+		study, err := provider.StudyForSample(context.Background(), saga.MLWHSample{SangerID: "SANG1"})
+
+		convey.Convey("when StudyForSample is called, then errors.Is reports saga.ErrNotFound", func() {
+			convey.So(study, convey.ShouldBeNil)
+			convey.So(errors.Is(err, saga.ErrNotFound), convey.ShouldBeTrue)
+		})
+	})
+}

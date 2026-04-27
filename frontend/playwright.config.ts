@@ -86,21 +86,22 @@ function resolvePorts(): ResolvedPorts {
 
 const { frontendPort, resultsPort, seqmetaPort } = resolvePorts();
 const frontendHealthUrl = `http://127.0.0.1:${frontendPort}/api/health`;
+const seqmetaStubPath = path.join(frontendRoot, "e2e", "seqmeta-stub.mjs");
 const chromiumExecutablePath = resolveChromiumExecutablePath();
 const defaultFrontendHealthMaxAttempts = 120;
 const frontendHealthMaxAttempts = 720;
 const frontendHealthPollIntervalMs = 250;
 const frontendStartupTimeoutMs =
     180_000 +
-    Math.max(
-        0,
-        frontendHealthMaxAttempts - defaultFrontendHealthMaxAttempts,
-    ) *
+    Math.max(0, frontendHealthMaxAttempts - defaultFrontendHealthMaxAttempts) *
         frontendHealthPollIntervalMs;
 const frontendStartCommand = [
     `WA_RUN_DEV_FRONTEND_HEALTH_URL=${JSON.stringify(frontendHealthUrl)}`,
     `WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS=${JSON.stringify(String(frontendHealthMaxAttempts))}`,
     'WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD="printf \"\""',
+    `WA_RUN_DEV_SEQMETA_CMD=${JSON.stringify(
+        `node ${JSON.stringify(seqmetaStubPath)} ${seqmetaPort}`,
+    )}`,
     `WA_RUN_DEV_FRONTEND_DEV_CMD=${JSON.stringify(
         `bash -lc ${JSON.stringify(
             `pnpm exec next build && exec pnpm exec next start --port ${frontendPort}`,

@@ -681,6 +681,15 @@ func (c *Client) sampleMetadataMLWHSamples(
 	return mlwhSamples, nil
 }
 
+// StudyForSample returns the MLWH study associated with a sample.
+func (c *Client) StudyForSample(ctx context.Context, sample MLWHSample) (*Study, error) {
+	if sample.IDStudyLims == "" {
+		return nil, ErrNotFound
+	}
+
+	return c.MLWH().GetStudy(ctx, sample.IDStudyLims)
+}
+
 // StudySamples holds all MLWH samples associated with one study.
 type StudySamples struct {
 	StudyID string

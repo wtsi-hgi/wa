@@ -27,16 +27,63 @@ package seqmeta
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/saga"
 )
+
+func TestServerLoadFreshEnrichCache(t *testing.T) {
+	now := time.Date(2026, time.April, 24, 11, 30, 0, 0, time.UTC)
+
+	convey.Convey("Given a server with cached enrich rows", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
+		server := NewServer(&MockProvider{}, store)
+
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "fresh",
+			Type:       IdentifierStudyID,
+			Body:       []byte(`{"identifier":"fresh"}`),
+			FetchedAt:  now,
+			TTL:        time.Hour,
+		}), convey.ShouldBeNil)
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "expired",
+			Type:       IdentifierStudyID,
+			Body:       []byte(`{"identifier":"expired"}`),
+			FetchedAt:  now.Add(-time.Hour),
+			TTL:        time.Minute,
+		}), convey.ShouldBeNil)
+
+		convey.Convey("when the cached row is still fresh, then the server returns it", func() {
+			entry, err := server.loadFreshEnrichCache("fresh", now.Add(30*time.Minute))
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(entry, convey.ShouldNotBeNil)
+			if entry == nil {
+				return
+			}
+			convey.So(entry.Identifier, convey.ShouldEqual, "fresh")
+		})
+
+		convey.Convey("when the cached row has expired, then the server treats it as a miss", func() {
+			entry, err := server.loadFreshEnrichCache("expired", now)
+
+			convey.So(entry, convey.ShouldBeNil)
+			convey.So(errors.Is(err, sql.ErrNoRows), convey.ShouldBeTrue)
+		})
+	})
+}
 
 type failingResponseWriter struct {
 	header http.Header
@@ -107,6 +154,58 @@ func TestServerStudyDiffEndpoint(t *testing.T) {
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
 		convey.So(body, convey.ShouldContainKey, "error")
 	})
+
+	convey.Convey("E5: study diff invalidates a cached enrich entry for the study identifier", t, func() {
+		provider.AllSamplesForStudyFunc = func(_ context.Context, requestedStudyID string) ([]saga.MLWHSample, error) {
+			convey.So(requestedStudyID, convey.ShouldEqual, "6568")
+
+			return samples, nil
+		}
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "6568",
+			Type:       IdentifierStudyID,
+			Body:       []byte(`{"identifier":"6568","type":"study_id","graph":{"study":{"id_study_lims":"6568"}}}`),
+			FetchedAt:  time.Date(2026, time.April, 24, 12, 0, 0, 0, time.UTC),
+			TTL:        time.Hour,
+		}), convey.ShouldBeNil)
+
+		request := httptest.NewRequest(http.MethodGet, "/diff/study/6568", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		loaded, err := store.LoadEnrichCache("6568")
+
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(loaded, convey.ShouldBeNil)
+		convey.So(err, convey.ShouldEqual, sql.ErrNoRows)
+	})
+
+	convey.Convey("E5: study diff invalidates cached enrich entries that reference the study", t, func() {
+		provider.AllSamplesForStudyFunc = func(_ context.Context, requestedStudyID string) ([]saga.MLWHSample, error) {
+			convey.So(requestedStudyID, convey.ShouldEqual, "6568")
+
+			return samples, nil
+		}
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "SANG1",
+			Type:       IdentifierSangerSampleID,
+			Body:       []byte(`{"identifier":"SANG1","type":"sanger_sample_id","graph":{"sample":{"sanger_id":"SANG1","id_study_lims":"6568"},"study":{"id_study_lims":"6568"}}}`),
+			FetchedAt:  time.Date(2026, time.April, 24, 12, 0, 0, 0, time.UTC),
+			TTL:        time.Hour,
+		}), convey.ShouldBeNil)
+
+		request := httptest.NewRequest(http.MethodGet, "/diff/study/6568", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		loaded, err := store.LoadEnrichCache("SANG1")
+
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(loaded, convey.ShouldBeNil)
+		convey.So(err, convey.ShouldEqual, sql.ErrNoRows)
+	})
 }
 
 func TestServerSampleDiffEndpoint(t *testing.T) {
@@ -149,6 +248,32 @@ func TestServerSampleDiffEndpoint(t *testing.T) {
 		recorder = httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, request)
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
+	})
+
+	convey.Convey("E5: sample diff invalidates the cached enrich entry for that sample identifier", t, func() {
+		provider.GetSampleFilesFunc = func(_ context.Context, requestedSangerID string) ([]saga.IRODSFile, error) {
+			convey.So(requestedSangerID, convey.ShouldEqual, "SANG1")
+
+			return files, nil
+		}
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "SANG1",
+			Type:       IdentifierSangerSampleID,
+			Body:       []byte(`{"identifier":"SANG1","type":"sanger_sample_id","graph":{"sample":{"sanger_id":"SANG1","id_study_lims":"6568"}}}`),
+			FetchedAt:  time.Date(2026, time.April, 24, 12, 0, 0, 0, time.UTC),
+			TTL:        time.Hour,
+		}), convey.ShouldBeNil)
+
+		request := httptest.NewRequest(http.MethodGet, "/diff/sample/SANG1", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		loaded, err := store.LoadEnrichCache("SANG1")
+
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(loaded, convey.ShouldBeNil)
+		convey.So(err, convey.ShouldEqual, sql.ErrNoRows)
 	})
 }
 
@@ -195,6 +320,71 @@ func TestServerValidateEndpoint(t *testing.T) {
 		server.Handler().ServeHTTP(recorder, request)
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(received, convey.ShouldEqual, "foo/bar")
+	})
+
+	convey.Convey("E6: validate returns a single matched object without an enrichment graph", t, func() {
+		request := httptest.NewRequest(http.MethodGet, "/validate/6568", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var body map[string]any
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(body["type"], convey.ShouldEqual, string(IdentifierStudyID))
+
+		object, ok := body["object"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(object["id_study_lims"], convey.ShouldEqual, "6568")
+		_, hasGraph := object["graph"]
+		convey.So(hasGraph, convey.ShouldBeFalse)
+	})
+
+	convey.Convey("E6: validate uses the targeted Sanger sample lookup and still returns the sample object", t, func() {
+		allSamplesCalls := 0
+		findSamplesBySangerIDCalls := 0
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, nil
+			},
+			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
+				allSamplesCalls++
+
+				return []saga.MLWHSample{{SangerID: "S1"}}, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				findSamplesBySangerIDCalls++
+				if identifier != "S1" {
+					return nil, saga.ErrNotFound
+				}
+
+				return []saga.MLWHSample{{SangerID: "S1", IDSampleLims: "L1"}}, nil
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+				return nil, nil
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/validate/S1", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var body map[string]any
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(body["type"], convey.ShouldEqual, string(IdentifierSangerSampleID))
+
+		object, ok := body["object"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(object["sanger_id"], convey.ShouldEqual, "S1")
+		convey.So(object["id_sample_lims"], convey.ShouldEqual, "L1")
+		_, hasGraph := object["graph"]
+		convey.So(hasGraph, convey.ShouldBeFalse)
+		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 1)
+		convey.So(allSamplesCalls, convey.ShouldEqual, 0)
 	})
 }
 

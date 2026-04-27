@@ -1,21 +1,21 @@
-import { identifierResultSchema, type IdentifierResult } from "@/lib/contracts";
+import { enrichmentResultSchema, type EnrichmentResult } from "@/lib/contracts";
 
 export const SEQMETA_CACHE_COOKIE_NAME = "wa-seqmeta-cache";
 const SEQMETA_CACHE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
-export type SeqmetaCacheSnapshot = Record<string, IdentifierResult | null>;
+export type SeqmetaCacheSnapshot = Record<string, EnrichmentResult | null>;
 
 type SeqmetaCacheChangeListener = (snapshot: SeqmetaCacheSnapshot) => void;
 
 export interface SeqmetaCacheStore {
-    get(value: string): IdentifierResult | null | undefined;
-    set(value: string, result: IdentifierResult | null): void;
+    get(value: string): EnrichmentResult | null | undefined;
+    set(value: string, result: EnrichmentResult | null): void;
     has(value: string): boolean;
 }
 
 function areCacheResultsEqual(
-    left: IdentifierResult | null | undefined,
-    right: IdentifierResult | null,
+    left: EnrichmentResult | null | undefined,
+    right: EnrichmentResult | null,
 ): boolean {
     if (left === right) {
         return true;
@@ -29,7 +29,7 @@ function areCacheResultsEqual(
 }
 
 export class SeqmetaCache implements SeqmetaCacheStore {
-    private cache: Map<string, IdentifierResult | null>;
+    private cache: Map<string, EnrichmentResult | null>;
 
     constructor(
         snapshot: SeqmetaCacheSnapshot = {},
@@ -38,12 +38,15 @@ export class SeqmetaCache implements SeqmetaCacheStore {
         this.cache = new Map(Object.entries(snapshot));
     }
 
-    get(value: string): IdentifierResult | null | undefined {
+    get(value: string): EnrichmentResult | null | undefined {
         return this.cache.get(value);
     }
 
-    set(value: string, result: IdentifierResult | null): void {
-        if (this.cache.has(value) && areCacheResultsEqual(this.cache.get(value), result)) {
+    set(value: string, result: EnrichmentResult | null): void {
+        if (
+            this.cache.has(value) &&
+            areCacheResultsEqual(this.cache.get(value), result)
+        ) {
             return;
         }
 
@@ -77,7 +80,7 @@ function parseSeqmetaCacheSnapshot(value: unknown): SeqmetaCacheSnapshot {
             continue;
         }
 
-        const parsed = identifierResultSchema.safeParse(candidate);
+        const parsed = enrichmentResultSchema.safeParse(candidate);
 
         if (parsed.success) {
             snapshot[identifier] = parsed.data;

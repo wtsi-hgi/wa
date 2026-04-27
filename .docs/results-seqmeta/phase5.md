@@ -18,8 +18,8 @@ the `EnrichmentGraph` JSON with `omitempty` pointer/slice fields.
 Establishes the route, handler, and response shape used by E2-E6.
 Covers all 2 acceptance tests from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -31,8 +31,8 @@ Implement partial responses (non-classification hop failures become
 `MissingHop`) and the all-hops-5xx -> 502 case at the handler
 layer. Covers all 3 acceptance tests from E2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.3: E3 - Cache hits and TTL via functional option [parallel with 5.2, 5.4, 5.5, 5.6]
 
@@ -42,8 +42,8 @@ Integrate `LoadEnrichCache`/`SaveEnrichCache` with the handler and
 expose a `WithEnrichTTL` functional option on the server (no env
 reads). Covers all 4 acceptance tests from E3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.4: E4 - DELETE /enrich/{identifier} [parallel with 5.2, 5.3, 5.5, 5.6]
 
@@ -52,8 +52,8 @@ spec.md section: E4
 Implement `DELETE /enrich/{identifier}` invoking
 `InvalidateEnrichFor`. Covers all 3 acceptance tests from E4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.5: E5 - Diff invalidation integration [parallel with 5.2, 5.3, 5.4, 5.6]
 
@@ -63,8 +63,8 @@ End-to-end test that `DiffStudySamples`/`DiffSampleFiles`
 mutations invalidate cached enrichment entries through the HTTP
 server. Covers all 3 acceptance tests from E5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.6: E6 - /validate preservation [parallel with 5.2, 5.3, 5.4, 5.5]
 
@@ -74,8 +74,8 @@ Verify `/validate` endpoint behaviour is unchanged:
 `IdentifierResult.Object` is still a single matched object and no
 graph shape leaks in. Covers all 2 acceptance tests from E6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

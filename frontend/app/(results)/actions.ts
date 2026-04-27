@@ -7,6 +7,7 @@ import {
     seqmetaJson,
 } from "@/lib/backend-client";
 import {
+    enrichmentResultSchema,
     errorSchema,
     fileEntrySchema,
     identifierResultSchema,
@@ -15,6 +16,7 @@ import {
     sampleSchema,
     searchResultSchema,
     statsResultSchema,
+    type EnrichmentResult,
     type FileEntry,
     type IdentifierResult,
     type ResultSet,
@@ -104,9 +106,11 @@ export async function fetchFileContent(
             response.status,
             response.status === 413
                 ? {
-                    body,
-                    fileSize: fileSizeHeader ? Number(fileSizeHeader) : undefined,
-                }
+                      body,
+                      fileSize: fileSizeHeader
+                          ? Number(fileSizeHeader)
+                          : undefined,
+                  }
                 : body,
         );
     }
@@ -129,6 +133,28 @@ export async function validateIdentifier(
         return await seqmetaJson(
             `/validate/${encodeURIComponent(trimmed)}`,
             identifierResultSchema,
+        );
+    } catch (error) {
+        if (error instanceof BackendRequestError && error.status === 404) {
+            return null;
+        }
+
+        throw error;
+    }
+}
+
+export async function enrichIdentifier(
+    value: string,
+): Promise<EnrichmentResult | null> {
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    try {
+        return await seqmetaJson(
+            `/enrich/${encodeURIComponent(trimmed)}`,
+            enrichmentResultSchema,
         );
     } catch (error) {
         if (error instanceof BackendRequestError && error.status === 404) {

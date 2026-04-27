@@ -27,10 +27,12 @@ package saga
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -336,6 +338,238 @@ func TestMLWHAllSamplesForStudy(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(samples, ShouldHaveLength, 2)
 			So(requestedFilters, ShouldResemble, []string{"{\"study_id\":\"3361\"}", "{\"study_id\":\"3361\"}"})
+		})
+	})
+}
+
+func TestMLWHFindSamplesBySangerID(t *testing.T) {
+	Convey("Given MLWH supports a sanger-id filters query for samples", t, func() {
+		var requestedPath string
+		var requestedFilter map[string]string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedPath = r.URL.Path
+
+			if err := json.Unmarshal([]byte(r.URL.Query().Get("filters")), &requestedFilter); err != nil {
+				t.Fatalf("failed to decode filters: %v", err)
+			}
+
+			_, _ = w.Write([]byte(`{"items":[{"sanger_id":"WTSI_wEMB10524782","id_study_lims":"6568"}],"total":1,"offset":0,"limit":1}`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().FindSamplesBySangerID(context.Background(), "WTSI_wEMB10524782")
+
+		Convey("when FindSamplesBySangerID is called, then it requests the samples endpoint with the sanger-id filter", func() {
+			So(err, ShouldBeNil)
+			So(requestedPath, ShouldEqual, "/integrations/mlwh/samples")
+			So(requestedFilter, ShouldResemble, map[string]string{"sanger_id": "WTSI_wEMB10524782"})
+			So(samples, ShouldHaveLength, 1)
+			So(samples[0].IDStudyLims, ShouldEqual, "6568")
+		})
+	})
+
+	Convey("Given MLWH returns no samples for a sanger-id filter", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"items":[],"total":0,"offset":0,"limit":100}`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().FindSamplesBySangerID(context.Background(), "missing")
+
+		Convey("when FindSamplesBySangerID is called, then it returns an empty non-nil slice and no error", func() {
+			So(err, ShouldBeNil)
+			So(samples, ShouldNotBeNil)
+			So(samples, ShouldHaveLength, 0)
+		})
+	})
+
+	Convey("Given MLWH returns a server error for a sanger-id filter", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().FindSamplesBySangerID(context.Background(), "broken")
+
+		Convey("when FindSamplesBySangerID is called, then it propagates the server error", func() {
+			So(samples, ShouldNotBeNil)
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrServerError), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given MLWH paginates a sanger-id sample query", t, func() {
+		pages := 0
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			pages++
+
+			switch r.URL.Query().Get("page") {
+			case "", "1":
+				items := make([]MLWHSample, 100)
+				for i := range items {
+					items[i] = MLWHSample{
+						IDStudyLims:  "6568",
+						IDSampleLims: "S" + strconv.Itoa(i+1),
+						SangerID:     "WTSI_wEMB10524782",
+					}
+				}
+
+				response, err := json.Marshal(PaginatedResponse[MLWHSample]{
+					Items:  items,
+					Offset: 0,
+					Limit:  100,
+				})
+				if err != nil {
+					t.Fatalf("failed to marshal page one: %v", err)
+				}
+
+				_, _ = w.Write(response)
+			case "2":
+				_, _ = w.Write([]byte(`{"items":[],"offset":100,"limit":100}`))
+			default:
+				t.Fatalf("unexpected page request: %s", r.URL.Query().Get("page"))
+			}
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().FindSamplesBySangerID(context.Background(), "WTSI_wEMB10524782")
+
+		Convey("when FindSamplesBySangerID is called, then it auto-paginates through the empty terminal page", func() {
+			So(err, ShouldBeNil)
+			So(pages, ShouldEqual, 2)
+			So(samples, ShouldHaveLength, 100)
+			So(samples[0].SangerID, ShouldEqual, "WTSI_wEMB10524782")
+			So(samples[99].IDSampleLims, ShouldEqual, "S100")
+		})
+	})
+}
+
+func TestMLWHFindSamplesByIDSampleLims(t *testing.T) {
+	Convey("Given MLWH supports an id-sample-lims filters query for samples", t, func() {
+		var requestedPath string
+		var requestedFilter map[string]string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedPath = r.URL.Path
+
+			if err := json.Unmarshal([]byte(r.URL.Query().Get("filters")), &requestedFilter); err != nil {
+				t.Fatalf("failed to decode filters: %v", err)
+			}
+
+			_, _ = w.Write([]byte(`{"items":[{"id_sample_lims":"LIMS456","id_study_lims":"6568"}],"total":1,"offset":0,"limit":1}`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().FindSamplesByIDSampleLims(context.Background(), "LIMS456")
+
+		Convey("when FindSamplesByIDSampleLims is called, then it requests the samples endpoint with the id-sample-lims filter", func() {
+			So(err, ShouldBeNil)
+			So(requestedPath, ShouldEqual, "/integrations/mlwh/samples")
+			So(requestedFilter, ShouldResemble, map[string]string{"id_sample_lims": "LIMS456"})
+			So(samples, ShouldHaveLength, 1)
+			So(samples[0].IDSampleLims, ShouldEqual, "LIMS456")
+		})
+	})
+
+	Convey("Given MLWH returns no samples for an id-sample-lims filter", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"items":[],"total":0,"offset":0,"limit":100}`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().FindSamplesByIDSampleLims(context.Background(), "LIMS456")
+
+		Convey("when FindSamplesByIDSampleLims is called, then it returns an empty non-nil slice and no error", func() {
+			So(err, ShouldBeNil)
+			So(samples, ShouldNotBeNil)
+			So(samples, ShouldHaveLength, 0)
+		})
+	})
+}
+
+func TestMLWHFindSamplesByAccessionNumber(t *testing.T) {
+	Convey("Given MLWH supports an accession-number filters query for samples", t, func() {
+		var requestedFilter map[string]string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.Unmarshal([]byte(r.URL.Query().Get("filters")), &requestedFilter); err != nil {
+				t.Fatalf("failed to decode filters: %v", err)
+			}
+
+			_, _ = w.Write([]byte(`{"items":[{"accession_number":"SAM789","id_sample_lims":"S1","id_study_lims":"6568"}],"total":1,"offset":0,"limit":1}`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().FindSamplesByAccessionNumber(context.Background(), "SAM789")
+
+		Convey("when FindSamplesByAccessionNumber is called, then it requests the samples endpoint with the accession-number filter", func() {
+			So(err, ShouldBeNil)
+			So(requestedFilter, ShouldResemble, map[string]string{"accession_number": "SAM789"})
+			So(samples, ShouldHaveLength, 1)
+			So(samples[0].AccessionNumber, ShouldEqual, "SAM789")
+		})
+	})
+}
+
+func TestMLWHFindSamplesByLibraryType(t *testing.T) {
+	Convey("Given MLWH supports a library-type filters query for samples", t, func() {
+		var requestedPath string
+		var requestedFilter map[string]string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedPath = r.URL.Path
+
+			if err := json.Unmarshal([]byte(r.URL.Query().Get("filters")), &requestedFilter); err != nil {
+				t.Fatalf("failed to decode filters: %v", err)
+			}
+
+			_, _ = w.Write([]byte(`{"items":[{"library_type":"RNA PolyA","id_study_lims":"6568"},{"library_type":"RNA PolyA","id_study_lims":"7123"}],"total":2,"offset":0,"limit":2}`))
+		}))
+		Reset(server.Close)
+
+		client, err := NewClient("test-key", WithBaseURL(server.URL))
+		So(err, ShouldBeNil)
+		Reset(client.Close)
+
+		samples, err := client.MLWH().FindSamplesByLibraryType(context.Background(), "RNA PolyA")
+
+		Convey("when FindSamplesByLibraryType is called, then it requests the samples endpoint with the library-type filter", func() {
+			So(err, ShouldBeNil)
+			So(requestedPath, ShouldEqual, "/integrations/mlwh/samples")
+			So(requestedFilter, ShouldResemble, map[string]string{"library_type": "RNA PolyA"})
+			So(samples, ShouldHaveLength, 2)
+			So(samples[0].LibraryType, ShouldEqual, "RNA PolyA")
+			So(samples[1].IDStudyLims, ShouldEqual, "7123")
 		})
 	})
 }

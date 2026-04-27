@@ -19,8 +19,8 @@ badge, study/library/sample panels, and
 loading/partial/missing/404/502 states driven by the H2 action.
 Covers all 5 acceptance tests from H3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 8.2: H4 - Playwright coverage
 
@@ -31,5 +31,5 @@ enrichment happy path and at least one partial/missing-hop
 scenario. Depends on item 8.1. Covers all 2 acceptance tests from
 H4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

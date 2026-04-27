@@ -81,6 +81,104 @@ export type Sample = z.infer<typeof sampleSchema>;
 export const samplesSchema = z.array(sampleSchema);
 export type Samples = z.infer<typeof samplesSchema>;
 
+export const enrichmentStudySchema = z.object({
+    id_study_tmp: z.number(),
+    id_lims: z.string(),
+    id_study_lims: z.string(),
+    name: z.string(),
+    faculty_sponsor: z.string(),
+    state: z.string(),
+    abstract: z.string(),
+    abbreviation: z.string(),
+    accession_number: z.string(),
+    description: z.string(),
+    data_release_strategy: z.string(),
+    study_title: z.string(),
+    data_access_group: z.string(),
+    hmdmc_number: z.string(),
+    programme: z.string(),
+    created: z.string(),
+    reference_genome: z.string(),
+    ethically_approved: z.boolean(),
+    study_type: z.string(),
+    contains_human_dna: z.boolean(),
+    contaminated_human_dna: z.boolean(),
+    study_visibility: z.string(),
+    ega_dac_accession_number: z.string(),
+    ega_policy_accession_number: z.string(),
+    data_release_timing: z.string(),
+});
+export type EnrichmentStudy = z.infer<typeof enrichmentStudySchema>;
+
+export const enrichmentStudiesSchema = z.array(enrichmentStudySchema);
+export type EnrichmentStudies = z.infer<typeof enrichmentStudiesSchema>;
+
+export const enrichmentSampleSchema = z.object({
+    id_study_lims: z.string(),
+    id_sample_lims: z.string(),
+    sanger_id: z.string(),
+    sample_name: z.string(),
+    taxon_id: z.number(),
+    common_name: z.string(),
+    library_type: z.string(),
+    id_run: z.number(),
+    lane: z.number(),
+    tag_index: z.number(),
+    irods_path: z.string(),
+    study_accession_number: z.string(),
+    accession_number: z.string(),
+});
+export type EnrichmentSample = z.infer<typeof enrichmentSampleSchema>;
+
+export const enrichmentSamplesSchema = z.array(enrichmentSampleSchema);
+export type EnrichmentSamples = z.infer<typeof enrichmentSamplesSchema>;
+
+export const libraryLinkSchema = z.object({
+    library_type: z.string(),
+    id_study_lims: z.string(),
+});
+export type LibraryLink = z.infer<typeof libraryLinkSchema>;
+
+export const projectSchema = z.object({
+    id: z.number(),
+    name: z.string(),
+});
+export type Project = z.infer<typeof projectSchema>;
+
+export const projectUserSchema = z.object({
+    id: z.number(),
+    username: z.string(),
+});
+export type ProjectUser = z.infer<typeof projectUserSchema>;
+
+export const enrichmentGraphSchema = z.object({
+    study: enrichmentStudySchema.optional(),
+    studies: enrichmentStudiesSchema.optional(),
+    sample: enrichmentSampleSchema.optional(),
+    samples: enrichmentSamplesSchema.optional(),
+    library: libraryLinkSchema.optional(),
+    libraries: z.array(libraryLinkSchema).optional(),
+    project: projectSchema.optional(),
+    users: z.array(projectUserSchema).optional(),
+});
+export type EnrichmentGraph = z.infer<typeof enrichmentGraphSchema>;
+
+export const missingHopSchema = z.object({
+    hop: z.string(),
+    reason: z.string(),
+    status: z.number(),
+});
+export type MissingHop = z.infer<typeof missingHopSchema>;
+
+export const enrichmentResultSchema = z.object({
+    identifier: z.string(),
+    type: z.string(),
+    graph: enrichmentGraphSchema,
+    partial: z.boolean(),
+    missing: z.array(missingHopSchema).optional(),
+});
+export type EnrichmentResult = z.infer<typeof enrichmentResultSchema>;
+
 export const errorSchema = z.object({
     error: z.string(),
 });

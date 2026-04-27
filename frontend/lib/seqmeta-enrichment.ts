@@ -1,9 +1,10 @@
-import type { IdentifierResult } from "@/lib/contracts";
+import { BackendRequestError } from "@/lib/backend-client";
+import type { EnrichmentResult } from "@/lib/contracts";
 import type { SeqmetaCacheStore } from "@/lib/seqmeta-cache-core";
 
 export type SeqmetaEnrichmentState = {
-    enrichments: Record<string, IdentifierResult | null>;
-    errors: Record<string, boolean>;
+    enrichments: Record<string, EnrichmentResult | null>;
+    errors: Record<string, "not_found" | "upstream_impaired">;
 };
 
 export function isSeqmetaKey(key: string): boolean {
@@ -26,32 +27,60 @@ export function buildCachedEnrichmentState(
     metadata: Record<string, string>,
     cache: SeqmetaCacheStore,
 ): SeqmetaEnrichmentState {
-    const enrichments: Record<string, IdentifierResult | null> = {};
+    const enrichments: Record<string, EnrichmentResult | null> = {};
+    const errors: Record<string, "not_found" | "upstream_impaired"> = {};
 
     for (const value of collectSeqmetaValues(metadata)) {
         if (!cache.has(value)) {
             continue;
         }
 
-        enrichments[value] = cache.get(value) ?? null;
+        const enrichment = cache.get(value) ?? null;
+        enrichments[value] = enrichment;
+
+        if (enrichment === null) {
+            errors[value] = "not_found";
+        }
     }
 
-    return { enrichments, errors: {} };
+    return { enrichments, errors };
 }
 
 export function primeSeqmetaCache(
     cache: SeqmetaCacheStore,
-    enrichments: Record<string, IdentifierResult | null>,
+    enrichments: Record<string, EnrichmentResult | null>,
 ): void {
     for (const [value, result] of Object.entries(enrichments)) {
         cache.set(value, result);
     }
 }
 
+export function mergeSeqmetaEnrichmentState(
+    base: SeqmetaEnrichmentState,
+    override: Partial<SeqmetaEnrichmentState>,
+): SeqmetaEnrichmentState {
+    const enrichments = {
+        ...base.enrichments,
+        ...override.enrichments,
+    };
+    const errors = {
+        ...base.errors,
+        ...override.errors,
+    };
+
+    for (const [value, enrichment] of Object.entries(enrichments)) {
+        if (enrichment !== null) {
+            delete errors[value];
+        }
+    }
+
+    return { enrichments, errors };
+}
+
 export async function enrichSeqmetaMetadata(
     metadata: Record<string, string>,
     cache: SeqmetaCacheStore,
-    validateIdentifier: (value: string) => Promise<IdentifierResult | null>,
+    enrichIdentifier: (value: string) => Promise<EnrichmentResult | null>,
 ): Promise<SeqmetaEnrichmentState> {
     const state = buildCachedEnrichmentState(metadata, cache);
     const pendingValues = collectSeqmetaValues(metadata).filter(
@@ -64,7 +93,7 @@ export async function enrichSeqmetaMetadata(
 
     const settled = await Promise.allSettled(
         pendingValues.map(async (value) => ({
-            result: await validateIdentifier(value),
+            result: await enrichIdentifier(value),
             value,
         })),
     );
@@ -77,12 +106,23 @@ export async function enrichSeqmetaMetadata(
         }
 
         if (result.status === "fulfilled") {
+            if (result.value.result === null) {
+                cache.set(value, null);
+                state.enrichments[value] = null;
+                state.errors[value] = "not_found";
+                continue;
+            }
+
             cache.set(value, result.value.result);
             state.enrichments[value] = result.value.result;
             continue;
         }
 
-        state.errors[value] = true;
+        state.errors[value] =
+            result.reason instanceof BackendRequestError &&
+            result.reason.status === 404
+                ? "not_found"
+                : "upstream_impaired";
     }
 
     return state;

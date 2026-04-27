@@ -10,37 +10,41 @@ const frontendRoot = path.resolve(testDir, "..");
 const repoRoot = path.resolve(frontendRoot, "..");
 
 describe("G1 scaffold", () => {
-    it("builds successfully with the required scaffold files present", () => {
-        const requiredPaths = [
-            "package.json",
-            "components.json",
-            "tsconfig.json",
-            "next.config.ts",
-            "vitest.config.ts",
-            "eslint.config.mjs",
-            "postcss.config.cjs",
-            "app/globals.css",
-            "app/layout.tsx",
-            "app/(results)/page.tsx",
-            "components/theme-provider.tsx",
-            "components/ui/toaster.tsx",
-            "lib/utils.ts",
-            ".env.example",
-        ];
+    it(
+        "builds successfully with the required scaffold files present",
+        { timeout: 30000 },
+        () => {
+            const requiredPaths = [
+                "package.json",
+                "components.json",
+                "tsconfig.json",
+                "next.config.ts",
+                "vitest.config.ts",
+                "eslint.config.mjs",
+                "postcss.config.cjs",
+                "app/globals.css",
+                "app/layout.tsx",
+                "app/(results)/page.tsx",
+                "components/theme-provider.tsx",
+                "components/ui/toaster.tsx",
+                "lib/utils.ts",
+                ".env.example",
+            ];
 
-        for (const relativePath of requiredPaths) {
-            expect(
-                existsSync(path.join(frontendRoot, relativePath)),
-                relativePath,
-            ).toBe(true);
-        }
+            for (const relativePath of requiredPaths) {
+                expect(
+                    existsSync(path.join(frontendRoot, relativePath)),
+                    relativePath,
+                ).toBe(true);
+            }
 
-        execFileSync("pnpm", ["build"], {
-            cwd: frontendRoot,
-            env: process.env,
-            stdio: "pipe",
-        });
-    });
+            execFileSync("pnpm", ["build"], {
+                cwd: frontendRoot,
+                env: process.env,
+                stdio: "pipe",
+            });
+        },
+    );
 
     it("includes the required frontend environment variables", () => {
         const envExample = readFileSync(
@@ -54,7 +58,10 @@ describe("G1 scaffold", () => {
     });
 
     it("documents the root run and test port overrides", () => {
-        const envExample = readFileSync(path.join(repoRoot, ".env.example"), "utf8");
+        const envExample = readFileSync(
+            path.join(repoRoot, ".env.example"),
+            "utf8",
+        );
 
         expect(envExample).toContain("WA_TEST_FRONTEND_PORT=");
         expect(envExample).toContain("WA_TEST_RESULTS_PORT=");

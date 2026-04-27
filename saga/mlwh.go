@@ -37,6 +37,16 @@ const defaultPaginationPageSize = 100
 
 const mlwhStudyFilterKey = "study_id"
 
+const mlwhFilterSangerID = "sanger_id"
+
+const mlwhFilterIDSampleLims = "id_sample_lims"
+
+const mlwhFilterAccessionNumber = "accession_number"
+
+const mlwhFilterLibraryType = "library_type"
+
+const mlwhFilterIDRun = "id_run"
+
 // PaginatedResponse is the generic paginated response envelope used by SAGA list endpoints.
 type PaginatedResponse[T any] struct {
 	Items  []T  `json:"items"`
@@ -232,13 +242,45 @@ func (m *MLWHClient) AllSamples(ctx context.Context) ([]MLWHSample, error) {
 	return collectAllPages(ctx, m.ListSamples)
 }
 
-// AllSamplesForStudy returns all MLWH sample rows for one study across every available page.
-func (m *MLWHClient) AllSamplesForStudy(ctx context.Context, studyID string) ([]MLWHSample, error) {
+func (m *MLWHClient) findSamplesByFilter(
+	ctx context.Context,
+	filterKey, filterValue string,
+) ([]MLWHSample, error) {
 	return collectAllPages(ctx, func(ctx context.Context, opts PageOptions) (*PaginatedResponse[MLWHSample], error) {
-		opts.Filters = map[string]string{mlwhStudyFilterKey: studyID}
+		opts.Filters = map[string]string{filterKey: filterValue}
 
 		return m.ListSamples(ctx, opts)
 	})
+}
+
+// FindSamplesBySangerID returns all MLWH sample rows matching one Sanger ID across every available page.
+func (m *MLWHClient) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]MLWHSample, error) {
+	return m.findSamplesByFilter(ctx, mlwhFilterSangerID, sangerID)
+}
+
+// FindSamplesByIDSampleLims returns all MLWH sample rows matching one id_sample_lims value across every available page.
+func (m *MLWHClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]MLWHSample, error) {
+	return m.findSamplesByFilter(ctx, mlwhFilterIDSampleLims, idSampleLims)
+}
+
+// FindSamplesByRunID returns all MLWH sample rows matching one run ID across every available page.
+func (m *MLWHClient) FindSamplesByRunID(ctx context.Context, runID int) ([]MLWHSample, error) {
+	return m.findSamplesByFilter(ctx, mlwhFilterIDRun, strconv.Itoa(runID))
+}
+
+// FindSamplesByAccessionNumber returns all MLWH sample rows matching one accession number across every available page.
+func (m *MLWHClient) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]MLWHSample, error) {
+	return m.findSamplesByFilter(ctx, mlwhFilterAccessionNumber, accessionNumber)
+}
+
+// FindSamplesByLibraryType returns all MLWH sample rows matching one library type across every available page.
+func (m *MLWHClient) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]MLWHSample, error) {
+	return m.findSamplesByFilter(ctx, mlwhFilterLibraryType, libraryType)
+}
+
+// AllSamplesForStudy returns all MLWH sample rows for one study across every available page.
+func (m *MLWHClient) AllSamplesForStudy(ctx context.Context, studyID string) ([]MLWHSample, error) {
+	return m.findSamplesByFilter(ctx, mlwhStudyFilterKey, studyID)
 }
 
 // ListFacultySponsors returns one page of MLWH faculty sponsors.

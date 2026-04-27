@@ -31,16 +31,25 @@ import (
 	"github.com/wtsi-hgi/wa/saga"
 )
 
-// ClientAdapter wraps saga.Client to satisfy SAGAProvider.
-type ClientAdapter struct {
-	client *saga.Client
-}
-
 var _ SAGAProvider = (*ClientAdapter)(nil)
 
+// ClientAdapter wraps saga.Client to satisfy SAGAProvider.
+type ClientAdapter struct {
+	client              *saga.Client
+	enrichFilterSupport map[string]bool
+}
+
 // NewClientAdapter creates a SAGAProvider backed by a saga.Client.
-func NewClientAdapter(client *saga.Client) *ClientAdapter {
-	return &ClientAdapter{client: client}
+func NewClientAdapter(client *saga.Client, opts ...ClientAdapterOption) *ClientAdapter {
+	adapter := &ClientAdapter{client: client}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(adapter)
+		}
+	}
+
+	return adapter
 }
 
 // GetStudy delegates to the MLWH client.
@@ -63,6 +72,36 @@ func (a *ClientAdapter) AllSamplesForStudy(ctx context.Context, studyID string) 
 	return a.client.MLWH().AllSamplesForStudy(ctx, studyID)
 }
 
+// FindSamplesBySangerID delegates to the MLWH client.
+func (a *ClientAdapter) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]saga.MLWHSample, error) {
+	return a.client.MLWH().FindSamplesBySangerID(ctx, sangerID)
+}
+
+// FindSamplesByIDSampleLims delegates to the MLWH client.
+func (a *ClientAdapter) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]saga.MLWHSample, error) {
+	return a.client.MLWH().FindSamplesByIDSampleLims(ctx, idSampleLims)
+}
+
+// FindSamplesByRunID delegates to the MLWH client.
+func (a *ClientAdapter) FindSamplesByRunID(ctx context.Context, idRun int) ([]saga.MLWHSample, error) {
+	return a.client.MLWH().FindSamplesByRunID(ctx, idRun)
+}
+
+// FindSamplesByLibraryType delegates to the MLWH client.
+func (a *ClientAdapter) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]saga.MLWHSample, error) {
+	return a.client.MLWH().FindSamplesByLibraryType(ctx, libraryType)
+}
+
+// FindSamplesByAccessionNumber delegates to the MLWH client.
+func (a *ClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]saga.MLWHSample, error) {
+	return a.client.MLWH().FindSamplesByAccessionNumber(ctx, accessionNumber)
+}
+
+// StudyForSample delegates to the saga client.
+func (a *ClientAdapter) StudyForSample(ctx context.Context, sample saga.MLWHSample) (*saga.Study, error) {
+	return a.client.StudyForSample(ctx, sample)
+}
+
 // GetSampleFiles delegates to the iRODS client.
 func (a *ClientAdapter) GetSampleFiles(ctx context.Context, sangerID string) ([]saga.IRODSFile, error) {
 	return a.client.IRODS().GetSampleFiles(ctx, sangerID)
@@ -71,4 +110,47 @@ func (a *ClientAdapter) GetSampleFiles(ctx context.Context, sangerID string) ([]
 // ListProjects delegates to the projects client.
 func (a *ClientAdapter) ListProjects(ctx context.Context) ([]saga.Project, error) {
 	return a.client.Projects().List(ctx)
+}
+
+// ListProjectStudies delegates to the projects client.
+func (a *ClientAdapter) ListProjectStudies(ctx context.Context, projectID int) ([]saga.ProjectStudy, error) {
+	return a.client.Projects().ListStudies(ctx, projectID)
+}
+
+// ListProjectSamples delegates to the projects client.
+func (a *ClientAdapter) ListProjectSamples(ctx context.Context, projectID int) ([]saga.ProjectSample, error) {
+	return a.client.Projects().ListSamples(ctx, projectID)
+}
+
+// ListProjectUsers delegates to the projects client.
+func (a *ClientAdapter) ListProjectUsers(ctx context.Context, projectID int) ([]saga.ProjectUser, error) {
+	return a.client.Projects().ListUsers(ctx, projectID)
+}
+
+func (a *ClientAdapter) EnrichFilterSupported(filterKey string) (bool, bool) {
+	if len(a.enrichFilterSupport) == 0 {
+		return false, false
+	}
+
+	supported, ok := a.enrichFilterSupport[filterKey]
+
+	return supported, ok
+}
+
+type ClientAdapterOption func(*ClientAdapter)
+
+// WithSupportedEnrichFilters configures probe-derived MLWH filter support for enrichment degradation.
+func WithSupportedEnrichFilters(supported map[string]bool) ClientAdapterOption {
+	return func(adapter *ClientAdapter) {
+		if len(supported) == 0 {
+			adapter.enrichFilterSupport = nil
+
+			return
+		}
+
+		adapter.enrichFilterSupport = make(map[string]bool, len(supported))
+		for key, value := range supported {
+			adapter.enrichFilterSupport[key] = value
+		}
+	}
 }

@@ -302,10 +302,46 @@ func (p *prefetchedProvider) AllSamplesForStudy(context.Context, string) ([]saga
 	return nil, errors.New("unused prefetched provider method")
 }
 
+func (p *prefetchedProvider) FindSamplesBySangerID(context.Context, string) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) FindSamplesByIDSampleLims(context.Context, string) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) FindSamplesByRunID(context.Context, int) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) FindSamplesByLibraryType(context.Context, string) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) FindSamplesByAccessionNumber(context.Context, string) ([]saga.MLWHSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) StudyForSample(context.Context, saga.MLWHSample) (*saga.Study, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
 func (p *prefetchedProvider) GetSampleFiles(context.Context, string) ([]saga.IRODSFile, error) {
 	return p.files, nil
 }
 
 func (p *prefetchedProvider) ListProjects(context.Context) ([]saga.Project, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) ListProjectStudies(context.Context, int) ([]saga.ProjectStudy, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) ListProjectSamples(context.Context, int) ([]saga.ProjectSample, error) {
+	return nil, errors.New("unused prefetched provider method")
+}
+
+func (p *prefetchedProvider) ListProjectUsers(context.Context, int) ([]saga.ProjectUser, error) {
 	return nil, errors.New("unused prefetched provider method")
 }
