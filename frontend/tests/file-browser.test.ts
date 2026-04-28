@@ -285,6 +285,66 @@ describe("N1 file browser", () => {
         );
     });
 
+    it("renders single preview to the right of file metadata in a two-column grid at all screen widths", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/images/photo1.png", "output"),
+            buildFile("/results/images/photo2.png", "output"),
+            buildFile("/results/images/photo3.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                }),
+            );
+        });
+
+        const singleLayout = container.querySelector(
+            '[data-file-browser-single-layout="/results/images"]',
+        ) as HTMLElement;
+        const preview = container.querySelector(
+            '[data-file-browser-preview="single"]',
+        ) as HTMLElement;
+        const fileButtons = container.querySelectorAll(
+            '[data-file-path^="/results/images/"]',
+        );
+
+        expect(singleLayout).toBeTruthy();
+        expect(preview).toBeTruthy();
+        expect(fileButtons).toHaveLength(3);
+
+        // Verify layout box has grid classes WITHOUT xl: prefix (applies at all widths)
+        expect(singleLayout.className).toContain("grid");
+        expect(singleLayout.className).toMatch(/grid-cols-\[minmax/);
+        expect(singleLayout.className).not.toMatch(/xl:grid-cols-/);
+
+        // Verify all file buttons are direct children of the grid
+        fileButtons.forEach((button) => {
+            expect(button.parentElement).toBe(singleLayout);
+        });
+
+        // Verify preview is a direct child of the grid
+        expect(preview.parentElement).toBe(singleLayout);
+
+        // Verify preview row-spans all file rows
+        expect(preview.style.gridRow).toBe("1 / span 3");
+
+        // Verify preview starts at column 2 (no xl: prefix, applies at all widths)
+        expect(preview.className).toContain("col-start-2");
+        expect(preview.className).not.toMatch(/xl:col-start-/);
+    });
+
     it("shows an empty state when there are no registered files", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
@@ -617,5 +677,83 @@ describe("N1 file browser", () => {
         );
 
         expect(handlePreviewPageChange).toHaveBeenCalledWith(2);
+    });
+
+    it("renders file buttons and preview as direct grid siblings in single mode", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+            buildFile("/results/plot-003.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                }),
+            );
+        });
+
+        const gridContainer = container.querySelector(
+            '[data-file-browser-single-layout="/results"]',
+        );
+        const preview = container.querySelector(
+            '[data-file-browser-preview="single"]',
+        );
+
+        expect(gridContainer).toBeTruthy();
+        expect(preview).toBeTruthy();
+
+        // Preview must be a direct child of the grid container
+        expect(preview?.parentElement).toBe(gridContainer);
+
+        // All file buttons must be direct children of the grid container
+        const fileButtons = container.querySelectorAll(
+            'button[data-file-path^="/results/plot-"]',
+        );
+
+        expect(fileButtons).toHaveLength(3);
+
+        for (const button of fileButtons) {
+            // Each file button must be a direct child of the grid container,
+            // not wrapped in an intermediate div
+            expect(button.parentElement).toBe(gridContainer);
+        }
+
+        // The grid container should have grid classes WITHOUT xl: prefix (applies at all widths)
+        expect(gridContainer?.className).toContain("grid");
+        expect(gridContainer?.className).toMatch(/grid-cols-\[minmax/);
+        expect(gridContainer?.className).not.toMatch(/xl:grid-cols-/);
+
+        // Preview should row-span all file rows
+        const previewElement = preview as HTMLElement;
+        expect(previewElement.style.gridRow).toBe("1 / span 3");
+
+        // Verify DOM structure: file buttons and preview are siblings
+        const gridChildren = Array.from(gridContainer?.children ?? []);
+        const buttonIndices = Array.from(fileButtons).map((btn) =>
+            gridChildren.indexOf(btn),
+        );
+        const previewIndex = gridChildren.indexOf(preview ?? document.body);
+
+        expect(buttonIndices.every((i) => i >= 0)).toBe(true);
+        expect(previewIndex).toBeGreaterThanOrEqual(0);
+
+        // All should be siblings (children of the same container)
+        expect(
+            buttonIndices.every((i) =>
+                gridChildren.includes(fileButtons[i] as Element),
+            ),
+        ).toBe(true);
     });
 });

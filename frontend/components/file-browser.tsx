@@ -1,6 +1,7 @@
 "use client";
 
 import {
+    cloneElement,
     memo,
     type ReactNode,
     useEffect,
@@ -663,7 +664,7 @@ export function FileBrowser({
                         key={`files-${node.path}`}
                         className={cn(
                             previewMode === "single"
-                                ? "grid gap-3 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] xl:items-start"
+                                ? "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
                                 : "space-y-3 xl:col-span-2",
                         )}
                         data-file-browser-directory-files={node.path}
@@ -673,14 +674,15 @@ export function FileBrowser({
                     >
                         {previewMode === "single"
                             ? [
-                                  ...displayedFiles.map((file) => (
-                                      <div key={file.path}>
-                                          {renderFileButton(file, true)}
-                                      </div>
-                                  )),
+                                  ...displayedFiles.map((file) =>
+                                      cloneElement(
+                                          renderFileButton(file, true),
+                                          { key: file.path },
+                                      ),
+                                  ),
                                   <div
                                       key={`single-preview-${node.path}`}
-                                      className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3 xl:col-start-2 xl:row-start-1 xl:h-full"
+                                      className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3 col-start-2 row-start-1 h-full"
                                       data-file-browser-preview="single"
                                       style={{
                                           gridRow: `1 / span ${Math.max(displayedFiles.length, 1)}`,
