@@ -164,6 +164,28 @@ describe("O1 file preview", () => {
         expect(image.getAttribute("src")).toContain("thumb=true");
     });
 
+    it("uses a full-width thumbnail wrapper for row previews", async () => {
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+
+        render(
+            createElement(FileImageThumbnail, {
+                file: buildFile({ path: "/tmp/results/plot.png" }),
+                fullSizeUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
+                height: 180,
+                thumbnailUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png&thumb=true&w=320&h=180",
+            }),
+        );
+
+        const image = screen.getByAltText("plot.png preview");
+        const wrapper = image.parentElement;
+
+        expect(wrapper?.className).toContain("w-full");
+        expect(wrapper?.className).not.toContain("inline-flex");
+    });
+
     it("opens the lightbox from the reusable thumbnail with the full-size source", async () => {
         const { FileImageThumbnail } =
             await import("@/components/file-preview");

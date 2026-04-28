@@ -410,7 +410,7 @@ function LightboxImage({
                 }
                 onClick={() => setLightboxOpen(true)}
             >
-                <span className="relative inline-flex">
+                <span className="relative flex w-full justify-center">
                     <Image
                         alt={`${fileName} preview`}
                         className={cn(

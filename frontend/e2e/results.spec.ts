@@ -484,6 +484,39 @@ test.describe("Q1 critical results flows", () => {
 
         await expect(page.getByText("Click to enlarge")).toBeVisible();
         await expect(thumbnailImage).toHaveAttribute("src", /thumb=true/);
+        await expect
+            .poll(async () =>
+                thumbnailImage.evaluate((image) => {
+                    if (!(image instanceof HTMLImageElement)) {
+                        throw new Error("Expected thumbnail image element");
+                    }
+
+                    return image.clientWidth;
+                }),
+            )
+            .toBeGreaterThan(0);
+        await expect
+            .poll(async () =>
+                thumbnailImage.evaluate((image) => {
+                    if (!(image instanceof HTMLImageElement)) {
+                        throw new Error("Expected thumbnail image element");
+                    }
+
+                    return image.clientHeight;
+                }),
+            )
+            .toBeGreaterThan(0);
+        await expect
+            .poll(async () =>
+                thumbnailImage.evaluate((image) => {
+                    if (!(image instanceof HTMLImageElement)) {
+                        throw new Error("Expected thumbnail image element");
+                    }
+
+                    return image.naturalWidth;
+                }),
+            )
+            .toBeGreaterThan(0);
 
         await thumbnailButton.click();
 
