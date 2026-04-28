@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { ArrowDownToLine, Expand, FileCode2, Search, X } from "lucide-react";
 import hljs from "highlight.js/lib/core";
 import json from "highlight.js/lib/languages/json";
@@ -490,46 +490,58 @@ function ImagePreview({
     );
 }
 
-export function FileImageThumbnail({
-    file,
-    fullSizeUrl,
-    height = 220,
-    thumbnailUrl,
-}: FileImageThumbnailProps) {
-    const fileName = file.path.split("/").pop() ?? file.path;
+export const FileImageThumbnail = memo(
+    function FileImageThumbnail({
+        file,
+        fullSizeUrl,
+        height = 220,
+        thumbnailUrl,
+    }: FileImageThumbnailProps) {
+        const fileName = file.path.split("/").pop() ?? file.path;
 
-    return (
-        <article className="rounded-[1.5rem] border border-border/70 bg-background/70 p-4 shadow-[0_20px_80px_-68px_rgba(48,67,98,0.8)]">
-            <div className="flex items-start justify-between gap-3">
-                <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                        Image preview
-                    </p>
-                    <h3 className="mt-2 break-all text-sm font-medium text-foreground">
-                        {fileName}
-                    </h3>
+        return (
+            <article className="rounded-[1.5rem] border border-border/70 bg-background/70 p-4 shadow-[0_20px_80px_-68px_rgba(48,67,98,0.8)]">
+                <div className="flex items-start justify-between gap-3">
+                    <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                            Image preview
+                        </p>
+                        <h3 className="mt-2 break-all text-sm font-medium text-foreground">
+                            {fileName}
+                        </h3>
+                    </div>
+                    <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                        {formatBytes(file.size)}
+                    </span>
                 </div>
-                <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    {formatBytes(file.size)}
-                </span>
-            </div>
 
-            <div className="mt-4">
-                <LightboxImage
-                    buttonClassName="group inline-flex w-full justify-center overflow-hidden rounded-[1.25rem] border border-border/70 bg-background/80 p-2 shadow-[0_16px_48px_-44px_rgba(48,67,98,0.7)]"
-                    fileName={fileName}
-                    fullSizeUrl={fullSizeUrl}
-                    imageClassName="w-full"
-                    maxHeightPx={height}
-                    sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
-                    thumbnailHeight={height}
-                    thumbnailUrl={thumbnailUrl}
-                    thumbnailWidth={Math.max(320, Math.round(height * 1.6))}
-                />
-            </div>
-        </article>
-    );
-}
+                <div className="mt-4">
+                    <LightboxImage
+                        buttonClassName="group inline-flex w-full justify-center overflow-hidden rounded-[1.25rem] border border-border/70 bg-background/80 p-2 shadow-[0_16px_48px_-44px_rgba(48,67,98,0.7)]"
+                        fileName={fileName}
+                        fullSizeUrl={fullSizeUrl}
+                        imageClassName="w-full"
+                        maxHeightPx={height}
+                        sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
+                        thumbnailHeight={height}
+                        thumbnailUrl={thumbnailUrl}
+                        thumbnailWidth={Math.max(320, Math.round(height * 1.6))}
+                    />
+                </div>
+            </article>
+        );
+    },
+    (prevProps, nextProps) => {
+        // Only re-render if file path, URLs, or height changed
+        // Memo prevents unnecessary rerenders from parent updates
+        return (
+            prevProps.file.path === nextProps.file.path &&
+            prevProps.fullSizeUrl === nextProps.fullSizeUrl &&
+            prevProps.thumbnailUrl === nextProps.thumbnailUrl &&
+            prevProps.height === nextProps.height
+        );
+    },
+);
 
 export function selectRenderer(contentType: string): PreviewRenderer {
     const normalized = normalizeContentType(contentType);
