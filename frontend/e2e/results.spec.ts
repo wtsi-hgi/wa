@@ -378,7 +378,11 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await openResultDetail(page, rnaseqPipelineName);
 
-        await expect(page.locator('[data-file-browser="true"]')).toBeVisible();
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+
+        await expect(fileBrowser).toBeVisible();
+        await expect(fileBrowser).not.toContainText("Explorer");
+        await expect(fileBrowser).not.toContainText("Preview focus");
         await expect(
             page.locator(`[data-directory-path="${rnaseqQcPath}"]`),
         ).toBeVisible();
@@ -402,6 +406,9 @@ test.describe("Q1 critical results flows", () => {
         await expect(
             page.locator(`[data-file-path="${rnaseqImagePath}"]`),
         ).toBeVisible();
+        await expect(
+            page.locator(`[data-file-path="${rnaseqImagePath}"]`),
+        ).not.toContainText(rnaseqImagePath);
         await expect(
             page.locator(`[data-directory-path="${rnaseqGalleryPath}"]`),
         ).toBeVisible();
@@ -430,7 +437,7 @@ test.describe("Q1 critical results flows", () => {
         await selectDirectoryForFile(page, rnaseqReportPath);
         await page.locator(`[data-file-path="${rnaseqReportPath}"]`).click();
 
-        const preview = page.locator('[data-selected-file-path$="report.csv"]');
+        const preview = page.locator('[data-file-browser-preview="single"]');
 
         await expect(preview).toBeVisible();
         await expect(
@@ -454,7 +461,7 @@ test.describe("Q1 critical results flows", () => {
         await page.locator(`[data-file-path="${rnaseqImagePath}"]`).click();
 
         await expect(
-            page.locator('[data-selected-file-path$="image.png"]'),
+            page.locator('[data-file-browser-preview="single"]'),
         ).toBeVisible();
 
         const image = page.getByAltText("image.png preview");
@@ -526,9 +533,7 @@ test.describe("Q1 critical results flows", () => {
 
         await selectDirectoryForFile(page, ampliconConfigPath);
 
-        const preview = page.locator(
-            '[data-selected-file-path$="config.json"]',
-        );
+        const preview = page.locator('[data-file-browser-preview="single"]');
         const selectedFile = page.locator(
             `[data-file-path="${ampliconConfigPath}"]`,
         );

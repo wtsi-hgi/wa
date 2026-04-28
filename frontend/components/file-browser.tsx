@@ -415,7 +415,7 @@ export function FileBrowser({
             type="button"
             className={cn(
                 "flex w-full items-start gap-4 rounded-[1.25rem] border px-4 py-4 text-left transition",
-                nested ? "min-h-[6.5rem]" : "",
+                nested ? "min-h-[5.5rem]" : "",
                 file.path === activeFile?.path
                     ? "border-primary/45 bg-primary/10"
                     : "border-border/60 bg-background/65 hover:border-primary/35 hover:bg-background",
@@ -438,9 +438,6 @@ export function FileBrowser({
             <span className="min-w-0 flex-1">
                 <span className="block truncate text-base font-medium text-foreground">
                     {fileName(file.path)}
-                </span>
-                <span className="mt-2 block break-all text-xs text-muted-foreground">
-                    {file.path}
                 </span>
                 <span className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
                     <span>{formatBytes(file.size)}</span>
@@ -618,24 +615,13 @@ export function FileBrowser({
             data-file-browser="true"
         >
             <div className="flex flex-col gap-4 border-b border-border/60 pb-5 xl:flex-row xl:items-start xl:justify-between">
-                <div>
-                    <div className="flex items-center gap-3">
-                        <FolderTree
-                            className="size-4 text-primary"
-                            aria-hidden="true"
-                        />
-                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            File Browser
-                        </p>
-                    </div>
-                    <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                        {effectiveSelectedDirectory ?? "File Browser"}
-                    </h2>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                        {previewSummary ??
-                            (activeFiles.length > 0
-                                ? `Showing ${activeFiles.length} file${activeFiles.length === 1 ? "" : "s"} in this directory.`
-                                : "Expand a folder row to browse its files.")}
+                <div className="flex items-center gap-3">
+                    <FolderTree
+                        className="size-4 text-primary"
+                        aria-hidden="true"
+                    />
+                    <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                        File Browser
                     </p>
                 </div>
 
@@ -730,45 +716,13 @@ export function FileBrowser({
             {previewMode === "single" ? (
                 <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(20rem,0.92fr)_minmax(0,1.08fr)] xl:items-start">
                     <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4">
-                        <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-3">
-                            <div>
-                                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                    Explorer
-                                </p>
-                                <p className="mt-1 text-sm text-muted-foreground">
-                                    Expand folders to reveal up to 100 paginated
-                                    files.
-                                </p>
-                            </div>
-                            {displayedFiles.length > 0 ? (
-                                <span className="rounded-full border border-border/70 bg-background/80 px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                                    {displayedFiles.length} visible
-                                </span>
-                            ) : null}
-                        </div>
-                        <div className="mt-4 space-y-3">
+                        <div className="space-y-3">
                             {renderDirectoryRows(directoryTree)}
                         </div>
                     </div>
 
-                    <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4 xl:sticky xl:top-4">
-                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            Preview focus
-                        </p>
-                        <h3 className="mt-2 break-all text-xl font-semibold tracking-tight text-foreground">
-                            {activeFile
-                                ? fileName(activeFile.path)
-                                : "Select a file to preview"}
-                        </h3>
-                        {activeFile ? (
-                            <p className="mt-2 break-all text-sm text-muted-foreground">
-                                {activeFile.path}
-                            </p>
-                        ) : null}
-                        <div
-                            className="mt-5"
-                            data-file-browser-preview="single"
-                        >
+                    <div className="min-w-0 xl:sticky xl:top-4">
+                        <div data-file-browser-preview="single">
                             {renderSinglePreview?.(activeFile ?? null) ?? null}
                         </div>
                     </div>
@@ -778,23 +732,7 @@ export function FileBrowser({
                     className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4"
                     data-preview-mode="grid"
                 >
-                    <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-3">
-                        <div>
-                            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                Explorer
-                            </p>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                                1 preview per row at {previewHeight}px high.
-                            </p>
-                        </div>
-                        {displayedFiles.length > 0 ? (
-                            <span className="rounded-full border border-border/70 bg-background/80 px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                                {displayedFiles.length} visible
-                            </span>
-                        ) : null}
-                    </div>
-
-                    <div className="mt-4 space-y-3">
+                    <div className="space-y-3">
                         {renderDirectoryRows(directoryTree)}
                     </div>
                 </div>

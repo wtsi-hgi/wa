@@ -405,7 +405,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
             previewState.path === file.path ? previewState.isLoading : false;
 
         return (
-            <div data-selected-file-path={file.path}>
+            <div>
                 <FilePreview
                     content={previewContent}
                     error={previewError}

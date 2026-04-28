@@ -20,7 +20,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import type { FileEntry } from "@/lib/contracts";
-import { cn, formatBytes, formatUtcDateTime } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 
 hljs.registerLanguage("json", json);
 hljs.registerLanguage("markdown", markdownLanguage);
@@ -150,10 +150,6 @@ function buildDownloadUrl(proxyUrl: string): string {
     return `${proxyUrl}${proxyUrl.includes("?") ? "&" : "?"}download=true`;
 }
 
-function formatTimestamp(value: string): string {
-    return formatUtcDateTime(value);
-}
-
 function parseDelimitedContent(
     content: string,
     contentType: string,
@@ -222,48 +218,6 @@ function DownloadButton({ href }: { href: string }) {
             <ArrowDownToLine className="size-4" aria-hidden="true" />
             Download file
         </a>
-    );
-}
-
-function MetadataPanel({ file }: { file: FileEntry }) {
-    return (
-        <div className="space-y-4">
-            <div className="rounded-[1.5rem] border border-border/70 bg-background/75 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    Path
-                </p>
-                <p className="mt-2 break-all font-mono text-sm text-foreground">
-                    {file.path}
-                </p>
-            </div>
-
-            <dl className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                <div className="rounded-[1.5rem] border border-border/70 bg-background/75 p-4">
-                    <dt className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                        Kind
-                    </dt>
-                    <dd className="mt-2 text-sm text-foreground">
-                        {file.kind}
-                    </dd>
-                </div>
-                <div className="rounded-[1.5rem] border border-border/70 bg-background/75 p-4">
-                    <dt className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                        Size
-                    </dt>
-                    <dd className="mt-2 text-sm text-foreground">
-                        {formatBytes(file.size)}
-                    </dd>
-                </div>
-                <div className="rounded-[1.5rem] border border-border/70 bg-background/75 p-4">
-                    <dt className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                        Updated
-                    </dt>
-                    <dd className="mt-2 text-sm text-foreground">
-                        {formatTimestamp(file.mtime)}
-                    </dd>
-                </div>
-            </dl>
-        </div>
     );
 }
 
@@ -631,8 +585,7 @@ export function FilePreview({
 
     if (error?.status === 413) {
         return (
-            <section className="space-y-5">
-                <MetadataPanel file={file} />
+            <section>
                 <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
                     <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                         Preview unavailable
@@ -654,8 +607,7 @@ export function FilePreview({
 
     if (error) {
         return (
-            <section className="space-y-5">
-                <MetadataPanel file={file} />
+            <section>
                 <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
                     <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                         Preview unavailable
@@ -675,9 +627,7 @@ export function FilePreview({
     }
 
     return (
-        <section className="space-y-5">
-            <MetadataPanel file={file} />
-
+        <section>
             <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] p-5 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
                 <div className="flex flex-col gap-4 border-b border-border/60 pb-5 lg:flex-row lg:items-start lg:justify-between">
                     <div>

@@ -223,7 +223,7 @@ describe("O1 file preview", () => {
         ).toContain("download=true");
     });
 
-    it("renders binary previews as metadata with a download button", () => {
+    it("renders binary previews with a download button", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/sample.bam", size: 1048576 }),
             content: {
@@ -234,9 +234,12 @@ describe("O1 file preview", () => {
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fsample.bam",
         });
 
-        expect(screen.getByText("/tmp/results/sample.bam")).toBeTruthy();
-        expect(screen.getByText(/1.0 MB/i)).toBeTruthy();
-        expect(screen.getByText(/16 Apr 2026/i)).toBeTruthy();
+        expect(screen.getByText("sample.bam")).toBeTruthy();
+        expect(
+            screen.getByText(
+                /binary preview is unavailable for this file type/i,
+            ),
+        ).toBeTruthy();
         expect(
             screen.queryByText(
                 /metadata remains available for audit and manual retrieval/i,

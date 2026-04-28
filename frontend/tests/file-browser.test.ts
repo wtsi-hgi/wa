@@ -66,7 +66,9 @@ describe("N1 file browser", () => {
                         createElement(
                             "div",
                             { "data-testid": "single-preview" },
-                            file?.path ?? "none",
+                            file
+                                ? `preview:${file.path.split("/").pop()}`
+                                : "none",
                         ),
                 }),
             );
@@ -184,6 +186,43 @@ describe("N1 file browser", () => {
         expect(container.textContent).toContain("001.png");
         expect(container.textContent).toContain("002.png");
         expect(container.textContent).not.toContain("003.png");
+    });
+
+    it("keeps the file browser to a single explorer pane without duplicate path sections", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/gallery/001.png", "output"),
+            buildFile("/results/gallery/002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file
+                                ? `preview:${file.path.split("/").pop()}`
+                                : "none",
+                        ),
+                }),
+            );
+        });
+
+        expect(container.textContent).toContain("File Browser");
+        expect(container.textContent).not.toContain("Explorer");
+        expect(container.textContent).not.toContain("Preview focus");
+        expect(container.textContent).not.toContain("/results/gallery/001.png");
+        expect(container.textContent).not.toContain("/results/gallery/002.png");
+        expect(container.textContent).toContain("001.png");
+        expect(container.textContent).toContain("002.png");
+        expect(
+            container.querySelector('[data-file-browser-preview="single"]'),
+        ).toBeTruthy();
     });
 
     it("shows an empty state when there are no registered files", async () => {

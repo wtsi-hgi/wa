@@ -476,9 +476,12 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(fetchResultMock).toHaveBeenCalledWith("result-42");
         expect(fetchFilesMock).toHaveBeenCalledWith("result-42");
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
-        expect(markup).toContain("Explorer");
-        expect(markup).toContain("Preview focus");
-        expect(markup).toContain("/tmp/results/42/report.html");
+        expect(markup).not.toContain("Explorer");
+        expect(markup).not.toContain("Preview focus");
+        expect(markup).not.toContain("data-selected-file-path");
+        expect(markup).not.toContain("Path");
+        expect(markup).not.toContain("Kind");
+        expect(markup).not.toContain("Updated");
         expect(markup).toContain("Result metadata");
         expect(markup).toContain("SANG001");
         expect(markup).not.toContain("sanger_sample_id: SANG001");
