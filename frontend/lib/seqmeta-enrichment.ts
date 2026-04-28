@@ -7,6 +7,13 @@ export type SeqmetaEnrichmentState = {
     errors: Record<string, "not_found" | "upstream_impaired">;
 };
 
+type SeqmetaAliasType =
+    | "library_type"
+    | "sample_lims"
+    | "sanger_sample_id"
+    | "study_accession"
+    | "study_id";
+
 export function isSeqmetaKey(key: string): boolean {
     return key.startsWith("seqmeta_");
 }
@@ -55,6 +62,94 @@ export function primeSeqmetaCache(
     }
 }
 
+function cloneEnrichmentForAlias(
+    enrichment: EnrichmentResult,
+    identifier: string,
+    type: string,
+): EnrichmentResult {
+    if (enrichment.identifier === identifier && enrichment.type === type) {
+        return enrichment;
+    }
+
+    return {
+        ...enrichment,
+        identifier,
+        type,
+    };
+}
+
+function trimSeqmetaValue(value: string | null | undefined): string | null {
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const trimmed = value.trim();
+
+    return trimmed ? trimmed : null;
+}
+
+function collectSeqmetaAliases(
+    enrichment: EnrichmentResult,
+): Array<[string, SeqmetaAliasType | string]> {
+    const aliases = new Map<string, SeqmetaAliasType | string>();
+
+    function add(value: string | null | undefined, type: SeqmetaAliasType) {
+        const trimmed = trimSeqmetaValue(value);
+
+        if (!trimmed || aliases.has(trimmed)) {
+            return;
+        }
+
+        aliases.set(trimmed, type);
+    }
+
+    add(enrichment.identifier, enrichment.type as SeqmetaAliasType);
+    add(enrichment.graph.study?.id_study_lims, "study_id");
+    add(enrichment.graph.study?.accession_number, "study_accession");
+    add(enrichment.graph.library?.library_type, "library_type");
+    add(enrichment.graph.library?.id_study_lims, "study_id");
+
+    for (const library of enrichment.graph.libraries ?? []) {
+        add(library.library_type, "library_type");
+        add(library.id_study_lims, "study_id");
+    }
+
+    function addSampleAliases(sample: {
+        accession_number?: string;
+        id_sample_lims?: string;
+        id_study_lims?: string;
+        library_type?: string;
+        sanger_id?: string;
+        study_accession_number?: string;
+    }) {
+        add(sample.sanger_id, "sanger_sample_id");
+        add(sample.id_sample_lims, "sample_lims");
+        add(sample.library_type, "library_type");
+        add(sample.id_study_lims, "study_id");
+        add(sample.study_accession_number, "study_accession");
+        add(sample.accession_number, "sanger_sample_id");
+    }
+
+    if (enrichment.graph.sample) {
+        addSampleAliases(enrichment.graph.sample);
+    }
+
+    for (const sample of enrichment.graph.samples ?? []) {
+        addSampleAliases(sample);
+    }
+
+    return Array.from(aliases.entries());
+}
+
+function primeSeqmetaCacheEntry(
+    cache: SeqmetaCacheStore,
+    enrichment: EnrichmentResult,
+): void {
+    for (const [value, type] of collectSeqmetaAliases(enrichment)) {
+        cache.set(value, cloneEnrichmentForAlias(enrichment, value, type));
+    }
+}
+
 export function mergeSeqmetaEnrichmentState(
     base: SeqmetaEnrichmentState,
     override: Partial<SeqmetaEnrichmentState>,
@@ -91,39 +186,46 @@ export async function enrichSeqmetaMetadata(
         return state;
     }
 
-    const settled = await Promise.allSettled(
-        pendingValues.map(async (value) => ({
-            result: await enrichIdentifier(value),
-            value,
-        })),
-    );
+    for (const value of pendingValues) {
+        if (cache.has(value)) {
+            const enrichment = cache.get(value) ?? null;
 
-    for (const [index, result] of settled.entries()) {
-        const value = pendingValues[index];
+            state.enrichments[value] = enrichment;
 
-        if (!value) {
+            if (enrichment === null) {
+                state.errors[value] = "not_found";
+            }
+
             continue;
         }
 
-        if (result.status === "fulfilled") {
-            if (result.value.result === null) {
+        try {
+            const result = await enrichIdentifier(value);
+
+            if (result === null) {
                 cache.set(value, null);
                 state.enrichments[value] = null;
                 state.errors[value] = "not_found";
                 continue;
             }
 
-            cache.set(value, result.value.result);
-            state.enrichments[value] = result.value.result;
+            primeSeqmetaCacheEntry(cache, result);
+            state.enrichments[value] = cache.get(value) ?? result;
             continue;
-        }
+        } catch (error) {
+            if (error instanceof BackendRequestError && error.status === 404) {
+                cache.set(value, null);
+                state.enrichments[value] = null;
+                state.errors[value] = "not_found";
+                continue;
+            }
 
-        state.errors[value] =
-            result.reason instanceof BackendRequestError &&
-            result.reason.status === 404
-                ? "not_found"
-                : "upstream_impaired";
+            state.errors[value] = "upstream_impaired";
+        }
     }
 
-    return state;
+    return mergeSeqmetaEnrichmentState(
+        state,
+        buildCachedEnrichmentState(metadata, cache),
+    );
 }

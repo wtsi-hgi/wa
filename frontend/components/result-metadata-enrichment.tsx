@@ -8,6 +8,7 @@ import type { EnrichmentResult } from "@/lib/contracts";
 import {
     buildCachedEnrichmentState,
     collectSeqmetaValues,
+    enrichSeqmetaMetadata,
     mergeSeqmetaEnrichmentState,
     primeSeqmetaCache,
 } from "@/lib/seqmeta-enrichment";
@@ -53,6 +54,8 @@ export function ResultMetadataEnrichment({
         liveState.requestKey === requestKey
             ? liveState.state
             : EMPTY_LIVE_STATE;
+    const activeLiveErrors = activeLiveState.errors;
+    const activeLiveEnrichments = activeLiveState.enrichments;
     const mergedState = mergeSeqmetaEnrichmentState(baseState, activeLiveState);
     const loading = Object.fromEntries(
         values
@@ -60,8 +63,8 @@ export function ResultMetadataEnrichment({
                 (value) =>
                     !cache.has(value) &&
                     !(value in initialErrors) &&
-                    !(value in activeLiveState.errors) &&
-                    !(value in activeLiveState.enrichments),
+                    !(value in activeLiveErrors) &&
+                    !(value in activeLiveEnrichments),
             )
             .map((value) => [value, true]),
     );
@@ -74,8 +77,8 @@ export function ResultMetadataEnrichment({
                 !cache.has(value) &&
                 !inFlightValuesRef.current.has(value) &&
                 !(value in initialErrors) &&
-                !(value in activeLiveState.errors) &&
-                !(value in activeLiveState.enrichments),
+                !(value in activeLiveErrors) &&
+                !(value in activeLiveEnrichments),
         );
 
         if (pendingValues.length === 0) {
@@ -86,55 +89,25 @@ export function ResultMetadataEnrichment({
             inFlightValuesRef.current.add(value);
         }
 
-        Promise.allSettled(
-            pendingValues.map(async (value) => ({
-                result: await enrichIdentifier(value),
-                value,
-            })),
-        ).then((settled) => {
-            const nextEnrichments = { ...activeLiveState.enrichments };
-            const nextErrors = { ...activeLiveState.errors };
-
-            for (const [index, result] of settled.entries()) {
-                const value = pendingValues[index];
-
-                if (!value) {
-                    continue;
+        void enrichSeqmetaMetadata(metadata, cache, enrichIdentifier).then(
+            (nextState) => {
+                for (const value of pendingValues) {
+                    inFlightValuesRef.current.delete(value);
                 }
 
-                inFlightValuesRef.current.delete(value);
-
-                if (result.status === "fulfilled") {
-                    if (result.value.result === null) {
-                        cache.set(value, null);
-                        nextEnrichments[value] = null;
-                        nextErrors[value] = "not_found";
-                    } else {
-                        cache.set(value, result.value.result);
-                        nextEnrichments[value] = result.value.result;
-                        delete nextErrors[value];
-                    }
-
-                    continue;
-                }
-
-                nextErrors[value] = "upstream_impaired";
-            }
-
-            setLiveState({
-                requestKey,
-                state: {
-                    enrichments: nextEnrichments,
-                    errors: nextErrors,
-                },
-            });
-        });
+                setLiveState({
+                    requestKey,
+                    state: nextState,
+                });
+            },
+        );
     }, [
-        activeLiveState.enrichments,
-        activeLiveState.errors,
         cache,
+        activeLiveEnrichments,
+        activeLiveErrors,
         initialEnrichments,
         initialErrors,
+        metadata,
         requestKey,
         values,
     ]);

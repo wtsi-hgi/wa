@@ -119,6 +119,47 @@ describe("H3 enrichment state and badge", () => {
         expect(screen.queryByText("Some details unavailable")).toBeNull();
     });
 
+    it("reuses a resolved enrichment for related seqmeta values from the same metadata set", async () => {
+        enrichIdentifierMock.mockResolvedValue(buildEnrichmentResult());
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+
+        render(
+            createElement(ResultMetadataEnrichment, {
+                metadata: {
+                    seqmeta_studyid: "6568",
+                    seqmeta_sampleid: "SANG001",
+                    seqmeta_library: "RNA",
+                },
+            }),
+            {
+                wrapper: ({ children }) =>
+                    createElement(SeqmetaCacheProvider, null, children),
+            },
+        );
+
+        await waitFor(() => {
+            const studyRow = document.querySelector(
+                '[data-metadata-row="seqmeta_studyid"] [data-testid="seqmeta-badge-label"]',
+            );
+
+            expect(studyRow?.textContent).toBe("Cancer Programme");
+        });
+
+        expect(enrichIdentifierMock).toHaveBeenCalledTimes(1);
+        expect(enrichIdentifierMock).toHaveBeenCalledWith("6568");
+
+        const sampleRow = document.querySelector(
+            '[data-metadata-row="seqmeta_sampleid"] [data-testid="seqmeta-badge-label"]',
+        );
+        const libraryRow = document.querySelector(
+            '[data-metadata-row="seqmeta_library"] [data-testid="seqmeta-badge-label"]',
+        );
+
+        expect(sampleRow?.textContent).toBe("SANG001");
+        expect(libraryRow?.textContent).toBe("RNA");
+    });
+
     it("does not start a duplicate enrichment request when the component rerenders while the first request is in flight", async () => {
         const pending = deferred<EnrichmentResult | null>();
         enrichIdentifierMock.mockReturnValue(pending.promise);
