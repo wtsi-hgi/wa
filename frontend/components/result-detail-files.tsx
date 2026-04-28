@@ -36,6 +36,7 @@ type FileUrlOptions = {
 
 const thumbnailsPerPage = 100;
 const defaultPreviewHeight = 220;
+const thumbnailRenderHeight = 420;
 const imageExtensions = new Set([
     "avif",
     "bmp",
@@ -468,11 +469,11 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                         fullSizeUrl={buildFileUrl(resultId, file.path)}
                         height={previewHeight}
                         thumbnailUrl={buildFileUrl(resultId, file.path, {
-                            height: previewHeight,
+                            height: thumbnailRenderHeight,
                             thumbnail: true,
                             width: Math.max(
                                 320,
-                                Math.round(previewHeight * 1.6),
+                                Math.round(thumbnailRenderHeight * 1.6),
                             ),
                         })}
                     />

@@ -42,6 +42,7 @@ vi.mock("@/components/file-browser", () => ({
     },
     FileBrowser: ({
         files,
+        onPreviewHeightChange,
         onPreviewModeChange,
         onPreviewPageChange,
         onSelectDirectory,
@@ -58,6 +59,7 @@ vi.mock("@/components/file-browser", () => ({
         visibleFiles,
     }: {
         files: FileEntry[];
+        onPreviewHeightChange?: (value: number) => void;
         onPreviewModeChange?: (mode: "single" | "grid") => void;
         onPreviewPageChange?: (page: number) => void;
         onSelectDirectory?: (path: string) => void;
@@ -116,6 +118,15 @@ vi.mock("@/components/file-browser", () => ({
                     },
                     file.path,
                 ),
+            ),
+            createElement(
+                "button",
+                {
+                    key: "preview-height-320",
+                    onClick: () => onPreviewHeightChange?.(320),
+                    type: "button",
+                },
+                "preview-height-320",
             ),
             createElement(
                 "button",
@@ -305,6 +316,53 @@ describe("O1 result detail file integration", () => {
         await waitFor(() => {
             expect(screen.getAllByTestId("thumbnail-preview")).toHaveLength(1);
         });
+    });
+
+    it("keeps grid thumbnail sources stable when only the preview height changes", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [
+                    buildFile("/tmp/results/a/plot-001.png"),
+                    buildFile("/tmp/results/a/plot-002.png"),
+                ],
+                resultId: "result-1",
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "show-grid" }));
+
+        await waitFor(() => {
+            expect(screen.getAllByTestId("thumbnail-preview")).toHaveLength(2);
+        });
+
+        const initialThumbnail = screen.getAllByTestId("thumbnail-preview")[0];
+        const initialThumbnailUrl =
+            initialThumbnail?.getAttribute("data-thumbnail-url");
+
+        expect(initialThumbnail?.getAttribute("data-height")).toBe("220");
+        expect(initialThumbnailUrl).toContain("thumb=true");
+        expect(initialThumbnailUrl).toBeTruthy();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "preview-height-320" }),
+        );
+
+        await waitFor(() => {
+            expect(
+                screen
+                    .getAllByTestId("thumbnail-preview")[0]
+                    ?.getAttribute("data-height"),
+            ).toBe("320");
+        });
+
+        expect(
+            screen
+                .getAllByTestId("thumbnail-preview")[0]
+                ?.getAttribute("data-thumbnail-url"),
+        ).toBe(initialThumbnailUrl);
     });
 
     it("paginates the default single-preview file list after the first 100 files", async () => {
