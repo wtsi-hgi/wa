@@ -117,6 +117,18 @@ function countOccurrences(markup: string, needle: string): number {
     return markup.match(new RegExp(needle, "g"))?.length ?? 0;
 }
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+
+    const promise = new Promise<T>((innerResolve, innerReject) => {
+        resolve = innerResolve;
+        reject = innerReject;
+    });
+
+    return { promise, resolve, reject };
+}
+
 async function renderDashboard(
     searchParams?: Record<string, string | string[]>,
 ) {
@@ -242,6 +254,30 @@ describe("J1 dashboard with search builder and recent results", () => {
         await act(async () => {
             root?.unmount();
         });
+    });
+
+    it("starts loading filter metadata and studies before stats resolves", async () => {
+        const statsPending = deferred<StatsResult>();
+
+        process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
+        fetchStatsMock.mockReturnValue(statsPending.promise);
+        fetchMetaKeysMock.mockResolvedValue([]);
+        fetchStudiesMock.mockResolvedValue([]);
+
+        const pageModule = await import("@/app/(results)/page");
+        const Page = pageModule.default;
+        const pagePromise = Page({ searchParams: Promise.resolve({}) });
+
+        await Promise.resolve();
+
+        expect(fetchStatsMock).toHaveBeenCalledTimes(1);
+        expect(fetchMetaKeysMock).toHaveBeenCalledTimes(1);
+        expect(fetchStudiesMock).toHaveBeenCalledTimes(1);
+
+        statsPending.resolve(buildStats());
+        await pagePromise;
+
+        delete process.env.WA_SEQMETA_BACKEND_URL;
     });
 
     it("derives non-study filter suggestions from loaded result data", async () => {

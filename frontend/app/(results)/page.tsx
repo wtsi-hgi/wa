@@ -170,9 +170,14 @@ export default async function ResultsLandingPage({
     const seqmetaAvailable = Boolean(
         process.env.WA_SEQMETA_BACKEND_URL?.trim(),
     );
+    const statsPromise = fetchStats(10, 30);
+    const metaKeysPromise = fetchMetaKeys();
+    const studiesPromise = seqmetaAvailable
+        ? fetchStudies()
+        : Promise.resolve<Study[]>([]);
 
     try {
-        stats = await fetchStats(10, 30);
+        stats = await statsPromise;
     } catch (error) {
         statsError = getErrorMessage(
             error,
@@ -181,7 +186,7 @@ export default async function ResultsLandingPage({
     }
 
     try {
-        const loadedMetaKeys = await fetchMetaKeys();
+        const loadedMetaKeys = await metaKeysPromise;
         metaKeys = Array.isArray(loadedMetaKeys) ? loadedMetaKeys : [];
     } catch (error) {
         statsError =
@@ -191,7 +196,7 @@ export default async function ResultsLandingPage({
 
     if (seqmetaAvailable) {
         try {
-            const loadedStudies = await fetchStudies();
+            const loadedStudies = await studiesPromise;
             studies = Array.isArray(loadedStudies) ? loadedStudies : [];
         } catch (error) {
             statsError =

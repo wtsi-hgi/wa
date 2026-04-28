@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { act } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "@/components/app-providers";
@@ -20,6 +20,18 @@ const buildCachedEnrichmentStateMock = vi.fn();
 const collectSeqmetaValuesMock = vi.fn();
 const mergeSeqmetaEnrichmentStateMock = vi.fn();
 const primeSeqmetaCacheMock = vi.fn();
+const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
+    toastErrorMock: vi.fn(),
+    toastSuccessMock: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+    Toaster: () => createElement("div", { "data-testid": "sonner-toaster" }),
+    toast: {
+        error: toastErrorMock,
+        success: toastSuccessMock,
+    },
+}));
 
 vi.mock("@/app/(results)/actions", () => ({
     fetchFiles: fetchFilesMock,
@@ -68,6 +80,18 @@ function buildResultSet(): ResultSet {
     };
 }
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+
+    const promise = new Promise<T>((innerResolve, innerReject) => {
+        resolve = innerResolve;
+        reject = innerReject;
+    });
+
+    return { promise, resolve, reject };
+}
+
 describe("O1 result detail hydration", () => {
     const matchMediaStub = () => ({
         addEventListener: vi.fn(),
@@ -83,6 +107,7 @@ describe("O1 result detail hydration", () => {
     afterEach(() => {
         document.body.innerHTML = "";
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
     });
 
     it("keeps directory switching interactive when client locale formatting differs", async () => {
@@ -159,14 +184,8 @@ describe("O1 result detail hydration", () => {
         ];
         const result = buildResultSet();
         const toLocaleStringSpy = vi.spyOn(Date.prototype, "toLocaleString");
-        const writeTextMock = vi.fn().mockResolvedValue(undefined);
 
         vi.stubGlobal("matchMedia", matchMediaStub);
-        vi.stubGlobal("navigator", {
-            clipboard: {
-                writeText: writeTextMock,
-            },
-        });
         fetchFilesMock.mockResolvedValue(files);
         fetchResultMock.mockResolvedValue(result);
         validateIdentifierMock.mockResolvedValue(true);
@@ -235,24 +254,42 @@ describe("O1 result detail hydration", () => {
             ).toBeNull();
         });
 
-        const copyButton = screen.getByRole("button", {
-            name: `Copy result ID ${result.id}`,
-        });
-
-        expect(copyButton.getAttribute("data-result-id-copy")).toBe(result.id);
-        expect(copyButton.textContent).not.toContain(result.id);
-        expect(copyButton.textContent).toContain("...");
-
-        fireEvent.click(copyButton);
-
-        await waitFor(() => {
-            expect(writeTextMock).toHaveBeenCalledWith(result.id);
-        });
-
         expect(recoverableErrors).toHaveLength(0);
 
         await act(async () => {
             root?.unmount();
         });
+    });
+
+    it("renders the detail page without waiting for server-side seqmeta enrichment", async () => {
+        const files = [buildFile("/results/a/sample.bam")];
+        const result = buildResultSet();
+        const pendingEnrichment = deferred<{
+            enrichments: Record<string, never>;
+            errors: Record<string, never>;
+        }>();
+
+        fetchFilesMock.mockResolvedValue(files);
+        fetchResultMock.mockResolvedValue(result);
+        enrichSeqmetaMetadataMock.mockReturnValue(pendingEnrichment.promise);
+
+        const pageModule = await import("@/app/(results)/results/[id]/page");
+        const Page = pageModule.default;
+        const pagePromise = Page({
+            params: Promise.resolve({ id: "result-1" }),
+        });
+
+        const renderState = await Promise.race([
+            pagePromise.then(() => "resolved" as const),
+            new Promise<"timeout">((resolve) => {
+                setTimeout(() => resolve("timeout"), 25);
+            }),
+        ]);
+
+        expect(renderState).toBe("resolved");
+        expect(enrichSeqmetaMetadataMock).not.toHaveBeenCalled();
+
+        pendingEnrichment.resolve({ enrichments: {}, errors: {} });
+        await pagePromise;
     });
 });

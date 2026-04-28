@@ -2,18 +2,12 @@ import Link from "next/link";
 
 import { ChevronLeft } from "lucide-react";
 
-import {
-    enrichIdentifier,
-    fetchFiles,
-    fetchResult,
-} from "@/app/(results)/actions";
+import { fetchFiles, fetchResult } from "@/app/(results)/actions";
 import { ResultIdCopyChip } from "@/app/(results)/results/[id]/result-id-copy-chip";
 import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
 import { ResultRegistrationSummary } from "@/components/result-registration-summary";
 import type { FileEntry, ResultSet } from "@/lib/contracts";
-import { enrichSeqmetaMetadata } from "@/lib/seqmeta-enrichment";
-import { getRequestSeqmetaCache } from "@/lib/seqmeta-cache-server";
 import { formatBytes } from "@/lib/utils";
 
 type DetailPageParams = {
@@ -137,15 +131,8 @@ export default async function ResultDetailPage({
         returnHref === "/" ? "Back to dashboard" : "Back to search results";
     const resultPromise = fetchResult(id);
     const filesPromise = fetchFiles(id);
-    const requestCachePromise = getRequestSeqmetaCache();
     const result = await resultPromise;
-    const enrichmentPromise = requestCachePromise.then((cache) =>
-        enrichSeqmetaMetadata(result.metadata, cache, enrichIdentifier),
-    );
-    const [files, enrichmentState] = await Promise.all([
-        filesPromise,
-        enrichmentPromise,
-    ]);
+    const files = await filesPromise;
     const fileSummary = summarizeFiles(files);
 
     return (
@@ -224,8 +211,6 @@ export default async function ResultDetailPage({
 
             <ResultMetadataEnrichment
                 key={result.id}
-                initialEnrichments={enrichmentState.enrichments}
-                initialErrors={enrichmentState.errors}
                 metadata={result.metadata}
             />
         </main>
