@@ -253,41 +253,89 @@ export async function enrichSeqmetaMetadata(
         return state;
     }
 
-    for (const value of pendingValues) {
-        if (cache.has(value)) {
-            const enrichment = cache.get(value) ?? null;
+    // Hybrid approach: enrich the first (highest priority) value sequentially
+    // to prime cache aliases, then parallelize remaining lookups
+    const [firstValue, ...remainingValues] = pendingValues;
 
-            state.enrichments[value] = enrichment;
-
-            if (enrichment === null) {
-                state.errors[value] = "not_found";
-            }
-
-            continue;
-        }
-
+    // First value enrichment (sequential to populate cache aliases)
+    if (!cache.has(firstValue)) {
         try {
-            const result = await enrichIdentifier(value);
+            const result = await enrichIdentifier(firstValue);
 
             if (result === null) {
-                cache.set(value, null);
-                state.enrichments[value] = null;
-                state.errors[value] = "not_found";
-                continue;
+                cache.set(firstValue, null);
+                state.enrichments[firstValue] = null;
+                state.errors[firstValue] = "not_found";
+            } else {
+                primeSeqmetaCacheEntry(cache, result);
+                state.enrichments[firstValue] = cache.get(firstValue) ?? result;
             }
-
-            primeSeqmetaCacheEntry(cache, result);
-            state.enrichments[value] = cache.get(value) ?? result;
-            continue;
         } catch (error) {
             if (error instanceof BackendRequestError && error.status === 404) {
-                cache.set(value, null);
-                state.enrichments[value] = null;
-                state.errors[value] = "not_found";
-                continue;
+                cache.set(firstValue, null);
+                state.enrichments[firstValue] = null;
+                state.errors[firstValue] = "not_found";
+            } else {
+                state.errors[firstValue] = "upstream_impaired";
             }
+        }
+    }
 
-            state.errors[value] = "upstream_impaired";
+    // Remaining values in parallel (after cache may be primed)
+    const stillPending = remainingValues.filter((value) => !cache.has(value));
+
+    if (stillPending.length > 0) {
+        const results = await Promise.all(
+            stillPending.map(async (value) => {
+                // Double-check cache in case first lookup populated it
+                if (cache.has(value)) {
+                    const enrichment = cache.get(value) ?? null;
+                    return { value, enrichment, error: null };
+                }
+
+                try {
+                    const result = await enrichIdentifier(value);
+
+                    if (result === null) {
+                        cache.set(value, null);
+                        return {
+                            value,
+                            enrichment: null,
+                            error: "not_found" as const,
+                        };
+                    }
+
+                    primeSeqmetaCacheEntry(cache, result);
+                    const enrichment = cache.get(value) ?? result;
+                    return { value, enrichment, error: null };
+                } catch (error) {
+                    if (
+                        error instanceof BackendRequestError &&
+                        error.status === 404
+                    ) {
+                        cache.set(value, null);
+                        return {
+                            value,
+                            enrichment: null,
+                            error: "not_found" as const,
+                        };
+                    }
+
+                    return {
+                        value,
+                        enrichment: null,
+                        error: "upstream_impaired" as const,
+                    };
+                }
+            }),
+        );
+
+        // Apply results to state
+        for (const result of results) {
+            state.enrichments[result.value] = result.enrichment;
+            if (result.error) {
+                state.errors[result.value] = result.error;
+            }
         }
     }
 
