@@ -505,6 +505,65 @@ describe("N1 file browser", () => {
         expect(container.textContent).toContain("Page 2 of 3");
     });
 
+    it("keeps preview height drag updates local until the slider is committed", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const handlePreviewHeightChange = vi.fn();
+        const renderGridPreview = vi.fn((file: FileEntry): ReactNode =>
+            createElement(
+                "div",
+                { "data-testid": `grid-preview-${file.path}` },
+                `preview:${file.path}`,
+            ),
+        );
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: handlePreviewHeightChange,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewHeight: 220,
+                    previewMode: "grid",
+                    renderGridPreview,
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        expect(renderGridPreview).toHaveBeenCalledTimes(2);
+
+        const slider = container.querySelector(
+            'input[aria-label="Preview height"]',
+        );
+
+        expect(slider).toBeTruthy();
+
+        await act(async () => {
+            const range = slider as HTMLInputElement;
+
+            range.value = "260";
+            range.dispatchEvent(new Event("input", { bubbles: true }));
+            range.value = "300";
+            range.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+
+        expect(container.textContent).toContain("300px");
+        expect(handlePreviewHeightChange).not.toHaveBeenCalled();
+        expect(renderGridPreview).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            slider?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        });
+
+        expect(handlePreviewHeightChange).toHaveBeenCalledTimes(1);
+        expect(handlePreviewHeightChange).toHaveBeenCalledWith(300);
+    });
+
     it("paginates the file list in single preview mode", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = Array.from({ length: 101 }, (_, index) =>

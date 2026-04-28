@@ -1,6 +1,13 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+    memo,
+    type ReactNode,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import {
     ChevronDown,
     ChevronRight,
@@ -66,6 +73,67 @@ type RawDirectoryNode = {
     name: string;
     path: string;
 };
+
+const previewHeightCommitKeys = new Set([
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "End",
+    "Home",
+    "PageDown",
+    "PageUp",
+]);
+
+const PreviewHeightControl = memo(function PreviewHeightControl({
+    onCommit,
+    value,
+}: {
+    onCommit?: (value: number) => void;
+    value: number;
+}) {
+    const [draftValue, setDraftValue] = useState(value);
+    const committedValueRef = useRef(value);
+
+    const commitDraftValue = () => {
+        if (draftValue === committedValueRef.current) {
+            return;
+        }
+
+        committedValueRef.current = draftValue;
+        onCommit?.(draftValue);
+    };
+
+    return (
+        <label className="block rounded-[1.25rem] border border-border/70 bg-background/75 px-4 py-3 text-sm text-foreground">
+            <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">Preview height</span>
+                <span className="text-muted-foreground">{draftValue}px</span>
+            </div>
+            <input
+                aria-label="Preview height"
+                className="mt-3 w-full accent-primary"
+                max={420}
+                min={120}
+                onBlur={commitDraftValue}
+                onChange={() => undefined}
+                onInput={(event) => {
+                    setDraftValue(Number(event.currentTarget.value));
+                }}
+                onKeyUp={(event) => {
+                    if (previewHeightCommitKeys.has(event.key)) {
+                        commitDraftValue();
+                    }
+                }}
+                onMouseUp={commitDraftValue}
+                onTouchEnd={commitDraftValue}
+                step={20}
+                type="range"
+                value={draftValue}
+            />
+        </label>
+    );
+});
 
 function parentDirectory(path: string): string {
     const normalized = path.trim();
@@ -706,28 +774,11 @@ export function FileBrowser({
                         </div>
                     </div>
 
-                    <label className="block rounded-[1.25rem] border border-border/70 bg-background/75 px-4 py-3 text-sm text-foreground">
-                        <div className="flex items-center justify-between gap-3">
-                            <span className="font-medium">Preview height</span>
-                            <span className="text-muted-foreground">
-                                {previewHeight}px
-                            </span>
-                        </div>
-                        <input
-                            aria-label="Preview height"
-                            className="mt-3 w-full accent-primary"
-                            max={420}
-                            min={120}
-                            onChange={(event) =>
-                                onPreviewHeightChange?.(
-                                    Number(event.target.value),
-                                )
-                            }
-                            step={20}
-                            type="range"
-                            value={previewHeight}
-                        />
-                    </label>
+                    <PreviewHeightControl
+                        key={previewHeight}
+                        onCommit={onPreviewHeightChange}
+                        value={previewHeight}
+                    />
 
                     {previewPageCount > 1 ? (
                         <div className="flex items-center justify-end gap-2">
