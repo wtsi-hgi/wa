@@ -194,7 +194,9 @@ describe("N1 file browser", () => {
             ),
         ).toBeTruthy();
         expect(
-            firstGridRow?.querySelector('[data-grid-preview-path="/results/a/001.png"]'),
+            firstGridRow?.querySelector(
+                '[data-grid-preview-path="/results/a/001.png"]',
+            ),
         ).toBeTruthy();
         expect(container.textContent).toContain("001.png");
         expect(container.textContent).toContain("002.png");
@@ -508,12 +510,13 @@ describe("N1 file browser", () => {
     it("keeps preview height drag updates local until the slider is committed", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const handlePreviewHeightChange = vi.fn();
-        const renderGridPreview = vi.fn((file: FileEntry): ReactNode =>
-            createElement(
-                "div",
-                { "data-testid": `grid-preview-${file.path}` },
-                `preview:${file.path}`,
-            ),
+        const renderGridPreview = vi.fn(
+            (file: FileEntry): ReactNode =>
+                createElement(
+                    "div",
+                    { "data-testid": `grid-preview-${file.path}` },
+                    `preview:${file.path}`,
+                ),
         );
         const files = [
             buildFile("/results/plot-001.png", "output"),

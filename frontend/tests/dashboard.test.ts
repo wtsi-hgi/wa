@@ -447,7 +447,9 @@ describe("J1 dashboard with search builder and recent results", () => {
             target: { value: "656" },
         });
 
-        expect(valueInput.getAttribute("list")).toBe("filter-suggestions-study_id");
+        expect(valueInput.getAttribute("list")).toBe(
+            "filter-suggestions-study_id",
+        );
         expect(
             container.querySelector(
                 "datalist#filter-suggestions-study_id option[value='6568']",

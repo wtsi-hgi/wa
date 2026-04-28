@@ -333,7 +333,10 @@ export function FilterBuilder({
                                                             htmlFor="filter-value"
                                                             className="text-sm font-medium text-foreground"
                                                         >
-                                                            {selectedField.label} value
+                                                            {
+                                                                selectedField.label
+                                                            }{" "}
+                                                            value
                                                         </label>
                                                         <input
                                                             data-filter-value-input={
