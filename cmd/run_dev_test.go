@@ -30,12 +30,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -76,9 +78,17 @@ func TestRunDevScript(t *testing.T) {
 
 		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
 		resultsList := waitForSeededResultsForTest(t, resultsPort)
+		fixtureSummary := summarizeRunDevFixturesForTest(t, repoRoot, resultsPort, resultsList)
 
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
 		convey.So(resultsList, convey.ShouldHaveLength, 3)
+		convey.So(fixtureSummary.nestedDirectoryCount, convey.ShouldBeGreaterThanOrEqualTo, 3)
+		convey.So(fixtureSummary.hasSiblingDirectories, convey.ShouldBeTrue)
+		convey.So(fixtureSummary.hasRepeatedFileTypes, convey.ShouldBeTrue)
+		convey.So(fixtureSummary.fileKinds, convey.ShouldContain, "input")
+		convey.So(fixtureSummary.fileKinds, convey.ShouldContain, "output")
+		convey.So(fixtureSummary.fileKinds, convey.ShouldContain, "pipeline")
+		convey.So(fixtureSummary.maxPreviewableImagesInDirectory, convey.ShouldBeGreaterThan, 100)
 		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", resultsPort))
 		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
 		convey.So(snapshot.ResultsDBPath, convey.ShouldNotBeBlank)
@@ -604,6 +614,147 @@ func signalRunDevProcessGroupForTest(command *exec.Cmd, signal syscall.Signal) {
 	_ = command.Process.Signal(signal)
 }
 
+func summarizeRunDevFixturesForTest(t *testing.T, repoRoot string, resultsPort int, resultSets []results.ResultSet) runDevFixtureSummary {
+	t.Helper()
+
+	previewableImageExts := map[string]struct{}{
+		".apng": {},
+		".avif": {},
+		".gif":  {},
+		".jpeg": {},
+		".jpg":  {},
+		".png":  {},
+		".svg":  {},
+		".webp": {},
+	}
+
+	directoryDepths := map[string]int{}
+	parentToChildren := map[string]map[string]struct{}{}
+	fileTypeCounts := map[string]int{}
+	previewableByDirectory := map[string]int{}
+	kindSet := map[string]struct{}{}
+
+	for _, resultSet := range resultSets {
+		files := listRunDevResultFilesForTest(t, resultsPort, resultSet.ID)
+
+		for _, file := range files {
+			kindSet[file.Kind] = struct{}{}
+
+			relPath, err := filepath.Rel(resultSet.OutputDirectory, file.Path)
+			if err != nil {
+				t.Fatalf("compute relative path for %s: %v", file.Path, err)
+			}
+
+			relPath = filepath.ToSlash(relPath)
+			directory := filepath.ToSlash(filepath.Dir(relPath))
+			if directory == "." {
+				directory = ""
+			}
+
+			depth := 0
+			if directory != "" {
+				depth = strings.Count(directory, "/") + 1
+				directoryDepths[directory] = depth
+
+				parent := filepath.ToSlash(filepath.Dir(directory))
+				if parent == "." {
+					parent = ""
+				}
+
+				children := parentToChildren[parent]
+				if children == nil {
+					children = map[string]struct{}{}
+					parentToChildren[parent] = children
+				}
+
+				children[directory] = struct{}{}
+			}
+
+			ext := strings.ToLower(filepath.Ext(file.Path))
+			if ext != "" {
+				fileTypeCounts[ext]++
+			}
+
+			if _, ok := previewableImageExts[ext]; ok {
+				previewableByDirectory[directory]++
+			}
+		}
+
+		convey.So(filepath.IsAbs(resultSet.OutputDirectory), convey.ShouldBeTrue)
+		convey.So(strings.HasPrefix(resultSet.OutputDirectory, repoRoot), convey.ShouldBeTrue)
+	}
+
+	nestedDirectoryCount := 0
+	for _, depth := range directoryDepths {
+		if depth >= 2 {
+			nestedDirectoryCount++
+		}
+	}
+
+	hasSiblingDirectories := false
+	for _, children := range parentToChildren {
+		if len(children) >= 2 {
+			hasSiblingDirectories = true
+			break
+		}
+	}
+
+	hasRepeatedFileTypes := false
+	for _, count := range fileTypeCounts {
+		if count >= 2 {
+			hasRepeatedFileTypes = true
+			break
+		}
+	}
+
+	maxPreviewableImagesInDirectory := 0
+	for _, count := range previewableByDirectory {
+		if count > maxPreviewableImagesInDirectory {
+			maxPreviewableImagesInDirectory = count
+		}
+	}
+
+	kinds := make([]string, 0, len(kindSet))
+	for kind := range kindSet {
+		kinds = append(kinds, kind)
+	}
+	slices.Sort(kinds)
+
+	return runDevFixtureSummary{
+		nestedDirectoryCount:            nestedDirectoryCount,
+		hasSiblingDirectories:           hasSiblingDirectories,
+		hasRepeatedFileTypes:            hasRepeatedFileTypes,
+		maxPreviewableImagesInDirectory: maxPreviewableImagesInDirectory,
+		fileKinds:                       kinds,
+	}
+}
+
+func listRunDevResultFilesForTest(t *testing.T, resultsPort int, resultID string) []results.FileEntry {
+	t.Helper()
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/results/%s/files", resultsPort, resultID)
+	response, err := http.Get(endpoint)
+	if err != nil {
+		t.Fatalf("get result files from %s: %v", endpoint, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	if response.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			t.Fatalf("get result files from %s returned %d and unreadable body: %v", endpoint, response.StatusCode, readErr)
+		}
+
+		t.Fatalf("get result files from %s returned %d: %s", endpoint, response.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var files []results.FileEntry
+	if err := json.NewDecoder(response.Body).Decode(&files); err != nil {
+		t.Fatalf("decode result files from %s: %v", endpoint, err)
+	}
+
+	return files
+}
+
 func startDelayedHTTPServerForTest(t *testing.T, port int, delay time.Duration) {
 	t.Helper()
 
@@ -966,4 +1117,12 @@ func waitForTCPPortForTest(t *testing.T, port int) {
 	}
 
 	t.Fatalf("timed out waiting for TCP listener on %s", address)
+}
+
+type runDevFixtureSummary struct {
+	nestedDirectoryCount            int
+	hasSiblingDirectories           bool
+	hasRepeatedFileTypes            bool
+	maxPreviewableImagesInDirectory int
+	fileKinds                       []string
 }

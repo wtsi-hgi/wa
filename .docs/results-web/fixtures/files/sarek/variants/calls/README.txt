@@ -1,4 +1,9 @@
-Variant call bundle
+# Variant Summary
 
-This demo directory contains the post-filter review artefacts for the tumour-normal pair.
-Use the HTML report for the interactive summary and this folder for analyst notes.
+- Run status: complete
+- Reviewed by: carol
+- Notes: tumour-normal pair produced concordant structural calls.
+
+## Highlights
+
+The validation set shows stable coverage across the panel with no failed regions.

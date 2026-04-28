@@ -1,7 +1,9 @@
-Coverage summary
-================
+# Variant Summary
 
-- Batch: exon_lib
-- Samples reviewed: 20
-- All FastQC checkpoints passed.
-- Alignment rates stayed above 96% for the seeded cohort.
+- Run status: complete
+- Reviewed by: carol
+- Notes: tumour-normal pair produced concordant structural calls.
+
+## Highlights
+
+The validation set shows stable coverage across the panel with no failed regions.

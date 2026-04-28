@@ -4,34 +4,826 @@
         "run_key": "runid=48522&unique=exon_lib",
         "requester": "alice",
         "operator": "bob",
-        "command": "nextflow run nf-core/rnaseq -profile singularity",
+        "command": "nextflow run nf-core/rnaseq -profile singularity --input inputs/samplesheet/samplesheet.csv",
         "pipeline_name": "nf-core/rnaseq",
         "pipeline_version": "3.18.0",
         "output_directory": ".docs/results-web/fixtures/files/rnaseq",
         "files": [
             {
                 "path": "reports/report.csv",
-                "mtime": "2026-04-16T09:00:00Z",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "reports/report-qc.csv",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
                 "path": "qc/images/image.png",
-                "mtime": "2026-04-16T09:05:00Z",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
+                "path": "qc/images/gallery/plot-001.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-002.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-003.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-004.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-005.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-006.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-007.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-008.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-009.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-010.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-011.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-012.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-013.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-014.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-015.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-016.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-017.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-018.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-019.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-020.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-021.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-022.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-023.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-024.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-025.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-026.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-027.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-028.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-029.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-030.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-031.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-032.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-033.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-034.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-035.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-036.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-037.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-038.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-039.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-040.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-041.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-042.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-043.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-044.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-045.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-046.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-047.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-048.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-049.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-050.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-051.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-052.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-053.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-054.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-055.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-056.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-057.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-058.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-059.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-060.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-061.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-062.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-063.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-064.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-065.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-066.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-067.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-068.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-069.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-070.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-071.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-072.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-073.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-074.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-075.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-076.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-077.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-078.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-079.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-080.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-081.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-082.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-083.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-084.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-085.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-086.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-087.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-088.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-089.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-090.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-091.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-092.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-093.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-094.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-095.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-096.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-097.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-098.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-099.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-100.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-101.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-102.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-103.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-104.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-105.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-106.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-107.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-108.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-109.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-110.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-111.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-112.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-113.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-114.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-115.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-116.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-117.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-118.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-119.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/images/gallery/plot-120.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/notes/summary.txt",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/notes/multiqc-summary.txt",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "alignment/star/sample-a/Log.final.out",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "alignment/star/sample-a/ReadsPerGene.out.tab",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "alignment/star/sample-b/Log.final.out",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "delivery/expression/counts.tsv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "delivery/expression/plots/volcano.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "inputs/samplesheet/samplesheet.csv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "input"
+            },
+            {
+                "path": "inputs/reference/genome.fa",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "input"
+            },
+            {
+                "path": "inputs/reference/genes.gtf",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "input"
+            },
+            {
                 "path": "pipeline/pipeline.nf",
-                "mtime": "2026-04-16T09:10:00Z",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "pipeline"
             },
             {
-                "path": "qc/notes/summary.txt",
-                "mtime": "2026-04-16T09:12:00Z",
+                "path": "pipeline/modules/alignment.nf",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
-                "kind": "output"
+                "kind": "pipeline"
+            },
+            {
+                "path": "pipeline/conf/base.config",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "pipeline"
             }
         ],
         "metadata": {
@@ -45,28 +837,88 @@
         "run_key": "runid=59231&unique=tumour_pair",
         "requester": "carol",
         "operator": "dan",
-        "command": "nextflow run nf-core/sarek --tools manta,strelka",
+        "command": "nextflow run nf-core/sarek --tools manta,strelka --input inputs/bams",
         "pipeline_name": "nf-core/sarek",
         "pipeline_version": "3.4.2",
         "output_directory": ".docs/results-web/fixtures/files/sarek",
         "files": [
             {
                 "path": "reports/summary.md",
-                "mtime": "2026-04-16T10:00:00Z",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
                 "path": "reports/html/results.html",
-                "mtime": "2026-04-16T10:05:00Z",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "reports/html/cohort/coverage.html",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
                 "path": "variants/calls/README.txt",
-                "mtime": "2026-04-16T10:08:00Z",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
+            },
+            {
+                "path": "variants/calls/tumour.somatic.vcf",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "variants/calls/normal.germline.vcf",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "variants/plots/coverage-tumour.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "variants/plots/coverage-normal.png",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "inputs/bams/tumour.bam",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "input"
+            },
+            {
+                "path": "inputs/bams/normal.bam",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "input"
+            },
+            {
+                "path": "pipeline/main.nf",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "pipeline"
+            },
+            {
+                "path": "pipeline/modules/variant-caller.nf",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "pipeline"
+            },
+            {
+                "path": "pipeline/params/casesheet.json",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "pipeline"
             }
         ],
         "metadata": {
@@ -80,26 +932,80 @@
         "run_key": "runid=77123&unique=panel_a",
         "requester": "erin",
         "operator": "frank",
-        "command": "nextflow run nf-amplicon -params-file config.json",
+        "command": "nextflow run nf-amplicon -params-file config/review/config.json",
         "pipeline_name": "wtsi/amplicon",
         "pipeline_version": "1.7.1",
         "output_directory": ".docs/results-web/fixtures/files/amplicon",
         "files": [
             {
                 "path": "qc/plots/plot.svg",
-                "mtime": "2026-04-16T11:00:00Z",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "qc/plots/amplicon-coverage.svg",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
                 "path": "config/review/config.json",
-                "mtime": "2026-04-16T11:05:00Z",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "input"
+            },
+            {
+                "path": "inputs/panels/panel-a.bed",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "input"
+            },
+            {
+                "path": "inputs/reads/run-info.csv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "input"
+            },
+            {
+                "path": "pipeline/main.nf",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "pipeline"
+            },
+            {
+                "path": "pipeline/modules/consensus.nf",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "pipeline"
+            },
+            {
+                "path": "logs/runtime/run.log",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
-                "path": "logs/runtime/run.log",
-                "mtime": "2026-04-16T11:08:00Z",
+                "path": "logs/runtime/stages/publish.log",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "results/variants/sample-01.json",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "results/variants/sample-02.json",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "delivery/reports/validation.txt",
+                "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
             }

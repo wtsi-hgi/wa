@@ -105,6 +105,22 @@ test.describe("Q1 critical results flows", () => {
         "images",
         "image.png",
     );
+    const rnaseqGalleryFirstImagePath = path.join(
+        fixturesRoot,
+        "rnaseq",
+        "qc",
+        "images",
+        "gallery",
+        "plot-001.png",
+    );
+    const rnaseqGalleryPageTwoImagePath = path.join(
+        fixturesRoot,
+        "rnaseq",
+        "qc",
+        "images",
+        "gallery",
+        "plot-101.png",
+    );
 
     test("shows the search builder above recent registrations on the dashboard", async ({
         page,
@@ -357,6 +373,36 @@ test.describe("Q1 critical results flows", () => {
         ).toBeVisible();
         await expect(fullSizeImage).toHaveAttribute("src", /\/api\/file\?/);
         await expect(fullSizeImage).not.toHaveAttribute("src", /thumb=true/);
+    });
+
+    test("paginates the seeded image gallery after the first 100 previews", async ({
+        page,
+    }) => {
+        await openResultDetail(page, rnaseqPipelineName);
+
+        await selectDirectoryForFile(page, rnaseqGalleryFirstImagePath);
+        await page.getByLabel("Preview first 100 files").check();
+
+        await expect(page.getByText("Page 1 of 2")).toBeVisible();
+        await expect(
+            page.locator(
+                `[data-grid-preview-path="${rnaseqGalleryFirstImagePath}"]`,
+            ),
+        ).toBeVisible();
+        await expect(
+            page.locator(
+                `[data-grid-preview-path="${rnaseqGalleryPageTwoImagePath}"]`,
+            ),
+        ).toHaveCount(0);
+
+        await page.getByRole("button", { name: "Next" }).click();
+
+        await expect(page.getByText("Page 2 of 2")).toBeVisible();
+        await expect(
+            page.locator(
+                `[data-grid-preview-path="${rnaseqGalleryPageTwoImagePath}"]`,
+            ),
+        ).toBeVisible();
     });
 
     test("renders seeded JSON file content after the loading state clears", async ({
