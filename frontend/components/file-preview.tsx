@@ -452,28 +452,34 @@ function LightboxImage({
                 aria-label="Open image lightbox"
                 className={
                     buttonClassName ??
-                    "group inline-flex overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]"
+                    "group relative inline-flex cursor-zoom-in overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]"
                 }
                 onClick={() => setLightboxOpen(true)}
             >
-                <Image
-                    alt={`${fileName} preview`}
-                    className={cn(
-                        "rounded-xl object-contain transition duration-200 group-hover:scale-[1.01]",
-                        imageClassName,
-                    )}
-                    decoding="async"
-                    loading="lazy"
-                    src={thumbnailUrl}
-                    unoptimized
-                    width={thumbnailWidth}
-                    height={thumbnailHeight}
-                    sizes={sizes}
-                    style={{
-                        maxHeight: `${maxHeightPx}px`,
-                        maxWidth: `${thumbnailWidth}px`,
-                    }}
-                />
+                <span className="relative inline-flex">
+                    <Image
+                        alt={`${fileName} preview`}
+                        className={cn(
+                            "rounded-xl object-contain transition duration-200 group-hover:scale-[1.01]",
+                            imageClassName,
+                        )}
+                        decoding="async"
+                        loading="lazy"
+                        src={thumbnailUrl}
+                        unoptimized
+                        width={thumbnailWidth}
+                        height={thumbnailHeight}
+                        sizes={sizes}
+                        style={{
+                            maxHeight: `${maxHeightPx}px`,
+                            maxWidth: `${thumbnailWidth}px`,
+                        }}
+                    />
+                    <span className="pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-2 rounded-full bg-[color:rgba(15,23,42,0.78)] px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-white shadow-lg">
+                        <Expand className="size-3.5" aria-hidden="true" />
+                        Click to enlarge
+                    </span>
+                </span>
             </button>
 
             {lightboxOpen ? (

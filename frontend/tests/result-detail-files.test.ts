@@ -50,8 +50,12 @@ vi.mock("@/components/file-browser", () => ({
         previewMode,
         previewPage,
         previewPageCount,
+        previewSummary,
+        renderGridPreview,
+        renderSinglePreview,
         selectedDirectory,
         selectedPath,
+        visibleFiles,
     }: {
         files: FileEntry[];
         onPreviewModeChange?: (mode: "single" | "grid") => void;
@@ -62,19 +66,26 @@ vi.mock("@/components/file-browser", () => ({
         previewMode?: "single" | "grid";
         previewPage?: number;
         previewPageCount?: number;
+        previewSummary?: string;
+        renderGridPreview?: (file: FileEntry) => React.ReactNode;
+        renderSinglePreview?: (file: FileEntry | null) => React.ReactNode;
         selectedDirectory?: string;
         selectedPath?: string;
+        visibleFiles?: FileEntry[];
     }) =>
         createElement(
             "div",
             {
+                "data-file-browser": "true",
                 "data-preview-height": String(previewHeight ?? 0),
                 "data-preview-mode": previewMode ?? "single",
                 "data-preview-page": String(previewPage ?? 1),
                 "data-preview-page-count": String(previewPageCount ?? 1),
+                "data-preview-summary": previewSummary ?? "",
                 "data-selected-directory": selectedDirectory ?? "",
                 "data-selected-path": selectedPath ?? "",
             },
+            createElement("h2", { key: "title" }, "File Browser"),
             [
                 ...new Set(
                     files.map(
@@ -94,7 +105,7 @@ vi.mock("@/components/file-browser", () => ({
                     directoryPath,
                 ),
             ),
-            files.map((file) =>
+            (visibleFiles ?? files).map((file) =>
                 createElement(
                     "button",
                     {
@@ -139,6 +150,31 @@ vi.mock("@/components/file-browser", () => ({
                 },
                 "next-page",
             ),
+            previewMode === "single"
+                ? createElement(
+                      "div",
+                      {
+                          key: "single-preview",
+                          "data-testid": "single-preview-slot",
+                      },
+                      renderSinglePreview?.(
+                          files.find((file) => file.path === selectedPath) ??
+                              null,
+                      ),
+                  )
+                : null,
+            ...(previewMode === "grid"
+                ? (visibleFiles ?? files).map((file) =>
+                      createElement(
+                          "div",
+                          {
+                              key: `grid-preview-${file.path}`,
+                              "data-testid": "grid-preview-slot",
+                          },
+                          renderGridPreview?.(file),
+                      ),
+                  )
+                : []),
         ),
 }));
 
@@ -203,10 +239,11 @@ describe("O1 result detail file integration", () => {
         );
 
         expect(screen.queryByText("File focus")).toBeNull();
+        expect(screen.queryByText("Selected file")).toBeNull();
+        expect(screen.getByText("File Browser")).toBeTruthy();
         expect(
             screen.getByText("preview:/tmp/results/a/first.png"),
         ).toBeTruthy();
-        expect(screen.getByText("Selected file")).toBeTruthy();
     });
 
     it("switches to the first file in a newly selected directory", async () => {
@@ -268,6 +305,53 @@ describe("O1 result detail file integration", () => {
         await waitFor(() => {
             expect(screen.getAllByTestId("thumbnail-preview")).toHaveLength(1);
         });
+    });
+
+    it("paginates the default single-preview file list after the first 100 files", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+        const files = Array.from({ length: 101 }, (_, index) =>
+            buildFile(
+                `/tmp/results/a/plot-${String(index + 1).padStart(3, "0")}.png`,
+            ),
+        );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files,
+                resultId: "result-1",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(
+                screen.getAllByRole("button", {
+                    name: /\/tmp\/results\/a\/plot-/,
+                }),
+            ).toHaveLength(100);
+        });
+
+        expect(
+            screen.queryByRole("button", {
+                name: "/tmp/results/a/plot-101.png",
+            }),
+        ).toBeNull();
+
+        fireEvent.click(screen.getByRole("button", { name: "next-page" }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByRole("button", {
+                    name: "/tmp/results/a/plot-101.png",
+                }),
+            ).toBeTruthy();
+        });
+
+        expect(
+            screen.getAllByRole("button", {
+                name: /\/tmp\/results\/a\/plot-/,
+            }),
+        ).toHaveLength(1);
     });
 
     it("renders non-image files as gallery preview rows in grid mode", async () => {

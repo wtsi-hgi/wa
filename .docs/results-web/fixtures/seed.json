@@ -7,25 +7,31 @@
         "command": "nextflow run nf-core/rnaseq -profile singularity",
         "pipeline_name": "nf-core/rnaseq",
         "pipeline_version": "3.18.0",
-        "output_directory": ".docs/results-web/fixtures/files",
+        "output_directory": ".docs/results-web/fixtures/files/rnaseq",
         "files": [
             {
-                "path": "report.csv",
+                "path": "reports/report.csv",
                 "mtime": "2026-04-16T09:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
-                "path": "image.png",
+                "path": "qc/images/image.png",
                 "mtime": "2026-04-16T09:05:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
-                "path": "pipeline.nf",
+                "path": "pipeline/pipeline.nf",
                 "mtime": "2026-04-16T09:10:00Z",
                 "size": 0,
                 "kind": "pipeline"
+            },
+            {
+                "path": "qc/notes/summary.txt",
+                "mtime": "2026-04-16T09:12:00Z",
+                "size": 0,
+                "kind": "output"
             }
         ],
         "metadata": {
@@ -42,17 +48,23 @@
         "command": "nextflow run nf-core/sarek --tools manta,strelka",
         "pipeline_name": "nf-core/sarek",
         "pipeline_version": "3.4.2",
-        "output_directory": ".docs/results-web/fixtures/files",
+        "output_directory": ".docs/results-web/fixtures/files/sarek",
         "files": [
             {
-                "path": "summary.md",
+                "path": "reports/summary.md",
                 "mtime": "2026-04-16T10:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
-                "path": "results.html",
+                "path": "reports/html/results.html",
                 "mtime": "2026-04-16T10:05:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "variants/calls/README.txt",
+                "mtime": "2026-04-16T10:08:00Z",
                 "size": 0,
                 "kind": "output"
             }
@@ -71,17 +83,23 @@
         "command": "nextflow run nf-amplicon -params-file config.json",
         "pipeline_name": "wtsi/amplicon",
         "pipeline_version": "1.7.1",
-        "output_directory": ".docs/results-web/fixtures/files",
+        "output_directory": ".docs/results-web/fixtures/files/amplicon",
         "files": [
             {
-                "path": "plot.svg",
+                "path": "qc/plots/plot.svg",
                 "mtime": "2026-04-16T11:00:00Z",
                 "size": 0,
                 "kind": "output"
             },
             {
-                "path": "config.json",
+                "path": "config/review/config.json",
                 "mtime": "2026-04-16T11:05:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "logs/runtime/run.log",
+                "mtime": "2026-04-16T11:08:00Z",
                 "size": 0,
                 "kind": "output"
             }

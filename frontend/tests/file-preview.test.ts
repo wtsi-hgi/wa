@@ -383,6 +383,19 @@ describe("O1 file preview", () => {
         expect(image.getAttribute("style")).toContain("max-height: 240px");
     });
 
+    it("shows an explicit enlarge affordance on image previews", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/image.png" }),
+            content: {
+                content: "",
+                contentType: "image/png",
+            },
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fimage.png",
+        });
+
+        expect(screen.getByText("Click to enlarge")).toBeTruthy();
+    });
+
     it("opens a lightbox overlay when the image thumbnail is clicked", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/image.png" }),

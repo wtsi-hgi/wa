@@ -1,0 +1,7 @@
+Coverage summary
+================
+
+- Batch: exon_lib
+- Samples reviewed: 20
+- All FastQC checkpoints passed.
+- Alignment rates stayed above 96% for the seeded cohort.

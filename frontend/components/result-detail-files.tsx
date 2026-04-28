@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Images } from "lucide-react";
 
 import {
     buildDirectoryGroups,
@@ -320,22 +319,6 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         effectivePreviewPage * thumbnailsPerPage,
     );
 
-    const previewContent =
-        effectiveSelectedFile &&
-        previewState.path === effectiveSelectedFile.path
-            ? previewState.content
-            : undefined;
-    const previewError =
-        effectiveSelectedFile &&
-        previewState.path === effectiveSelectedFile.path
-            ? previewState.error
-            : undefined;
-    const isLoading =
-        effectiveSelectedFile &&
-        previewState.path === effectiveSelectedFile.path
-            ? previewState.isLoading
-            : false;
-
     useEffect(() => {
         if (
             previewMode === "grid" ||
@@ -402,153 +385,102 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         };
     }, [effectiveSelectedFile, previewMode, resultId]);
 
-    return (
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(24rem,0.95fr)] 2xl:grid-cols-[minmax(0,1.05fr)_minmax(28rem,0.95fr)]">
-            <div className="min-w-0">
-                <FileBrowser
-                    files={files}
-                    onPreviewHeightChange={setPreviewHeight}
-                    onPreviewModeChange={(nextMode) => {
-                        setPreviewMode(nextMode);
-                        setPreviewPage(1);
-                    }}
-                    onPreviewPageChange={setPreviewPage}
-                    onSelectDirectory={(directoryPath) => {
-                        if (directoryPath === selectedDirectory) {
-                            return;
-                        }
+    const renderSinglePreview = (file: FileEntry | null) => {
+        if (!file) {
+            return (
+                <p className="text-sm leading-7 text-muted-foreground">
+                    No files are registered for this result set.
+                </p>
+            );
+        }
 
-                        const nextGroup = directoryGroups.find(
-                            (group) => group.path === directoryPath,
-                        );
-                        const nextFile = nextGroup?.files[0] ?? null;
+        const previewContent =
+            previewState.path === file.path ? previewState.content : undefined;
+        const previewError =
+            previewState.path === file.path ? previewState.error : undefined;
+        const isLoading =
+            previewState.path === file.path ? previewState.isLoading : false;
 
-                        setSelectedDirectory(directoryPath);
-                        setSelectedFile(nextFile);
-                        setPreviewPage(1);
-                        setPreviewState(buildPreviewState(nextFile));
-                    }}
-                    onSelectFile={(file) => {
-                        if (selectedFile?.path === file.path) {
-                            return;
-                        }
-
-                        setSelectedFile(file);
-                        setPreviewState(buildPreviewState(file));
-                    }}
-                    previewHeight={previewHeight}
-                    previewMode={previewMode}
-                    previewPage={effectivePreviewPage}
-                    previewPageCount={previewPageCount}
-                    selectedDirectory={selectedGroup?.path}
-                    selectedPath={effectiveSelectedFile?.path}
+        return (
+            <div data-selected-file-path={file.path}>
+                <FilePreview
+                    content={previewContent}
+                    error={previewError}
+                    file={file}
+                    isLoading={isLoading}
+                    proxyUrl={buildFileUrl(resultId, file.path)}
                 />
             </div>
+        );
+    };
 
-            <section className="min-w-0 rounded-[1.75rem] border border-border/70 bg-card/85 p-6 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-                {previewMode === "single" ? (
-                    <>
-                        <div className="space-y-2">
-                            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                                Preview
-                            </p>
-                            <h2 className="text-2xl font-semibold tracking-tight">
-                                Selected file
-                            </h2>
-                        </div>
+    return (
+        <FileBrowser
+            files={files}
+            onPreviewHeightChange={setPreviewHeight}
+            onPreviewModeChange={(nextMode) => {
+                setPreviewMode(nextMode);
+                setPreviewPage(1);
+            }}
+            onPreviewPageChange={setPreviewPage}
+            onSelectDirectory={(directoryPath) => {
+                if (directoryPath === selectedDirectory) {
+                    return;
+                }
 
-                        {effectiveSelectedFile ? (
-                            <div
-                                className="mt-6"
-                                data-selected-file-path={
-                                    effectiveSelectedFile.path
-                                }
-                            >
-                                <FilePreview
-                                    content={previewContent}
-                                    error={previewError}
-                                    file={effectiveSelectedFile}
-                                    isLoading={isLoading}
-                                    proxyUrl={buildFileUrl(
-                                        resultId,
-                                        effectiveSelectedFile.path,
-                                    )}
-                                />
-                            </div>
-                        ) : (
-                            <p className="mt-6 text-sm leading-7 text-muted-foreground">
-                                No files are registered for this result set.
-                            </p>
-                        )}
-                    </>
+                const nextGroup = directoryGroups.find(
+                    (group) => group.path === directoryPath,
+                );
+                const nextFile = nextGroup?.files[0] ?? null;
+
+                setSelectedDirectory(directoryPath);
+                setSelectedFile(nextFile);
+                setPreviewPage(1);
+                setPreviewState(buildPreviewState(nextFile));
+            }}
+            onSelectFile={(file) => {
+                if (selectedFile?.path === file.path) {
+                    return;
+                }
+
+                setSelectedFile(file);
+                setPreviewState(buildPreviewState(file));
+            }}
+            previewHeight={previewHeight}
+            previewMode={previewMode}
+            previewPage={effectivePreviewPage}
+            previewPageCount={previewPageCount}
+            previewSummary={
+                previewPageCount > 1
+                    ? pageSummary(
+                          selectedDirectoryFiles.length,
+                          effectivePreviewPage,
+                      )
+                    : undefined
+            }
+            renderGridPreview={(file) =>
+                isImageFile(file.path) ? (
+                    <FileImageThumbnail
+                        file={file}
+                        fullSizeUrl={buildFileUrl(resultId, file.path)}
+                        height={previewHeight}
+                        thumbnailUrl={buildFileUrl(resultId, file.path, {
+                            height: previewHeight,
+                            thumbnail: true,
+                            width: Math.max(
+                                320,
+                                Math.round(previewHeight * 1.6),
+                            ),
+                        })}
+                    />
                 ) : (
-                    <>
-                        <div className="flex flex-col gap-3 border-b border-border/60 pb-5 xl:flex-row xl:items-end xl:justify-between">
-                            <div>
-                                <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                                    Preview gallery
-                                </p>
-                                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                                    {selectedGroup?.path ??
-                                        "Selected directory"}
-                                </h2>
-                                <p className="mt-2 text-sm text-muted-foreground">
-                                    {pageSummary(
-                                        selectedDirectoryFiles.length,
-                                        effectivePreviewPage,
-                                    )}
-                                </p>
-                            </div>
-                            <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-4 py-2 text-sm text-muted-foreground">
-                                <Images
-                                    className="size-4 text-primary"
-                                    aria-hidden="true"
-                                />
-                                1 preview per row at {previewHeight}px high
-                            </div>
-                        </div>
-
-                        <div
-                            className="mt-6 space-y-4"
-                            data-preview-mode="grid"
-                        >
-                            {visiblePreviewFiles.map((file) =>
-                                isImageFile(file.path) ? (
-                                    <FileImageThumbnail
-                                        key={file.path}
-                                        file={file}
-                                        fullSizeUrl={buildFileUrl(
-                                            resultId,
-                                            file.path,
-                                        )}
-                                        height={previewHeight}
-                                        thumbnailUrl={buildFileUrl(
-                                            resultId,
-                                            file.path,
-                                            {
-                                                height: previewHeight,
-                                                thumbnail: true,
-                                                width: Math.max(
-                                                    320,
-                                                    Math.round(
-                                                        previewHeight * 1.6,
-                                                    ),
-                                                ),
-                                            },
-                                        )}
-                                    />
-                                ) : (
-                                    <GalleryPreviewRow
-                                        key={file.path}
-                                        file={file}
-                                        resultId={resultId}
-                                    />
-                                ),
-                            )}
-                        </div>
-                    </>
-                )}
-            </section>
-        </section>
+                    <GalleryPreviewRow file={file} resultId={resultId} />
+                )
+            }
+            renderSinglePreview={renderSinglePreview}
+            selectedDirectory={selectedGroup?.path}
+            selectedPath={effectiveSelectedFile?.path}
+            visibleFiles={visiblePreviewFiles}
+        />
     );
 }

@@ -1,0 +1,9 @@
+{
+    "panel": "haem",
+    "minimum_depth": 120,
+    "emit_qc_bundle": true,
+    "reviewers": [
+        "erin",
+        "frank"
+    ]
+}

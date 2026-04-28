@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -48,7 +48,7 @@ describe("N1 file browser", () => {
         container.remove();
     });
 
-    it("groups files by parent directory and flattens file rows within the selected directory", async () => {
+    it("renders a unified file browser pane with embedded single preview content", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
         await act(async () => {
@@ -62,15 +62,23 @@ describe("N1 file browser", () => {
                     ],
                     onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
                 }),
             );
         });
 
-        expect(container.textContent).toContain("Directories");
+        expect(container.textContent).toContain("File Browser");
+        expect(container.textContent).toContain("Folders");
         expect(container.textContent).toContain("/out/a");
         expect(container.textContent).toContain("2 files");
         expect(container.textContent).toContain("1.txt");
         expect(container.textContent).toContain("2.txt");
+        expect(container.textContent).toContain("/out/a/1.txt");
         expect(container.textContent).not.toContain("/out/b/3.txt");
 
         await click(
@@ -79,6 +87,48 @@ describe("N1 file browser", () => {
 
         expect(container.textContent).toContain("3.txt");
         expect(container.textContent).not.toContain("1.txt");
+    });
+
+    it("renders grid previews beside the current page of file rows", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/a/001.png", "output"),
+            buildFile("/results/a/002.png", "output"),
+            buildFile("/results/a/003.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "grid",
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "grid-preview" },
+                            `preview:${file.path}`,
+                        ),
+                    visibleFiles: files.slice(0, 2),
+                }),
+            );
+        });
+
+        expect(
+            container.querySelectorAll('[data-testid="grid-preview"]'),
+        ).toHaveLength(2);
+        expect(container.textContent).toContain("preview:/results/a/001.png");
+        expect(container.textContent).toContain("preview:/results/a/002.png");
+        expect(container.textContent).not.toContain(
+            "preview:/results/a/003.png",
+        );
+        expect(container.textContent).toContain("001.png");
+        expect(container.textContent).toContain("002.png");
+        expect(container.textContent).not.toContain("003.png");
     });
 
     it("shows an empty state when there are no registered files", async () => {
@@ -228,5 +278,57 @@ describe("N1 file browser", () => {
         expect(container.textContent).toContain("Preview first 100 files");
         expect(container.textContent).toContain("Preview height");
         expect(container.textContent).toContain("Page 2 of 3");
+    });
+
+    it("paginates the file list in single preview mode", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = Array.from({ length: 101 }, (_, index) =>
+            buildFile(
+                `/results/plot-${String(index + 1).padStart(3, "0")}.png`,
+                "output",
+            ),
+        );
+        const handlePreviewPageChange = vi.fn();
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewPageChange: handlePreviewPageChange,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    previewPage: 1,
+                    previewPageCount: 2,
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files.slice(0, 100),
+                }),
+            );
+        });
+
+        expect(container.textContent).toContain("Page 1 of 2");
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/plot-100.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/plot-101.png"]',
+            ),
+        ).toBeNull();
+
+        await click(
+            Array.from(container.querySelectorAll("button")).find(
+                (button) => button.textContent === "Next",
+            ) ?? null,
+        );
+
+        expect(handlePreviewPageChange).toHaveBeenCalledWith(2);
     });
 });
