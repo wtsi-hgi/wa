@@ -582,6 +582,16 @@ export function FilePreview({
     const downloadUrl = buildDownloadUrl(proxyUrl);
     const fileName = file.path.split("/").pop() ?? file.path;
     const previewable = isPreviewable(renderer, file.path);
+    const highlightedContent = useMemo(() => {
+        if (renderer !== "code") {
+            return undefined;
+        }
+
+        return highlightCode(
+            content?.content ?? "",
+            content?.contentType ?? "text/plain",
+        );
+    }, [content?.content, content?.contentType, renderer]);
 
     if (error?.status === 413) {
         return (
@@ -727,11 +737,7 @@ export function FilePreview({
                             <pre className="overflow-x-auto p-5 text-sm leading-7 text-slate-100">
                                 <code
                                     dangerouslySetInnerHTML={{
-                                        __html: highlightCode(
-                                            content?.content ?? "",
-                                            content?.contentType ??
-                                                "text/plain",
-                                        ),
+                                        __html: highlightedContent ?? "",
                                     }}
                                 />
                             </pre>

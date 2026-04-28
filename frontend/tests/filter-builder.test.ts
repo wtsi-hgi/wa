@@ -150,7 +150,7 @@ describe("K1 filter builder component", () => {
     it("shows cached suggestions for non-study fields and applies a selected value", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
-        render(
+        const { container } = render(
             createElement(FilterBuilder, {
                 currentFilters: {},
                 metaKeys: ["library"],
@@ -169,11 +169,38 @@ describe("K1 filter builder component", () => {
             target: { value: "rna" },
         });
 
-        fireEvent.click(
-            await screen.findByRole("button", {
-                name: /use nf-core\/rnaseq/i,
-            }),
+        const popover = container.querySelector(
+            "[data-search-builder-popover='true']",
         );
+        const fieldList = container.querySelector(
+            "[data-search-builder-field-list='true']",
+        );
+        const footerPanel = container.querySelector(
+            "[data-search-builder-selected-field-panel='true']",
+        );
+        const valueInput = screen.getByLabelText(/pipeline name value/i);
+
+        expect(popover).toBeTruthy();
+        expect(fieldList).toBeTruthy();
+        expect(footerPanel).toBeTruthy();
+        expect(fieldList?.contains(valueInput)).toBe(false);
+        expect(footerPanel?.contains(valueInput)).toBe(true);
+        expect(
+            screen.queryByRole("button", { name: /use nf-core\/rnaseq/i }),
+        ).toBeNull();
+        expect(valueInput.getAttribute("list")).toBe(
+            "filter-suggestions-pipeline_name",
+        );
+        expect(
+            container.querySelector(
+                "datalist#filter-suggestions-pipeline_name option[value='nf-core/rnaseq']",
+            ),
+        ).toBeTruthy();
+
+        fireEvent.change(valueInput, {
+            target: { value: "nf-core/rnaseq" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith(
             "/?pipeline_name=nf-core%2Frnaseq",

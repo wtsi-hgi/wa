@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 
 import {
     buildDirectoryGroups,
@@ -189,7 +189,7 @@ function pageSummary(total: number, page: number): string {
     return `Showing ${start}-${end} of ${total} files`;
 }
 
-function GalleryPreviewRow({
+const GalleryPreviewRow = memo(function GalleryPreviewRow({
     file,
     resultId,
 }: {
@@ -271,6 +271,16 @@ function GalleryPreviewRow({
                 proxyUrl={buildFileUrl(resultId, file.path)}
             />
         </div>
+    );
+}, areGalleryPreviewRowPropsEqual);
+
+function areGalleryPreviewRowPropsEqual(
+    previous: { file: FileEntry; resultId: string },
+    next: { file: FileEntry; resultId: string },
+): boolean {
+    return (
+        previous.file.path === next.file.path &&
+        previous.resultId === next.resultId
     );
 }
 
@@ -478,7 +488,11 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                         })}
                     />
                 ) : (
-                    <GalleryPreviewRow file={file} resultId={resultId} />
+                    <GalleryPreviewRow
+                        file={file}
+                        key={file.path}
+                        resultId={resultId}
+                    />
                 )
             }
             renderSinglePreview={renderSinglePreview}

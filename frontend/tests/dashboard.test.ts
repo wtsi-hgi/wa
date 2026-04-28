@@ -323,13 +323,23 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
         fireEvent.click(screen.getByRole("option", { name: /pipeline name/i }));
-        fireEvent.change(screen.getByLabelText(/pipeline name value/i), {
+        const valueInput = screen.getByLabelText(/pipeline name value/i);
+
+        fireEvent.change(valueInput, {
             target: { value: "rna" },
         });
 
+        expect(valueInput.getAttribute("list")).toBe(
+            "filter-suggestions-pipeline_name",
+        );
         expect(
-            await screen.findByRole("button", { name: /use nf-core\/rnaseq/i }),
+            container.querySelector(
+                "datalist#filter-suggestions-pipeline_name option[value='nf-core/rnaseq']",
+            ),
         ).toBeTruthy();
+        expect(
+            screen.queryByRole("button", { name: /use nf-core\/rnaseq/i }),
+        ).toBeNull();
 
         await act(async () => {
             root?.unmount();
@@ -374,13 +384,24 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
         fireEvent.click(screen.getByRole("option", { name: /^requester$/i }));
-        fireEvent.change(screen.getByLabelText(/requester value/i), {
+        const valueInput = screen.getByLabelText(/requester value/i);
+
+        fireEvent.change(valueInput, {
             target: { value: "car" },
         });
 
-        fireEvent.click(
-            await screen.findByRole("button", { name: /use carol/i }),
-        );
+        expect(valueInput.getAttribute("list")).toBe("filter-suggestions-user");
+        expect(
+            container.querySelector(
+                "datalist#filter-suggestions-user option[value='carol']",
+            ),
+        ).toBeTruthy();
+        expect(screen.queryByRole("button", { name: /use carol/i })).toBeNull();
+
+        fireEvent.change(valueInput, {
+            target: { value: "carol" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?user=carol");
 

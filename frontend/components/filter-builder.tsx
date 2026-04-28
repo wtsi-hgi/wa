@@ -12,7 +12,6 @@ import {
     CommandInput,
     CommandItem,
     CommandList,
-    CommandSeparator,
 } from "@/components/ui/command";
 import { buildSearchQuery, type SearchFilters } from "@/lib/search-params";
 import { cn } from "@/lib/utils";
@@ -198,6 +197,9 @@ export function FilterBuilder({
         selectedFieldKey,
         draftValue,
     );
+    const suggestionListId = selectedFieldKey
+        ? `filter-suggestions-${selectedFieldKey}`
+        : undefined;
 
     function pushFilters(filters: SearchFilters) {
         const renderedQuery = buildSearchQuery(filters).toString();
@@ -273,50 +275,59 @@ export function FilterBuilder({
                                 aria-label="Search builder filter panel"
                                 className="absolute right-0 z-50 mt-3 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border border-border/80 bg-popover p-0 text-popover-foreground shadow-[0_28px_90px_-54px_rgba(28,40,58,0.72)] outline-none"
                             >
-                                <Command>
+                                <Command className="max-h-[32rem]">
                                     <CommandInput placeholder="Find a field" />
-                                    <CommandList>
-                                        <CommandEmpty>
-                                            No matching fields.
-                                        </CommandEmpty>
-                                        <CommandGroup>
-                                            {fieldOptions.map((field) => {
-                                                const isSelected =
-                                                    field.key ===
-                                                    selectedFieldKey;
+                                    <div className="flex min-h-0 flex-col">
+                                        <CommandList
+                                            data-search-builder-field-list="true"
+                                            className="max-h-72 min-h-0 flex-1 p-2"
+                                        >
+                                            <CommandEmpty>
+                                                No matching fields.
+                                            </CommandEmpty>
+                                            <CommandGroup>
+                                                {fieldOptions.map((field) => {
+                                                    const isSelected =
+                                                        field.key ===
+                                                        selectedFieldKey;
 
-                                                return (
-                                                    <CommandItem
-                                                        key={field.key}
-                                                        aria-label={field.label}
-                                                        className="flex w-full items-center justify-between gap-3 text-left"
-                                                        data-filter-field-option={
-                                                            field.key
-                                                        }
-                                                        value={`${field.label} ${field.key}`}
-                                                        onSelect={() =>
-                                                            handleFieldSelect(
-                                                                field.key,
-                                                            )
-                                                        }
-                                                    >
-                                                        <span className="font-medium text-foreground">
-                                                            {field.label}
-                                                        </span>
-                                                        <Check
-                                                            className={cn(
-                                                                "ml-auto size-4 text-primary",
-                                                                isSelected
-                                                                    ? "opacity-100"
-                                                                    : "opacity-0",
-                                                            )}
-                                                        />
-                                                    </CommandItem>
-                                                );
-                                            })}
-                                        </CommandGroup>
-                                        <CommandSeparator />
-                                        <div className="p-3">
+                                                    return (
+                                                        <CommandItem
+                                                            key={field.key}
+                                                            aria-label={
+                                                                field.label
+                                                            }
+                                                            className="flex w-full items-center justify-between gap-3 text-left"
+                                                            data-filter-field-option={
+                                                                field.key
+                                                            }
+                                                            value={`${field.label} ${field.key}`}
+                                                            onSelect={() =>
+                                                                handleFieldSelect(
+                                                                    field.key,
+                                                                )
+                                                            }
+                                                        >
+                                                            <span className="font-medium text-foreground">
+                                                                {field.label}
+                                                            </span>
+                                                            <Check
+                                                                className={cn(
+                                                                    "ml-auto size-4 text-primary",
+                                                                    isSelected
+                                                                        ? "opacity-100"
+                                                                        : "opacity-0",
+                                                                )}
+                                                            />
+                                                        </CommandItem>
+                                                    );
+                                                })}
+                                            </CommandGroup>
+                                        </CommandList>
+                                        <div
+                                            data-search-builder-selected-field-panel="true"
+                                            className="border-t border-border/70 p-3"
+                                        >
                                             {selectedField ? (
                                                 selectedField.key ===
                                                 "study_id" ? (
@@ -348,6 +359,9 @@ export function FilterBuilder({
                                                                     selectedField.key
                                                                 }
                                                                 id="filter-value"
+                                                                list={
+                                                                    suggestionListId
+                                                                }
                                                                 value={
                                                                     draftValue
                                                                 }
@@ -365,46 +379,30 @@ export function FilterBuilder({
                                                                 }
                                                                 className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/30"
                                                             />
-                                                        </div>
-                                                        {visibleSuggestions.length >
-                                                        0 ? (
-                                                            <div className="space-y-2">
-                                                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                                                    Suggestions
-                                                                </p>
-                                                                <div className="max-h-44 space-y-2 overflow-y-auto rounded-xl border border-border/70 bg-muted/20 p-2">
+                                                            {visibleSuggestions.length >
+                                                            0 ? (
+                                                                <datalist
+                                                                    id={
+                                                                        suggestionListId
+                                                                    }
+                                                                >
                                                                     {visibleSuggestions.map(
                                                                         (
                                                                             suggestion,
                                                                         ) => (
-                                                                            <button
+                                                                            <option
                                                                                 key={
                                                                                     suggestion
                                                                                 }
-                                                                                type="button"
-                                                                                aria-label={`Use ${suggestion}`}
-                                                                                onClick={() =>
-                                                                                    applyFilterValue(
-                                                                                        selectedField.key,
-                                                                                        suggestion,
-                                                                                    )
+                                                                                value={
+                                                                                    suggestion
                                                                                 }
-                                                                                className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition hover:bg-accent/45"
-                                                                            >
-                                                                                <span className="font-medium text-foreground">
-                                                                                    {
-                                                                                        suggestion
-                                                                                    }
-                                                                                </span>
-                                                                                <span className="text-xs text-muted-foreground">
-                                                                                    Autofill
-                                                                                </span>
-                                                                            </button>
+                                                                            />
                                                                         ),
                                                                     )}
-                                                                </div>
-                                                            </div>
-                                                        ) : null}
+                                                                </datalist>
+                                                            ) : null}
+                                                        </div>
                                                         <button
                                                             type="submit"
                                                             className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-95"
@@ -421,7 +419,7 @@ export function FilterBuilder({
                                                 </p>
                                             )}
                                         </div>
-                                    </CommandList>
+                                    </div>
                                 </Command>
                             </div>
                         ) : null}

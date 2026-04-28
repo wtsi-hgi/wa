@@ -225,6 +225,43 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
+    it("renders the single preview inside the selected directory file box", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/gallery/001.png", "output"),
+            buildFile("/results/gallery/002.png", "output"),
+            buildFile("/results/gallery/003.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                }),
+            );
+        });
+
+        const directoryFiles = container.querySelector(
+            '[data-file-browser-directory-files="/results/gallery"]',
+        );
+        const preview = container.querySelector(
+            '[data-file-browser-preview="single"]',
+        );
+
+        expect(directoryFiles).toBeTruthy();
+        expect(preview).toBeTruthy();
+        expect(directoryFiles?.contains(preview ?? null)).toBe(true);
+    });
+
     it("shows an empty state when there are no registered files", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
@@ -262,6 +299,61 @@ describe("N1 file browser", () => {
             "/out/project/run",
         ]);
         expect(tree[0]?.children[1]?.fileCount).toBe(2);
+    });
+
+    it("tracks recursive descendant totals for directory tree summaries", async () => {
+        const { buildDirectoryTree } =
+            await import("@/components/file-browser");
+
+        const tree = buildDirectoryTree([
+            buildFile("/out/project/run/1.csv", "output"),
+            buildFile("/out/project/run/deep/2.csv", "output"),
+            buildFile("/out/project/other/3.png", "output"),
+            buildFile("/out/project/other/leaf/4.txt", "output"),
+        ]);
+
+        expect(tree[0]?.path).toBe("/out/project");
+        expect(tree[0]?.fileCount).toBe(0);
+        expect(tree[0]?.children.map((node) => node.path)).toEqual([
+            "/out/project/other",
+            "/out/project/run",
+        ]);
+        expect(tree[0]?.descendantFileCount).toBe(4);
+        expect(tree[0]?.descendantDirectoryCount).toBe(4);
+        expect(tree[0]?.children[0]?.descendantFileCount).toBe(2);
+        expect(tree[0]?.children[0]?.descendantDirectoryCount).toBe(1);
+        expect(tree[0]?.children[1]?.descendantFileCount).toBe(2);
+        expect(tree[0]?.children[1]?.descendantDirectoryCount).toBe(1);
+    });
+
+    it("renders recursive file and subfolder totals in directory rows", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/out/project/run/1.csv", "output"),
+                        buildFile("/out/project/run/deep/2.csv", "output"),
+                        buildFile("/out/project/other/3.png", "output"),
+                        buildFile("/out/project/other/leaf/4.txt", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/out/project"]',
+            )?.textContent,
+        ).toContain("4 files");
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/out/project"]',
+            )?.textContent,
+        ).toContain("4 subfolders");
     });
 
     it("retains the root directory when files live directly under slash", async () => {

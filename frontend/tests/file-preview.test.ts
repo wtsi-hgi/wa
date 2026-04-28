@@ -2,7 +2,23 @@
 
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { highlightAutoMock } = vi.hoisted(() => ({
+    highlightAutoMock: vi.fn((content: string) => ({
+        value: `highlighted:${content}`,
+    })),
+}));
+
+vi.mock("highlight.js/lib/core", () => ({
+    default: {
+        highlight: vi.fn((content: string) => ({
+            value: `highlighted:${content}`,
+        })),
+        highlightAuto: highlightAutoMock,
+        registerLanguage: vi.fn(),
+    },
+}));
 
 import { FilePreview, type FilePreviewProps } from "@/components/file-preview";
 import type { FileEntry } from "@/lib/contracts";
@@ -41,6 +57,7 @@ function renderPreview(props: Partial<FilePreviewProps> = {}) {
 
 afterEach(() => {
     cleanup();
+    highlightAutoMock.mockClear();
 });
 
 describe("O1 file preview", () => {
@@ -466,5 +483,24 @@ describe("O1 file preview", () => {
         expect(
             screen.queryByRole("dialog", { name: /image preview lightbox/i }),
         ).toBeNull();
+    });
+
+    it("does not recompute syntax highlighting when a loaded code preview rerenders unchanged", () => {
+        const props: FilePreviewProps = {
+            content: {
+                content: '{"status":"ready"}',
+                contentType: "text/plain",
+            },
+            file: buildFile({ path: "/tmp/results/report.log" }),
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.log",
+        };
+        const rendered = render(createElement(FilePreview, props));
+
+        expect(highlightAutoMock).toHaveBeenCalledTimes(1);
+
+        rendered.rerender(createElement(FilePreview, props));
+
+        expect(highlightAutoMock).toHaveBeenCalledTimes(1);
     });
 });

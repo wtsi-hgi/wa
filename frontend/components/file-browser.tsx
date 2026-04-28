@@ -24,6 +24,8 @@ export type DirectoryGroup = {
 
 export type DirectoryTreeNode = {
     children: DirectoryTreeNode[];
+    descendantDirectoryCount: number;
+    descendantFileCount: number;
     fileCount: number;
     files: FileEntry[];
     label: string;
@@ -171,6 +173,14 @@ function compressDirectoryNode(rawNode: RawDirectoryNode): DirectoryTreeNode {
     const children = [...current.children.values()]
         .map((child) => compressDirectoryNode(child))
         .sort(compareDirectoryTreeNodes);
+    const descendantDirectoryCount = children.reduce(
+        (total, child) => total + 1 + child.descendantDirectoryCount,
+        0,
+    );
+    const descendantFileCount = children.reduce(
+        (total, child) => total + child.descendantFileCount,
+        current.group?.fileCount ?? 0,
+    );
     const weight = Math.min(
         current.group
             ? fileKindOrder[current.group.files[0]?.kind ?? "pipeline"]
@@ -180,6 +190,8 @@ function compressDirectoryNode(rawNode: RawDirectoryNode): DirectoryTreeNode {
 
     return {
         children,
+        descendantDirectoryCount,
+        descendantFileCount,
         fileCount: current.group?.fileCount ?? 0,
         files: current.group?.files ?? [],
         label: labelSegments.join("/"),
@@ -458,7 +470,7 @@ export function FileBrowser({
             const isExpanded = visibleExpandedDirectories.has(node.path);
             const isSelected = node.path === effectiveSelectedDirectory;
             const hasChildren = node.children.length > 0;
-            const hasFiles = node.fileCount > 0;
+            const hasFiles = node.descendantFileCount > 0;
             const rows: ReactNode[] = [
                 <button
                     key={`dir-${node.path}`}
@@ -538,11 +550,11 @@ export function FileBrowser({
                         </span>
                         <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
                             <span>
-                                {node.fileCount === 0
+                                {node.descendantFileCount === 0
                                     ? hasChildren
                                         ? "Expand to browse"
                                         : "Empty folder"
-                                    : `${node.fileCount} file${node.fileCount === 1 ? "" : "s"}`}
+                                    : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
                             </span>
                             {node.totalSize > 0 ? (
                                 <span>{formatBytes(node.totalSize)}</span>
@@ -555,8 +567,8 @@ export function FileBrowser({
                         </span>
                     </span>
                     <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                        {hasChildren
-                            ? `${node.children.length} subfolder${node.children.length === 1 ? "" : "s"}`
+                        {node.descendantDirectoryCount > 0
+                            ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
                             : "Folder"}
                     </span>
                 </button>,
@@ -572,17 +584,33 @@ export function FileBrowser({
                         key={`files-${node.path}`}
                         className={cn(
                             previewMode === "single"
-                                ? "space-y-3"
+                                ? "grid gap-3 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] xl:items-stretch"
                                 : "space-y-3 xl:col-span-2",
                         )}
                         data-file-browser-directory-files={node.path}
                     >
                         {previewMode === "single"
-                            ? displayedFiles.map((file) => (
-                                  <div key={file.path}>
-                                      {renderFileButton(file, true)}
-                                  </div>
-                              ))
+                            ? [
+                                  <div
+                                      key={`single-list-${node.path}`}
+                                      className="space-y-3"
+                                  >
+                                      {displayedFiles.map((file) => (
+                                          <div key={file.path}>
+                                              {renderFileButton(file, true)}
+                                          </div>
+                                      ))}
+                                  </div>,
+                                  <div
+                                      key={`single-preview-${node.path}`}
+                                      className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3 xl:h-full"
+                                      data-file-browser-preview="single"
+                                  >
+                                      {renderSinglePreview?.(
+                                          activeFile ?? null,
+                                      ) ?? null}
+                                  </div>,
+                              ]
                             : displayedFiles.map((file) => (
                                   <div
                                       key={file.path}
@@ -714,17 +742,12 @@ export function FileBrowser({
             </div>
 
             {previewMode === "single" ? (
-                <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(20rem,0.92fr)_minmax(0,1.08fr)] xl:items-start">
-                    <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4">
-                        <div className="space-y-3">
-                            {renderDirectoryRows(directoryTree)}
-                        </div>
-                    </div>
-
-                    <div className="min-w-0 xl:sticky xl:top-4">
-                        <div data-file-browser-preview="single">
-                            {renderSinglePreview?.(activeFile ?? null) ?? null}
-                        </div>
+                <div
+                    className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4"
+                    data-preview-mode="single"
+                >
+                    <div className="space-y-3">
+                        {renderDirectoryRows(directoryTree)}
                     </div>
                 </div>
             ) : (

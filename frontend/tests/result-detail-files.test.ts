@@ -13,6 +13,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "@/lib/contracts";
 
 const fetchMock = vi.fn<typeof fetch>();
+const { filePreviewRenderCounts } = vi.hoisted(() => ({
+    filePreviewRenderCounts: new Map<string, number>(),
+}));
 
 vi.stubGlobal("fetch", fetchMock);
 
@@ -211,12 +214,24 @@ vi.mock("@/components/file-preview", () => ({
             },
             file.path,
         ),
-    FilePreview: ({ file, proxyUrl }: { file: FileEntry; proxyUrl: string }) =>
-        createElement(
+    FilePreview: ({
+        file,
+        proxyUrl,
+    }: {
+        file: FileEntry;
+        proxyUrl: string;
+    }) => {
+        filePreviewRenderCounts.set(
+            file.path,
+            (filePreviewRenderCounts.get(file.path) ?? 0) + 1,
+        );
+
+        return createElement(
             "div",
             { "data-preview-url": proxyUrl },
             `preview:${file.path}`,
-        ),
+        );
+    },
 }));
 
 function buildFile(path: string): FileEntry {
@@ -231,6 +246,7 @@ function buildFile(path: string): FileEntry {
 afterEach(() => {
     cleanup();
     fetchMock.mockReset();
+    filePreviewRenderCounts.clear();
 });
 
 describe("O1 result detail file integration", () => {
@@ -437,6 +453,48 @@ describe("O1 result detail file integration", () => {
                 screen.getByText("preview:/tmp/results/a/report.json"),
             ).toBeTruthy();
         });
+    });
+
+    it("does not rerender non-image grid previews when only the preview height changes", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        fetchMock.mockResolvedValue(
+            new Response('{"sample":"alpha"}', {
+                headers: { "content-type": "application/json" },
+                status: 200,
+            }),
+        );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/a/report.json")],
+                resultId: "result-1",
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "show-grid" }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText("preview:/tmp/results/a/report.json"),
+            ).toBeTruthy();
+            expect(
+                filePreviewRenderCounts.get("/tmp/results/a/report.json"),
+            ).toBe(3);
+        });
+
+        const settledRenderCount = filePreviewRenderCounts.get(
+            "/tmp/results/a/report.json",
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "preview-height-320" }),
+        );
+
+        expect(filePreviewRenderCounts.get("/tmp/results/a/report.json")).toBe(
+            settledRenderCount,
+        );
     });
 
     it("renders html previews from the proxy without waiting for inline content", async () => {
