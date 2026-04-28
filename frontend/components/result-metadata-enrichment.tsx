@@ -89,8 +89,8 @@ export function ResultMetadataEnrichment({
             inFlightValuesRef.current.add(value);
         }
 
-        void enrichSeqmetaMetadata(metadata, cache, enrichIdentifier).then(
-            (nextState) => {
+        void enrichSeqmetaMetadata(metadata, cache, enrichIdentifier)
+            .then((nextState) => {
                 for (const value of pendingValues) {
                     inFlightValuesRef.current.delete(value);
                 }
@@ -99,8 +99,29 @@ export function ResultMetadataEnrichment({
                     requestKey,
                     state: nextState,
                 });
-            },
-        );
+            })
+            .catch(() => {
+                // Enrichment failed - clear in-flight and set errors for all pending
+                for (const value of pendingValues) {
+                    inFlightValuesRef.current.delete(value);
+                }
+
+                const errors: Record<
+                    string,
+                    "not_found" | "upstream_impaired"
+                > = {};
+                for (const value of pendingValues) {
+                    errors[value] = "upstream_impaired";
+                }
+
+                setLiveState({
+                    requestKey,
+                    state: {
+                        enrichments: {},
+                        errors,
+                    },
+                });
+            });
     }, [
         cache,
         activeLiveEnrichments,
