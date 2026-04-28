@@ -183,6 +183,19 @@ describe("N1 file browser", () => {
         expect(container.textContent).not.toContain(
             "preview:/results/a/003.png",
         );
+        const firstGridRow = container.querySelector(
+            '[data-file-browser-grid-row="/results/a/001.png"]',
+        );
+
+        expect(firstGridRow).toBeTruthy();
+        expect(
+            firstGridRow?.querySelector(
+                'button[data-file-path="/results/a/001.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            firstGridRow?.querySelector('[data-grid-preview-path="/results/a/001.png"]'),
+        ).toBeTruthy();
         expect(container.textContent).toContain("001.png");
         expect(container.textContent).toContain("002.png");
         expect(container.textContent).not.toContain("003.png");
@@ -256,10 +269,18 @@ describe("N1 file browser", () => {
         const preview = container.querySelector(
             '[data-file-browser-preview="single"]',
         );
+        const singleLayout = container.querySelector(
+            '[data-file-browser-single-layout="/results/gallery"]',
+        );
 
         expect(directoryFiles).toBeTruthy();
         expect(preview).toBeTruthy();
         expect(directoryFiles?.contains(preview ?? null)).toBe(true);
+        expect(singleLayout).toBeTruthy();
+        expect(singleLayout?.contains(preview ?? null)).toBe(true);
+        expect((preview as HTMLElement | null)?.style.gridRow).toBe(
+            "1 / span 3",
+        );
     });
 
     it("shows an empty state when there are no registered files", async () => {

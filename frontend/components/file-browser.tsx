@@ -422,15 +422,26 @@ export function FileBrowser({
         );
     }
 
-    const renderFileButton = (file: FileEntry, nested = false) => (
+    const renderFileButton = (
+        file: FileEntry,
+        nested = false,
+        embedded = false,
+    ) => (
         <button
             type="button"
             className={cn(
-                "flex w-full items-start gap-4 rounded-[1.25rem] border px-4 py-4 text-left transition",
+                "flex w-full items-start gap-4 text-left transition",
+                embedded
+                    ? "rounded-[1rem] px-0 py-0"
+                    : "rounded-[1.25rem] border px-4 py-4",
                 nested ? "min-h-[5.5rem]" : "",
-                file.path === activeFile?.path
-                    ? "border-primary/45 bg-primary/10"
-                    : "border-border/60 bg-background/65 hover:border-primary/35 hover:bg-background",
+                embedded
+                    ? file.path === activeFile?.path
+                        ? "text-foreground"
+                        : "text-foreground/90"
+                    : file.path === activeFile?.path
+                      ? "border-primary/45 bg-primary/10"
+                      : "border-border/60 bg-background/65 hover:border-primary/35 hover:bg-background",
             )}
             data-file-path={file.path}
             onClick={() => {
@@ -584,27 +595,28 @@ export function FileBrowser({
                         key={`files-${node.path}`}
                         className={cn(
                             previewMode === "single"
-                                ? "grid gap-3 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] xl:items-stretch"
+                                ? "grid gap-3 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] xl:items-start"
                                 : "space-y-3 xl:col-span-2",
                         )}
                         data-file-browser-directory-files={node.path}
+                        data-file-browser-single-layout={
+                            previewMode === "single" ? node.path : undefined
+                        }
                     >
                         {previewMode === "single"
                             ? [
-                                  <div
-                                      key={`single-list-${node.path}`}
-                                      className="space-y-3"
-                                  >
-                                      {displayedFiles.map((file) => (
-                                          <div key={file.path}>
-                                              {renderFileButton(file, true)}
-                                          </div>
-                                      ))}
-                                  </div>,
+                                  ...displayedFiles.map((file) => (
+                                      <div key={file.path}>
+                                          {renderFileButton(file, true)}
+                                      </div>
+                                  )),
                                   <div
                                       key={`single-preview-${node.path}`}
-                                      className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3 xl:h-full"
+                                      className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3 xl:col-start-2 xl:row-start-1 xl:h-full"
                                       data-file-browser-preview="single"
+                                      style={{
+                                          gridRow: `1 / span ${Math.max(displayedFiles.length, 1)}`,
+                                      }}
                                   >
                                       {renderSinglePreview?.(
                                           activeFile ?? null,
@@ -614,11 +626,14 @@ export function FileBrowser({
                             : displayedFiles.map((file) => (
                                   <div
                                       key={file.path}
-                                      className="grid gap-3 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] xl:items-start"
+                                      className="grid gap-3 rounded-[1.25rem] border border-border/60 bg-background/65 p-3 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] xl:items-start"
+                                      data-file-browser-grid-row={file.path}
                                   >
-                                      <div>{renderFileButton(file, true)}</div>
+                                      <div className="min-w-0 xl:border-r xl:border-border/60 xl:pr-3">
+                                          {renderFileButton(file, true, true)}
+                                      </div>
                                       <div
-                                          className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3"
+                                          className="min-w-0 xl:pl-1"
                                           data-grid-preview-path={file.path}
                                       >
                                           {renderGridPreview?.(file) ?? null}
