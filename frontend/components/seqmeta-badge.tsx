@@ -71,6 +71,10 @@ function metadataLabel(metadataKey: string): string {
     return humanizeToken(trimmedKey);
 }
 
+function isLibraryMetadataKey(metadataKey: string): boolean {
+    return metadataKey === "seqmeta_library";
+}
+
 function enrichmentTypeLabel(type: string): string {
     if (type === "sanger_sample_id") {
         return "Sanger sample ID";
@@ -198,86 +202,90 @@ function buildDetailFields(
         return fields;
     }
 
-    appendDetailField(fields, {
-        key: "seqmeta_type",
-        label: "Resolved seqmeta type",
-        value: enrichment.type,
-    });
+    const libraryMetadata = isLibraryMetadataKey(metadataKey);
 
-    appendDetailField(
-        fields,
-        enrichment.graph.study?.name
-            ? {
-                  key: "study_name",
-                  label: "Study name",
-                  value: enrichment.graph.study.name,
-              }
-            : null,
-    );
-    appendDetailField(
-        fields,
-        enrichment.graph.study?.id_study_lims
-            ? {
-                  key: "study_id",
-                  label: "Study identifier",
-                  searchKey: "study_id",
-                  value: enrichment.graph.study.id_study_lims,
-              }
-            : null,
-    );
-    appendDetailField(
-        fields,
-        enrichment.graph.study?.accession_number
-            ? {
-                  key: "study_accession_number",
-                  label: "Study accession",
-                  value: enrichment.graph.study.accession_number,
-              }
-            : null,
-    );
+    if (!libraryMetadata) {
+        appendDetailField(fields, {
+            key: "seqmeta_type",
+            label: "Resolved seqmeta type",
+            value: enrichment.type,
+        });
 
-    appendDetailField(
-        fields,
-        enrichment.graph.sample?.sample_name
-            ? {
-                  key: "sample_name",
-                  label: "Sample name",
-                  value: enrichment.graph.sample.sample_name,
-              }
-            : null,
-    );
-    appendDetailField(
-        fields,
-        enrichment.graph.sample?.sanger_id
-            ? {
-                  key: "seqmeta_sampleid",
-                  label: "Sanger sample ID",
-                  searchKey: "seqmeta_sampleid",
-                  value: enrichment.graph.sample.sanger_id,
-              }
-            : null,
-    );
-    appendDetailField(
-        fields,
-        enrichment.graph.sample?.id_sample_lims
-            ? {
-                  key: "seqmeta_sample_lims",
-                  label: "Sample LIMS ID",
-                  searchKey: "seqmeta_sample_lims",
-                  value: enrichment.graph.sample.id_sample_lims,
-              }
-            : null,
-    );
-    appendDetailField(
-        fields,
-        enrichment.graph.sample?.accession_number
-            ? {
-                  key: "sample_accession_number",
-                  label: "Sample accession",
-                  value: enrichment.graph.sample.accession_number,
-              }
-            : null,
-    );
+        appendDetailField(
+            fields,
+            enrichment.graph.study?.name
+                ? {
+                      key: "study_name",
+                      label: "Study name",
+                      value: enrichment.graph.study.name,
+                  }
+                : null,
+        );
+        appendDetailField(
+            fields,
+            enrichment.graph.study?.id_study_lims
+                ? {
+                      key: "study_id",
+                      label: "Study identifier",
+                      searchKey: "study_id",
+                      value: enrichment.graph.study.id_study_lims,
+                  }
+                : null,
+        );
+        appendDetailField(
+            fields,
+            enrichment.graph.study?.accession_number
+                ? {
+                      key: "study_accession_number",
+                      label: "Study accession",
+                      value: enrichment.graph.study.accession_number,
+                  }
+                : null,
+        );
+
+        appendDetailField(
+            fields,
+            enrichment.graph.sample?.sample_name
+                ? {
+                      key: "sample_name",
+                      label: "Sample name",
+                      value: enrichment.graph.sample.sample_name,
+                  }
+                : null,
+        );
+        appendDetailField(
+            fields,
+            enrichment.graph.sample?.sanger_id
+                ? {
+                      key: "seqmeta_sampleid",
+                      label: "Sanger sample ID",
+                      searchKey: "seqmeta_sampleid",
+                      value: enrichment.graph.sample.sanger_id,
+                  }
+                : null,
+        );
+        appendDetailField(
+            fields,
+            enrichment.graph.sample?.id_sample_lims
+                ? {
+                      key: "seqmeta_sample_lims",
+                      label: "Sample LIMS ID",
+                      searchKey: "seqmeta_sample_lims",
+                      value: enrichment.graph.sample.id_sample_lims,
+                  }
+                : null,
+        );
+        appendDetailField(
+            fields,
+            enrichment.graph.sample?.accession_number
+                ? {
+                      key: "sample_accession_number",
+                      label: "Sample accession",
+                      value: enrichment.graph.sample.accession_number,
+                  }
+                : null,
+        );
+    }
 
     const libraryTypes = [
         enrichment.graph.library?.library_type,
@@ -321,24 +329,38 @@ function buildDetailFields(
     );
     appendDetailField(
         fields,
-        enrichment.graph.samples && enrichment.graph.samples.length > 0
-            ? {
-                  key: "linked_samples",
-                  label: "Linked samples",
-                  value: enrichment.graph.samples
-                      .slice(0, 5)
-                      .map((sample) => {
-                          const sampleName = asString(sample.sample_name);
-                          const sangerId = asString(sample.sanger_id);
+        (() => {
+            const linkedSamples = Array.from(
+                new Set(
+                    (libraryMetadata && enrichment.graph.sample
+                        ? [
+                              enrichment.graph.sample,
+                              ...(enrichment.graph.samples ?? []),
+                          ]
+                        : (enrichment.graph.samples ?? [])
+                    )
+                        .map((sample) => {
+                            const sampleName = asString(sample.sample_name);
+                            const sangerId = asString(sample.sanger_id);
 
-                          return [sampleName, sangerId]
-                              .filter(Boolean)
-                              .join(" / ");
-                      })
-                      .filter(Boolean)
-                      .join(", "),
-              }
-            : null,
+                            return [sampleName, sangerId]
+                                .filter(Boolean)
+                                .join(" / ");
+                        })
+                        .filter(Boolean),
+                ),
+            );
+
+            if (linkedSamples.length === 0) {
+                return null;
+            }
+
+            return {
+                key: "linked_samples",
+                label: "Linked samples",
+                value: linkedSamples.slice(0, 5).join(", "),
+            };
+        })(),
     );
 
     return fields;
@@ -369,6 +391,12 @@ function buildStatusLines(
 
     if (!enrichment) {
         return [];
+    }
+
+    if (isLibraryMetadataKey(metadataKey)) {
+        return [
+            `Selected ${metadataLabel(metadataKey).toLowerCase()}: ${rawValue}.`,
+        ];
     }
 
     const lines = [

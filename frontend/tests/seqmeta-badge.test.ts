@@ -251,14 +251,28 @@ describe("M1 result detail seqmeta enrichment", () => {
         ).toBe("/?study_id=6568");
     });
 
-    it("renders seqmeta_library with a library-focused label and explanatory resolution lines", async () => {
+    it("renders seqmeta_library details without singular sample or study guesses", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
         render(
             createElement(SeqmetaBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "RNA",
-                enrichment: buildEnrichment(),
+                enrichment: buildEnrichment({
+                    graph: {
+                        ...buildEnrichment().graph,
+                        samples: [
+                            {
+                                sample_name: "Sample 1",
+                                sanger_id: "SANG001",
+                            },
+                            {
+                                sample_name: "Sample 2",
+                                sanger_id: "SANG002",
+                            },
+                        ],
+                    },
+                }),
             }),
         );
 
@@ -276,9 +290,24 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("Resolution")).toBeTruthy();
         expect(screen.getByText("Selected library type: RNA.")).toBeTruthy();
         expect(
-            screen.getByText("Resolved via Sanger sample ID SANG001."),
+            screen.queryByText("Resolved via Sanger sample ID SANG001."),
+        ).toBeNull();
+        expect(screen.queryByText("Study context: RNA Seq.")).toBeNull();
+        expect(screen.queryByText("Resolved seqmeta type")).toBeNull();
+        expect(
+            screen.queryByRole("link", {
+                name: /send study_id to search filter/i,
+            }),
+        ).toBeNull();
+        expect(
+            screen.queryByRole("link", {
+                name: /send seqmeta_sampleid to search filter/i,
+            }),
+        ).toBeNull();
+        expect(screen.getByText("Linked samples")).toBeTruthy();
+        expect(
+            screen.getByText("Sample 1 / SANG001, Sample 2 / SANG002"),
         ).toBeTruthy();
-        expect(screen.getByText("Study context: RNA Seq.")).toBeTruthy();
         expect(screen.queryByText("Status")).toBeNull();
     });
 

@@ -30,6 +30,73 @@ export function collectSeqmetaValues(
     );
 }
 
+function seqmetaLookupPriority(metadataKey: string): number {
+    if (
+        metadataKey === "seqmeta_studyid" ||
+        metadataKey === "seqmeta_study_accession"
+    ) {
+        return 0;
+    }
+
+    if (
+        metadataKey === "seqmeta_sampleid" ||
+        metadataKey === "seqmeta_sample_lims"
+    ) {
+        return 1;
+    }
+
+    if (metadataKey === "seqmeta_library") {
+        return 3;
+    }
+
+    return 2;
+}
+
+function collectSeqmetaLookupValues(
+    metadata: Record<string, string>,
+): string[] {
+    const plannedLookups = new Map<
+        string,
+        { index: number; priority: number; value: string }
+    >();
+
+    for (const [index, [key, rawValue]] of Object.entries(metadata).entries()) {
+        if (!isSeqmetaKey(key)) {
+            continue;
+        }
+
+        const value = rawValue.trim();
+
+        if (!value) {
+            continue;
+        }
+
+        const priority = seqmetaLookupPriority(key);
+        const existing = plannedLookups.get(value);
+
+        if (
+            existing &&
+            (existing.priority < priority ||
+                (existing.priority === priority && existing.index <= index))
+        ) {
+            continue;
+        }
+
+        plannedLookups.set(value, {
+            index,
+            priority,
+            value,
+        });
+    }
+
+    return Array.from(plannedLookups.values())
+        .sort(
+            (left, right) =>
+                left.priority - right.priority || left.index - right.index,
+        )
+        .map((entry) => entry.value);
+}
+
 export function buildCachedEnrichmentState(
     metadata: Record<string, string>,
     cache: SeqmetaCacheStore,
@@ -178,7 +245,7 @@ export async function enrichSeqmetaMetadata(
     enrichIdentifier: (value: string) => Promise<EnrichmentResult | null>,
 ): Promise<SeqmetaEnrichmentState> {
     const state = buildCachedEnrichmentState(metadata, cache);
-    const pendingValues = collectSeqmetaValues(metadata).filter(
+    const pendingValues = collectSeqmetaLookupValues(metadata).filter(
         (value) => !cache.has(value),
     );
 

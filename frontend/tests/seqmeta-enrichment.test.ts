@@ -160,6 +160,37 @@ describe("H3 enrichment state and badge", () => {
         expect(libraryRow?.textContent).toBe("RNA");
     });
 
+    it("prefers specific seqmeta identifiers over seqmeta_library when choosing the first lookup", async () => {
+        enrichIdentifierMock.mockResolvedValue(buildEnrichmentResult());
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+
+        render(
+            createElement(ResultMetadataEnrichment, {
+                metadata: {
+                    seqmeta_library: "RNA",
+                    seqmeta_studyid: "6568",
+                    seqmeta_sampleid: "SANG001",
+                },
+            }),
+            {
+                wrapper: ({ children }) =>
+                    createElement(SeqmetaCacheProvider, null, children),
+            },
+        );
+
+        await waitFor(() => {
+            const studyRow = document.querySelector(
+                '[data-metadata-row="seqmeta_studyid"] [data-testid="seqmeta-badge-label"]',
+            );
+
+            expect(studyRow?.textContent).toBe("Cancer Programme");
+        });
+
+        expect(enrichIdentifierMock).toHaveBeenCalledTimes(1);
+        expect(enrichIdentifierMock).toHaveBeenCalledWith("6568");
+    });
+
     it("does not start a duplicate enrichment request when the component rerenders while the first request is in flight", async () => {
         const pending = deferred<EnrichmentResult | null>();
         enrichIdentifierMock.mockReturnValue(pending.promise);
