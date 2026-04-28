@@ -116,33 +116,43 @@ describe("K1 filter builder component", () => {
         expect(pushMock).toHaveBeenCalledWith("/?user=alice&user=bob");
     });
 
-    it("uses the study combobox flow for study_id filters", async () => {
+    it("uses the shared autocomplete input flow for study_id filters", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
-        render(
+        const { container } = render(
             createElement(FilterBuilder, {
                 currentFilters: {},
                 metaKeys: [],
                 seqmetaAvailable: true,
-                studies: [
-                    { id_study_lims: "6568", name: "RNA Seq" },
-                    { id_study_lims: "7777", name: "Cancer Study" },
-                ],
+                studies: [],
+                suggestionValues: {
+                    study_id: ["6568", "7777"],
+                },
             }),
         );
 
         fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
         fireEvent.click(screen.getByRole("option", { name: /study id/i }));
 
-        const studyInput = await screen.findByLabelText(/^study$/i);
+        const studyInput = await screen.findByLabelText(/study id value/i);
 
         fireEvent.change(studyInput, {
-            target: { value: "RNA" },
+            target: { value: "656" },
         });
 
-        fireEvent.click(
-            await screen.findByRole("button", { name: /rna seq/i }),
+        expect(studyInput.getAttribute("list")).toBe(
+            "filter-suggestions-study_id",
         );
+        expect(
+            container.querySelector(
+                "datalist#filter-suggestions-study_id option[value='6568']",
+            ),
+        ).toBeTruthy();
+
+        fireEvent.change(studyInput, {
+            target: { value: "6568" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?study_id=6568");
     });

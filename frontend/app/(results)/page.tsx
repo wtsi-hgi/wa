@@ -62,9 +62,14 @@ function toMetaSuggestionKey(metaKey: string): string {
 function buildSuggestionValues(
     stats: StatsResult,
     tableData: ResultSet[] | SearchResult[],
+    studies: Study[],
 ): FilterSuggestionMap {
     const suggestions: FilterSuggestionMap = {};
     const entries = [...stats.recent, ...tableData];
+
+    for (const study of studies) {
+        appendSuggestion(suggestions, "study_id", study.id_study_lims);
+    }
 
     for (const pipeline of stats.pipelines) {
         appendSuggestion(suggestions, "pipeline_name", pipeline.pipeline_name);
@@ -222,7 +227,7 @@ export default async function ResultsLandingPage({
         }
     }
 
-    const suggestionValues = buildSuggestionValues(stats, tableData);
+    const suggestionValues = buildSuggestionValues(stats, tableData, studies);
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">

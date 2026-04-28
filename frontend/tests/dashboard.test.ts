@@ -143,6 +143,7 @@ async function renderDashboard(
 describe("J1 dashboard with search builder and recent results", () => {
     afterEach(() => {
         document.body.innerHTML = "";
+        delete process.env.WA_SEQMETA_BACKEND_URL;
         vi.clearAllMocks();
         vi.resetModules();
         pushMock.mockReset();
@@ -404,6 +405,61 @@ describe("J1 dashboard with search builder and recent results", () => {
         fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?user=carol");
+
+        await act(async () => {
+            root?.unmount();
+        });
+    });
+
+    it("hydrates study suggestions from loaded studies and applies the selected value", async () => {
+        process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
+        fetchStatsMock.mockResolvedValue(buildStats());
+        fetchStudiesMock.mockResolvedValue([
+            { id_study_lims: "6568", name: "RNA Seq" },
+            { id_study_lims: "7777", name: "Cancer Study" },
+        ]);
+        searchResultsMock.mockResolvedValue([]);
+
+        const pageModule = await import("@/app/(results)/page");
+        const Page = pageModule.default;
+        const serverTree = createElement(
+            AppProviders,
+            undefined,
+            await Page({ searchParams: Promise.resolve({}) }),
+        );
+        const container = document.createElement("div");
+        const rootMarkup = renderToString(serverTree);
+
+        document.body.appendChild(container);
+        container.innerHTML = rootMarkup;
+
+        let root: ReturnType<typeof hydrateRoot> | null = null;
+
+        await act(async () => {
+            root = hydrateRoot(container, serverTree);
+        });
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(screen.getByRole("option", { name: /study id/i }));
+        const valueInput = screen.getByLabelText(/study id value/i);
+
+        fireEvent.change(valueInput, {
+            target: { value: "656" },
+        });
+
+        expect(valueInput.getAttribute("list")).toBe("filter-suggestions-study_id");
+        expect(
+            container.querySelector(
+                "datalist#filter-suggestions-study_id option[value='6568']",
+            ),
+        ).toBeTruthy();
+
+        fireEvent.change(valueInput, {
+            target: { value: "6568" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+        expect(pushMock).toHaveBeenCalledWith("/?study_id=6568");
 
         await act(async () => {
             root?.unmount();

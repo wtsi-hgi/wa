@@ -4,7 +4,6 @@ import { useState, type FormEvent } from "react";
 import { Check, Plus, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
-import { StudyCombobox } from "@/components/study-combobox";
 import {
     Command,
     CommandEmpty,
@@ -237,10 +236,6 @@ export function FilterBuilder({
         applyFilterValue(selectedField.key, draftValue);
     }
 
-    function handleStudySelect(studyId: string) {
-        applyFilterValue("study_id", studyId);
-    }
-
     return (
         <section
             data-search-builder="true"
@@ -329,88 +324,68 @@ export function FilterBuilder({
                                             className="border-t border-border/70 p-3"
                                         >
                                             {selectedField ? (
-                                                selectedField.key ===
-                                                "study_id" ? (
-                                                    <StudyCombobox
-                                                        onSelect={
-                                                            handleStudySelect
-                                                        }
-                                                        studies={studies}
-                                                    />
-                                                ) : (
-                                                    <form
-                                                        className="space-y-3"
-                                                        onSubmit={
-                                                            handleAddFilter
-                                                        }
-                                                    >
-                                                        <div className="space-y-2">
-                                                            <label
-                                                                htmlFor="filter-value"
-                                                                className="text-sm font-medium text-foreground"
-                                                            >
-                                                                {
-                                                                    selectedField.label
-                                                                }{" "}
-                                                                value
-                                                            </label>
-                                                            <input
-                                                                data-filter-value-input={
-                                                                    selectedField.key
-                                                                }
-                                                                id="filter-value"
-                                                                list={
+                                                <form
+                                                    className="space-y-3"
+                                                    onSubmit={handleAddFilter}
+                                                >
+                                                    <div className="space-y-2">
+                                                        <label
+                                                            htmlFor="filter-value"
+                                                            className="text-sm font-medium text-foreground"
+                                                        >
+                                                            {selectedField.label} value
+                                                        </label>
+                                                        <input
+                                                            data-filter-value-input={
+                                                                selectedField.key
+                                                            }
+                                                            id="filter-value"
+                                                            list={
+                                                                suggestionListId
+                                                            }
+                                                            value={draftValue}
+                                                            onChange={(event) =>
+                                                                setDraftValue(
+                                                                    event.target
+                                                                        .value,
+                                                                )
+                                                            }
+                                                            placeholder={
+                                                                selectedField.placeholder
+                                                            }
+                                                            className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/30"
+                                                        />
+                                                        {visibleSuggestions.length >
+                                                        0 ? (
+                                                            <datalist
+                                                                id={
                                                                     suggestionListId
                                                                 }
-                                                                value={
-                                                                    draftValue
-                                                                }
-                                                                onChange={(
-                                                                    event,
-                                                                ) =>
-                                                                    setDraftValue(
-                                                                        event
-                                                                            .target
-                                                                            .value,
-                                                                    )
-                                                                }
-                                                                placeholder={
-                                                                    selectedField.placeholder
-                                                                }
-                                                                className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/30"
-                                                            />
-                                                            {visibleSuggestions.length >
-                                                            0 ? (
-                                                                <datalist
-                                                                    id={
-                                                                        suggestionListId
-                                                                    }
-                                                                >
-                                                                    {visibleSuggestions.map(
-                                                                        (
-                                                                            suggestion,
-                                                                        ) => (
-                                                                            <option
-                                                                                key={
-                                                                                    suggestion
-                                                                                }
-                                                                                value={
-                                                                                    suggestion
-                                                                                }
-                                                                            />
-                                                                        ),
-                                                                    )}
-                                                                </datalist>
-                                                            ) : null}
-                                                        </div>
-                                                        <button
-                                                            type="submit"
-                                                            className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-95"
-                                                        >
-                                                            Add
-                                                        </button>
-                                                    </form>
-                                                )
+                                                            >
+                                                                {visibleSuggestions.map(
+                                                                    (
+                                                                        suggestion,
+                                                                    ) => (
+                                                                        <option
+                                                                            key={
+                                                                                suggestion
+                                                                            }
+                                                                            value={
+                                                                                suggestion
+                                                                            }
+                                                                        />
+                                                                    ),
+                                                                )}
+                                                            </datalist>
+                                                        ) : null}
+                                                    </div>
+                                                    <button
+                                                        type="submit"
+                                                        className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-95"
+                                                    >
+                                                        Add
+                                                    </button>
+                                                </form>
                                             ) : (
                                                 <p className="text-sm leading-6 text-muted-foreground">
                                                     Choose a field, then enter a
