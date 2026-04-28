@@ -27,6 +27,84 @@ function asString(value: unknown): string | null {
     return typeof value === "string" && value.trim() ? value : null;
 }
 
+function humanizeToken(token: string): string {
+    return token
+        .split("_")
+        .filter(Boolean)
+        .map((part) => {
+            if (part === "id") {
+                return "ID";
+            }
+
+            if (part === "lims") {
+                return "LIMS";
+            }
+
+            return part.replace(/^./, (letter) => letter.toUpperCase());
+        })
+        .join(" ");
+}
+
+function metadataLabel(metadataKey: string): string {
+    const trimmedKey = metadataKey.replace(/^seqmeta_/, "");
+
+    if (trimmedKey === "library") {
+        return "Library type";
+    }
+
+    if (trimmedKey === "sampleid") {
+        return "Sanger sample ID";
+    }
+
+    if (trimmedKey === "sample_lims") {
+        return "Sample LIMS ID";
+    }
+
+    if (trimmedKey === "studyid") {
+        return "Study identifier";
+    }
+
+    if (trimmedKey === "study_accession") {
+        return "Study accession";
+    }
+
+    return humanizeToken(trimmedKey);
+}
+
+function enrichmentTypeLabel(type: string): string {
+    if (type === "sanger_sample_id") {
+        return "Sanger sample ID";
+    }
+
+    if (type === "study_id") {
+        return "Study identifier";
+    }
+
+    if (type === "study_accession") {
+        return "Study accession";
+    }
+
+    return humanizeToken(type);
+}
+
+function resolvedEnrichmentValue(enrichment: EnrichmentResult): string | null {
+    if (
+        enrichment.type === "study_id" ||
+        enrichment.type === "study_accession"
+    ) {
+        return (
+            asString(enrichment.graph.study?.id_study_lims) ??
+            asString(enrichment.graph.study?.accession_number) ??
+            asString(enrichment.identifier)
+        );
+    }
+
+    return (
+        asString(enrichment.graph.sample?.sanger_id) ??
+        asString(enrichment.identifier)
+    );
+}
+
 function primaryLabel(
     rawValue: string,
     enrichment: EnrichmentResult | null,
@@ -46,31 +124,7 @@ function primaryLabel(
         );
     }
 
-    return `${enrichment.type}: ${rawValue}`;
-}
-
-function primaryDetails(enrichment: EnrichmentResult | null): string[] {
-    if (!enrichment) {
-        return [];
-    }
-
-    const details = [
-        asString(enrichment.graph.study?.name),
-        asString(enrichment.graph.study?.accession_number),
-        asString(enrichment.graph.sample?.sample_name),
-        asString(enrichment.graph.sample?.sanger_id),
-        asString(enrichment.graph.sample?.accession_number),
-        asString(enrichment.graph.library?.library_type),
-        ...(enrichment.graph.libraries ?? []).map((library) =>
-            asString(library.library_type),
-        ),
-        ...(enrichment.graph.samples ?? []).flatMap((sample) => [
-            asString(sample.sample_name),
-            asString(sample.sanger_id),
-        ]),
-    ].filter((value): value is string => Boolean(value));
-
-    return [...new Set(details)].slice(0, 6);
+    return rawValue;
 }
 
 function humanizeMissingHop(missing: MissingHop): string {
@@ -291,27 +345,52 @@ function buildDetailFields(
 }
 
 function buildStatusLines(
+    metadataKey: string,
+    rawValue: string,
     enrichment: EnrichmentResult | null,
     error: SeqmetaBadgeProps["error"],
     loading: boolean,
 ): string[] {
     if (loading) {
-        return ["Loading enrichment..."];
+        return [`Looking up ${metadataLabel(metadataKey).toLowerCase()}.`];
     }
 
     if (error === "not_found") {
-        return ["enrichment unavailable"];
+        return [
+            `No enrichment matched this ${metadataLabel(metadataKey).toLowerCase()} value.`,
+        ];
     }
 
     if (error === "upstream_impaired") {
-        return ["Backend could not reach upstream"];
+        return [
+            `Upstream services were unavailable while resolving this ${metadataLabel(metadataKey).toLowerCase()} value.`,
+        ];
     }
 
     if (!enrichment) {
         return [];
     }
 
-    return primaryDetails(enrichment);
+    const lines = [
+        `Selected ${metadataLabel(metadataKey).toLowerCase()}: ${rawValue}.`,
+    ];
+    const resolvedValue = resolvedEnrichmentValue(enrichment);
+
+    if (resolvedValue) {
+        lines.push(
+            `Resolved via ${enrichmentTypeLabel(enrichment.type)} ${resolvedValue}.`,
+        );
+    } else {
+        lines.push(`Resolved via ${enrichmentTypeLabel(enrichment.type)}.`);
+    }
+
+    const studyName = asString(enrichment.graph.study?.name);
+
+    if (studyName) {
+        lines.push(`Study context: ${studyName}.`);
+    }
+
+    return lines;
 }
 
 async function writeClipboard(value: string): Promise<boolean> {
@@ -340,8 +419,9 @@ export function SeqmetaBadge({
         [enrichment, metadataKey, rawValue],
     );
     const statusLines = useMemo(
-        () => buildStatusLines(enrichment, error, loading),
-        [enrichment, error, loading],
+        () =>
+            buildStatusLines(metadataKey, rawValue, enrichment, error, loading),
+        [enrichment, error, loading, metadataKey, rawValue],
     );
     const missingLines = useMemo(
         () =>
@@ -451,7 +531,7 @@ export function SeqmetaBadge({
                         className="absolute inset-0 bg-[color:rgba(15,23,42,0.64)] backdrop-blur-sm"
                         onClick={() => setDialogOpen(false)}
                     />
-                    <section className="relative z-10 w-full max-w-4xl overflow-hidden rounded-[2rem] border border-border/80 bg-[linear-gradient(145deg,color-mix(in_oklab,var(--card)_88%,white_12%),color-mix(in_oklab,var(--accent)_14%,var(--card)_86%))] shadow-[0_36px_140px_-72px_rgba(20,31,49,0.9)]">
+                    <section className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[2rem] border border-border/80 bg-[linear-gradient(145deg,color-mix(in_oklab,var(--card)_88%,white_12%),color-mix(in_oklab,var(--accent)_14%,var(--card)_86%))] shadow-[0_36px_140px_-72px_rgba(20,31,49,0.9)] sm:max-h-[calc(100vh-3rem)]">
                         <div className="flex items-start justify-between gap-4 border-b border-border/70 px-6 py-5 sm:px-7">
                             <div className="space-y-2">
                                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted-foreground">
@@ -477,7 +557,7 @@ export function SeqmetaBadge({
                             </button>
                         </div>
 
-                        <div className="grid gap-6 px-6 py-6 sm:px-7 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                        <div className="grid max-h-[calc(100vh-12rem)] min-h-0 gap-6 overflow-y-auto px-6 py-6 sm:px-7 lg:grid-cols-[minmax(0,1fr)_18rem]">
                             <div className="space-y-3">
                                 {detailFields.map((field) => {
                                     const href = field.searchKey
@@ -566,7 +646,7 @@ export function SeqmetaBadge({
                                 {statusLines.length > 0 ? (
                                     <div>
                                         <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                            Status
+                                            Resolution
                                         </p>
                                         <div className="mt-2 space-y-2 text-sm leading-6 text-foreground">
                                             {statusLines.map((line) => (

@@ -3,7 +3,13 @@
  */
 
 import { createElement } from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EnrichmentResult } from "@/lib/contracts";
@@ -76,6 +82,18 @@ describe("H3 enrichment state and badge", () => {
     afterEach(() => {
         cleanup();
     });
+
+    async function openSeqmetaDetails() {
+        await waitFor(() => {
+            expect(screen.getByTestId("seqmeta-badge-trigger")).toBeTruthy();
+        });
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+    }
 
     it("shows the study name without a banner for a full study enrichment", async () => {
         enrichIdentifierMock.mockResolvedValue(buildEnrichmentResult());
@@ -217,6 +235,8 @@ describe("H3 enrichment state and badge", () => {
             },
         );
 
+        await openSeqmetaDetails();
+
         await waitFor(() => {
             expect(screen.getByText("Showing first 1000 samples")).toBeTruthy();
         });
@@ -249,6 +269,8 @@ describe("H3 enrichment state and badge", () => {
                     createElement(SeqmetaCacheProvider, null, children),
             },
         );
+
+        await openSeqmetaDetails();
 
         await waitFor(() => {
             expect(screen.getByText("Study record unavailable")).toBeTruthy();
@@ -302,8 +324,13 @@ describe("H3 enrichment state and badge", () => {
                 screen.getByLabelText("enrichment backend impaired"),
             ).toBeTruthy();
         });
+
+        await openSeqmetaDetails();
+
         expect(
-            screen.getByText("Backend could not reach upstream"),
+            screen.getByText(
+                "Upstream services were unavailable while resolving this study identifier value.",
+            ),
         ).toBeTruthy();
     });
 });

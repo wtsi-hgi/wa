@@ -30,6 +30,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -110,7 +111,14 @@ func TestSampleAllMetadata(t *testing.T) {
 			case "/integrations/mlwh/samples":
 				requestedFilters = append(requestedFilters, r.URL.Query().Get("filters"))
 
-				if r.URL.Query().Get("filters") != `{"study_id":"100"}` {
+				decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
+				if err != nil {
+					http.Error(w, "expected decodable filters", http.StatusInternalServerError)
+
+					return
+				}
+
+				if decodedFilters != `{"study_id":"100"}` {
 					http.Error(w, "expected filtered request", http.StatusInternalServerError)
 
 					return
@@ -135,7 +143,7 @@ func TestSampleAllMetadata(t *testing.T) {
 			So(metadata.SangerID, ShouldEqual, "S1")
 			So(metadata.MLWH, ShouldHaveLength, 1)
 			So(metadata.MLWH[0].SangerID, ShouldEqual, "S1")
-			So(requestedFilters, ShouldResemble, []string{"{\"study_id\":\"100\"}"})
+			So(requestedFilters, ShouldResemble, []string{"%7B%22study_id%22%3A%22100%22%7D"})
 		})
 	})
 
@@ -203,7 +211,14 @@ func TestStudyAllSamples(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestedFilters = append(requestedFilters, r.URL.Query().Get("filters"))
 
-			if r.URL.Query().Get("filters") != `{"study_id":"100"}` {
+			decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
+			if err != nil {
+				http.Error(w, "expected decodable filters", http.StatusInternalServerError)
+
+				return
+			}
+
+			if decodedFilters != `{"study_id":"100"}` {
 				http.Error(w, "expected filtered request", http.StatusInternalServerError)
 
 				return
@@ -230,7 +245,7 @@ func TestStudyAllSamples(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(studySamples, ShouldNotBeNil)
 			So(studySamples.Samples, ShouldHaveLength, 3)
-			So(requestedFilters, ShouldResemble, []string{"{\"study_id\":\"100\"}", "{\"study_id\":\"100\"}"})
+			So(requestedFilters, ShouldResemble, []string{"%7B%22study_id%22%3A%22100%22%7D", "%7B%22study_id%22%3A%22100%22%7D"})
 		})
 	})
 

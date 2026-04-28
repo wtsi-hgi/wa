@@ -229,7 +229,9 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            "SANG001",
+        );
         expect(screen.queryByRole("dialog")).toBeNull();
 
         fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
@@ -247,6 +249,70 @@ describe("M1 result detail seqmeta enrichment", () => {
                 })
                 .getAttribute("href"),
         ).toBe("/?study_id=6568");
+    });
+
+    it("renders seqmeta_library with a library-focused label and explanatory resolution lines", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_library",
+                rawValue: "RNA",
+                enrichment: buildEnrichment(),
+            }),
+        );
+
+        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            "RNA",
+        );
+        expect(screen.queryByText("sanger_sample_id: RNA")).toBeNull();
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.getByText("Resolution")).toBeTruthy();
+        expect(screen.getByText("Selected library type: RNA.")).toBeTruthy();
+        expect(
+            screen.getByText("Resolved via Sanger sample ID SANG001."),
+        ).toBeTruthy();
+        expect(screen.getByText("Study context: RNA Seq.")).toBeTruthy();
+        expect(screen.queryByText("Status")).toBeNull();
+    });
+
+    it("renders a vertically scrollable body for long seqmeta detail content", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG001",
+                enrichment: buildEnrichment({
+                    graph: {
+                        ...buildEnrichment().graph,
+                        samples: Array.from({ length: 24 }, (_, index) => ({
+                            sample_name: `Sample ${index + 1}`,
+                            sanger_id: `SANG${String(index + 1).padStart(3, "0")}`,
+                        })),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const summaryPanel = screen.getByText("Summary").closest("aside");
+        const dialogBody = summaryPanel?.parentElement;
+
+        expect(dialogBody).toBeTruthy();
+        expect(dialogBody?.className).toContain("overflow-y-auto");
+        expect(dialogBody?.className).toContain("max-h-[calc(100vh-12rem)]");
     });
 
     it("uses the study name as the badge label for a full study enrichment", async () => {
@@ -290,7 +356,11 @@ describe("M1 result detail seqmeta enrichment", () => {
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
-        expect(screen.getByText("enrichment unavailable")).toBeTruthy();
+        expect(
+            screen.getByText(
+                "No enrichment matched this sanger sample id value.",
+            ),
+        ).toBeTruthy();
     });
 
     it("renders non-seqmeta metadata without attempting enrichment", async () => {
@@ -339,12 +409,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
     });
 
-    it("starts all seqmeta enrichments in parallel during server detail rendering", async () => {
-        const pending = Array.from({ length: 5 }, () =>
-            deferred<EnrichmentResult | null>(),
-        );
-        const queue = [...pending];
-
+    it("does not start seqmeta enrichments during server detail rendering", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
                 metadata: {
@@ -359,30 +424,16 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchFilesMock.mockResolvedValue([]);
         setRequestCookieHeader();
 
-        enrichIdentifierMock.mockImplementation((value: string) => {
-            const next = queue.shift();
-
-            if (!next) {
-                throw new Error(`unexpected identifier ${value}`);
-            }
-
-            return next.promise;
-        });
-
         const pageModule = await import("@/app/(results)/results/[id]/page");
-        const renderPromise = pageModule.default({
-            params: Promise.resolve({ id: "result-42" }),
-        });
+        const markup = renderToStaticMarkup(
+            await pageModule.default({
+                params: Promise.resolve({ id: "result-42" }),
+            }),
+        );
 
-        await waitFor(() => {
-            expect(enrichIdentifierMock).toHaveBeenCalledTimes(5);
-        });
-
-        for (const [index, item] of pending.entries()) {
-            item.resolve(buildEnrichment({ identifier: `ID-${index}` }));
-        }
-
-        renderToStaticMarkup(await renderPromise);
+        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(markup).toContain("seqmeta_library");
+        expect(markup).toContain("RNA");
     });
 
     it("shows an empty metadata state when a result set has no metadata", async () => {
@@ -393,7 +444,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("No metadata")).toBeTruthy();
     });
 
-    it("renders the detail page shell with server-started seqmeta enrichment", async () => {
+    it("renders the detail page shell without server-started seqmeta enrichment", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
                 metadata: {
@@ -412,7 +463,6 @@ describe("M1 result detail seqmeta enrichment", () => {
                 size: 512,
             }),
         ]);
-        enrichIdentifierMock.mockResolvedValue(buildEnrichment());
         setRequestCookieHeader();
 
         const pageModule = await import("@/app/(results)/results/[id]/page");
@@ -425,12 +475,13 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         expect(fetchResultMock).toHaveBeenCalledWith("result-42");
         expect(fetchFilesMock).toHaveBeenCalledWith("result-42");
-        expect(enrichIdentifierMock).toHaveBeenCalledWith("SANG001");
-        expect(markup).toContain("Directories");
-        expect(markup).toContain("Selected file");
+        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(markup).toContain("Folders");
+        expect(markup).toContain("Preview");
         expect(markup).toContain("/tmp/results/42/report.html");
         expect(markup).toContain("Result metadata");
-        expect(markup).toContain("sanger_sample_id: SANG001");
+        expect(markup).toContain("SANG001");
+        expect(markup).not.toContain("sanger_sample_id: SANG001");
         expect(markup).toContain("Registered files");
         expect(markup).toContain('data-registration-layout="compact"');
         expect(markup).toContain("Key details");
@@ -492,7 +543,9 @@ describe("M1 result detail seqmeta enrichment", () => {
             },
         );
 
-        expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            "SANG001",
+        );
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
 
         firstRender.unmount();
@@ -511,7 +564,9 @@ describe("M1 result detail seqmeta enrichment", () => {
             },
         );
 
-        expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            "SANG001",
+        );
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
     });
 
@@ -539,7 +594,9 @@ describe("M1 result detail seqmeta enrichment", () => {
             },
         );
 
-        expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            "SANG001",
+        );
         fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
 
         await waitFor(() => {
@@ -549,7 +606,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.queryByLabelText("enrichment unavailable")).toBeNull();
     });
 
-    it("mirrors the client cache to a cookie and reuses it on the next detail render", async () => {
+    it("mirrors the client cache to a cookie while server detail renders stay cache-agnostic", async () => {
         fetchFilesMock.mockResolvedValue([]);
         fetchResultMock
             .mockResolvedValueOnce(
@@ -564,7 +621,6 @@ describe("M1 result detail seqmeta enrichment", () => {
                     metadata: { seqmeta_sampleid: "SANG001" },
                 }),
             );
-        enrichIdentifierMock.mockResolvedValue(buildEnrichment());
         setRequestCookieHeader();
 
         const { ResultMetadataEnrichment } =
@@ -606,8 +662,9 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).toHaveBeenCalledTimes(1);
-        expect(firstMarkup).toContain("sanger_sample_id: SANG001");
+        expect(enrichIdentifierMock).toHaveBeenCalledTimes(0);
+        expect(firstMarkup).toContain("SANG001");
+        expect(firstMarkup).not.toContain("sanger_sample_id: SANG001");
 
         setRequestCookieHeader(
             buildSeqmetaCacheCookie({ SANG001: buildEnrichment() }),
@@ -619,8 +676,9 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).toHaveBeenCalledTimes(1);
-        expect(secondMarkup).toContain("sanger_sample_id: SANG001");
+        expect(enrichIdentifierMock).toHaveBeenCalledTimes(0);
+        expect(secondMarkup).toContain("SANG001");
+        expect(secondMarkup).not.toContain("sanger_sample_id: SANG001");
     });
 
     it("does not rewrite the seqmeta cookie when mount enrichment matches the existing cache", async () => {
@@ -648,14 +706,16 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
 
         await waitFor(() => {
-            expect(screen.getByText("sanger_sample_id: SANG001")).toBeTruthy();
+            expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+                "SANG001",
+            );
         });
 
         expect(cookieWrites).toHaveLength(writesBeforeRender);
         expect(readSeqmetaCookieFromDocument()).toBe(document.cookie);
     });
 
-    it("marks seqmeta enrichment as unavailable when server validation fails", async () => {
+    it("keeps server detail rendering neutral when seqmeta validation would fail client-side", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
                 metadata: {
@@ -679,7 +739,8 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(markup).toContain("enrichment backend impaired");
+        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(markup).not.toContain("enrichment backend impaired");
         expect(markup).toContain("SANG001");
     });
 });

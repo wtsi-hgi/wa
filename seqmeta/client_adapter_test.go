@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
@@ -72,7 +73,14 @@ func TestClientAdapterAllSamplesForStudy(t *testing.T) {
 				return
 			}
 
-			if r.URL.Query().Get("filters") != `{"study_id":"100"}` {
+			decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
+			if err != nil {
+				http.Error(w, "unexpected filters", http.StatusBadRequest)
+
+				return
+			}
+
+			if decodedFilters != `{"study_id":"100"}` {
 				http.Error(w, "unexpected filters", http.StatusBadRequest)
 
 				return
@@ -161,7 +169,14 @@ func TestClientAdapterFindSamplesBySangerID(t *testing.T) {
 				return
 			}
 
-			if r.URL.Query().Get("filters") != `{"sanger_id":"SANG1"}` {
+			decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
+			if err != nil {
+				http.Error(w, "unexpected filters", http.StatusBadRequest)
+
+				return
+			}
+
+			if decodedFilters != `{"sample_id":"SANG1"}` {
 				http.Error(w, "unexpected filters", http.StatusBadRequest)
 
 				return
@@ -190,8 +205,15 @@ func TestClientAdapterExtendedDelegates(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/integrations/mlwh/samples":
-				filters := map[string]string{}
-				if err := json.Unmarshal([]byte(r.URL.Query().Get("filters")), &filters); err != nil {
+				filters := map[string]any{}
+				decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
+				if err != nil {
+					http.Error(w, "invalid filters", http.StatusBadRequest)
+
+					return
+				}
+
+				if err := json.Unmarshal([]byte(decodedFilters), &filters); err != nil {
 					http.Error(w, "invalid filters", http.StatusBadRequest)
 
 					return
@@ -200,9 +222,9 @@ func TestClientAdapterExtendedDelegates(t *testing.T) {
 				switch {
 				case filters["id_sample_lims"] == "S2":
 					_, _ = w.Write([]byte(`{"items":[{"id_sample_lims":"S2","sanger_id":"SANG2"}],"total":1,"offset":0,"limit":100}`))
-				case filters["id_run"] == "34134":
+				case filters["run_id"] == "34134":
 					_, _ = w.Write([]byte(`{"items":[{"id_run":34134,"sanger_id":"SANG3"}],"total":1,"offset":0,"limit":100}`))
-				case filters["library_type"] == "RNA PolyA":
+				case convey.ShouldResemble(filters["library_type"], []any{"RNA PolyA"}) == "":
 					_, _ = w.Write([]byte(`{"items":[{"library_type":"RNA PolyA","sanger_id":"SANG4"}],"total":1,"offset":0,"limit":100}`))
 				case filters["accession_number"] == "SAM123":
 					_, _ = w.Write([]byte(`{"items":[{"accession_number":"SAM123","sanger_id":"SANG5"}],"total":1,"offset":0,"limit":100}`))
