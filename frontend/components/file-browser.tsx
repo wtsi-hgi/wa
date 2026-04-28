@@ -1,7 +1,13 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { Eye, FolderTree, ListFilter } from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+    ChevronDown,
+    ChevronRight,
+    Eye,
+    FolderTree,
+    ListFilter,
+} from "lucide-react";
 
 import { type FileEntry } from "@/lib/contracts";
 import { cn, formatBytes } from "@/lib/utils";
@@ -14,6 +20,17 @@ export type DirectoryGroup = {
     path: string;
     totalSize: number;
     typeCounts: Record<string, number>;
+};
+
+export type DirectoryTreeNode = {
+    children: DirectoryTreeNode[];
+    fileCount: number;
+    files: FileEntry[];
+    label: string;
+    path: string;
+    totalSize: number;
+    typeCounts: Record<string, number>;
+    weight: number;
 };
 
 const fileKindOrder: Record<FileEntry["kind"], number> = {
@@ -41,6 +58,13 @@ type FileBrowserProps = {
     visibleFiles?: FileEntry[];
 };
 
+type RawDirectoryNode = {
+    children: Map<string, RawDirectoryNode>;
+    group?: DirectoryGroup;
+    name: string;
+    path: string;
+};
+
 function parentDirectory(path: string): string {
     const normalized = path.trim();
     const index = normalized.lastIndexOf("/");
@@ -54,6 +78,141 @@ function parentDirectory(path: string): string {
 
 function fileName(path: string): string {
     return path.split("/").pop() ?? path;
+}
+
+function directoryLabel(path: string): string {
+    return path === "/" ? "/" : path.slice(1);
+}
+
+function pathSegments(path: string): string[] {
+    if (path === "/") {
+        return [];
+    }
+
+    return path.split("/").filter(Boolean);
+}
+
+function subtreeWeight(node: DirectoryTreeNode): number {
+    return node.weight;
+}
+
+function compareDirectoryTreeNodes(
+    left: DirectoryTreeNode,
+    right: DirectoryTreeNode,
+): number {
+    return (
+        subtreeWeight(left) - subtreeWeight(right) ||
+        left.path.localeCompare(right.path)
+    );
+}
+
+function buildRawDirectoryTree(groups: DirectoryGroup[]): RawDirectoryNode[] {
+    const root: RawDirectoryNode = {
+        children: new Map<string, RawDirectoryNode>(),
+        name: "",
+        path: "/",
+    };
+
+    for (const group of groups) {
+        const segments = pathSegments(group.path);
+
+        if (segments.length === 0) {
+            root.group = group;
+            continue;
+        }
+
+        let current = root;
+        let currentPath = "";
+
+        for (const segment of segments) {
+            currentPath = `${currentPath}/${segment}`;
+            const existingChild = current.children.get(segment);
+
+            if (existingChild) {
+                current = existingChild;
+                continue;
+            }
+
+            const next: RawDirectoryNode = {
+                children: new Map<string, RawDirectoryNode>(),
+                name: segment,
+                path: currentPath,
+            };
+
+            current.children.set(segment, next);
+            current = next;
+        }
+
+        current.group = group;
+    }
+
+    if (root.group) {
+        return [root];
+    }
+
+    return [...root.children.values()];
+}
+
+function compressDirectoryNode(rawNode: RawDirectoryNode): DirectoryTreeNode {
+    const labelSegments = [rawNode.name];
+    let current = rawNode;
+
+    while (!current.group && current.children.size === 1) {
+        const nextChild = [...current.children.values()][0];
+
+        if (!nextChild) {
+            break;
+        }
+
+        labelSegments.push(nextChild.name);
+        current = nextChild;
+    }
+
+    const children = [...current.children.values()]
+        .map((child) => compressDirectoryNode(child))
+        .sort(compareDirectoryTreeNodes);
+    const weight = Math.min(
+        current.group
+            ? fileKindOrder[current.group.files[0]?.kind ?? "pipeline"]
+            : Number.POSITIVE_INFINITY,
+        ...children.map((child) => child.weight),
+    );
+
+    return {
+        children,
+        fileCount: current.group?.fileCount ?? 0,
+        files: current.group?.files ?? [],
+        label: labelSegments.join("/"),
+        path: current.path,
+        totalSize: current.group?.totalSize ?? 0,
+        typeCounts: current.group?.typeCounts ?? {},
+        weight: Number.isFinite(weight) ? weight : fileKindOrder.pipeline,
+    };
+}
+
+export function buildDirectoryTree(files: FileEntry[]): DirectoryTreeNode[] {
+    return buildRawDirectoryTree(buildDirectoryGroups(files))
+        .map((node) => compressDirectoryNode(node))
+        .sort(compareDirectoryTreeNodes);
+}
+
+function ancestorPaths(path: string | undefined): string[] {
+    if (!path) {
+        return [];
+    }
+
+    const segments = pathSegments(path);
+
+    return segments.map(
+        (_, index) => `/${segments.slice(0, index + 1).join("/")}`,
+    );
+}
+
+function collectTreePaths(node: DirectoryTreeNode): string[] {
+    return [
+        node.path,
+        ...node.children.flatMap((child) => collectTreePaths(child)),
+    ];
 }
 
 function formatMtime(mtime: string | undefined): string {
@@ -159,35 +318,71 @@ export function FileBrowser({
     const [uncontrolledPath, setUncontrolledPath] = useState<
         string | undefined
     >(selectedPath);
+    const [collapsedDirectories, setCollapsedDirectories] = useState<
+        Set<string>
+    >(() => new Set<string>());
+    const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
+        () =>
+            new Set(
+                ancestorPaths(
+                    selectedDirectory ?? parentDirectory(files[0]?.path ?? "/"),
+                ),
+            ),
+    );
+    const initialDirectoryNotificationRef = useRef<string | undefined>(
+        undefined,
+    );
     const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
-    const preferredDirectory = selectedDirectory ?? uncontrolledDirectory;
-    const activeDirectory =
-        directoryGroups.find((group) => group.path === preferredDirectory) ??
-        directoryGroups[0];
+    const directoryTree = useMemo(() => buildDirectoryTree(files), [files]);
+    const preferredDirectory =
+        selectedDirectory ?? uncontrolledDirectory ?? directoryGroups[0]?.path;
+    const activeDirectory = directoryGroups.find(
+        (group) => group.path === preferredDirectory,
+    );
     const activeFiles = activeDirectory?.files ?? [];
-    const effectiveSelectedDirectory = activeDirectory?.path;
+    const effectiveSelectedDirectory = preferredDirectory;
     const preferredSelectedPath = selectedPath ?? uncontrolledPath;
     const activeFile =
         activeFiles.find((file) => file.path === preferredSelectedPath) ??
         activeFiles[0];
     const effectiveSelectedPath = activeFile?.path;
     const displayedFiles = visibleFiles ?? activeFiles;
+    const visibleExpandedDirectories = useMemo(() => {
+        const next = new Set(expandedDirectories);
+
+        for (const path of ancestorPaths(effectiveSelectedDirectory)) {
+            if (!collapsedDirectories.has(path)) {
+                next.add(path);
+            }
+        }
+
+        return next;
+    }, [collapsedDirectories, effectiveSelectedDirectory, expandedDirectories]);
 
     useEffect(() => {
-        if (!activeDirectory) {
+        if (
+            !effectiveSelectedDirectory ||
+            !onSelectDirectory ||
+            selectedDirectory !== undefined ||
+            uncontrolledDirectory !== undefined
+        ) {
             return;
         }
 
-        if (preferredDirectory === activeDirectory.path) {
+        if (
+            initialDirectoryNotificationRef.current ===
+            effectiveSelectedDirectory
+        ) {
             return;
         }
 
-        onSelectDirectory?.(activeDirectory.path);
+        initialDirectoryNotificationRef.current = effectiveSelectedDirectory;
+        onSelectDirectory(effectiveSelectedDirectory);
     }, [
-        activeDirectory,
-        preferredDirectory,
+        effectiveSelectedDirectory,
         onSelectDirectory,
         selectedDirectory,
+        uncontrolledDirectory,
     ]);
 
     useEffect(() => {
@@ -215,11 +410,12 @@ export function FileBrowser({
         );
     }
 
-    const renderFileButton = (file: FileEntry) => (
+    const renderFileButton = (file: FileEntry, nested = false) => (
         <button
             type="button"
             className={cn(
                 "flex w-full items-start gap-4 rounded-[1.25rem] border px-4 py-4 text-left transition",
+                nested ? "min-h-[6.5rem]" : "",
                 file.path === activeFile?.path
                     ? "border-primary/45 bg-primary/10"
                     : "border-border/60 bg-background/65 hover:border-primary/35 hover:bg-background",
@@ -233,6 +429,12 @@ export function FileBrowser({
                 onSelectFile(file);
             }}
         >
+            <span
+                aria-hidden="true"
+                className="mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background/80 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+            >
+                {file.kind.slice(0, 1)}
+            </span>
             <span className="min-w-0 flex-1">
                 <span className="block truncate text-base font-medium text-foreground">
                     {fileName(file.path)}
@@ -251,6 +453,165 @@ export function FileBrowser({
         </button>
     );
 
+    function renderDirectoryRows(
+        nodes: DirectoryTreeNode[],
+        depth = 0,
+    ): ReactNode[] {
+        return nodes.flatMap((node) => {
+            const isExpanded = visibleExpandedDirectories.has(node.path);
+            const isSelected = node.path === effectiveSelectedDirectory;
+            const hasChildren = node.children.length > 0;
+            const hasFiles = node.fileCount > 0;
+            const rows: ReactNode[] = [
+                <button
+                    key={`dir-${node.path}`}
+                    type="button"
+                    className={cn(
+                        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[1.25rem] border px-4 py-3 text-left transition",
+                        isSelected
+                            ? "border-primary/45 bg-primary/10"
+                            : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
+                    )}
+                    data-depth={depth}
+                    data-directory-expanded={String(isExpanded)}
+                    data-directory-path={node.path}
+                    onClick={() => {
+                        const nextIsExpanded = !isExpanded;
+
+                        setCollapsedDirectories((current) => {
+                            const next = new Set(current);
+
+                            if (nextIsExpanded) {
+                                next.delete(node.path);
+                            } else {
+                                next.add(node.path);
+                            }
+
+                            return next;
+                        });
+                        setExpandedDirectories((current) => {
+                            const next = new Set(current);
+
+                            if (isExpanded) {
+                                for (const path of collectTreePaths(node)) {
+                                    next.delete(path);
+                                }
+                                for (const path of ancestorPaths(node.path)) {
+                                    if (path !== node.path) {
+                                        next.add(path);
+                                    }
+                                }
+                            } else {
+                                for (const path of ancestorPaths(node.path)) {
+                                    next.add(path);
+                                }
+                            }
+
+                            return next;
+                        });
+
+                        if (selectedDirectory === undefined) {
+                            setUncontrolledDirectory(node.path);
+                        }
+
+                        onSelectDirectory?.(node.path);
+                    }}
+                    style={{ paddingLeft: `${depth * 1.2 + 1}rem` }}
+                >
+                    <span className="inline-flex size-6 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground">
+                        {hasChildren || hasFiles ? (
+                            isExpanded ? (
+                                <ChevronDown
+                                    className="size-4"
+                                    aria-hidden="true"
+                                />
+                            ) : (
+                                <ChevronRight
+                                    className="size-4"
+                                    aria-hidden="true"
+                                />
+                            )
+                        ) : (
+                            <span className="size-4" />
+                        )}
+                    </span>
+                    <span className="min-w-0">
+                        <span className="block truncate text-base font-medium text-foreground">
+                            {node.label || directoryLabel(node.path)}
+                        </span>
+                        <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                            <span>
+                                {node.fileCount === 0
+                                    ? hasChildren
+                                        ? "Expand to browse"
+                                        : "Empty folder"
+                                    : `${node.fileCount} file${node.fileCount === 1 ? "" : "s"}`}
+                            </span>
+                            {node.totalSize > 0 ? (
+                                <span>{formatBytes(node.totalSize)}</span>
+                            ) : null}
+                            {Object.keys(node.typeCounts).length > 0 ? (
+                                <span className="uppercase tracking-[0.18em]">
+                                    {formatTypeSummary(node.typeCounts)}
+                                </span>
+                            ) : null}
+                        </span>
+                    </span>
+                    <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                        {hasChildren
+                            ? `${node.children.length} subfolder${node.children.length === 1 ? "" : "s"}`
+                            : "Folder"}
+                    </span>
+                </button>,
+            ];
+
+            if (
+                isExpanded &&
+                node.path === effectiveSelectedDirectory &&
+                displayedFiles.length > 0
+            ) {
+                rows.push(
+                    <div
+                        key={`files-${node.path}`}
+                        className={cn(
+                            previewMode === "single"
+                                ? "space-y-3"
+                                : "space-y-3 xl:col-span-2",
+                        )}
+                        data-file-browser-directory-files={node.path}
+                    >
+                        {previewMode === "single"
+                            ? displayedFiles.map((file) => (
+                                  <div key={file.path}>
+                                      {renderFileButton(file, true)}
+                                  </div>
+                              ))
+                            : displayedFiles.map((file) => (
+                                  <div
+                                      key={file.path}
+                                      className="grid gap-3 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] xl:items-start"
+                                  >
+                                      <div>{renderFileButton(file, true)}</div>
+                                      <div
+                                          className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3"
+                                          data-grid-preview-path={file.path}
+                                      >
+                                          {renderGridPreview?.(file) ?? null}
+                                      </div>
+                                  </div>
+                              ))}
+                    </div>,
+                );
+            }
+
+            if (isExpanded && hasChildren) {
+                rows.push(...renderDirectoryRows(node.children, depth + 1));
+            }
+
+            return rows;
+        });
+    }
+
     return (
         <section
             className="rounded-[1.75rem] border border-border/70 bg-card/85 p-4 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)] sm:p-5"
@@ -268,11 +629,13 @@ export function FileBrowser({
                         </p>
                     </div>
                     <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                        {activeDirectory?.path}
+                        {effectiveSelectedDirectory ?? "File Browser"}
                     </h2>
                     <p className="mt-2 text-sm text-muted-foreground">
                         {previewSummary ??
-                            `Showing ${activeFiles.length} file${activeFiles.length === 1 ? "" : "s"} in this directory.`}
+                            (activeFiles.length > 0
+                                ? `Showing ${activeFiles.length} file${activeFiles.length === 1 ? "" : "s"} in this directory.`
+                                : "Expand a folder row to browse its files.")}
                     </p>
                 </div>
 
@@ -280,6 +643,7 @@ export function FileBrowser({
                     <div className="flex flex-wrap items-center gap-3">
                         <label className="inline-flex items-center gap-3 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-sm text-foreground">
                             <input
+                                aria-label="1 preview per row"
                                 checked={previewMode === "grid"}
                                 className="size-4 accent-primary"
                                 onChange={(event) =>
@@ -296,7 +660,7 @@ export function FileBrowser({
                                     className="size-4 text-primary"
                                     aria-hidden="true"
                                 />
-                                Preview first 100 files
+                                1 preview per row
                             </span>
                         </label>
 
@@ -307,7 +671,9 @@ export function FileBrowser({
                             />
                             {previewPageCount > 1
                                 ? `Page ${previewPage} of ${previewPageCount}`
-                                : "Single preview"}
+                                : previewMode === "grid"
+                                  ? "Grid previews"
+                                  : "Single preview"}
                         </div>
                     </div>
 
@@ -361,76 +727,38 @@ export function FileBrowser({
                 </div>
             </div>
 
-            <div className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4">
-                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    Folders
-                </p>
-                <div className="mt-4 flex flex-wrap gap-3">
-                    {directoryGroups.map((group) => {
-                        const isSelected = group.path === activeDirectory?.path;
-
-                        return (
-                            <button
-                                key={group.path}
-                                type="button"
-                                className={cn(
-                                    "min-w-[14rem] flex-1 rounded-[1.25rem] border px-4 py-3 text-left transition xl:flex-none xl:basis-[calc(33.333%-0.75rem)]",
-                                    isSelected
-                                        ? "border-primary/45 bg-primary/10"
-                                        : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
-                                )}
-                                data-directory-path={group.path}
-                                onClick={() => {
-                                    if (selectedDirectory === undefined) {
-                                        setUncontrolledDirectory(group.path);
-                                    }
-
-                                    onSelectDirectory?.(group.path);
-                                }}
-                            >
-                                <p className="break-all font-medium text-foreground">
-                                    {group.path}
-                                </p>
-                                <p className="mt-2 text-sm text-muted-foreground">
-                                    {group.fileCount} file
-                                    {group.fileCount === 1 ? "" : "s"} ·{" "}
-                                    {formatBytes(group.totalSize)}
-                                </p>
-                                <p className="mt-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                                    {formatTypeSummary(group.typeCounts)}
-                                </p>
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
-
             {previewMode === "single" ? (
-                <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)]">
+                <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(20rem,0.92fr)_minmax(0,1.08fr)] xl:items-start">
                     <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4">
-                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            Files
-                        </p>
-                        <p className="mt-2 text-sm text-muted-foreground">
-                            Select a file from {activeDirectory?.path}.
-                        </p>
-                        <ul className="mt-5 space-y-3">
-                            {displayedFiles.map((file) => (
-                                <li key={file.path}>
-                                    {renderFileButton(file)}
-                                </li>
-                            ))}
-                        </ul>
+                        <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-3">
+                            <div>
+                                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                    Explorer
+                                </p>
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                    Expand folders to reveal up to 100 paginated
+                                    files.
+                                </p>
+                            </div>
+                            {displayedFiles.length > 0 ? (
+                                <span className="rounded-full border border-border/70 bg-background/80 px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                                    {displayedFiles.length} visible
+                                </span>
+                            ) : null}
+                        </div>
+                        <div className="mt-4 space-y-3">
+                            {renderDirectoryRows(directoryTree)}
+                        </div>
                     </div>
 
-                    <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4">
+                    <div className="min-w-0 rounded-[1.5rem] border border-border/70 bg-background/55 p-4 xl:sticky xl:top-4">
                         <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            Preview
+                            Preview focus
                         </p>
                         <h3 className="mt-2 break-all text-xl font-semibold tracking-tight text-foreground">
                             {activeFile
                                 ? fileName(activeFile.path)
-                                : "No file selected"}
+                                : "Select a file to preview"}
                         </h3>
                         {activeFile ? (
                             <p className="mt-2 break-all text-sm text-muted-foreground">
@@ -441,7 +769,7 @@ export function FileBrowser({
                             className="mt-5"
                             data-file-browser-preview="single"
                         >
-                            {renderSinglePreview?.(activeFile) ?? null}
+                            {renderSinglePreview?.(activeFile ?? null) ?? null}
                         </div>
                     </div>
                 </div>
@@ -450,28 +778,24 @@ export function FileBrowser({
                     className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4"
                     data-preview-mode="grid"
                 >
-                    <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                        Files and previews
-                    </p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                        1 preview per row at {previewHeight}px high.
-                    </p>
+                    <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-3">
+                        <div>
+                            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                Explorer
+                            </p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                1 preview per row at {previewHeight}px high.
+                            </p>
+                        </div>
+                        {displayedFiles.length > 0 ? (
+                            <span className="rounded-full border border-border/70 bg-background/80 px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                                {displayedFiles.length} visible
+                            </span>
+                        ) : null}
+                    </div>
 
-                    <div className="mt-5 space-y-3">
-                        {displayedFiles.map((file) => (
-                            <div
-                                key={file.path}
-                                className="grid gap-3 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] xl:items-start"
-                            >
-                                <div>{renderFileButton(file)}</div>
-                                <div
-                                    className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3"
-                                    data-grid-preview-path={file.path}
-                                >
-                                    {renderGridPreview?.(file) ?? null}
-                                </div>
-                            </div>
-                        ))}
+                    <div className="mt-4 space-y-3">
+                        {renderDirectoryRows(directoryTree)}
                     </div>
                 </div>
             )}

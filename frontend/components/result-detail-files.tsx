@@ -287,12 +287,15 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
     const [previewState, setPreviewState] = useState<PreviewState>(() =>
         buildPreviewState(directoryGroups[0]?.files[0] ?? null),
     );
+    const effectiveSelectedDirectory =
+        selectedDirectory ?? directoryGroups[0]?.path;
 
     const selectedGroup = useMemo(
         () =>
-            directoryGroups.find((group) => group.path === selectedDirectory) ??
-            directoryGroups[0],
-        [directoryGroups, selectedDirectory],
+            directoryGroups.find(
+                (group) => group.path === effectiveSelectedDirectory,
+            ),
+        [directoryGroups, effectiveSelectedDirectory],
     );
     const selectedDirectoryFiles = useMemo(
         () => selectedGroup?.files ?? [],
@@ -478,7 +481,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                 )
             }
             renderSinglePreview={renderSinglePreview}
-            selectedDirectory={selectedGroup?.path}
+            selectedDirectory={effectiveSelectedDirectory}
             selectedPath={effectiveSelectedFile?.path}
             visibleFiles={visiblePreviewFiles}
         />

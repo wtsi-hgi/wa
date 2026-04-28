@@ -43,6 +43,49 @@ async function selectDirectoryForFile(
     filePath: string,
 ): Promise<void> {
     const directoryPath = path.dirname(filePath);
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+        const directoryButton = page
+            .locator(`[data-directory-path="${directoryPath}"]`)
+            .first();
+
+        if ((await directoryButton.count()) > 0) {
+            await expect(directoryButton).toBeVisible();
+            await directoryButton.click();
+            await expect(
+                page.locator(`[data-file-path="${filePath}"]`).first(),
+            ).toBeVisible();
+
+            return;
+        }
+
+        const visiblePaths = await page
+            .locator("[data-directory-path]")
+            .evaluateAll((elements) =>
+                elements
+                    .map((element) =>
+                        element.getAttribute("data-directory-path"),
+                    )
+                    .filter((value): value is string => Boolean(value)),
+            );
+        const nextPath = visiblePaths
+            .filter(
+                (candidate) =>
+                    directoryPath.startsWith(`${candidate}${path.sep}`) ||
+                    directoryPath === candidate,
+            )
+            .sort((left, right) => right.length - left.length)[0];
+
+        if (!nextPath || nextPath === directoryPath) {
+            break;
+        }
+
+        await page
+            .locator(`[data-directory-path="${nextPath}"]`)
+            .first()
+            .click();
+    }
+
     const directoryButton = page
         .locator(`[data-directory-path="${directoryPath}"]`)
         .first();
@@ -92,12 +135,25 @@ test.describe("Q1 critical results flows", () => {
         "review",
         "config.json",
     );
+    const ampliconConfigParentPath = path.join(
+        fixturesRoot,
+        "amplicon",
+        "config",
+    );
+    const ampliconConfigReviewPath = path.join(
+        fixturesRoot,
+        "amplicon",
+        "config",
+        "review",
+    );
     const rnaseqReportPath = path.join(
         fixturesRoot,
         "rnaseq",
         "reports",
         "report.csv",
     );
+    const rnaseqQcPath = path.join(fixturesRoot, "rnaseq", "qc");
+    const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
     const rnaseqImagePath = path.join(
         fixturesRoot,
         "rnaseq",
@@ -112,6 +168,13 @@ test.describe("Q1 critical results flows", () => {
         "images",
         "gallery",
         "plot-001.png",
+    );
+    const rnaseqGalleryPath = path.join(
+        fixturesRoot,
+        "rnaseq",
+        "qc",
+        "images",
+        "gallery",
     );
     const rnaseqGalleryPageTwoImagePath = path.join(
         fixturesRoot,
@@ -310,6 +373,57 @@ test.describe("Q1 critical results flows", () => {
         ).toBeVisible();
     });
 
+    test("compresses single-child paths and expands tree rows beneath the file browser pane", async ({
+        page,
+    }) => {
+        await openResultDetail(page, rnaseqPipelineName);
+
+        await expect(page.locator('[data-file-browser="true"]')).toBeVisible();
+        await expect(
+            page.locator(`[data-directory-path="${rnaseqQcPath}"]`),
+        ).toBeVisible();
+        await expect(
+            page.locator(`[data-directory-path="${rnaseqImagesPath}"]`),
+        ).toHaveCount(0);
+
+        await page.locator(`[data-directory-path="${rnaseqQcPath}"]`).click();
+
+        await expect(
+            page.locator(`[data-directory-path="${rnaseqImagesPath}"]`),
+        ).toBeVisible();
+        await expect(
+            page.locator(`[data-file-path="${rnaseqImagePath}"]`),
+        ).toHaveCount(0);
+
+        await page
+            .locator(`[data-directory-path="${rnaseqImagesPath}"]`)
+            .click();
+
+        await expect(
+            page.locator(`[data-file-path="${rnaseqImagePath}"]`),
+        ).toBeVisible();
+        await expect(
+            page.locator(`[data-directory-path="${rnaseqGalleryPath}"]`),
+        ).toBeVisible();
+
+        await page
+            .locator(`[data-directory-path="${rnaseqImagesPath}"]`)
+            .click();
+
+        await expect(
+            page.locator(`[data-file-path="${rnaseqImagePath}"]`),
+        ).toHaveCount(0);
+
+        await openResultDetail(page, ampliconPipelineName);
+
+        await expect(
+            page.locator(`[data-directory-path="${ampliconConfigReviewPath}"]`),
+        ).toBeVisible();
+        await expect(
+            page.locator(`[data-directory-path="${ampliconConfigParentPath}"]`),
+        ).toHaveCount(0);
+    });
+
     test("renders a CSV preview table for report outputs", async ({ page }) => {
         await openResultDetail(page, rnaseqPipelineName);
 
@@ -354,7 +468,7 @@ test.describe("Q1 critical results flows", () => {
         await openResultDetail(page, rnaseqPipelineName);
 
         await selectDirectoryForFile(page, rnaseqImagePath);
-        await page.getByLabel("Preview first 100 files").check();
+        await page.getByLabel("1 preview per row").check();
 
         const thumbnailButton = page.getByRole("button", {
             name: "Open image lightbox",
@@ -381,7 +495,7 @@ test.describe("Q1 critical results flows", () => {
         await openResultDetail(page, rnaseqPipelineName);
 
         await selectDirectoryForFile(page, rnaseqGalleryFirstImagePath);
-        await page.getByLabel("Preview first 100 files").check();
+        await page.getByLabel("1 preview per row").check();
 
         await expect(page.getByText("Page 1 of 2")).toBeVisible();
         await expect(

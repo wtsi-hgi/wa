@@ -48,16 +48,16 @@ describe("N1 file browser", () => {
         container.remove();
     });
 
-    it("renders a unified file browser pane with embedded single preview content", async () => {
+    it("renders a single tree-view pane with expandable directory rows", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
         await act(async () => {
             root.render(
                 createElement(FileBrowser, {
                     files: [
-                        buildFile("/out/a/1.txt", "output"),
-                        buildFile("/out/a/2.txt", "output"),
-                        buildFile("/out/b/3.txt", "output"),
+                        buildFile("/out/project/run/1.txt", "output"),
+                        buildFile("/out/project/run/2.txt", "output"),
+                        buildFile("/out/project/other/3.txt", "output"),
                         buildFile("/in/b.fastq", "input"),
                     ],
                     onSelectDirectory: vi.fn(),
@@ -73,20 +73,75 @@ describe("N1 file browser", () => {
         });
 
         expect(container.textContent).toContain("File Browser");
-        expect(container.textContent).toContain("Folders");
-        expect(container.textContent).toContain("/out/a");
-        expect(container.textContent).toContain("2 files");
-        expect(container.textContent).toContain("1.txt");
-        expect(container.textContent).toContain("2.txt");
-        expect(container.textContent).toContain("/out/a/1.txt");
-        expect(container.textContent).not.toContain("/out/b/3.txt");
-
-        await click(
-            container.querySelector('button[data-directory-path="/out/b"]'),
-        );
-
+        expect(container.textContent).not.toContain("Folders");
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/out/project"]',
+            ),
+        ).toBeTruthy();
         expect(container.textContent).toContain("3.txt");
         expect(container.textContent).not.toContain("1.txt");
+        expect(container.textContent).not.toContain("2.txt");
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/out/project"]',
+            ),
+        );
+
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/out/project/run"]',
+            ),
+        ).toBeNull();
+        expect(container.textContent).not.toContain("1.txt");
+        expect(container.textContent).not.toContain("2.txt");
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/out/project"]',
+            ),
+        );
+
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/out/project/run"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/out/project/other"]',
+            ),
+        ).toBeTruthy();
+        expect(container.textContent).not.toContain("1.txt");
+        expect(container.textContent).not.toContain("2.txt");
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/out/project/run"]',
+            ),
+        );
+
+        expect(container.textContent).toContain("1.txt");
+        expect(container.textContent).toContain("2.txt");
+        expect(container.textContent).not.toContain("3.txt");
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/out/project/run"]',
+            ),
+        );
+
+        expect(
+            container.querySelector(
+                'button[data-file-path="/out/project/run/1.txt"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                'button[data-file-path="/out/project/run/2.txt"]',
+            ),
+        ).toBeNull();
     });
 
     it("renders grid previews beside the current page of file rows", async () => {
@@ -147,26 +202,44 @@ describe("N1 file browser", () => {
         expect(container.textContent).toContain("No registered files");
     });
 
-    it("builds flat directory summaries instead of a nested tree", async () => {
-        const { buildDirectoryGroups } =
+    it("compresses single-child directory chains into tree nodes", async () => {
+        const { buildDirectoryTree } =
             await import("@/components/file-browser");
 
-        const groups = buildDirectoryGroups([
-            buildFile("/out/a/1.csv", "output"),
-            buildFile("/out/a/2.csv", "output"),
-            buildFile("/out/a/3.png", "output"),
-            buildFile("/out/b/4.txt", "output"),
+        const tree = buildDirectoryTree([
+            buildFile("/out/project/run/1.csv", "output"),
+            buildFile("/out/project/run/2.csv", "output"),
+            buildFile("/out/project/other/3.png", "output"),
+            buildFile("/in/raw/4.txt", "input"),
         ]);
 
-        expect(groups).toHaveLength(2);
-        expect(groups[0]?.path).toBe("/out/a");
-        expect(groups[0]?.fileCount).toBe(3);
-        expect(groups[0]?.typeCounts).toEqual({ csv: 2, png: 1 });
-        expect(groups[0]?.files.map((file) => file.path)).toEqual([
-            "/out/a/1.csv",
-            "/out/a/2.csv",
-            "/out/a/3.png",
+        expect(tree.map((node) => node.path)).toEqual([
+            "/out/project",
+            "/in/raw",
         ]);
+        expect(tree[0]?.label).toBe("out/project");
+        expect(tree[0]?.children.map((node) => node.path)).toEqual([
+            "/out/project/other",
+            "/out/project/run",
+        ]);
+        expect(tree[0]?.children[1]?.fileCount).toBe(2);
+    });
+
+    it("retains the root directory when files live directly under slash", async () => {
+        const { buildDirectoryTree } =
+            await import("@/components/file-browser");
+
+        const tree = buildDirectoryTree([
+            buildFile("/report.csv", "output"),
+            buildFile("/nested/image.png", "output"),
+        ]);
+
+        expect(tree.map((node) => node.path)).toEqual(["/"]);
+        expect(tree[0]?.fileCount).toBe(1);
+        expect(tree[0]?.files.map((file) => file.path)).toEqual([
+            "/report.csv",
+        ]);
+        expect(tree[0]?.children.map((node) => node.path)).toEqual(["/nested"]);
     });
 
     it("selects the first directory and first file on first render", async () => {
@@ -275,7 +348,7 @@ describe("N1 file browser", () => {
             );
         });
 
-        expect(container.textContent).toContain("Preview first 100 files");
+        expect(container.textContent).toContain("1 preview per row");
         expect(container.textContent).toContain("Preview height");
         expect(container.textContent).toContain("Page 2 of 3");
     });
