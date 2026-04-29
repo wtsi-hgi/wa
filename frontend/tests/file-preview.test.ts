@@ -570,4 +570,55 @@ describe("O1 file preview", () => {
             screen.queryByText(/image preview/i, { selector: "p" }),
         ).toBeNull();
     });
+
+    it("applies maxHeight to single-mode image previews so the slider takes effect", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/image.png" }),
+            content: { content: "", contentType: "image/png" },
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fimage.png",
+            maxHeight: 180,
+        });
+
+        const image = screen.getByAltText("image.png preview");
+
+        expect(image.getAttribute("style")).toContain("max-height: 180px");
+    });
+
+    it("keeps FileImageThumbnail intrinsic image dimensions stable when height prop changes", async () => {
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+        const sharedProps = {
+            file: buildFile({ path: "/tmp/results/plot.png" }),
+            fullSizeUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
+            thumbnailUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png&thumb=true&w=672&h=420",
+        };
+
+        const small = render(
+            createElement(FileImageThumbnail, {
+                ...sharedProps,
+                height: 160,
+            }),
+        );
+        const smallImage = screen.getByAltText("plot.png preview");
+        const smallWidth = smallImage.getAttribute("width");
+        const smallHeight = smallImage.getAttribute("height");
+        const smallStyle = smallImage.getAttribute("style") ?? "";
+
+        small.unmount();
+
+        render(
+            createElement(FileImageThumbnail, {
+                ...sharedProps,
+                height: 360,
+            }),
+        );
+        const largeImage = screen.getByAltText("plot.png preview");
+
+        expect(largeImage.getAttribute("width")).toBe(smallWidth);
+        expect(largeImage.getAttribute("height")).toBe(smallHeight);
+        expect(smallStyle).toContain("max-height: 160px");
+        expect(largeImage.getAttribute("style")).toContain("max-height: 360px");
+    });
 });

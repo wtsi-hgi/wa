@@ -777,7 +777,6 @@ export function FileBrowser({
                     </div>
 
                     <PreviewHeightControl
-                        key={previewHeight}
                         onCommit={onPreviewHeightChange}
                         value={previewHeight}
                     />

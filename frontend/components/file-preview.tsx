@@ -29,6 +29,11 @@ hljs.registerLanguage("python", python);
 hljs.registerLanguage("xml", xml);
 
 const nonPreviewableExtensions = new Set(["bam", "cram", "h5", "hdf5"]);
+const STABLE_THUMBNAIL_HEIGHT = 420;
+const STABLE_THUMBNAIL_WIDTH = Math.max(
+    320,
+    Math.round(STABLE_THUMBNAIL_HEIGHT * 1.6),
+);
 const imageExtensions = new Set([
     "png",
     "jpg",
@@ -62,6 +67,7 @@ export type FilePreviewProps = {
     content?: { content: string; contentType: string };
     error?: FilePreviewError;
     isLoading?: boolean;
+    maxHeight?: number;
     proxyUrl: string;
 };
 
@@ -485,15 +491,18 @@ function LightboxImage({
 
 function ImagePreview({
     fileName,
+    maxHeightPx,
     proxyUrl,
 }: {
     fileName: string;
+    maxHeightPx?: number;
     proxyUrl: string;
 }) {
     return (
         <LightboxImage
             fileName={fileName}
             fullSizeUrl={proxyUrl}
+            maxHeightPx={maxHeightPx}
             thumbnailUrl={proxyUrl}
         />
     );
@@ -524,9 +533,9 @@ export const FileImageThumbnail = memo(
                         imageClassName="w-full"
                         maxHeightPx={height}
                         sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
-                        thumbnailHeight={height}
+                        thumbnailHeight={STABLE_THUMBNAIL_HEIGHT}
                         thumbnailUrl={thumbnailUrl}
-                        thumbnailWidth={Math.max(320, Math.round(height * 1.6))}
+                        thumbnailWidth={STABLE_THUMBNAIL_WIDTH}
                     />
                 </div>
             </article>
@@ -587,6 +596,7 @@ export function FilePreview({
     content,
     error,
     isLoading = false,
+    maxHeight,
     proxyUrl,
 }: FilePreviewProps) {
     const renderer = content
@@ -682,7 +692,11 @@ export function FilePreview({
                     ) : null}
 
                     {!isLoading && previewable && renderer === "image" ? (
-                        <ImagePreview fileName={fileName} proxyUrl={proxyUrl} />
+                        <ImagePreview
+                            fileName={fileName}
+                            maxHeightPx={maxHeight}
+                            proxyUrl={proxyUrl}
+                        />
                     ) : null}
 
                     {!isLoading && previewable && renderer === "svg" ? (
@@ -695,30 +709,44 @@ export function FilePreview({
                                 width={1200}
                                 height={1200}
                                 sizes="100vw"
-                                style={{ maxHeight: "480px", maxWidth: "100%" }}
+                                style={{
+                                    maxHeight: maxHeight
+                                        ? `${maxHeight}px`
+                                        : "480px",
+                                    maxWidth: "100%",
+                                }}
                             />
                         </div>
                     ) : null}
 
                     {!isLoading && previewable && renderer === "pdf" ? (
                         <iframe
-                            className="min-h-[32rem] w-full rounded-[1.5rem] border border-border/70 bg-background"
+                            className="w-full rounded-[1.5rem] border border-border/70 bg-background"
                             src={proxyUrl}
+                            style={{ height: `${maxHeight ?? 512}px` }}
                             title="PDF preview"
                         />
                     ) : null}
 
                     {!isLoading && previewable && renderer === "html" ? (
                         <iframe
-                            className="min-h-[32rem] w-full rounded-[1.5rem] border border-border/70 bg-white"
+                            className="w-full rounded-[1.5rem] border border-border/70 bg-white"
                             sandbox="allow-same-origin"
                             src={proxyUrl}
+                            style={{ height: `${maxHeight ?? 512}px` }}
                             title="HTML preview"
                         />
                     ) : null}
 
                     {!isLoading && previewable && renderer === "markdown" ? (
-                        <article className="max-w-none rounded-[1.5rem] border border-border/70 bg-background/75 p-6">
+                        <article
+                            className="max-w-none overflow-y-auto rounded-[1.5rem] border border-border/70 bg-background/75 p-6"
+                            style={
+                                maxHeight
+                                    ? { maxHeight: `${maxHeight}px` }
+                                    : undefined
+                            }
+                        >
                             <ReactMarkdown>
                                 {content?.content ?? ""}
                             </ReactMarkdown>
@@ -729,10 +757,19 @@ export function FilePreview({
                     previewable &&
                     renderer === "csv" &&
                     content ? (
-                        <CsvPreview
-                            content={content.content}
-                            contentType={content.contentType}
-                        />
+                        <div
+                            className={cn(maxHeight ? "overflow-y-auto" : "")}
+                            style={
+                                maxHeight
+                                    ? { maxHeight: `${maxHeight}px` }
+                                    : undefined
+                            }
+                        >
+                            <CsvPreview
+                                content={content.content}
+                                contentType={content.contentType}
+                            />
+                        </div>
                     ) : null}
 
                     {!isLoading && previewable && renderer === "code" ? (
@@ -741,7 +778,14 @@ export function FilePreview({
                                 <Expand className="size-4" aria-hidden="true" />
                                 Syntax-highlighted preview
                             </div>
-                            <pre className="overflow-x-auto p-5 text-sm leading-7 text-slate-100">
+                            <pre
+                                className="overflow-auto p-5 text-sm leading-7 text-slate-100"
+                                style={
+                                    maxHeight
+                                        ? { maxHeight: `${maxHeight}px` }
+                                        : undefined
+                                }
+                            >
                                 <code
                                     dangerouslySetInnerHTML={{
                                         __html: highlightedContent ?? "",

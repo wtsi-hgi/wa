@@ -422,6 +422,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                     error={previewError}
                     file={file}
                     isLoading={isLoading}
+                    maxHeight={previewHeight}
                     proxyUrl={buildFileUrl(resultId, file.path)}
                 />
             </div>
