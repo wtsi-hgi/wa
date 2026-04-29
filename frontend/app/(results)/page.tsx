@@ -3,7 +3,6 @@ import { FilterBuilder } from "@/components/filter-builder";
 import { ResultsTable } from "@/components/results-table";
 import type { FilterSuggestionMap } from "@/components/filter-builder";
 import {
-    fetchStudies,
     fetchMetaKeys,
     fetchStats,
     searchResults,
@@ -171,15 +170,12 @@ export default async function ResultsLandingPage({
     let stats = emptyStats;
     let statsError: string | null = null;
     let metaKeys: string[] = [];
-    let studies: Study[] = [];
+    const studies: Study[] = [];
     const seqmetaAvailable = Boolean(
         process.env.WA_SEQMETA_BACKEND_URL?.trim(),
     );
     const statsPromise = fetchStats(10, 30);
     const metaKeysPromise = fetchMetaKeys();
-    const studiesPromise = seqmetaAvailable
-        ? fetchStudies()
-        : Promise.resolve<Study[]>([]);
 
     try {
         stats = await statsPromise;
@@ -197,16 +193,6 @@ export default async function ResultsLandingPage({
         statsError =
             statsError ??
             getErrorMessage(error, "Unable to load filter fields");
-    }
-
-    if (seqmetaAvailable) {
-        try {
-            const loadedStudies = await studiesPromise;
-            studies = Array.isArray(loadedStudies) ? loadedStudies : [];
-        } catch (error) {
-            statsError =
-                statsError ?? getErrorMessage(error, "Unable to load studies");
-        }
     }
 
     let tableData: ResultSet[] | SearchResult[] = stats.recent;

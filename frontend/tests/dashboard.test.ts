@@ -257,7 +257,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         });
     });
 
-    it("starts loading filter metadata and studies before stats resolves", async () => {
+    it("starts loading filter metadata before stats resolves without live study lookup", async () => {
         const statsPending = deferred<StatsResult>();
 
         process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
@@ -273,10 +273,32 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         expect(fetchStatsMock).toHaveBeenCalledTimes(1);
         expect(fetchMetaKeysMock).toHaveBeenCalledTimes(1);
-        expect(fetchStudiesMock).toHaveBeenCalledTimes(1);
+        expect(fetchStudiesMock).not.toHaveBeenCalled();
 
         statsPending.resolve(buildStats());
         await pagePromise;
+
+        delete process.env.WA_SEQMETA_BACKEND_URL;
+    });
+
+    it("does not block the landing page on slow live study suggestions", async () => {
+        process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
+        fetchStatsMock.mockResolvedValue(buildStats());
+        fetchMetaKeysMock.mockResolvedValue([]);
+        fetchStudiesMock.mockReturnValue(deferred().promise);
+        searchResultsMock.mockResolvedValue([]);
+
+        const pageModule = await import("@/app/(results)/page");
+        const Page = pageModule.default;
+        const pagePromise = Page({ searchParams: Promise.resolve({}) });
+
+        await Promise.resolve();
+        expect(fetchStudiesMock).not.toHaveBeenCalled();
+
+        const markup = renderToStaticMarkup(await pagePromise);
+
+        expect(markup).toContain("Search builder");
+        expect(markup).toContain("Recent registrations");
 
         delete process.env.WA_SEQMETA_BACKEND_URL;
     });
@@ -411,7 +433,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         });
     });
 
-    it("hydrates study suggestions from loaded studies and applies the selected value", async () => {
+    it("keeps study filters usable without loading live study suggestions", async () => {
         process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
         fetchStatsMock.mockResolvedValue(buildStats());
         fetchStudiesMock.mockResolvedValue([
@@ -454,7 +476,8 @@ describe("J1 dashboard with search builder and recent results", () => {
             container.querySelector(
                 "datalist#filter-suggestions-study_id option[value='6568']",
             ),
-        ).toBeTruthy();
+        ).toBeNull();
+        expect(fetchStudiesMock).not.toHaveBeenCalled();
 
         fireEvent.change(valueInput, {
             target: { value: "6568" },
