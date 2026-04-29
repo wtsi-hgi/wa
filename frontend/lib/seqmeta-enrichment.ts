@@ -239,34 +239,11 @@ export function mergeSeqmetaEnrichmentState(
     return { enrichments, errors };
 }
 
-class EnrichmentTimeoutError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "EnrichmentTimeoutError";
-    }
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    return Promise.race([
-        promise,
-        new Promise<T>((_, reject) => {
-            setTimeout(() => {
-                reject(
-                    new EnrichmentTimeoutError(
-                        `Enrichment request timed out after ${timeoutMs}ms`,
-                    ),
-                );
-            }, timeoutMs);
-        }),
-    ]);
-}
-
 export async function enrichSeqmetaMetadata(
     metadata: Record<string, string>,
     cache: SeqmetaCacheStore,
     enrichIdentifier: (value: string) => Promise<EnrichmentResult | null>,
 ): Promise<SeqmetaEnrichmentState> {
-    const ENRICHMENT_TIMEOUT_MS = 5000;
     const state = buildCachedEnrichmentState(metadata, cache);
     const pendingValues = collectSeqmetaLookupValues(metadata).filter(
         (value) => !cache.has(value),
@@ -283,10 +260,7 @@ export async function enrichSeqmetaMetadata(
     // First value enrichment (sequential to populate cache aliases)
     if (!cache.has(firstValue)) {
         try {
-            const result = await withTimeout(
-                enrichIdentifier(firstValue),
-                ENRICHMENT_TIMEOUT_MS,
-            );
+            const result = await enrichIdentifier(firstValue);
 
             if (result === null) {
                 cache.set(firstValue, null);
@@ -320,10 +294,7 @@ export async function enrichSeqmetaMetadata(
                 }
 
                 try {
-                    const result = await withTimeout(
-                        enrichIdentifier(value),
-                        ENRICHMENT_TIMEOUT_MS,
-                    );
+                    const result = await enrichIdentifier(value);
 
                     if (result === null) {
                         cache.set(value, null);

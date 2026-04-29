@@ -827,7 +827,9 @@
             }
         ],
         "metadata": {
-            "seqmeta_sampleid": "SANG5993",
+            "seqmeta_studyid": "3361",
+            "seqmeta_sampleid": "3361STDY5994718",
+            "seqmeta_sample_lims": "2153063",
             "library": "exon",
             "study": "study-alpha"
         }
@@ -922,7 +924,9 @@
             }
         ],
         "metadata": {
-            "seqmeta_sample_lims": "SMP5994",
+            "seqmeta_studyid": "7796",
+            "seqmeta_sampleid": "Embryo-Imp15289123",
+            "seqmeta_sample_lims": "9941914",
             "assay": "wgs",
             "priority": "urgent"
         }
@@ -1011,7 +1015,10 @@
             }
         ],
         "metadata": {
-            "seqmeta_library": "RNA",
+            "seqmeta_studyid": "4861",
+            "seqmeta_sampleid": "4861STDY7771117",
+            "seqmeta_sample_lims": "3990641",
+            "seqmeta_library": "Chromium single cell",
             "panel": "haem",
             "request_group": "validation"
         }

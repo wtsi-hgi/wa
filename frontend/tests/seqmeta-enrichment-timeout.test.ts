@@ -1,138 +1,98 @@
-/**
- * @vitest-environment jsdom
- */
-import { createElement } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
-import { SeqmetaCacheContext } from "@/lib/seqmeta-cache";
+import { BackendRequestError } from "@/lib/backend-client";
+import type { EnrichmentResult } from "@/lib/contracts";
 import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
+import { enrichSeqmetaMetadata } from "@/lib/seqmeta-enrichment";
 
-// Mock enrichIdentifier to return a promise that never resolves (hanging request)
-vi.mock("@/app/(results)/actions", () => ({
-    enrichIdentifier: vi.fn().mockReturnValue(
-        new Promise<never>(() => {
-            // Never resolves, never rejects - simulates a hanging network request
-        }),
-    ),
-}));
-
-describe("seqmeta enrichment timeout handling", () => {
+describe("enrichSeqmetaMetadata does not impose an artificial timeout", () => {
     beforeEach(() => {
-        // Ensure we're using real timers so setTimeout in withTimeout works
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
         vi.useRealTimers();
     });
 
-    test("loading state clears within 6 seconds when enrichment hangs", async () => {
+    it("no artificial timeout — slow 404 is classified as not_found", async () => {
         const cache = new SeqmetaCache();
-        const metadata = {
-            seqmeta_sampleid: "SANG5993",
+        const metadata: Record<string, string> = {
+            seqmeta_studyid: "9999999",
         };
 
-        render(
-            createElement(
-                SeqmetaCacheContext.Provider,
-                { value: cache },
-                createElement(ResultMetadataEnrichment, { metadata }),
-            ),
-        );
-
-        // Initially shows loading state
-        expect(screen.getByLabelText("loading enrichment")).toBeTruthy();
-
-        // Wait for timeout to trigger and loading to clear
-        // Should timeout within 5s, we give it 6s to be safe
-        await waitFor(
-            () => {
-                expect(
-                    screen.queryByLabelText("loading enrichment"),
-                ).toBeNull();
-            },
-            { timeout: 6000 },
-        );
-
-        // Should show upstream_impaired error indicator
-        const errorIndicator = screen.queryByLabelText(
-            "enrichment backend impaired",
-        );
-        expect(errorIndicator).toBeTruthy();
-    });
-
-    test("dialog stops showing Looking up within 6 seconds when enrichment hangs", async () => {
-        const cache = new SeqmetaCache();
-        const metadata = {
-            seqmeta_sampleid: "SANG5993",
-        };
-
-        render(
-            createElement(
-                SeqmetaCacheContext.Provider,
-                { value: cache },
-                createElement(ResultMetadataEnrichment, { metadata }),
-            ),
-        );
-
-        // Wait for timeout to trigger and loading to clear (within 6s)
-        await waitFor(
-            () => {
-                expect(
-                    screen.queryByLabelText("loading enrichment"),
-                ).toBeNull();
-            },
-            { timeout: 6000 },
-        );
-
-        // Click the badge to open dialog
-        const badges = screen.getAllByTestId("seqmeta-badge-trigger");
-        fireEvent.click(badges[0]);
-
-        // Dialog should open
-        await waitFor(() => {
-            expect(screen.getByRole("dialog")).toBeTruthy();
+        const enrichIdentifier = vi.fn(async (_value: string) => {
+            await new Promise((resolve) => setTimeout(resolve, 10_000));
+            throw new BackendRequestError(404, { detail: "not found" });
         });
 
-        // Dialog should NOT show "Looking up" because loading timed out
-        const lookingUpText = screen.queryByText(/Looking up/i);
-        expect(lookingUpText).toBeNull();
+        const promise = enrichSeqmetaMetadata(
+            metadata,
+            cache,
+            enrichIdentifier,
+        );
 
-        // Should show error message instead
-        const errorText = screen.queryByText(/unavailable/i);
-        expect(errorText).toBeTruthy();
+        await vi.advanceTimersByTimeAsync(10_000);
+        const state = await promise;
+
+        expect(state.errors["9999999"]).toBe("not_found");
+        expect(state.enrichments["9999999"]).toBeNull();
     });
 
-    test("parallel enrichment requests all timeout independently", async () => {
+    it("no artificial timeout — slow non-404 backend failure is classified as upstream_impaired", async () => {
         const cache = new SeqmetaCache();
-        const metadata = {
-            seqmeta_sampleid: "SANG5993",
-            seqmeta_studyid: "6568",
-            seqmeta_library: "RNA",
+        const metadata: Record<string, string> = {
+            seqmeta_studyid: "boom",
         };
 
-        render(
-            createElement(
-                SeqmetaCacheContext.Provider,
-                { value: cache },
-                createElement(ResultMetadataEnrichment, { metadata }),
-            ),
+        const enrichIdentifier = vi.fn(async (_value: string) => {
+            await new Promise((resolve) => setTimeout(resolve, 10_000));
+            throw new BackendRequestError(503, { detail: "down" });
+        });
+
+        const promise = enrichSeqmetaMetadata(
+            metadata,
+            cache,
+            enrichIdentifier,
         );
 
-        // First enrichment (studyid) times out after 5s, then parallel
-        // enrichments (sampleid, library) start and time out after another 5s.
-        // Total time: 10s + buffer = 11s
-        await waitFor(
-            () => {
-                expect(
-                    screen.queryAllByLabelText("loading enrichment"),
-                ).toHaveLength(0);
-            },
-            { timeout: 11000 },
+        await vi.advanceTimersByTimeAsync(10_000);
+        const state = await promise;
+
+        expect(state.errors["boom"]).toBe("upstream_impaired");
+    });
+
+    it("no artificial timeout — slow successful enrichment resolves without being aborted", async () => {
+        const cache = new SeqmetaCache();
+        const metadata: Record<string, string> = {
+            seqmeta_studyid: "3361",
+        };
+
+        const enrichIdentifier = vi.fn(async (value: string) => {
+            await new Promise((resolve) => setTimeout(resolve, 10_000));
+            return {
+                identifier: value,
+                type: "study_id",
+                graph: {
+                    study: {
+                        id_study_lims: value,
+                        name: "IHTP_ISC_IBDCA_Edinburgh",
+                    },
+                },
+                partial: false,
+            } satisfies EnrichmentResult;
+        });
+
+        const promise = enrichSeqmetaMetadata(
+            metadata,
+            cache,
+            enrichIdentifier,
         );
 
-        // All values should show upstream_impaired
-        const errorIndicators = screen.queryAllByLabelText(
-            "enrichment backend impaired",
-        );
-        expect(errorIndicators.length).toBeGreaterThan(0);
+        await vi.advanceTimersByTimeAsync(10_000);
+        const state = await promise;
+
+        expect(state.errors["3361"]).toBeUndefined();
+        expect(state.enrichments["3361"]).not.toBeNull();
+        expect(state.enrichments["3361"]?.identifier).toBe("3361");
     });
 });

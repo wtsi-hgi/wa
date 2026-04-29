@@ -275,7 +275,7 @@ test.describe("Q1 critical results flows", () => {
         ).toBeVisible();
         await expect(
             page.locator('[data-metadata-row="seqmeta_sampleid"]'),
-        ).toContainText("SANG5993");
+        ).toContainText("3361STDY5994718");
         await expect(
             page.locator('[data-metadata-row="library"]'),
         ).toContainText("exon");
