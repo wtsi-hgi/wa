@@ -391,6 +391,41 @@ describe("N1 file browser", () => {
         expect(preview.className).not.toMatch(/xl:col-start-/);
     });
 
+    it("does not add a second bordered box around the single preview panel", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/images/photo1.png", "output"),
+            buildFile("/results/images/photo2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "section",
+                            { "data-testid": "single-preview-surface" },
+                            file?.path ?? "none",
+                        ),
+                }),
+            );
+        });
+
+        const previewPanel = container.querySelector(
+            '[data-file-browser-preview="single"]',
+        ) as HTMLElement | null;
+
+        expect(previewPanel).toBeTruthy();
+        expect(previewPanel?.className).toContain("h-full");
+        expect(previewPanel?.className).not.toMatch(/(?:^|\s)border(?:\s|$)/);
+        expect(previewPanel?.className).not.toMatch(/(?:^|\s)p-\d/);
+        expect(previewPanel?.className).not.toMatch(/(?:^|\s)bg-/);
+    });
+
     it("shows an empty state when there are no registered files", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 

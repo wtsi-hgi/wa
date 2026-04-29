@@ -128,19 +128,6 @@ func isContextError(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
-func unsupportedFilterResult(identifier string, identifierType IdentifierType) *EnrichmentResult {
-	return &EnrichmentResult{
-		Identifier: identifier,
-		Type:       identifierType,
-		Partial:    true,
-		Missing: []MissingHop{{
-			Hop:    HopClassify,
-			Reason: ReasonFilterUnsupported,
-			Status: http.StatusBadGateway,
-		}},
-	}
-}
-
 func unsupportedFilterMissing() []MissingHop {
 	return []MissingHop{{
 		Hop:    HopClassify,

@@ -618,8 +618,8 @@ export function FilePreview({
 
     if (error?.status === 413) {
         return (
-            <section>
-                <div className="relative rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+            <section className="h-full w-full">
+                <div className="relative h-full w-full rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
                     <DownloadIconLink
                         className="absolute right-4 top-4"
                         href={downloadUrl}
@@ -641,8 +641,8 @@ export function FilePreview({
 
     if (error) {
         return (
-            <section>
-                <div className="relative rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+            <section className="h-full w-full">
+                <div className="relative h-full w-full rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
                     <DownloadIconLink
                         className="absolute right-4 top-4"
                         href={downloadUrl}
@@ -662,14 +662,14 @@ export function FilePreview({
     }
 
     return (
-        <section>
-            <div className="relative overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] p-5 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
+        <section className="h-full w-full">
+            <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] p-5 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
                 <DownloadIconLink
                     className="absolute right-4 top-4 z-10"
                     href={downloadUrl}
                 />
 
-                <div>
+                <div className="min-h-0 flex-1">
                     {isLoading ? (
                         <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
                             Loading preview...

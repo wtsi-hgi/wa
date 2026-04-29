@@ -528,6 +528,21 @@ describe("O1 file preview", () => {
         expect(link.querySelector("svg")).not.toBeNull();
     });
 
+    it("uses a full-size outer surface so browser panels do not need wrapper boxes", () => {
+        const { container } = renderPreview({
+            file: buildFile({ path: "/tmp/results/report.txt" }),
+            content: { content: "hello", contentType: "text/plain" },
+        });
+
+        const root = container.querySelector("section");
+        const surface = root?.firstElementChild;
+
+        expect(root?.className).toContain("h-full");
+        expect(root?.className).toContain("w-full");
+        expect(surface?.className).toContain("h-full");
+        expect(surface?.className).toContain("w-full");
+    });
+
     it("uses an icon-only download anchor on the 413 too-large branch without a 'Preview' eyebrow", () => {
         renderPreview({
             error: { fileSize: 20971520, status: 413 },

@@ -1,56 +1,138 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+type PreviewBorderSurfaceMetrics = {
+    root: {
+        height: number;
+        width: number;
+        x: number;
+        y: number;
+    };
+    surfaces: {
+        height: number;
+        tagName: string;
+        width: number;
+        x: number;
+        y: number;
+    }[];
+};
+
+async function openResultFileBrowser(page: Page) {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/");
+
+    await page.getByRole("link", { name: "nf-core/rnaseq" }).first().click();
+
+    const fileBrowser = page.locator('[data-file-browser="true"]');
+    await expect(fileBrowser).toBeVisible();
+}
+
+async function openFirstSinglePreview(page: Page) {
+    const singleLayoutContainer = page
+        .locator("[data-file-browser-single-layout]")
+        .first();
+    const preview = page.locator('[data-file-browser-preview="single"]');
+
+    let foundLayout = false;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+        const dirButtons = await page
+            .locator('[data-directory-path][data-directory-expanded="false"]')
+            .all();
+
+        if (dirButtons.length === 0) {
+            break;
+        }
+
+        await dirButtons[0].click();
+
+        if (
+            (await singleLayoutContainer.count()) > 0 &&
+            (await preview.count()) > 0
+        ) {
+            foundLayout = true;
+            break;
+        }
+    }
+
+    expect(foundLayout).toBe(true);
+    await expect(singleLayoutContainer).toBeVisible();
+    await expect(preview).toBeVisible();
+
+    return { preview, singleLayoutContainer };
+}
+
+async function measurePreviewBorderSurfaces(
+    preview: Locator,
+): Promise<PreviewBorderSurfaceMetrics> {
+    return preview.evaluate((root) => {
+        const rootRect = root.getBoundingClientRect();
+        const minimumSurfaceHeight = Math.min(rootRect.height * 0.45, 120);
+
+        function rectMetrics(rect: DOMRect) {
+            return {
+                height: rect.height,
+                width: rect.width,
+                x: rect.x,
+                y: rect.y,
+            };
+        }
+
+        function hasVisibleBorder(element: Element): boolean {
+            const styles = window.getComputedStyle(element);
+            const sides = ["Top", "Right", "Bottom", "Left"] as const;
+
+            return sides.some((side) => {
+                const width = Number.parseFloat(
+                    styles.getPropertyValue(
+                        `border-${side.toLowerCase()}-width`,
+                    ),
+                );
+                const style = styles.getPropertyValue(
+                    `border-${side.toLowerCase()}-style`,
+                );
+
+                return width > 0 && style !== "none" && style !== "hidden";
+            });
+        }
+
+        const elements = [root, ...root.querySelectorAll("*")];
+        const surfaces = elements
+            .map((element) => {
+                const rect = element.getBoundingClientRect();
+
+                return { element, rect };
+            })
+            .filter(({ element, rect }) => {
+                const startsNearPreviewTop =
+                    Math.abs(rect.y - rootRect.y) <= 16;
+                const spansPreviewWidth = rect.width >= rootRect.width * 0.9;
+                const isMeaningfulSurface = rect.height >= minimumSurfaceHeight;
+
+                return (
+                    hasVisibleBorder(element) &&
+                    startsNearPreviewTop &&
+                    spansPreviewWidth &&
+                    isMeaningfulSurface
+                );
+            })
+            .map(({ element, rect }) => ({
+                ...rectMetrics(rect),
+                tagName: element.tagName.toLowerCase(),
+            }));
+
+        return {
+            root: rectMetrics(rootRect),
+            surfaces,
+        };
+    });
+}
 
 test.describe("File Browser single preview layout", () => {
     test("positions single preview to the right of file metadata at 1024px viewport", async ({
         page,
     }) => {
-        await page.setViewportSize({ width: 1024, height: 768 });
-        await page.goto("/");
-
-        await page
-            .getByRole("link", { name: "nf-core/rnaseq" })
-            .first()
-            .click();
-
-        // Wait for file browser to be visible with single preview mode
-        const fileBrowser = page.locator('[data-file-browser="true"]');
-        await expect(fileBrowser).toBeVisible();
-
-        // Wait for a directory with files to be expanded in single preview mode
-        const singleLayoutContainer = page
-            .locator("[data-file-browser-single-layout]")
-            .first();
-        const preview = page.locator('[data-file-browser-preview="single"]');
-
-        // Keep clicking directory rows until we find one that shows files with preview
-        let foundLayout = false;
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-            const dirButtons = await page
-                .locator(
-                    '[data-directory-path][data-directory-expanded="false"]',
-                )
-                .all();
-
-            if (dirButtons.length === 0) {
-                break;
-            }
-
-            await dirButtons[0].click();
-
-            // Check if we now have a single layout container with preview
-            if (
-                (await singleLayoutContainer.count()) > 0 &&
-                (await preview.count()) > 0
-            ) {
-                foundLayout = true;
-                break;
-            }
-        }
-
-        expect(foundLayout).toBe(true);
-
-        await expect(singleLayoutContainer).toBeVisible();
-        await expect(preview).toBeVisible();
+        await openResultFileBrowser(page);
+        const { preview, singleLayoutContainer } =
+            await openFirstSinglePreview(page);
 
         // Get the first file button in the layout
         const fileButton = singleLayoutContainer
@@ -81,16 +163,7 @@ test.describe("File Browser single preview layout", () => {
     test("row-spans multiple file rows when directory has multiple files in single preview mode", async ({
         page,
     }) => {
-        await page.setViewportSize({ width: 1024, height: 768 });
-        await page.goto("/");
-
-        await page
-            .getByRole("link", { name: "nf-core/rnaseq" })
-            .first()
-            .click();
-
-        // Wait for file browser
-        await expect(page.locator('[data-file-browser="true"]')).toBeVisible();
+        await openResultFileBrowser(page);
 
         // Navigate directories until we find one with multiple files
         let foundMultiFileLayout = false;
@@ -165,5 +238,23 @@ test.describe("File Browser single preview layout", () => {
         expect(previewBBox.x).toBeGreaterThan(
             lastFileBBox.x + lastFileBBox.width,
         );
+    });
+
+    test("renders the single preview as one bordered surface filling the preview area", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        const { preview } = await openFirstSinglePreview(page);
+
+        const metrics = await measurePreviewBorderSurfaces(preview);
+
+        expect(metrics.surfaces).toHaveLength(1);
+
+        const [surface] = metrics.surfaces;
+
+        expect(surface.x).toBeCloseTo(metrics.root.x, 1);
+        expect(surface.y).toBeCloseTo(metrics.root.y, 1);
+        expect(surface.width).toBeGreaterThanOrEqual(metrics.root.width - 2);
+        expect(surface.height).toBeGreaterThanOrEqual(metrics.root.height - 2);
     });
 });

@@ -682,7 +682,7 @@ export function FileBrowser({
                                   ),
                                   <div
                                       key={`single-preview-${node.path}`}
-                                      className="min-w-0 rounded-[1.25rem] border border-border/60 bg-background/65 p-3 col-start-2 row-start-1 h-full"
+                                      className="min-w-0 col-start-2 row-start-1 h-full"
                                       data-file-browser-preview="single"
                                       style={{
                                           gridRow: `1 / span ${Math.max(displayedFiles.length, 1)}`,
