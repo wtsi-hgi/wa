@@ -32,7 +32,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"testing"
 
@@ -338,14 +337,14 @@ func TestMLWHAllSamplesForStudy(t *testing.T) {
 		Convey("when AllSamplesForStudy is called, then each request includes the server-side study filter", func() {
 			So(err, ShouldBeNil)
 			So(samples, ShouldHaveLength, 2)
-			So(requestedFilters, ShouldResemble, []string{"%7B%22study_id%22%3A%223361%22%7D", "%7B%22study_id%22%3A%223361%22%7D"})
+			So(requestedFilters, ShouldResemble, []string{`{"study_id":"3361"}`, `{"study_id":"3361"}`})
 		})
 	})
 }
 
 func TestMLWHSampleFilterQueryUsesLiveContract(t *testing.T) {
 	Convey("Given MLWH sample lookup methods using real Saga filter semantics", t, func() {
-		Convey("when FindSamplesBySangerID is called, then it sends a double-encoded sample_id filter", func() {
+		Convey("when FindSamplesBySangerID is called, then it sends a normally encoded sample_id filter", func() {
 			var requestedPath string
 			var requestedFiltersValue string
 			var requestedFilter map[string]any
@@ -353,7 +352,7 @@ func TestMLWHSampleFilterQueryUsesLiveContract(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestedPath = r.URL.Path
 				requestedFiltersValue = r.URL.Query().Get("filters")
-				requestedFilter = decodeDoubleEncodedFilters(t, r)
+				requestedFilter = decodeFilters(t, r)
 
 				_, _ = w.Write([]byte(`{"items":[{"sanger_id":"WTSI_wEMB10524782","id_study_lims":"6568"}],"total":1,"offset":0,"limit":1}`))
 			}))
@@ -367,18 +366,18 @@ func TestMLWHSampleFilterQueryUsesLiveContract(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(requestedPath, ShouldEqual, "/integrations/mlwh/samples")
-			So(requestedFiltersValue, ShouldEqual, "%7B%22sample_id%22%3A%22WTSI_wEMB10524782%22%7D")
+			So(requestedFiltersValue, ShouldEqual, `{"sample_id":"WTSI_wEMB10524782"}`)
 			So(requestedFilter, ShouldResemble, map[string]any{"sample_id": "WTSI_wEMB10524782"})
 			So(samples, ShouldHaveLength, 1)
 		})
 
-		Convey("when FindSamplesByRunID is called, then it sends a double-encoded run_id filter", func() {
+		Convey("when FindSamplesByRunID is called, then it sends a normally encoded run_id filter", func() {
 			var requestedFiltersValue string
 			var requestedFilter map[string]any
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestedFiltersValue = r.URL.Query().Get("filters")
-				requestedFilter = decodeDoubleEncodedFilters(t, r)
+				requestedFilter = decodeFilters(t, r)
 
 				_, _ = w.Write([]byte(`{"items":[{"id_run":34134}],"total":1,"offset":0,"limit":1}`))
 			}))
@@ -391,18 +390,18 @@ func TestMLWHSampleFilterQueryUsesLiveContract(t *testing.T) {
 			samples, err := client.MLWH().FindSamplesByRunID(context.Background(), 34134)
 
 			So(err, ShouldBeNil)
-			So(requestedFiltersValue, ShouldEqual, "%7B%22run_id%22%3A%2234134%22%7D")
+			So(requestedFiltersValue, ShouldEqual, `{"run_id":"34134"}`)
 			So(requestedFilter, ShouldResemble, map[string]any{"run_id": "34134"})
 			So(samples, ShouldHaveLength, 1)
 		})
 
-		Convey("when FindSamplesByLibraryType is called, then it sends a double-encoded list-valued library_type filter", func() {
+		Convey("when FindSamplesByLibraryType is called, then it sends a normally encoded list-valued library_type filter", func() {
 			var requestedFiltersValue string
 			var requestedFilter map[string]any
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestedFiltersValue = r.URL.Query().Get("filters")
-				requestedFilter = decodeDoubleEncodedFilters(t, r)
+				requestedFilter = decodeFilters(t, r)
 
 				_, _ = w.Write([]byte(`{"items":[{"library_type":"RNA PolyA","id_study_lims":"6568"}],"total":1,"offset":0,"limit":1}`))
 			}))
@@ -415,7 +414,7 @@ func TestMLWHSampleFilterQueryUsesLiveContract(t *testing.T) {
 			samples, err := client.MLWH().FindSamplesByLibraryType(context.Background(), "RNA PolyA")
 
 			So(err, ShouldBeNil)
-			So(requestedFiltersValue, ShouldEqual, "%7B%22library_type%22%3A%5B%22RNA+PolyA%22%5D%7D")
+			So(requestedFiltersValue, ShouldEqual, `{"library_type":["RNA PolyA"]}`)
 			So(requestedFilter, ShouldResemble, map[string]any{"library_type": []any{"RNA PolyA"}})
 			So(samples, ShouldHaveLength, 1)
 		})
@@ -429,7 +428,7 @@ func TestMLWHFindSamplesBySangerID(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestedPath = r.URL.Path
-			requestedFilter = decodeDoubleEncodedFilters(t, r)
+			requestedFilter = decodeFilters(t, r)
 
 			_, _ = w.Write([]byte(`{"items":[{"sanger_id":"WTSI_wEMB10524782","id_study_lims":"6568"}],"total":1,"offset":0,"limit":1}`))
 		}))
@@ -540,15 +539,11 @@ func TestMLWHFindSamplesBySangerID(t *testing.T) {
 }
 
 func TestMLWHFindSamplesByIDSampleLims(t *testing.T) {
-	Convey("Given MLWH supports an id-sample-lims filters query for samples", t, func() {
-		var requestedPath string
-		var requestedFilter map[string]any
-
+	Convey("Given MLWH does not advertise an id-sample-lims samples filter", t, func() {
+		requests := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestedPath = r.URL.Path
-			requestedFilter = decodeDoubleEncodedFilters(t, r)
-
-			_, _ = w.Write([]byte(`{"items":[{"id_sample_lims":"LIMS456","id_study_lims":"6568"}],"total":1,"offset":0,"limit":1}`))
+			requests++
+			http.NotFound(w, r)
 		}))
 		Reset(server.Close)
 
@@ -558,43 +553,21 @@ func TestMLWHFindSamplesByIDSampleLims(t *testing.T) {
 
 		samples, err := client.MLWH().FindSamplesByIDSampleLims(context.Background(), "LIMS456")
 
-		Convey("when FindSamplesByIDSampleLims is called, then it requests the samples endpoint with the id-sample-lims filter", func() {
-			So(err, ShouldBeNil)
-			So(requestedPath, ShouldEqual, "/integrations/mlwh/samples")
-			So(requestedFilter, ShouldResemble, map[string]any{"id_sample_lims": "LIMS456"})
-			So(samples, ShouldHaveLength, 1)
-			So(samples[0].IDSampleLims, ShouldEqual, "LIMS456")
-		})
-	})
-
-	Convey("Given MLWH returns no samples for an id-sample-lims filter", t, func() {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"items":[],"total":0,"offset":0,"limit":100}`))
-		}))
-		Reset(server.Close)
-
-		client, err := NewClient("test-key", WithBaseURL(server.URL))
-		So(err, ShouldBeNil)
-		Reset(client.Close)
-
-		samples, err := client.MLWH().FindSamplesByIDSampleLims(context.Background(), "LIMS456")
-
-		Convey("when FindSamplesByIDSampleLims is called, then it returns an empty non-nil slice and no error", func() {
-			So(err, ShouldBeNil)
+		Convey("when FindSamplesByIDSampleLims is called, then it fails fast without issuing an unsupported live query", func() {
+			So(errors.Is(err, ErrUnsupportedFilter), ShouldBeTrue)
 			So(samples, ShouldNotBeNil)
 			So(samples, ShouldHaveLength, 0)
+			So(requests, ShouldEqual, 0)
 		})
 	})
 }
 
 func TestMLWHFindSamplesByAccessionNumber(t *testing.T) {
-	Convey("Given MLWH supports an accession-number filters query for samples", t, func() {
-		var requestedFilter map[string]any
-
+	Convey("Given MLWH does not advertise an accession-number samples filter", t, func() {
+		requests := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestedFilter = decodeDoubleEncodedFilters(t, r)
-
-			_, _ = w.Write([]byte(`{"items":[{"accession_number":"SAM789","id_sample_lims":"S1","id_study_lims":"6568"}],"total":1,"offset":0,"limit":1}`))
+			requests++
+			http.NotFound(w, r)
 		}))
 		Reset(server.Close)
 
@@ -604,11 +577,11 @@ func TestMLWHFindSamplesByAccessionNumber(t *testing.T) {
 
 		samples, err := client.MLWH().FindSamplesByAccessionNumber(context.Background(), "SAM789")
 
-		Convey("when FindSamplesByAccessionNumber is called, then it requests the samples endpoint with the accession-number filter", func() {
-			So(err, ShouldBeNil)
-			So(requestedFilter, ShouldResemble, map[string]any{"accession_number": "SAM789"})
-			So(samples, ShouldHaveLength, 1)
-			So(samples[0].AccessionNumber, ShouldEqual, "SAM789")
+		Convey("when FindSamplesByAccessionNumber is called, then it fails fast without issuing an unsupported live query", func() {
+			So(errors.Is(err, ErrUnsupportedFilter), ShouldBeTrue)
+			So(samples, ShouldNotBeNil)
+			So(samples, ShouldHaveLength, 0)
+			So(requests, ShouldEqual, 0)
 		})
 	})
 }
@@ -617,12 +590,14 @@ func TestMLWHFindSamplesByLibraryType(t *testing.T) {
 	Convey("Given MLWH supports a library-type filters query for samples", t, func() {
 		var requestedPath string
 		var requestedFilter map[string]any
+		requests := 0
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
 			requestedPath = r.URL.Path
-			requestedFilter = decodeDoubleEncodedFilters(t, r)
+			requestedFilter = decodeFilters(t, r)
 
-			_, _ = w.Write([]byte(`{"items":[{"library_type":"RNA PolyA","id_study_lims":"6568"},{"library_type":"RNA PolyA","id_study_lims":"7123"}],"total":2,"offset":0,"limit":2}`))
+			_, _ = w.Write([]byte(`{"items":[{"library_type":"RNA PolyA","id_study_lims":"6568"},{"library_type":"RNA PolyA","id_study_lims":"7123"}],"total":2000,"offset":0,"limit":2}`))
 		}))
 		Reset(server.Close)
 
@@ -639,6 +614,7 @@ func TestMLWHFindSamplesByLibraryType(t *testing.T) {
 			So(samples, ShouldHaveLength, 2)
 			So(samples[0].LibraryType, ShouldEqual, "RNA PolyA")
 			So(samples[1].IDStudyLims, ShouldEqual, "7123")
+			So(requests, ShouldEqual, 1)
 		})
 	})
 }
@@ -723,18 +699,12 @@ func TestMLWHListDataReleaseStrategies(t *testing.T) {
 	})
 }
 
-func decodeDoubleEncodedFilters(t *testing.T, r *http.Request) map[string]any {
+func decodeFilters(t *testing.T, r *http.Request) map[string]any {
 	t.Helper()
 
-	encodedFilters := r.URL.Query().Get("filters")
-	decodedFilters, err := url.QueryUnescape(encodedFilters)
-	if err != nil {
-		t.Fatalf("decode double-encoded filters: %v", err)
-	}
-
 	filters := make(map[string]any)
-	if err := json.Unmarshal([]byte(decodedFilters), &filters); err != nil {
-		t.Fatalf("unmarshal decoded filters: %v", err)
+	if err := json.Unmarshal([]byte(r.URL.Query().Get("filters")), &filters); err != nil {
+		t.Fatalf("unmarshal filters: %v", err)
 	}
 
 	return filters

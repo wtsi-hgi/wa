@@ -30,16 +30,9 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/wtsi-hgi/wa/saga"
-)
-
-const (
-	mlwhFilterSangerID        = "sanger_id"
-	mlwhFilterIDSampleLims    = "id_sample_lims"
-	mlwhFilterIDRun           = "id_run"
-	mlwhFilterLibraryType     = "library_type"
-	mlwhFilterAccessionNumber = "accession_number"
 )
 
 type enrichClassifier struct {
@@ -49,31 +42,12 @@ type enrichClassifier struct {
 var enrichClassifiers = []enrichClassifier{
 	{classify: classifyStudyID},
 	{classify: classifyStudyAccession},
+	{classify: classifyRunID},
 	{classify: classifySangerSampleID},
 	{classify: classifySampleLimsID},
 	{classify: classifySampleAccession},
-	{classify: classifyRunID},
 	{classify: classifyLibraryType},
 	{classify: classifyProjectName},
-}
-
-type enrichFilterSupportProvider interface {
-	EnrichFilterSupported(filterKey string) (bool, bool)
-}
-
-func isUnsupportedFilterError(provider SAGAProvider, filterKey string, err error) bool {
-	if filterKey == "" || !errors.Is(err, saga.ErrServerError) {
-		return false
-	}
-
-	filterSupport, ok := provider.(enrichFilterSupportProvider)
-	if !ok {
-		return false
-	}
-
-	supported, known := filterSupport.EnrichFilterSupported(filterKey)
-
-	return known && !supported
 }
 
 type sampleClassifier func(context.Context, SAGAProvider, string) ([]saga.MLWHSample, error)
@@ -83,17 +57,12 @@ func classifySampleIdentifier(
 	provider SAGAProvider,
 	identifier string,
 	identifierType IdentifierType,
-	filterKey string,
 	lookup sampleClassifier,
 ) (*EnrichmentResult, bool, []MissingHop, error) {
 	samples, err := lookup(ctx, provider, identifier)
 	if err != nil {
 		if isContextError(err) {
 			return nil, false, nil, err
-		}
-
-		if isUnsupportedFilterError(provider, filterKey, err) {
-			return nil, false, unsupportedFilterMissing(), nil
 		}
 
 		if isClientError(err) {
@@ -126,14 +95,6 @@ func classifySampleIdentifier(
 
 func isContextError(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
-}
-
-func unsupportedFilterMissing() []MissingHop {
-	return []MissingHop{{
-		Hop:    HopClassify,
-		Reason: ReasonFilterUnsupported,
-		Status: http.StatusBadGateway,
-	}}
 }
 
 func missingHop(hop string, err error) MissingHop {
@@ -362,10 +323,6 @@ func classifyRunID(ctx context.Context, provider SAGAProvider, identifier string
 			return nil, false, nil, err
 		}
 
-		if isUnsupportedFilterError(provider, mlwhFilterIDRun, err) {
-			return nil, false, unsupportedFilterMissing(), nil
-		}
-
 		if isClientError(err) {
 			return nil, false, nil, nil
 		}
@@ -393,14 +350,14 @@ func classifyRunID(ctx context.Context, provider SAGAProvider, identifier string
 }
 
 func classifyLibraryType(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+	if !looksLikeLibraryType(identifier) {
+		return nil, false, nil, nil
+	}
+
 	samples, err := provider.FindSamplesByLibraryType(ctx, identifier)
 	if err != nil {
 		if isContextError(err) {
 			return nil, false, nil, err
-		}
-
-		if isUnsupportedFilterError(provider, mlwhFilterLibraryType, err) {
-			return nil, false, unsupportedFilterMissing(), nil
 		}
 
 		if isClientError(err) {
@@ -437,6 +394,10 @@ func classifyLibraryType(ctx context.Context, provider SAGAProvider, identifier 
 	}
 
 	return result, true, nil, nil
+}
+
+func looksLikeLibraryType(identifier string) bool {
+	return strings.ContainsAny(identifier, " \t")
 }
 
 func enrichStudiesForSamples(ctx context.Context, provider SAGAProvider, samples []saga.MLWHSample, result *EnrichmentResult) error {
@@ -629,7 +590,6 @@ func distinctLibrariesForSamples(samples []saga.MLWHSample) []Library {
 
 func classifySangerSampleID(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, provider, identifier, IdentifierSangerSampleID,
-		mlwhFilterSangerID,
 		func(ctx context.Context, provider SAGAProvider, identifier string) ([]saga.MLWHSample, error) {
 			return provider.FindSamplesBySangerID(ctx, identifier)
 		})
@@ -637,7 +597,6 @@ func classifySangerSampleID(ctx context.Context, provider SAGAProvider, identifi
 
 func classifySampleLimsID(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, provider, identifier, IdentifierSampleLimsID,
-		mlwhFilterIDSampleLims,
 		func(ctx context.Context, provider SAGAProvider, identifier string) ([]saga.MLWHSample, error) {
 			return provider.FindSamplesByIDSampleLims(ctx, identifier)
 		})
@@ -645,7 +604,6 @@ func classifySampleLimsID(ctx context.Context, provider SAGAProvider, identifier
 
 func classifySampleAccession(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, provider, identifier, IdentifierSampleAccession,
-		mlwhFilterAccessionNumber,
 		func(ctx context.Context, provider SAGAProvider, identifier string) ([]saga.MLWHSample, error) {
 			return provider.FindSamplesByAccessionNumber(ctx, identifier)
 		})

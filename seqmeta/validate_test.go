@@ -305,43 +305,72 @@ func TestValidate(t *testing.T) {
 		convey.So(libraryResult.Type, convey.ShouldEqual, IdentifierLibraryType)
 		convey.So(libraryResult.Object.(saga.MLWHSample).LibraryType, convey.ShouldEqual, "RNA PolyA")
 
-		convey.So(findSamplesByIDSampleLimsCalls, convey.ShouldEqual, 4)
-		convey.So(findSamplesByAccessionNumberCalls, convey.ShouldEqual, 3)
+		convey.So(findSamplesByIDSampleLimsCalls, convey.ShouldEqual, 3)
+		convey.So(findSamplesByAccessionNumberCalls, convey.ShouldEqual, 2)
 		convey.So(findSamplesByRunIDCalls, convey.ShouldEqual, 1)
 		convey.So(findSamplesByLibraryTypeCalls, convey.ShouldEqual, 1)
 		convey.So(allSamplesCalls, convey.ShouldEqual, 0)
 	})
 
-	convey.Convey("validate falls back to AllSamples when a targeted filter is known unsupported", t, func() {
+	convey.Convey("validate propagates targeted filter errors instead of falling back to AllSamples", t, func() {
 		allSamplesCalls := 0
 		findSamplesBySangerIDCalls := 0
-		provider := &filterSupportProvider{
-			MockProvider: &MockProvider{
-				GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
-					return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
-				},
-				AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
-					return nil, nil
-				},
-				AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
-					allSamplesCalls++
-
-					return []saga.MLWHSample{{SangerID: "S1", IDSampleLims: "L1"}}, nil
-				},
-				FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
-					findSamplesBySangerIDCalls++
-					convey.So(identifier, convey.ShouldEqual, "S1")
-
-					return nil, saga.ErrServerError
-				},
-				ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
-					return nil, nil
-				},
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
 			},
-			supported: map[string]bool{mlwhFilterSangerID: false},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, nil
+			},
+			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
+				allSamplesCalls++
+
+				return []saga.MLWHSample{{SangerID: "S1", IDSampleLims: "L1"}}, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				findSamplesBySangerIDCalls++
+				convey.So(identifier, convey.ShouldEqual, "S1")
+
+				return nil, saga.ErrServerError
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+				return nil, nil
+			},
 		}
 
 		result, err := Validate(ctx, provider, "S1")
+
+		convey.So(result, convey.ShouldBeNil)
+		convey.So(errors.Is(err, saga.ErrServerError), convey.ShouldBeTrue)
+		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 1)
+		convey.So(allSamplesCalls, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("numeric identifiers are validated as run IDs before sample IDs", t, func() {
+		findSamplesBySangerIDCalls := 0
+		findSamplesByRunIDCalls := 0
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.APIError{StatusCode: 422, Message: "Unprocessable Entity"}
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, nil
+			},
+			FindSamplesByRunIDFn: func(_ context.Context, runID int) ([]saga.MLWHSample, error) {
+				findSamplesByRunIDCalls++
+				convey.So(runID, convey.ShouldEqual, 34134)
+
+				return []saga.MLWHSample{{IDRun: 34134, SangerID: "34134"}}, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				findSamplesBySangerIDCalls++
+				convey.So(identifier, convey.ShouldEqual, "34134")
+
+				return []saga.MLWHSample{{SangerID: "34134"}}, nil
+			},
+		}
+
+		result, err := Validate(ctx, provider, "34134")
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(result, convey.ShouldNotBeNil)
@@ -349,10 +378,10 @@ func TestValidate(t *testing.T) {
 			return
 		}
 
-		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
-		convey.So(result.Object.(saga.MLWHSample).SangerID, convey.ShouldEqual, "S1")
-		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 1)
-		convey.So(allSamplesCalls, convey.ShouldEqual, 1)
+		convey.So(result.Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(result.Object.(saga.MLWHSample).IDRun, convey.ShouldEqual, 34134)
+		convey.So(findSamplesByRunIDCalls, convey.ShouldEqual, 1)
+		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 0)
 	})
 
 	convey.Convey("a non-404 GetStudy error for an unknown identifier surfaces as ErrUnknownIdentifier", t, func() {

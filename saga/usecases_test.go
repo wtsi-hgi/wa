@@ -30,7 +30,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -71,9 +70,18 @@ func TestSampleAllMetadata(t *testing.T) {
 	})
 
 	Convey("Given MLWH returns sample rows and iRODS returns 404", t, func() {
+		var requestedFilters []string
+
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/integrations/mlwh/samples":
+				requestedFilters = append(requestedFilters, r.URL.Query().Get("filters"))
+				if r.URL.Query().Get("filters") != `{"sample_id":"S1"}` {
+					http.Error(w, "expected targeted sample filter", http.StatusInternalServerError)
+
+					return
+				}
+
 				_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"100","id_sample_lims":"S1-LIMS","sanger_id":"S1","sample_name":"Sample 1","taxon_id":9606,"common_name":"human","library_type":"Chromium","id_run":101,"lane":1,"tag_index":10}],"total":1,"offset":0,"limit":100}`))
 			case "/integrations/irods/samples/S1":
 				http.NotFound(w, r)
@@ -98,6 +106,7 @@ func TestSampleAllMetadata(t *testing.T) {
 			So(metadata.IRODSFiles, ShouldHaveLength, 0)
 			So(metadata.AVUs, ShouldNotBeNil)
 			So(len(metadata.AVUs), ShouldEqual, 0)
+			So(requestedFilters, ShouldResemble, []string{`{"sample_id":"S1"}`})
 		})
 	})
 
@@ -111,14 +120,7 @@ func TestSampleAllMetadata(t *testing.T) {
 			case "/integrations/mlwh/samples":
 				requestedFilters = append(requestedFilters, r.URL.Query().Get("filters"))
 
-				decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
-				if err != nil {
-					http.Error(w, "expected decodable filters", http.StatusInternalServerError)
-
-					return
-				}
-
-				if decodedFilters != `{"study_id":"100"}` {
+				if r.URL.Query().Get("filters") != `{"study_id":"100"}` {
 					http.Error(w, "expected filtered request", http.StatusInternalServerError)
 
 					return
@@ -143,7 +145,7 @@ func TestSampleAllMetadata(t *testing.T) {
 			So(metadata.SangerID, ShouldEqual, "S1")
 			So(metadata.MLWH, ShouldHaveLength, 1)
 			So(metadata.MLWH[0].SangerID, ShouldEqual, "S1")
-			So(requestedFilters, ShouldResemble, []string{"%7B%22study_id%22%3A%22100%22%7D"})
+			So(requestedFilters, ShouldResemble, []string{`{"study_id":"100"}`})
 		})
 	})
 
@@ -211,14 +213,7 @@ func TestStudyAllSamples(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestedFilters = append(requestedFilters, r.URL.Query().Get("filters"))
 
-			decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
-			if err != nil {
-				http.Error(w, "expected decodable filters", http.StatusInternalServerError)
-
-				return
-			}
-
-			if decodedFilters != `{"study_id":"100"}` {
+			if r.URL.Query().Get("filters") != `{"study_id":"100"}` {
 				http.Error(w, "expected filtered request", http.StatusInternalServerError)
 
 				return
@@ -245,7 +240,7 @@ func TestStudyAllSamples(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(studySamples, ShouldNotBeNil)
 			So(studySamples.Samples, ShouldHaveLength, 3)
-			So(requestedFilters, ShouldResemble, []string{"%7B%22study_id%22%3A%22100%22%7D", "%7B%22study_id%22%3A%22100%22%7D"})
+			So(requestedFilters, ShouldResemble, []string{`{"study_id":"100"}`, `{"study_id":"100"}`})
 		})
 	})
 

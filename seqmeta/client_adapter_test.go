@@ -28,9 +28,9 @@ package seqmeta
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
@@ -73,14 +73,7 @@ func TestClientAdapterAllSamplesForStudy(t *testing.T) {
 				return
 			}
 
-			decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
-			if err != nil {
-				http.Error(w, "unexpected filters", http.StatusBadRequest)
-
-				return
-			}
-
-			if decodedFilters != `{"study_id":"100"}` {
+			if r.URL.Query().Get("filters") != `{"study_id":"100"}` {
 				http.Error(w, "unexpected filters", http.StatusBadRequest)
 
 				return
@@ -169,14 +162,7 @@ func TestClientAdapterFindSamplesBySangerID(t *testing.T) {
 				return
 			}
 
-			decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
-			if err != nil {
-				http.Error(w, "unexpected filters", http.StatusBadRequest)
-
-				return
-			}
-
-			if decodedFilters != `{"sample_id":"SANG1"}` {
+			if r.URL.Query().Get("filters") != `{"sample_id":"SANG1"}` {
 				http.Error(w, "unexpected filters", http.StatusBadRequest)
 
 				return
@@ -206,14 +192,7 @@ func TestClientAdapterExtendedDelegates(t *testing.T) {
 			switch r.URL.Path {
 			case "/integrations/mlwh/samples":
 				filters := map[string]any{}
-				decodedFilters, err := url.QueryUnescape(r.URL.Query().Get("filters"))
-				if err != nil {
-					http.Error(w, "invalid filters", http.StatusBadRequest)
-
-					return
-				}
-
-				if err := json.Unmarshal([]byte(decodedFilters), &filters); err != nil {
+				if err := json.Unmarshal([]byte(r.URL.Query().Get("filters")), &filters); err != nil {
 					http.Error(w, "invalid filters", http.StatusBadRequest)
 
 					return
@@ -262,9 +241,8 @@ func TestClientAdapterExtendedDelegates(t *testing.T) {
 		projectUsers, errProjectUsers := adapter.ListProjectUsers(context.Background(), 7)
 
 		convey.Convey("when each extended adapter method is called, then the expected result is returned", func() {
-			convey.So(errIDSampleLims, convey.ShouldBeNil)
-			convey.So(idSampleLimsSamples, convey.ShouldHaveLength, 1)
-			convey.So(idSampleLimsSamples[0].IDSampleLims, convey.ShouldEqual, "S2")
+			convey.So(errors.Is(errIDSampleLims, saga.ErrUnsupportedFilter), convey.ShouldBeTrue)
+			convey.So(idSampleLimsSamples, convey.ShouldBeEmpty)
 
 			convey.So(errRunID, convey.ShouldBeNil)
 			convey.So(runSamples, convey.ShouldHaveLength, 1)
@@ -274,9 +252,8 @@ func TestClientAdapterExtendedDelegates(t *testing.T) {
 			convey.So(libraryTypeSamples, convey.ShouldHaveLength, 1)
 			convey.So(libraryTypeSamples[0].LibraryType, convey.ShouldEqual, "RNA PolyA")
 
-			convey.So(errAccession, convey.ShouldBeNil)
-			convey.So(accessionSamples, convey.ShouldHaveLength, 1)
-			convey.So(accessionSamples[0].AccessionNumber, convey.ShouldEqual, "SAM123")
+			convey.So(errors.Is(errAccession, saga.ErrUnsupportedFilter), convey.ShouldBeTrue)
+			convey.So(accessionSamples, convey.ShouldBeEmpty)
 
 			convey.So(errStudy, convey.ShouldBeNil)
 			convey.So(study, convey.ShouldNotBeNil)

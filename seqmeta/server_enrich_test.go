@@ -169,10 +169,10 @@ func TestServerEnrichEndpoint(t *testing.T) {
 	})
 
 	convey.Convey("E2: enrich endpoint returns 502 with missing probes when every classification hop fails upstream", t, func() {
-		convey.So(store.DeleteEnrichCache("xyz"), convey.ShouldBeNil)
+		convey.So(store.DeleteEnrichCache("unknown thing"), convey.ShouldBeNil)
 
 		provider.GetStudyFunc = func(_ context.Context, identifier string) (*saga.Study, error) {
-			convey.So(identifier, convey.ShouldEqual, "xyz")
+			convey.So(identifier, convey.ShouldEqual, "unknown thing")
 
 			return nil, saga.ErrServerError
 		}
@@ -180,22 +180,22 @@ func TestServerEnrichEndpoint(t *testing.T) {
 			return nil, saga.ErrServerError
 		}
 		provider.FindSamplesBySangerIDFn = func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
-			convey.So(identifier, convey.ShouldEqual, "xyz")
+			convey.So(identifier, convey.ShouldEqual, "unknown thing")
 
 			return nil, saga.ErrServerError
 		}
 		provider.FindSamplesByIDSampleLimsFn = func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
-			convey.So(identifier, convey.ShouldEqual, "xyz")
+			convey.So(identifier, convey.ShouldEqual, "unknown thing")
 
 			return nil, saga.ErrServerError
 		}
 		provider.FindSamplesByAccessionNumberFn = func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
-			convey.So(identifier, convey.ShouldEqual, "xyz")
+			convey.So(identifier, convey.ShouldEqual, "unknown thing")
 
 			return nil, saga.ErrServerError
 		}
 		provider.FindSamplesByLibraryTypeFn = func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
-			convey.So(identifier, convey.ShouldEqual, "xyz")
+			convey.So(identifier, convey.ShouldEqual, "unknown thing")
 
 			return nil, saga.ErrServerError
 		}
@@ -203,7 +203,7 @@ func TestServerEnrichEndpoint(t *testing.T) {
 			return nil, saga.ErrServerError
 		}
 
-		request := httptest.NewRequest(http.MethodGet, "/enrich/xyz", nil)
+		request := httptest.NewRequest(http.MethodGet, "/enrich/unknown%20thing", nil)
 		recorder := httptest.NewRecorder()
 
 		server.Handler().ServeHTTP(recorder, request)
@@ -481,7 +481,7 @@ func TestServerEnrichEndpoint(t *testing.T) {
 		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 1)
 		convey.So(findSamplesByIDSampleLimsCalls, convey.ShouldEqual, 1)
 		convey.So(findSamplesByAccessionNumberCalls, convey.ShouldEqual, 1)
-		convey.So(findSamplesByLibraryTypeCalls, convey.ShouldEqual, 1)
+		convey.So(findSamplesByLibraryTypeCalls, convey.ShouldEqual, 0)
 		convey.So(listProjectsCalls, convey.ShouldEqual, 1)
 	})
 

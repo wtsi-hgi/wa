@@ -28,6 +28,7 @@ package saga
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -39,13 +40,11 @@ const mlwhStudyFilterKey = "study_id"
 
 const mlwhFilterSangerID = "sample_id"
 
-const mlwhFilterIDSampleLims = "id_sample_lims"
-
-const mlwhFilterAccessionNumber = "accession_number"
-
 const mlwhFilterLibraryType = "library_type"
 
 const mlwhFilterIDRun = "run_id"
+
+var ErrUnsupportedFilter = errors.New("saga: unsupported filter")
 
 // PaginatedResponse is the generic paginated response envelope used by SAGA list endpoints.
 type PaginatedResponse[T any] struct {
@@ -85,7 +84,7 @@ func (o PageOptions) queryValues() url.Values {
 
 	if len(o.Filters) > 0 {
 		filterJSON, _ := json.Marshal(o.Filters)
-		values.Set("filters", url.QueryEscape(string(filterJSON)))
+		values.Set("filters", string(filterJSON))
 	}
 
 	if len(values) == 0 {
@@ -269,7 +268,7 @@ func (m *MLWHClient) FindSamplesBySangerID(ctx context.Context, sangerID string)
 
 // FindSamplesByIDSampleLims returns all MLWH sample rows matching one id_sample_lims value across every available page.
 func (m *MLWHClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]MLWHSample, error) {
-	return m.findSamplesByFilter(ctx, mlwhFilterIDSampleLims, idSampleLims)
+	return []MLWHSample{}, ErrUnsupportedFilter
 }
 
 // FindSamplesByRunID returns all MLWH sample rows matching one run ID across every available page.
@@ -279,12 +278,21 @@ func (m *MLWHClient) FindSamplesByRunID(ctx context.Context, runID int) ([]MLWHS
 
 // FindSamplesByAccessionNumber returns all MLWH sample rows matching one accession number across every available page.
 func (m *MLWHClient) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]MLWHSample, error) {
-	return m.findSamplesByFilter(ctx, mlwhFilterAccessionNumber, accessionNumber)
+	return []MLWHSample{}, ErrUnsupportedFilter
 }
 
-// FindSamplesByLibraryType returns all MLWH sample rows matching one library type across every available page.
+// FindSamplesByLibraryType returns the first page of MLWH sample rows matching one library type.
 func (m *MLWHClient) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]MLWHSample, error) {
-	return m.findSamplesByFilter(ctx, mlwhFilterLibraryType, libraryType)
+	response, err := m.ListSamples(ctx, PageOptions{
+		Page:     1,
+		PageSize: defaultPaginationPageSize,
+		Filters:  map[string]any{mlwhFilterLibraryType: sampleFilterValue(mlwhFilterLibraryType, libraryType)},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return response.Items, nil
 }
 
 // AllSamplesForStudy returns all MLWH sample rows for one study across every available page.

@@ -659,12 +659,12 @@ func (c *Client) sampleMetadataMLWHSamples(
 ) ([]MLWHSample, error) {
 	studyIDs := irodsFileStudyIDs(irodsFiles)
 	if len(studyIDs) == 0 {
-		allSamples, err := c.MLWH().AllSamples(ctx)
+		mlwhSamples, err := c.MLWH().FindSamplesBySangerID(ctx, sangerID)
 		if err != nil {
 			return nil, err
 		}
 
-		return filterMLWHSamplesBySangerID(allSamples, sangerID), nil
+		return filterMLWHSamplesBySangerID(mlwhSamples, sangerID), nil
 	}
 
 	mlwhSamples := make([]MLWHSample, 0)

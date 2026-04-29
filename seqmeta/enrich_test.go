@@ -390,7 +390,15 @@ func TestEnrichSangerSampleID(t *testing.T) {
 
 	convey.Convey("C3: sanger_sample_id enrichment is partial when the study hop fails upstream", t, func() {
 		provider := &MockProvider{
-			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+			GetStudyFunc: func(_ context.Context, studyID string) (*saga.Study, error) {
+				if studyID == "6568" {
+					return &saga.Study{IDStudyLims: studyID}, nil
+				}
+
+				if studyID == "S1" {
+					return nil, saga.ErrNotFound
+				}
+
 				return nil, saga.ErrNotFound
 			},
 			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
@@ -694,9 +702,9 @@ func TestEnrichRunID(t *testing.T) {
 		convey.So(result.Missing, convey.ShouldBeNil)
 		convey.So(findSamplesByRunIDCalls, convey.ShouldEqual, 1)
 		convey.So(getStudyCalls, convey.ShouldEqual, 2)
-		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 1)
-		convey.So(findSamplesByIDSampleLimsCalls, convey.ShouldEqual, 1)
-		convey.So(findSamplesByAccessionNumberCalls, convey.ShouldEqual, 1)
+		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 0)
+		convey.So(findSamplesByIDSampleLimsCalls, convey.ShouldEqual, 0)
+		convey.So(findSamplesByAccessionNumberCalls, convey.ShouldEqual, 0)
 		convey.So(allStudiesCalls, convey.ShouldEqual, 1)
 	})
 
@@ -1162,7 +1170,7 @@ func TestEnrichProjectName(t *testing.T) {
 		convey.So(findSamplesByIDSampleLimsCalls, convey.ShouldEqual, 1)
 		convey.So(findSamplesByAccessionNumberCalls, convey.ShouldEqual, 1)
 		convey.So(findSamplesByRunIDCalls, convey.ShouldEqual, 0)
-		convey.So(findSamplesByLibraryTypeCalls, convey.ShouldEqual, 1)
+		convey.So(findSamplesByLibraryTypeCalls, convey.ShouldEqual, 0)
 		convey.So(listProjectsCalls, convey.ShouldEqual, 1)
 		convey.So(listProjectStudiesCalls, convey.ShouldEqual, 1)
 		convey.So(listProjectSamplesCalls, convey.ShouldEqual, 1)
@@ -1282,7 +1290,7 @@ func TestEnrichAllClassificationHopsFail(t *testing.T) {
 			},
 		}
 
-		result, err := Enrich(ctx, provider, "xyz")
+		result, err := Enrich(ctx, provider, "unknown thing")
 
 		convey.So(result, convey.ShouldBeNil)
 		convey.So(errors.Is(err, ErrAllHopsFailed), convey.ShouldBeTrue)
@@ -1397,7 +1405,7 @@ func TestEnrichUnknownIdentifier(t *testing.T) {
 		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 1)
 		convey.So(findSamplesByIDSampleLimsCalls, convey.ShouldEqual, 1)
 		convey.So(findSamplesByAccessionNumberCalls, convey.ShouldEqual, 1)
-		convey.So(findSamplesByLibraryTypeCalls, convey.ShouldEqual, 1)
+		convey.So(findSamplesByLibraryTypeCalls, convey.ShouldEqual, 0)
 		convey.So(listProjectsCalls, convey.ShouldEqual, 1)
 	})
 
@@ -1455,82 +1463,42 @@ func TestEnrichUnknownIdentifier(t *testing.T) {
 	})
 }
 
-type filterSupportProvider struct {
-	*MockProvider
-	supported map[string]bool
-}
-
-func (p *filterSupportProvider) EnrichFilterSupported(filterKey string) (bool, bool) {
-	if p == nil || len(p.supported) == 0 {
-		return false, false
-	}
-
-	supported, ok := p.supported[filterKey]
-
-	return supported, ok
-}
-
-func TestEnrichFilterUnsupported(t *testing.T) {
-	convey.Convey("G1: an unsupported sanger_id filter no longer classifies an otherwise unknown identifier", t, func() {
-		provider := &filterSupportProvider{
-			MockProvider: &MockProvider{
-				GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
-					return nil, saga.ErrNotFound
-				},
-				AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
-					return nil, saga.ErrNotFound
-				},
-				FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-					return nil, saga.ErrServerError
-				},
+func TestEnrichTargetedFilterErrors(t *testing.T) {
+	convey.Convey("G1: a sanger_id filter server error is carried into a later project match as upstream context", t, func() {
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.ErrNotFound
 			},
-			supported: map[string]bool{mlwhFilterSangerID: false},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, saga.ErrNotFound
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return nil, saga.ErrServerError
+			},
+			FindSamplesByIDSampleLimsFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			FindSamplesByAccessionNumberFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			FindSamplesByLibraryTypeFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+				return []saga.Project{{ID: 7, Name: "S1"}}, nil
+			},
+			ListProjectStudiesFn: func(_ context.Context, _ int) ([]saga.ProjectStudy, error) {
+				return []saga.ProjectStudy{}, nil
+			},
+			ListProjectSamplesFn: func(_ context.Context, _ int) ([]saga.ProjectSample, error) {
+				return []saga.ProjectSample{}, nil
+			},
+			ListProjectUsersFn: func(_ context.Context, _ int) ([]saga.ProjectUser, error) {
+				return []saga.ProjectUser{{ID: 1, Username: "user1"}}, nil
+			},
 		}
 
 		result, err := Enrich(context.Background(), provider, "S1")
-
-		convey.So(result, convey.ShouldBeNil)
-		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeTrue)
-	})
-
-	convey.Convey("G1: an unsupported library_type filter is carried into a later project match as partial context", t, func() {
-		provider := &filterSupportProvider{
-			MockProvider: &MockProvider{
-				GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
-					return nil, saga.ErrNotFound
-				},
-				AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
-					return nil, saga.ErrNotFound
-				},
-				FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-					return []saga.MLWHSample{}, nil
-				},
-				FindSamplesByIDSampleLimsFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-					return []saga.MLWHSample{}, nil
-				},
-				FindSamplesByAccessionNumberFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-					return []saga.MLWHSample{}, nil
-				},
-				FindSamplesByLibraryTypeFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-					return nil, saga.ErrServerError
-				},
-				ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
-					return []saga.Project{{ID: 7, Name: "Project-7"}}, nil
-				},
-				ListProjectStudiesFn: func(_ context.Context, _ int) ([]saga.ProjectStudy, error) {
-					return []saga.ProjectStudy{}, nil
-				},
-				ListProjectSamplesFn: func(_ context.Context, _ int) ([]saga.ProjectSample, error) {
-					return []saga.ProjectSample{}, nil
-				},
-				ListProjectUsersFn: func(_ context.Context, _ int) ([]saga.ProjectUser, error) {
-					return []saga.ProjectUser{{ID: 1, Username: "user1"}}, nil
-				},
-			},
-			supported: map[string]bool{mlwhFilterLibraryType: false},
-		}
-
-		result, err := Enrich(context.Background(), provider, "Project-7")
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(result, convey.ShouldNotBeNil)
@@ -1542,8 +1510,157 @@ func TestEnrichFilterUnsupported(t *testing.T) {
 		convey.So(result.Partial, convey.ShouldBeTrue)
 		convey.So(result.Missing, convey.ShouldResemble, []MissingHop{{
 			Hop:    HopClassify,
-			Reason: ReasonFilterUnsupported,
+			Reason: ReasonUpstreamError,
 			Status: http.StatusBadGateway,
 		}})
+	})
+
+	convey.Convey("G1: a run_id filter server error is carried into a later project match as upstream context", t, func() {
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.ErrNotFound
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, saga.ErrNotFound
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			FindSamplesByIDSampleLimsFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			FindSamplesByAccessionNumberFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			FindSamplesByRunIDFn: func(_ context.Context, _ int) ([]saga.MLWHSample, error) {
+				return nil, saga.ErrServerError
+			},
+			FindSamplesByLibraryTypeFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+				return []saga.Project{{ID: 7, Name: "34134"}}, nil
+			},
+			ListProjectStudiesFn: func(_ context.Context, _ int) ([]saga.ProjectStudy, error) {
+				return []saga.ProjectStudy{}, nil
+			},
+			ListProjectSamplesFn: func(_ context.Context, _ int) ([]saga.ProjectSample, error) {
+				return []saga.ProjectSample{}, nil
+			},
+			ListProjectUsersFn: func(_ context.Context, _ int) ([]saga.ProjectUser, error) {
+				return []saga.ProjectUser{{ID: 1, Username: "user1"}}, nil
+			},
+		}
+
+		result, err := Enrich(context.Background(), provider, "34134")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierProjectName)
+		convey.So(result.Partial, convey.ShouldBeTrue)
+		convey.So(result.Missing, convey.ShouldResemble, []MissingHop{{
+			Hop:    HopClassify,
+			Reason: ReasonUpstreamError,
+			Status: http.StatusBadGateway,
+		}})
+	})
+
+	convey.Convey("G1: a library_type filter server error is carried into a later project match as upstream context", t, func() {
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.ErrNotFound
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, saga.ErrNotFound
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			FindSamplesByIDSampleLimsFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			FindSamplesByAccessionNumberFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{}, nil
+			},
+			FindSamplesByLibraryTypeFn: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+				return nil, saga.ErrServerError
+			},
+			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
+				return []saga.Project{{ID: 7, Name: "Project 7"}}, nil
+			},
+			ListProjectStudiesFn: func(_ context.Context, _ int) ([]saga.ProjectStudy, error) {
+				return []saga.ProjectStudy{}, nil
+			},
+			ListProjectSamplesFn: func(_ context.Context, _ int) ([]saga.ProjectSample, error) {
+				return []saga.ProjectSample{}, nil
+			},
+			ListProjectUsersFn: func(_ context.Context, _ int) ([]saga.ProjectUser, error) {
+				return []saga.ProjectUser{{ID: 1, Username: "user1"}}, nil
+			},
+		}
+
+		result, err := Enrich(context.Background(), provider, "Project 7")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierProjectName)
+		convey.So(result.Partial, convey.ShouldBeTrue)
+		convey.So(result.Missing, convey.ShouldResemble, []MissingHop{{
+			Hop:    HopClassify,
+			Reason: ReasonUpstreamError,
+			Status: http.StatusBadGateway,
+		}})
+	})
+}
+
+func TestEnrichRunIDPrecedence(t *testing.T) {
+	convey.Convey("numeric identifiers are enriched as run IDs before sample IDs", t, func() {
+		findSamplesBySangerIDCalls := 0
+		findSamplesByRunIDCalls := 0
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
+				return nil, saga.ErrNotFound
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return nil, nil
+			},
+			FindSamplesByRunIDFn: func(_ context.Context, runID int) ([]saga.MLWHSample, error) {
+				findSamplesByRunIDCalls++
+				convey.So(runID, convey.ShouldEqual, 34134)
+
+				return []saga.MLWHSample{{IDRun: 34134, SangerID: "34134", IDStudyLims: "6568", LibraryType: "RNA PolyA"}}, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]saga.MLWHSample, error) {
+				findSamplesBySangerIDCalls++
+				convey.So(identifier, convey.ShouldEqual, "34134")
+
+				return []saga.MLWHSample{{SangerID: "34134", IDStudyLims: "9999", LibraryType: "wrong"}}, nil
+			},
+			GetSampleFilesFunc: func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
+				return nil, saga.ErrNotFound
+			},
+		}
+
+		result, err := Enrich(context.Background(), provider, "34134")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.Samples[0].IDRun, convey.ShouldEqual, 34134)
+		convey.So(findSamplesByRunIDCalls, convey.ShouldEqual, 1)
+		convey.So(findSamplesBySangerIDCalls, convey.ShouldEqual, 0)
 	})
 }

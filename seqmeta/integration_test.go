@@ -96,7 +96,6 @@ func assertLiveEnrichment(t *testing.T, result *EnrichmentResult, testCase enric
 	case enrichExpectationPartial:
 		convey.So(result.Partial, convey.ShouldBeTrue)
 		convey.So(result.Missing, convey.ShouldNotBeEmpty)
-		convey.So(hasMissingReason(result.Missing, ReasonFilterUnsupported), convey.ShouldBeTrue)
 	}
 
 	if testCase.expectation == enrichExpectationPartial {
@@ -117,16 +116,6 @@ func assertLiveEnrichment(t *testing.T, result *EnrichmentResult, testCase enric
 		convey.So(result.Graph.Samples, convey.ShouldNotBeEmpty)
 		convey.So(result.Graph.Libraries, convey.ShouldNotBeEmpty)
 	}
-}
-
-func hasMissingReason(missing []MissingHop, reason string) bool {
-	for _, hop := range missing {
-		if hop.Reason == reason {
-			return true
-		}
-	}
-
-	return false
 }
 
 func TestIntegrationEnrichMatrix(t *testing.T) {
@@ -177,7 +166,7 @@ func TestIntegrationEnrichMatrix(t *testing.T) {
 	})
 }
 
-func TestIntegrationEnrichSampleLinkedIdentifiersRemainConsistent(t *testing.T) {
+func TestIntegrationEnrichSampleLinkedUnsupportedIdentifiersFailFast(t *testing.T) {
 	token := os.Getenv("SAGA_TEST_API_TOKEN")
 	if token == "" {
 		t.Skip("SAGA_TEST_API_TOKEN not set")
@@ -188,9 +177,6 @@ func TestIntegrationEnrichSampleLinkedIdentifiersRemainConsistent(t *testing.T) 
 	sampleCases := sampleLinkedMatrixCases()
 
 	convey.Convey("Given live sample identifier enrichments", t, func() {
-		foundSampleLims := false
-		foundSampleAccession := false
-
 		for _, testCase := range sampleCases {
 			testCase := testCase
 
@@ -213,37 +199,28 @@ func TestIntegrationEnrichSampleLinkedIdentifiersRemainConsistent(t *testing.T) 
 				sample := baseResult.Graph.Sample
 
 				if sample.IDSampleLims != "" {
-					foundSampleLims = true
-
 					convey.Convey("sample_lims_id", func() {
-						status, body, alternateResult := fetchLiveEnrichment(t, provider, sample.IDSampleLims, liveEnrichMatrixTimeout)
+						status, body, alternateResult := fetchLiveEnrichment(t, provider, sample.IDSampleLims, 10*time.Second)
 						logUnexpectedEnrichmentStatus(t, sample.IDSampleLims, status, body)
 
-						convey.So(status, convey.ShouldEqual, http.StatusOK)
-						convey.So(alternateResult.Type, convey.ShouldEqual, IdentifierSampleLimsID)
-						assertSameSampleContext(t, baseResult, alternateResult)
+						convey.So(status, convey.ShouldEqual, http.StatusNotFound)
+						convey.So(string(body), convey.ShouldContainSubstring, ErrUnknownIdentifier.Error())
+						convey.So(alternateResult, convey.ShouldBeNil)
 					})
 				}
 
 				if sample.AccessionNumber != "" {
-					foundSampleAccession = true
-
 					convey.Convey("sample_accession", func() {
-						status, body, alternateResult := fetchLiveEnrichment(t, provider, sample.AccessionNumber, liveEnrichMatrixTimeout)
+						status, body, alternateResult := fetchLiveEnrichment(t, provider, sample.AccessionNumber, 10*time.Second)
 						logUnexpectedEnrichmentStatus(t, sample.AccessionNumber, status, body)
 
-						convey.So(status, convey.ShouldEqual, http.StatusOK)
-						convey.So(alternateResult.Type, convey.ShouldEqual, IdentifierSampleAccession)
-						assertSameSampleContext(t, baseResult, alternateResult)
+						convey.So(status, convey.ShouldEqual, http.StatusNotFound)
+						convey.So(string(body), convey.ShouldContainSubstring, ErrUnknownIdentifier.Error())
+						convey.So(alternateResult, convey.ShouldBeNil)
 					})
 				}
 			})
 		}
-
-		convey.Convey("matrix contains supported sample-linked alternate identifiers", func() {
-			convey.So(foundSampleLims, convey.ShouldBeTrue)
-			convey.So(foundSampleAccession, convey.ShouldBeTrue)
-		})
 	})
 }
 
@@ -304,46 +281,4 @@ func logUnexpectedEnrichmentStatus(t *testing.T, identifier string, status int, 
 	}
 
 	t.Logf("GET /enrich/%s returned %d: %s", identifier, status, string(body))
-}
-
-func assertSameSampleContext(t *testing.T, baseResult, alternateResult *EnrichmentResult) {
-	t.Helper()
-
-	convey.So(baseResult, convey.ShouldNotBeNil)
-	convey.So(alternateResult, convey.ShouldNotBeNil)
-	if baseResult == nil || alternateResult == nil {
-		return
-	}
-
-	convey.So(baseResult.Graph.Sample, convey.ShouldNotBeNil)
-	convey.So(alternateResult.Graph.Sample, convey.ShouldNotBeNil)
-	convey.So(baseResult.Graph.Study, convey.ShouldNotBeNil)
-	convey.So(alternateResult.Graph.Study, convey.ShouldNotBeNil)
-	convey.So(baseResult.Graph.Library, convey.ShouldNotBeNil)
-	convey.So(alternateResult.Graph.Library, convey.ShouldNotBeNil)
-	if baseResult.Graph.Sample == nil || alternateResult.Graph.Sample == nil {
-		return
-	}
-
-	convey.So(alternateResult.Graph.Sample.SangerID, convey.ShouldEqual, baseResult.Graph.Sample.SangerID)
-	convey.So(alternateResult.Graph.Sample.IDSampleLims, convey.ShouldEqual, baseResult.Graph.Sample.IDSampleLims)
-	convey.So(alternateResult.Graph.Sample.AccessionNumber, convey.ShouldEqual, baseResult.Graph.Sample.AccessionNumber)
-	convey.So(alternateResult.Graph.Sample.IDStudyLims, convey.ShouldEqual, baseResult.Graph.Sample.IDStudyLims)
-
-	if baseResult.Graph.Study == nil || alternateResult.Graph.Study == nil {
-		return
-	}
-
-	convey.So(alternateResult.Graph.Study.IDStudyLims, convey.ShouldEqual, baseResult.Graph.Study.IDStudyLims)
-	convey.So(alternateResult.Graph.Study.AccessionNumber, convey.ShouldEqual, baseResult.Graph.Study.AccessionNumber)
-
-	if baseResult.Graph.Library == nil || alternateResult.Graph.Library == nil {
-		return
-	}
-
-	convey.So(alternateResult.Graph.Library.LibraryType, convey.ShouldEqual, baseResult.Graph.Library.LibraryType)
-	convey.So(alternateResult.Graph.Library.IDStudyLims, convey.ShouldEqual, baseResult.Graph.Library.IDStudyLims)
-	convey.So(alternateResult.Graph.Samples, convey.ShouldNotBeEmpty)
-	convey.So(alternateResult.Partial, convey.ShouldBeFalse)
-	convey.So(alternateResult.Missing, convey.ShouldBeEmpty)
 }

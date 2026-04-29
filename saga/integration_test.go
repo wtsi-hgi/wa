@@ -86,23 +86,6 @@ func TestAssertSupportedFilterResult(t *testing.T) {
 	})
 }
 
-func mustHarvestSeedStudySample(t *testing.T, ctx context.Context, client *Client) MLWHSample {
-	t.Helper()
-
-	samples, err := client.MLWH().AllSamplesForStudy(ctx, "3361")
-	assertSupportedFilterResult(t, "study_id", err)
-
-	for _, sample := range samples {
-		if sample.IDSampleLims != "" && sample.AccessionNumber != "" {
-			return sample
-		}
-	}
-
-	t.Fatalf("study 3361 did not yield a sample with id_sample_lims and accession_number populated")
-
-	return MLWHSample{}
-}
-
 func assertSupportedFilterResult(t *testing.T, filterKey string, err error) {
 	t.Helper()
 	assertSupportedFilterResultWithReporter(t, filterKey, err)
@@ -253,15 +236,6 @@ func TestFilterProbes(t *testing.T) {
 			assertSampleResultShape(samples)
 		})
 
-		Convey("when FindSamplesByIDSampleLims is called for a sample harvested from study 3361, then it returns MLWH samples", func() {
-			seed := mustHarvestSeedStudySample(t, ctx, client)
-
-			samples, err := client.MLWH().FindSamplesByIDSampleLims(ctx, seed.IDSampleLims)
-
-			assertSupportedFilterResult(t, "id_sample_lims", err)
-			assertSampleResultShape(samples)
-		})
-
 		Convey("when FindSamplesByRunID is called for a known run, then it returns MLWH samples", func() {
 			samples, err := client.MLWH().FindSamplesByRunID(ctx, 34134)
 
@@ -276,14 +250,6 @@ func TestFilterProbes(t *testing.T) {
 			assertSampleResultShape(samples)
 		})
 
-		Convey("when FindSamplesByAccessionNumber is called for a sample harvested from study 3361, then it returns MLWH samples", func() {
-			seed := mustHarvestSeedStudySample(t, ctx, client)
-
-			samples, err := client.MLWH().FindSamplesByAccessionNumber(ctx, seed.AccessionNumber)
-
-			assertSupportedFilterResult(t, "accession_number", err)
-			assertSampleResultShape(samples)
-		})
 	})
 }
 

@@ -30,7 +30,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -46,12 +45,7 @@ func TestMLWHFindSamplesByRunID(t *testing.T) {
 			requestedPath = r.URL.Path
 			requestedFiltersValue = r.URL.Query().Get("filters")
 
-			decodedFilters, err := url.QueryUnescape(requestedFiltersValue)
-			if err != nil {
-				t.Fatalf("failed to decode filters value: %v", err)
-			}
-
-			if err := json.Unmarshal([]byte(decodedFilters), &requestedFilter); err != nil {
+			if err := json.Unmarshal([]byte(requestedFiltersValue), &requestedFilter); err != nil {
 				t.Fatalf("failed to decode filters: %v", err)
 			}
 
@@ -65,10 +59,10 @@ func TestMLWHFindSamplesByRunID(t *testing.T) {
 
 		samples, err := client.MLWH().FindSamplesByRunID(context.Background(), 34134)
 
-		Convey("when FindSamplesByRunID is called, then it sends the live contract's double-encoded run_id filter", func() {
+		Convey("when FindSamplesByRunID is called, then it sends the live contract's normally encoded run_id filter", func() {
 			So(err, ShouldBeNil)
 			So(requestedPath, ShouldEqual, "/integrations/mlwh/samples")
-			So(requestedFiltersValue, ShouldEqual, "%7B%22run_id%22%3A%2234134%22%7D")
+			So(requestedFiltersValue, ShouldEqual, `{"run_id":"34134"}`)
 			So(requestedFilter, ShouldResemble, map[string]any{"run_id": "34134"})
 			So(samples, ShouldHaveLength, 3)
 		})

@@ -35,21 +35,12 @@ var _ SAGAProvider = (*ClientAdapter)(nil)
 
 // ClientAdapter wraps saga.Client to satisfy SAGAProvider.
 type ClientAdapter struct {
-	client              *saga.Client
-	enrichFilterSupport map[string]bool
+	client *saga.Client
 }
 
 // NewClientAdapter creates a SAGAProvider backed by a saga.Client.
-func NewClientAdapter(client *saga.Client, opts ...ClientAdapterOption) *ClientAdapter {
-	adapter := &ClientAdapter{client: client}
-
-	for _, opt := range opts {
-		if opt != nil {
-			opt(adapter)
-		}
-	}
-
-	return adapter
+func NewClientAdapter(client *saga.Client) *ClientAdapter {
+	return &ClientAdapter{client: client}
 }
 
 // GetStudy delegates to the MLWH client.
@@ -125,32 +116,4 @@ func (a *ClientAdapter) ListProjectSamples(ctx context.Context, projectID int) (
 // ListProjectUsers delegates to the projects client.
 func (a *ClientAdapter) ListProjectUsers(ctx context.Context, projectID int) ([]saga.ProjectUser, error) {
 	return a.client.Projects().ListUsers(ctx, projectID)
-}
-
-func (a *ClientAdapter) EnrichFilterSupported(filterKey string) (bool, bool) {
-	if len(a.enrichFilterSupport) == 0 {
-		return false, false
-	}
-
-	supported, ok := a.enrichFilterSupport[filterKey]
-
-	return supported, ok
-}
-
-type ClientAdapterOption func(*ClientAdapter)
-
-// WithSupportedEnrichFilters configures probe-derived MLWH filter support for enrichment degradation.
-func WithSupportedEnrichFilters(supported map[string]bool) ClientAdapterOption {
-	return func(adapter *ClientAdapter) {
-		if len(supported) == 0 {
-			adapter.enrichFilterSupport = nil
-
-			return
-		}
-
-		adapter.enrichFilterSupport = make(map[string]bool, len(supported))
-		for key, value := range supported {
-			adapter.enrichFilterSupport[key] = value
-		}
-	}
 }

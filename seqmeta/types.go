@@ -54,7 +54,6 @@ const (
 const (
 	ReasonUpstreamError     = "upstream_error"
 	ReasonNotFound          = "not_found"
-	ReasonFilterUnsupported = "filter_unsupported"
 	ReasonSamplesTruncated  = "samples_truncated"
 )
 
