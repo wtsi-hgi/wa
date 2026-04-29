@@ -203,6 +203,52 @@ describe("N1 file browser", () => {
         expect(container.textContent).not.toContain("003.png");
     });
 
+    it("renders grid-mode previews beside the file row at all screen widths (no xl: breakpoint)", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/a/001.png", "output"),
+            buildFile("/results/a/002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "grid",
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "grid-preview" },
+                            `preview:${file.path}`,
+                        ),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        const gridRows = container.querySelectorAll(
+            "[data-file-browser-grid-row]",
+        );
+
+        expect(gridRows.length).toBeGreaterThan(0);
+
+        for (const row of gridRows) {
+            // The per-file grid row must use unconditional side-by-side
+            // grid-cols, not the xl:-prefixed variant which only applies at
+            // ≥1280px and incorrectly stacks the preview underneath at
+            // standard viewport widths.
+            expect(row.className).toContain("grid");
+            expect(row.className).toMatch(/(?:^|\s)grid-cols-\[minmax/);
+            expect(row.className).not.toMatch(/xl:grid-cols-/);
+            expect(row.className).not.toMatch(/xl:items-start/);
+        }
+    });
+
     it("keeps the file browser to a single explorer pane without duplicate path sections", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
