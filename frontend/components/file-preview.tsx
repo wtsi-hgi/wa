@@ -209,14 +209,23 @@ function highlightCode(content: string, contentType: string): string {
     return hljs.highlightAuto(content).value;
 }
 
-function DownloadButton({ href }: { href: string }) {
+function DownloadIconLink({
+    className,
+    href,
+}: {
+    className?: string;
+    href: string;
+}) {
     return (
         <a
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-border/70 bg-accent/15 px-4 py-2 text-sm font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/25"
+            aria-label="Download file"
+            className={cn(
+                "inline-flex size-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground shadow-[0_8px_24px_-18px_rgba(48,67,98,0.85)] transition hover:border-primary/35 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                className,
+            )}
             href={href}
         >
             <ArrowDownToLine className="size-4" aria-hidden="true" />
-            Download file
         </a>
     );
 }
@@ -501,15 +510,7 @@ export const FileImageThumbnail = memo(
 
         return (
             <article className="rounded-[1.5rem] border border-border/70 bg-background/70 p-4 shadow-[0_20px_80px_-68px_rgba(48,67,98,0.8)]">
-                <div className="flex items-start justify-between gap-3">
-                    <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                            Image preview
-                        </p>
-                        <h3 className="mt-2 break-all text-sm font-medium text-foreground">
-                            {fileName}
-                        </h3>
-                    </div>
+                <div className="flex items-start justify-end gap-3">
                     <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                         {formatBytes(file.size)}
                     </span>
@@ -608,7 +609,11 @@ export function FilePreview({
     if (error?.status === 413) {
         return (
             <section>
-                <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+                <div className="relative rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+                    <DownloadIconLink
+                        className="absolute right-4 top-4"
+                        href={downloadUrl}
+                    />
                     <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                         Preview unavailable
                     </p>
@@ -619,9 +624,6 @@ export function FilePreview({
                         This file exceeds the preview limit. Reported size:{" "}
                         {formatBytes(error.fileSize)}.
                     </p>
-                    <div className="mt-5">
-                        <DownloadButton href={downloadUrl} />
-                    </div>
                 </div>
             </section>
         );
@@ -630,7 +632,11 @@ export function FilePreview({
     if (error) {
         return (
             <section>
-                <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+                <div className="relative rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+                    <DownloadIconLink
+                        className="absolute right-4 top-4"
+                        href={downloadUrl}
+                    />
                     <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                         Preview unavailable
                     </p>
@@ -640,9 +646,6 @@ export function FilePreview({
                     <p className="mt-3 text-sm leading-7 text-muted-foreground">
                         {error.message?.trim() || "Preview request failed"}
                     </p>
-                    <div className="mt-5">
-                        <DownloadButton href={downloadUrl} />
-                    </div>
                 </div>
             </section>
         );
@@ -650,21 +653,13 @@ export function FilePreview({
 
     return (
         <section>
-            <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] p-5 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-                <div className="flex flex-col gap-4 border-b border-border/60 pb-5 lg:flex-row lg:items-start lg:justify-between">
-                    <div>
-                        <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                            Preview
-                        </p>
-                        <h3 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                            {fileName}
-                        </h3>
-                    </div>
+            <div className="relative overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] p-5 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
+                <DownloadIconLink
+                    className="absolute right-4 top-4 z-10"
+                    href={downloadUrl}
+                />
 
-                    <DownloadButton href={downloadUrl} />
-                </div>
-
-                <div className="mt-5">
+                <div>
                     {isLoading ? (
                         <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
                             Loading preview...

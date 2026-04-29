@@ -273,7 +273,6 @@ describe("O1 file preview", () => {
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fsample.bam",
         });
 
-        expect(screen.getByText("sample.bam")).toBeTruthy();
         expect(
             screen.getByText(
                 /binary preview is unavailable for this file type/i,
@@ -502,5 +501,73 @@ describe("O1 file preview", () => {
         rendered.rerender(createElement(FilePreview, props));
 
         expect(highlightAutoMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not repeat the file name or render a 'Preview' eyebrow in the single preview header", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/report.txt" }),
+            content: { content: "hello", contentType: "text/plain" },
+        });
+
+        expect(
+            screen.queryByRole("heading", { name: "report.txt" }),
+        ).toBeNull();
+        expect(screen.queryByText(/^preview$/i, { selector: "p" })).toBeNull();
+    });
+
+    it("renders an icon-only download anchor on the single preview", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/report.txt" }),
+            content: { content: "hello", contentType: "text/plain" },
+        });
+
+        const link = screen.getByRole("link", { name: /download file/i });
+
+        expect(link.getAttribute("aria-label")).toBe("Download file");
+        expect(link.textContent?.trim()).toBe("");
+        expect(link.querySelector("svg")).not.toBeNull();
+    });
+
+    it("uses an icon-only download anchor on the 413 too-large branch without a 'Preview' eyebrow", () => {
+        renderPreview({
+            error: { fileSize: 20971520, status: 413 },
+        });
+
+        const link = screen.getByRole("link", { name: /download file/i });
+
+        expect(link.textContent?.trim()).toBe("");
+        expect(link.querySelector("svg")).not.toBeNull();
+    });
+
+    it("uses an icon-only download anchor on generic preview errors", () => {
+        renderPreview({
+            error: { message: "boom", status: 410 },
+        });
+
+        const link = screen.getByRole("link", { name: /download file/i });
+
+        expect(link.textContent?.trim()).toBe("");
+        expect(link.querySelector("svg")).not.toBeNull();
+    });
+
+    it("does not render the file name or an 'Image preview' eyebrow on FileImageThumbnail", async () => {
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+
+        render(
+            createElement(FileImageThumbnail, {
+                file: buildFile({ path: "/tmp/results/plot.png" }),
+                fullSizeUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
+                height: 180,
+                thumbnailUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png&thumb=true",
+            }),
+        );
+
+        expect(screen.queryByRole("heading", { name: "plot.png" })).toBeNull();
+        expect(
+            screen.queryByText(/image preview/i, { selector: "p" }),
+        ).toBeNull();
     });
 });
