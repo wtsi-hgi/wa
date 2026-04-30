@@ -298,9 +298,8 @@ describe("O1 result detail hydration", () => {
     it("renders a loading shell without waiting for result fetches", async () => {
         vi.stubGlobal("matchMedia", matchMediaStub);
 
-        const loadingModule = await import(
-            "@/app/(results)/results/[id]/loading"
-        );
+        const loadingModule =
+            await import("@/app/(results)/results/[id]/loading");
         const Loading = loadingModule.default;
         const serverTree = createElement(
             AppProviders,
