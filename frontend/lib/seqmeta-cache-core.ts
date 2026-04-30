@@ -30,6 +30,7 @@ function areCacheResultsEqual(
 
 export class SeqmetaCache implements SeqmetaCacheStore {
     private cache: Map<string, EnrichmentResult | null>;
+    private pendingFlush = false;
 
     constructor(
         snapshot: SeqmetaCacheSnapshot = {},
@@ -51,7 +52,7 @@ export class SeqmetaCache implements SeqmetaCacheStore {
         }
 
         this.cache.set(value, result);
-        this.onChange?.(this.snapshot());
+        this.scheduleFlush();
     }
 
     has(value: string): boolean {
@@ -60,6 +61,18 @@ export class SeqmetaCache implements SeqmetaCacheStore {
 
     snapshot(): SeqmetaCacheSnapshot {
         return Object.fromEntries(this.cache.entries());
+    }
+
+    private scheduleFlush(): void {
+        if (!this.onChange || this.pendingFlush) {
+            return;
+        }
+
+        this.pendingFlush = true;
+        queueMicrotask(() => {
+            this.pendingFlush = false;
+            this.onChange?.(this.snapshot());
+        });
     }
 }
 
