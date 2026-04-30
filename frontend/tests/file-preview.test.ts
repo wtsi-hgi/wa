@@ -55,6 +55,49 @@ function renderPreview(props: Partial<FilePreviewProps> = {}) {
     );
 }
 
+const nonImagePreviewCases = [
+    {
+        content: "# Run report\n\nPreview body",
+        contentType: "text/markdown",
+        filePath: "/tmp/results/report.md",
+        label: "markdown",
+    },
+    {
+        content: "<html><body><h1>Report</h1></body></html>",
+        contentType: "text/html",
+        filePath: "/tmp/results/report.html",
+        label: "HTML",
+    },
+    {
+        content: "<svg><rect width='10' height='10'/></svg>",
+        contentType: "image/svg+xml",
+        filePath: "/tmp/results/plot.svg",
+        label: "SVG",
+    },
+    {
+        content: "",
+        contentType: "application/pdf",
+        filePath: "/tmp/results/report.pdf",
+        label: "PDF",
+    },
+    {
+        content: "const status = 'ready';",
+        contentType: "text/plain",
+        filePath: "/tmp/results/notes.txt",
+        label: "text",
+    },
+    {
+        content: '{"status":"ready"}',
+        contentType: "application/json",
+        filePath: "/tmp/results/report.json",
+        label: "code",
+    },
+];
+
+function fileNameFromPath(filePath: string): string {
+    return filePath.split("/").pop() ?? filePath;
+}
+
 afterEach(() => {
     cleanup();
     highlightAutoMock.mockClear();
@@ -305,6 +348,95 @@ describe("O1 file preview", () => {
         expect(screen.getAllByRole("row")).toHaveLength(101);
     });
 
+    it("enlarges csv previews on click and shows all rows in the enlarged dialog", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/report.csv" }),
+            content: {
+                content: buildCsv(120),
+                contentType: "text/csv",
+            },
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
+        });
+
+        expect(screen.getByText("Showing 100 of 120 rows")).toBeTruthy();
+        expect(screen.queryByRole("dialog")).toBeNull();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: /enlarge report.csv preview/i }),
+        );
+
+        const dialog = screen.getByRole("dialog", {
+            name: /enlarged report.csv preview/i,
+        });
+
+        expect(dialog).toBeTruthy();
+        expect(screen.getByText("Showing 120 of 120 rows")).toBeTruthy();
+        expect(dialog.querySelectorAll("tr")).toHaveLength(121);
+    });
+
+    it.each(nonImagePreviewCases)(
+        "enlarges $label previews on click",
+        ({ content, contentType, filePath }) => {
+            const fileName = fileNameFromPath(filePath);
+
+            renderPreview({
+                file: buildFile({ path: filePath }),
+                content: { content, contentType },
+                proxyUrl: `/api/file?id=result-1&path=${encodeURIComponent(filePath)}`,
+            });
+
+            expect(screen.queryByRole("dialog")).toBeNull();
+
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: `Enlarge ${fileName} preview`,
+                }),
+            );
+
+            expect(
+                screen.getByRole("dialog", {
+                    name: `Enlarged ${fileName} preview`,
+                }),
+            ).toBeTruthy();
+        },
+    );
+
+    it("only exposes csv column sorting once the preview is enlarged", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/report.csv" }),
+            content: {
+                content: [
+                    "sample,status,count",
+                    "gamma,ready,3",
+                    "alpha,ready,1",
+                    "beta,pending,2",
+                ].join("\n"),
+                contentType: "text/csv",
+            },
+        });
+
+        expect(
+            screen.queryByRole("button", { name: /sort by sample/i }),
+        ).toBeNull();
+        expect(screen.getAllByRole("row")[1]?.textContent).toContain("gamma");
+
+        fireEvent.click(
+            screen.getByRole("button", { name: /enlarge report.csv preview/i }),
+        );
+
+        const toggle = screen.getByRole("button", { name: /sort by sample/i });
+
+        fireEvent.click(toggle);
+        const dialog = screen.getByRole("dialog", {
+            name: /enlarged report.csv preview/i,
+        });
+        let rows = dialog.querySelectorAll("tbody tr");
+
+        expect(rows[0]?.textContent).toContain("alpha");
+        expect(rows[2]?.textContent).toContain("gamma");
+    });
+
     it("shows a download button for previewable files", () => {
         renderPreview({
             content: {
@@ -344,7 +476,7 @@ describe("O1 file preview", () => {
         ).toContain("download=true");
     });
 
-    it("expands csv previews to show all rows when requested", () => {
+    it("does not show inline csv controls before the preview is enlarged", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/report.csv" }),
             content: {
@@ -353,13 +485,14 @@ describe("O1 file preview", () => {
             },
         });
 
-        fireEvent.click(screen.getByRole("button", { name: /show all rows/i }));
-
-        expect(screen.getByText("Showing 200 of 200 rows")).toBeTruthy();
-        expect(screen.getAllByRole("row")).toHaveLength(201);
+        expect(
+            screen.queryByRole("button", { name: /show all rows/i }),
+        ).toBeNull();
+        expect(screen.queryByLabelText(/filter rows/i)).toBeNull();
+        expect(screen.getByText("Showing 100 of 200 rows")).toBeTruthy();
     });
 
-    it("sorts csv rows ascending then descending when a column header is clicked", () => {
+    it("sorts enlarged csv rows ascending then descending when a column header is clicked", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/report.csv" }),
             content: {
@@ -373,15 +506,25 @@ describe("O1 file preview", () => {
             },
         });
 
+        fireEvent.click(
+            screen.getByRole("button", { name: /enlarge report.csv preview/i }),
+        );
+
         const toggle = screen.getByRole("button", { name: /sort by sample/i });
 
         fireEvent.click(toggle);
-        expect(screen.getAllByRole("row")[1]?.textContent).toContain("alpha");
-        expect(screen.getAllByRole("row")[3]?.textContent).toContain("gamma");
+        const dialog = screen.getByRole("dialog", {
+            name: /enlarged report.csv preview/i,
+        });
+        let rows = dialog.querySelectorAll("tbody tr");
+
+        expect(rows[0]?.textContent).toContain("alpha");
+        expect(rows[2]?.textContent).toContain("gamma");
 
         fireEvent.click(toggle);
-        expect(screen.getAllByRole("row")[1]?.textContent).toContain("gamma");
-        expect(screen.getAllByRole("row")[3]?.textContent).toContain("alpha");
+        rows = dialog.querySelectorAll("tbody tr");
+        expect(rows[0]?.textContent).toContain("gamma");
+        expect(rows[2]?.textContent).toContain("alpha");
     });
 
     it("filters expanded csv rows by matching text across columns", () => {
@@ -398,13 +541,21 @@ describe("O1 file preview", () => {
             },
         });
 
+        fireEvent.click(
+            screen.getByRole("button", { name: /enlarge report.csv preview/i }),
+        );
+
         fireEvent.change(screen.getByLabelText(/filter rows/i), {
             target: { value: "foo" },
         });
 
-        const rows = screen.getAllByRole("row");
-        expect(rows).toHaveLength(2);
-        expect(rows[1]?.textContent).toContain("foo");
+        const dialog = screen.getByRole("dialog", {
+            name: /enlarged report.csv preview/i,
+        });
+        const rows = dialog.querySelectorAll("tbody tr");
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.textContent).toContain("foo");
     });
 
     it("renders image previews as constrained thumbnails", () => {

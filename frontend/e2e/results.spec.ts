@@ -492,7 +492,9 @@ test.describe("Q1 critical results flows", () => {
         ).toHaveCount(0);
     });
 
-    test("renders a CSV preview table for report outputs", async ({ page }) => {
+    test("enlarges CSV previews before exposing table controls", async ({
+        page,
+    }) => {
         await openResultDetail(page, rnaseqPipelineName);
 
         await selectDirectoryForFile(page, rnaseqReportPath);
@@ -501,17 +503,32 @@ test.describe("Q1 critical results flows", () => {
         const preview = page.locator('[data-file-browser-preview="single"]');
 
         await expect(preview).toBeVisible();
+        await expect(preview.getByText("Showing 20 of 20 rows")).toBeVisible();
         await expect(
             preview.getByRole("button", { name: "Sort by sample_id" }),
+        ).toHaveCount(0);
+
+        await preview
+            .getByRole("button", { name: /Enlarge report\.csv preview/i })
+            .click();
+
+        const dialog = page.getByRole("dialog", {
+            name: /Enlarged report\.csv preview/i,
+        });
+
+        await expect(dialog).toBeVisible();
+        await expect(dialog.getByText("Showing 20 of 20 rows")).toBeVisible();
+        await expect(
+            dialog.getByRole("button", { name: "Sort by sample_id" }),
         ).toBeVisible();
         await expect(
-            preview.getByRole("button", { name: "Sort by metric" }),
+            dialog.getByRole("button", { name: "Sort by metric" }),
         ).toBeVisible();
         await expect(
-            preview.getByRole("button", { name: "Sort by value" }),
+            dialog.getByRole("button", { name: "Sort by value" }),
         ).toBeVisible();
         await expect(
-            preview.getByRole("button", { name: "Sort by status" }),
+            dialog.getByRole("button", { name: "Sort by status" }),
         ).toBeVisible();
     });
 

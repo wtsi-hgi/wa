@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { memo, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { ArrowDownToLine, Expand, FileCode2, Search, X } from "lucide-react";
 import hljs from "highlight.js/lib/core";
 import json from "highlight.js/lib/languages/json";
@@ -81,6 +82,12 @@ type LightboxImageProps = {
     thumbnailHeight?: number;
     thumbnailUrl: string;
     thumbnailWidth?: number;
+};
+
+type ExpandablePreviewProps = {
+    children: ReactNode;
+    dialogContent: ReactNode;
+    fileName: string;
 };
 
 export type FileImageThumbnailProps = {
@@ -236,18 +243,93 @@ function DownloadIconLink({
     );
 }
 
+function ExpandablePreview({
+    children,
+    dialogContent,
+    fileName,
+}: ExpandablePreviewProps) {
+    const [previewOpen, setPreviewOpen] = useState(false);
+
+    useEffect(() => {
+        if (!previewOpen) {
+            return undefined;
+        }
+
+        function handleKeyDown(event: KeyboardEvent) {
+            if (event.key === "Escape") {
+                setPreviewOpen(false);
+            }
+        }
+
+        window.addEventListener("keydown", handleKeyDown);
+
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [previewOpen]);
+
+    return (
+        <>
+            <div className="group relative min-h-0 cursor-zoom-in">
+                {children}
+                <button
+                    type="button"
+                    aria-label={`Enlarge ${fileName} preview`}
+                    className="absolute inset-0 z-10 flex items-end justify-start rounded-[1.5rem] text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+                    onClick={() => setPreviewOpen(true)}
+                >
+                    <span className="pointer-events-none m-3 inline-flex items-center gap-2 rounded-full bg-[color:rgba(15,23,42,0.78)] px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-white opacity-95 shadow-lg transition group-hover:bg-[color:rgba(15,23,42,0.88)]">
+                        <Expand className="size-3.5" aria-hidden="true" />
+                        Click to enlarge
+                    </span>
+                </button>
+            </div>
+
+            {previewOpen ? (
+                <div
+                    aria-label={`Enlarged ${fileName} preview`}
+                    aria-modal="true"
+                    className="fixed inset-0 z-50 flex items-center justify-center p-6"
+                    role="dialog"
+                >
+                    <button
+                        type="button"
+                        aria-label="Close enlarged preview backdrop"
+                        className="absolute inset-0 bg-[color:rgba(17,24,39,0.75)] backdrop-blur-sm"
+                        onClick={() => setPreviewOpen(false)}
+                    />
+                    <div className="relative z-10 flex max-h-full w-full max-w-6xl flex-col rounded-[2rem] border border-white/15 bg-background p-5 text-foreground shadow-2xl">
+                        <button
+                            type="button"
+                            aria-label="Close enlarged preview"
+                            className="absolute right-4 top-4 z-10 inline-flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground transition hover:bg-muted"
+                            onClick={() => setPreviewOpen(false)}
+                        >
+                            <X className="size-4" aria-hidden="true" />
+                        </button>
+                        <div className="max-h-[calc(100vh-8rem)] overflow-auto pr-1">
+                            {dialogContent}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+        </>
+    );
+}
+
 function CsvPreview({
     content,
     contentType,
+    isExpanded = false,
 }: {
     content: string;
     contentType: string;
+    isExpanded?: boolean;
 }) {
     const parsed = useMemo(
         () => parseDelimitedContent(content, contentType),
         [content, contentType],
     );
-    const [showAllRows, setShowAllRows] = useState(false);
     const [filterValue, setFilterValue] = useState("");
     const [sortIndex, setSortIndex] = useState<number | null>(null);
     const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -287,7 +369,7 @@ function CsvPreview({
         });
     }, [filteredRows, sortDirection, sortIndex]);
 
-    const visibleRows = showAllRows ? sortedRows : sortedRows.slice(0, 100);
+    const visibleRows = isExpanded ? sortedRows : sortedRows.slice(0, 100);
 
     return (
         <div className="space-y-4">
@@ -295,38 +377,26 @@ function CsvPreview({
                 <p className="text-sm text-muted-foreground">
                     Showing {visibleRows.length} of {parsed.rows.length} rows
                 </p>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                    <label className="relative block">
-                        <span className="sr-only">Filter rows</span>
-                        <Search
-                            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                            aria-hidden="true"
-                        />
-                        <input
-                            aria-label="Filter rows"
-                            className="w-full rounded-full border border-border/70 bg-background px-10 py-2 text-sm text-foreground outline-none transition focus:border-primary sm:w-64"
-                            onChange={(event) =>
-                                setFilterValue(event.target.value)
-                            }
-                            placeholder="Filter rows"
-                            value={filterValue}
-                        />
-                    </label>
-
-                    {parsed.rows.length > 100 ? (
-                        <button
-                            type="button"
-                            className="inline-flex items-center justify-center rounded-full border border-border/70 bg-background px-4 py-2 text-sm font-medium text-foreground transition hover:border-primary/35"
-                            onClick={() =>
-                                setShowAllRows((current) => !current)
-                            }
-                        >
-                            {showAllRows
-                                ? "Show first 100 rows"
-                                : "Show all rows"}
-                        </button>
-                    ) : null}
-                </div>
+                {isExpanded ? (
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                        <label className="relative block">
+                            <span className="sr-only">Filter rows</span>
+                            <Search
+                                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                                aria-hidden="true"
+                            />
+                            <input
+                                aria-label="Filter rows"
+                                className="w-full rounded-full border border-border/70 bg-background px-10 py-2 text-sm text-foreground outline-none transition focus:border-primary sm:w-64"
+                                onChange={(event) =>
+                                    setFilterValue(event.target.value)
+                                }
+                                placeholder="Filter rows"
+                                value={filterValue}
+                            />
+                        </label>
+                    </div>
+                ) : null}
             </div>
 
             <div className="rounded-[1.5rem] border border-border/70 bg-background/70 p-2">
@@ -335,31 +405,38 @@ function CsvPreview({
                         <TableRow>
                             {parsed.headers.map((header, index) => (
                                 <TableHead key={`${header}-${index}`}>
-                                    <button
-                                        type="button"
-                                        aria-label={`Sort by ${header}`}
-                                        className="inline-flex items-center gap-2 rounded-full px-2 py-1 text-left text-sm font-medium text-foreground transition hover:bg-muted/50"
-                                        onClick={() => {
-                                            if (sortIndex === index) {
-                                                setSortDirection((current) =>
-                                                    current === "asc"
-                                                        ? "desc"
-                                                        : "asc",
-                                                );
-                                                return;
-                                            }
+                                    {isExpanded ? (
+                                        <button
+                                            type="button"
+                                            aria-label={`Sort by ${header}`}
+                                            className="inline-flex items-center gap-2 rounded-full px-2 py-1 text-left text-sm font-medium text-foreground transition hover:bg-muted/50"
+                                            onClick={() => {
+                                                if (sortIndex === index) {
+                                                    setSortDirection(
+                                                        (current) =>
+                                                            current === "asc"
+                                                                ? "desc"
+                                                                : "asc",
+                                                    );
+                                                    return;
+                                                }
 
-                                            setSortIndex(index);
-                                            setSortDirection("asc");
-                                        }}
-                                    >
-                                        <span>{header}</span>
-                                        {sortIndex === index ? (
-                                            <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                                                {sortDirection}
-                                            </span>
-                                        ) : null}
-                                    </button>
+                                                setSortIndex(index);
+                                                setSortDirection("asc");
+                                            }}
+                                        >
+                                            <span>{header}</span>
+                                            {sortIndex === index ? (
+                                                <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                                                    {sortDirection}
+                                                </span>
+                                            ) : null}
+                                        </button>
+                                    ) : (
+                                        <span className="px-2 py-1 text-sm font-medium text-foreground">
+                                            {header}
+                                        </span>
+                                    )}
                                 </TableHead>
                             ))}
                         </TableRow>
@@ -655,7 +732,7 @@ export function FilePreview({
         <section className="h-full w-full">
             <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] p-5 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
                 <DownloadIconLink
-                    className="absolute right-4 top-4 z-10"
+                    className="absolute right-4 top-4 z-20"
                     href={downloadUrl}
                 />
 
@@ -690,99 +767,180 @@ export function FilePreview({
                     ) : null}
 
                     {!isLoading && previewable && renderer === "svg" ? (
-                        <div className="inline-flex overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-                            <Image
-                                alt={`${fileName} preview`}
-                                className="rounded-xl object-contain"
-                                src={proxyUrl}
-                                unoptimized
-                                width={1200}
-                                height={1200}
-                                sizes="100vw"
-                                style={{
-                                    maxHeight: maxHeight
-                                        ? `${maxHeight}px`
-                                        : "480px",
-                                    maxWidth: "100%",
-                                }}
-                            />
-                        </div>
+                        <ExpandablePreview
+                            fileName={fileName}
+                            dialogContent={
+                                <Image
+                                    alt={`${fileName} full preview`}
+                                    className="mx-auto max-h-[calc(100vh-9rem)] rounded-[1.5rem] object-contain"
+                                    src={proxyUrl}
+                                    unoptimized
+                                    width={1600}
+                                    height={1200}
+                                    sizes="100vw"
+                                />
+                            }
+                        >
+                            <div className="inline-flex overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
+                                <Image
+                                    alt={`${fileName} preview`}
+                                    className="rounded-xl object-contain"
+                                    src={proxyUrl}
+                                    unoptimized
+                                    width={1200}
+                                    height={1200}
+                                    sizes="100vw"
+                                    style={{
+                                        maxHeight: maxHeight
+                                            ? `${maxHeight}px`
+                                            : "480px",
+                                        maxWidth: "100%",
+                                    }}
+                                />
+                            </div>
+                        </ExpandablePreview>
                     ) : null}
 
                     {!isLoading && previewable && renderer === "pdf" ? (
-                        <iframe
-                            className="w-full rounded-[1.5rem] border border-border/70 bg-background"
-                            src={proxyUrl}
-                            style={{ height: `${maxHeight ?? 512}px` }}
-                            title="PDF preview"
-                        />
+                        <ExpandablePreview
+                            fileName={fileName}
+                            dialogContent={
+                                <iframe
+                                    className="h-[calc(100vh-9rem)] w-full rounded-[1.5rem] border border-border/70 bg-background"
+                                    src={proxyUrl}
+                                    title="Enlarged PDF preview"
+                                />
+                            }
+                        >
+                            <iframe
+                                className="w-full rounded-[1.5rem] border border-border/70 bg-background"
+                                src={proxyUrl}
+                                style={{ height: `${maxHeight ?? 512}px` }}
+                                title="PDF preview"
+                            />
+                        </ExpandablePreview>
                     ) : null}
 
                     {!isLoading && previewable && renderer === "html" ? (
-                        <iframe
-                            className="w-full rounded-[1.5rem] border border-border/70 bg-white"
-                            sandbox="allow-same-origin"
-                            src={proxyUrl}
-                            style={{ height: `${maxHeight ?? 512}px` }}
-                            title="HTML preview"
-                        />
+                        <ExpandablePreview
+                            fileName={fileName}
+                            dialogContent={
+                                <iframe
+                                    className="h-[calc(100vh-9rem)] w-full rounded-[1.5rem] border border-border/70 bg-white"
+                                    sandbox="allow-same-origin"
+                                    src={proxyUrl}
+                                    title="Enlarged HTML preview"
+                                />
+                            }
+                        >
+                            <iframe
+                                className="w-full rounded-[1.5rem] border border-border/70 bg-white"
+                                sandbox="allow-same-origin"
+                                src={proxyUrl}
+                                style={{ height: `${maxHeight ?? 512}px` }}
+                                title="HTML preview"
+                            />
+                        </ExpandablePreview>
                     ) : null}
 
                     {!isLoading && previewable && renderer === "markdown" ? (
-                        <article
-                            className="max-w-none overflow-y-auto rounded-[1.5rem] border border-border/70 bg-background/75 p-6"
-                            style={
-                                maxHeight
-                                    ? { maxHeight: `${maxHeight}px` }
-                                    : undefined
+                        <ExpandablePreview
+                            fileName={fileName}
+                            dialogContent={
+                                <article className="max-w-none rounded-[1.5rem] border border-border/70 bg-background/75 p-6 text-foreground">
+                                    <ReactMarkdown>
+                                        {content?.content ?? ""}
+                                    </ReactMarkdown>
+                                </article>
                             }
                         >
-                            <ReactMarkdown>
-                                {content?.content ?? ""}
-                            </ReactMarkdown>
-                        </article>
-                    ) : null}
-
-                    {!isLoading &&
-                    previewable &&
-                    renderer === "csv" &&
-                    content ? (
-                        <div
-                            className={cn(maxHeight ? "overflow-y-auto" : "")}
-                            style={
-                                maxHeight
-                                    ? { maxHeight: `${maxHeight}px` }
-                                    : undefined
-                            }
-                        >
-                            <CsvPreview
-                                content={content.content}
-                                contentType={content.contentType}
-                            />
-                        </div>
-                    ) : null}
-
-                    {!isLoading && previewable && renderer === "code" ? (
-                        <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
-                            <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.24em] text-slate-300">
-                                <Expand className="size-4" aria-hidden="true" />
-                                Syntax-highlighted preview
-                            </div>
-                            <pre
-                                className="overflow-auto p-5 text-sm leading-7 text-slate-100"
+                            <article
+                                className="max-w-none overflow-y-auto rounded-[1.5rem] border border-border/70 bg-background/75 p-6"
                                 style={
                                     maxHeight
                                         ? { maxHeight: `${maxHeight}px` }
                                         : undefined
                                 }
                             >
-                                <code
-                                    dangerouslySetInnerHTML={{
-                                        __html: highlightedContent ?? "",
-                                    }}
+                                <ReactMarkdown>
+                                    {content?.content ?? ""}
+                                </ReactMarkdown>
+                            </article>
+                        </ExpandablePreview>
+                    ) : null}
+
+                    {!isLoading &&
+                    previewable &&
+                    renderer === "csv" &&
+                    content ? (
+                        <ExpandablePreview
+                            fileName={fileName}
+                            dialogContent={
+                                <CsvPreview
+                                    content={content.content}
+                                    contentType={content.contentType}
+                                    isExpanded
                                 />
-                            </pre>
-                        </div>
+                            }
+                        >
+                            <div
+                                className={cn(
+                                    maxHeight ? "overflow-y-auto" : "",
+                                )}
+                                style={
+                                    maxHeight
+                                        ? { maxHeight: `${maxHeight}px` }
+                                        : undefined
+                                }
+                            >
+                                <CsvPreview
+                                    content={content.content}
+                                    contentType={content.contentType}
+                                />
+                            </div>
+                        </ExpandablePreview>
+                    ) : null}
+
+                    {!isLoading && previewable && renderer === "code" ? (
+                        <ExpandablePreview
+                            fileName={fileName}
+                            dialogContent={
+                                <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
+                                    <pre className="overflow-auto p-5 text-sm leading-7 text-slate-100">
+                                        <code
+                                            dangerouslySetInnerHTML={{
+                                                __html:
+                                                    highlightedContent ?? "",
+                                            }}
+                                        />
+                                    </pre>
+                                </div>
+                            }
+                        >
+                            <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
+                                <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.24em] text-slate-300">
+                                    <Expand
+                                        className="size-4"
+                                        aria-hidden="true"
+                                    />
+                                    Syntax-highlighted preview
+                                </div>
+                                <pre
+                                    className="overflow-auto p-5 text-sm leading-7 text-slate-100"
+                                    style={
+                                        maxHeight
+                                            ? { maxHeight: `${maxHeight}px` }
+                                            : undefined
+                                    }
+                                >
+                                    <code
+                                        dangerouslySetInnerHTML={{
+                                            __html: highlightedContent ?? "",
+                                        }}
+                                    />
+                                </pre>
+                            </div>
+                        </ExpandablePreview>
                     ) : null}
                 </div>
             </div>
