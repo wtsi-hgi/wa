@@ -757,25 +757,28 @@ func listRunDevResultFilesForTest(t *testing.T, resultsPort int, resultID string
 
 func startDelayedHTTPServerForTest(t *testing.T, port int, delay time.Duration) {
 	t.Helper()
+	readyCh := make(chan struct{})
+	go func() {
+		time.Sleep(delay)
+		close(readyCh)
+	}()
 
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			<-readyCh
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusOK)
 			_, _ = writer.Write([]byte("[]"))
 		}),
 	}
 
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("listen on delayed HTTP server port %d: %v", port, err)
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
-		time.Sleep(delay)
-
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			errCh <- err
-			return
-		}
-
 		errCh <- server.Serve(listener)
 	}()
 

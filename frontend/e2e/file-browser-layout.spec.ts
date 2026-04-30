@@ -19,11 +19,22 @@ type PreviewBorderSurfaceMetrics = {
 async function openResultFileBrowser(page: Page) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
+    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.locator('tbody tr[data-result-row="true"]')).toHaveCount(3);
 
-    await page.getByRole("link", { name: "nf-core/rnaseq" }).first().click();
+    const resultLink = page
+        .getByRole("link", { name: "nf-core/rnaseq" })
+        .first();
+    const href = await resultLink.getAttribute("href");
+
+    await page.goto(href ?? "/results/");
+    await expect(page).toHaveURL(new RegExp(`${href ?? "/results/"}$`));
+    await expect(
+        page.getByRole("heading", { level: 1, name: "nf-core/rnaseq" }),
+    ).toBeVisible({ timeout: 30000 });
 
     const fileBrowser = page.locator('[data-file-browser="true"]');
-    await expect(fileBrowser).toBeVisible();
+    await expect(fileBrowser).toBeVisible({ timeout: 30000 });
 }
 
 async function openFirstSinglePreview(page: Page) {

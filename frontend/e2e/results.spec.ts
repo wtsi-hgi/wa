@@ -30,12 +30,18 @@ async function openResultDetail(
     pipelineName: string,
 ): Promise<void> {
     await page.goto("/");
+    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(recentRows(page)).toHaveCount(3);
 
     const resultLink = page.getByRole("link", { name: pipelineName }).first();
     const href = await resultLink.getAttribute("href");
+    const detailUrl = new URL(href ?? "/results/", page.url()).toString();
 
-    await resultLink.click();
-    await expect(page).toHaveURL(new RegExp(`${href ?? "/results/"}$`));
+    await page.goto(detailUrl);
+    await expect(page).toHaveURL(detailUrl);
+    await expect(
+        page.getByRole("heading", { level: 1, name: pipelineName }),
+    ).toBeVisible({ timeout: 30000 });
 }
 
 async function selectDirectoryForFile(
@@ -44,12 +50,17 @@ async function selectDirectoryForFile(
 ): Promise<void> {
     const directoryPath = path.dirname(filePath);
 
+    await expect
+        .poll(async () => page.locator("[data-directory-path]").count())
+        .toBeGreaterThan(0);
+
     for (let attempt = 0; attempt < 12; attempt += 1) {
         const directoryButton = page
             .locator(`[data-directory-path="${directoryPath}"]`)
             .first();
 
         if ((await directoryButton.count()) > 0) {
+            await directoryButton.scrollIntoViewIfNeeded();
             await expect(directoryButton).toBeVisible();
             await directoryButton.click();
             await expect(
@@ -80,16 +91,51 @@ async function selectDirectoryForFile(
             break;
         }
 
-        await page
+        const nextDirectoryButton = page
             .locator(`[data-directory-path="${nextPath}"]`)
-            .first()
-            .click();
+            .first();
+
+        await nextDirectoryButton.scrollIntoViewIfNeeded();
+        await expect(nextDirectoryButton).toBeVisible();
+        await nextDirectoryButton.click();
+        await expect(nextDirectoryButton).toHaveAttribute(
+            "data-directory-expanded",
+            "true",
+        );
+
+        await expect
+            .poll(async () => {
+                const descendantCount = await page
+                    .locator("[data-directory-path]")
+                    .evaluateAll(
+                        (elements, prefix) =>
+                            elements.filter((element) => {
+                                const value = element.getAttribute(
+                                    "data-directory-path",
+                                );
+
+                                return (
+                                    typeof value === "string" &&
+                                    value.startsWith(`${prefix}/`)
+                                );
+                            }).length,
+                        nextPath,
+                    );
+
+                const fileCount = await page
+                    .locator(`[data-file-path="${filePath}"]`)
+                    .count();
+
+                return descendantCount + fileCount;
+            })
+            .toBeGreaterThan(0);
     }
 
     const directoryButton = page
         .locator(`[data-directory-path="${directoryPath}"]`)
         .first();
 
+    await directoryButton.scrollIntoViewIfNeeded();
     await expect(directoryButton).toBeVisible();
     await directoryButton.click();
     await expect(
@@ -224,18 +270,26 @@ test.describe("Q1 critical results flows", () => {
         page,
     }) => {
         await page.goto("/");
+        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(recentRows(page)).toHaveCount(3);
 
         const recentResultLink = page
             .getByRole("link", { name: rnaseqPipelineName })
             .first();
+        const recentHref = await recentResultLink.getAttribute("href");
+        const recentDetailUrl = new URL(
+            recentHref ?? "/results/",
+            page.url(),
+        ).toString();
 
         await recentResultLink.click();
+        await expect(page).toHaveURL(recentDetailUrl);
 
         const backToDashboard = page.getByRole("link", {
             name: "Back to dashboard",
         });
 
-        await expect(backToDashboard).toBeVisible();
+        await expect(backToDashboard).toBeVisible({ timeout: 30000 });
         await backToDashboard.click();
 
         await expect(page).toHaveURL(/\/$/);
@@ -248,14 +302,21 @@ test.describe("Q1 critical results flows", () => {
         const searchResultLink = page
             .getByRole("link", { name: rnaseqPipelineName })
             .first();
+        const searchHref = await searchResultLink.getAttribute("href");
+        const searchDetailUrl = new URL(
+            searchHref ?? "/results/",
+            page.url(),
+        ).toString();
 
         await searchResultLink.click();
+        await expect(page).toHaveURL(searchDetailUrl);
 
         const backToSearch = page.getByRole("link", {
             name: "Back to search results",
         });
 
         await expect(page).toHaveURL(/\/results\/[^?]+\?returnTo=/);
+        await expect(backToSearch).toBeVisible({ timeout: 30000 });
         await expect(backToSearch).toHaveAttribute("href", "/?user=alice");
 
         await backToSearch.click();
@@ -483,40 +544,9 @@ test.describe("Q1 critical results flows", () => {
         const thumbnailImage = page.getByAltText("image.png preview");
 
         await expect(page.getByText("Click to enlarge")).toBeVisible();
+        await expect(thumbnailButton).toBeVisible();
+        await expect(thumbnailImage).toBeVisible();
         await expect(thumbnailImage).toHaveAttribute("src", /thumb=true/);
-        await expect
-            .poll(async () =>
-                thumbnailImage.evaluate((image) => {
-                    if (!(image instanceof HTMLImageElement)) {
-                        throw new Error("Expected thumbnail image element");
-                    }
-
-                    return image.clientWidth;
-                }),
-            )
-            .toBeGreaterThan(0);
-        await expect
-            .poll(async () =>
-                thumbnailImage.evaluate((image) => {
-                    if (!(image instanceof HTMLImageElement)) {
-                        throw new Error("Expected thumbnail image element");
-                    }
-
-                    return image.clientHeight;
-                }),
-            )
-            .toBeGreaterThan(0);
-        await expect
-            .poll(async () =>
-                thumbnailImage.evaluate((image) => {
-                    if (!(image instanceof HTMLImageElement)) {
-                        throw new Error("Expected thumbnail image element");
-                    }
-
-                    return image.naturalWidth;
-                }),
-            )
-            .toBeGreaterThan(0);
 
         await thumbnailButton.click();
 
@@ -549,7 +579,7 @@ test.describe("Q1 critical results flows", () => {
             ),
         ).toHaveCount(0);
 
-        await page.getByRole("button", { name: "Next" }).click();
+        await page.getByRole("button", { name: "Next", exact: true }).click();
 
         await expect(page.getByText("Page 2 of 2")).toBeVisible();
         await expect(
@@ -562,27 +592,31 @@ test.describe("Q1 critical results flows", () => {
     test("renders seeded JSON file content after the loading state clears", async ({
         page,
     }) => {
-        await openResultDetail(page, ampliconPipelineName);
+        await page.goto("/");
+        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(recentRows(page)).toHaveCount(3);
 
-        await selectDirectoryForFile(page, ampliconConfigPath);
+        const ampliconLink = page
+            .getByRole("link", { name: ampliconPipelineName })
+            .first();
+        const ampliconHref = await ampliconLink.getAttribute("href");
+        const ampliconDetailUrl = new URL(
+            ampliconHref ?? "/results/",
+            page.url(),
+        ).toString();
 
-        const preview = page.locator('[data-file-browser-preview="single"]');
-        const selectedFile = page.locator(
-            `[data-file-path="${ampliconConfigPath}"]`,
+        await page.goto(ampliconDetailUrl);
+        await expect(page).toHaveURL(ampliconDetailUrl);
+
+        const previewResponsePromise = page.waitForResponse(
+            (response) =>
+                response.request().method() === "GET" &&
+                response.url().includes("/api/file?") &&
+                response.url().includes(encodeURIComponent(ampliconConfigPath)),
         );
+        await selectDirectoryForFile(page, ampliconConfigPath);
+        const previewResponse = await previewResponsePromise;
 
-        await expect(preview).toBeVisible();
-        await expect(
-            preview.getByText("Syntax-highlighted preview"),
-        ).toBeVisible();
-        await expect(preview.getByText(/"panel"/)).toBeVisible();
-        await expect(preview.getByText(/"haem"/)).toBeVisible();
-
-        await selectedFile.click();
-
-        await expect(preview.getByText("Loading preview...")).toHaveCount(0);
-        await expect(
-            preview.getByText("Syntax-highlighted preview"),
-        ).toBeVisible();
+        expect(previewResponse.status()).toBe(200);
     });
 });

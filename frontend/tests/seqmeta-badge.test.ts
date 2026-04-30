@@ -453,10 +453,11 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchFilesMock.mockResolvedValue([]);
         setRequestCookieHeader();
 
-        const pageModule = await import("@/app/(results)/results/[id]/page");
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
         const markup = renderToStaticMarkup(
-            await pageModule.default({
-                params: Promise.resolve({ id: "result-42" }),
+            await pageModule.ResultDetailPageContent({
+                id: "result-42",
             }),
         );
 
@@ -473,7 +474,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("No metadata")).toBeTruthy();
     });
 
-    it("renders the detail page shell without server-started seqmeta enrichment", async () => {
+    it("renders the detail page content without server-started seqmeta enrichment", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
                 metadata: {
@@ -494,11 +495,12 @@ describe("M1 result detail seqmeta enrichment", () => {
         ]);
         setRequestCookieHeader();
 
-        const pageModule = await import("@/app/(results)/results/[id]/page");
-        const Page = pageModule.default;
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
+        const Page = pageModule.ResultDetailPageContent;
         const markup = renderToStaticMarkup(
             await Page({
-                params: Promise.resolve({ id: "result-42" }),
+                id: "result-42",
             }),
         );
 
@@ -657,7 +659,8 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         const { ResultMetadataEnrichment } =
             await import("@/components/result-metadata-enrichment");
-        const pageModule = await import("@/app/(results)/results/[id]/page");
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
 
         render(
             createElement(ResultMetadataEnrichment, {
@@ -689,8 +692,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         ).toBe("SANG001");
 
         const firstMarkup = renderToStaticMarkup(
-            await pageModule.default({
-                params: Promise.resolve({ id: "result-42" }),
+            await pageModule.ResultDetailPageContent({
+                id: "result-42",
             }),
         );
 
@@ -703,8 +706,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
 
         const secondMarkup = renderToStaticMarkup(
-            await pageModule.default({
-                params: Promise.resolve({ id: "result-99" }),
+            await pageModule.ResultDetailPageContent({
+                id: "result-99",
             }),
         );
 
@@ -764,10 +767,11 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
         setRequestCookieHeader();
 
-        const pageModule = await import("@/app/(results)/results/[id]/page");
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
         const markup = renderToStaticMarkup(
-            await pageModule.default({
-                params: Promise.resolve({ id: "result-42" }),
+            await pageModule.ResultDetailPageContent({
+                id: "result-42",
             }),
         );
 

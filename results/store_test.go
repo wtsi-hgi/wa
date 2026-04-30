@@ -575,7 +575,7 @@ func TestStoreStats(t *testing.T) {
 
 	convey.Convey("B1.3: Given result sets created today and 2 days ago, when Stats is called with days=3, then daily counts include zero-filled UTC calendar days", t, func() {
 		store := newSQLiteStoreForTest(t)
-		now := time.Now().UTC()
+		now := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
 
 		seedStatsResultSetForTest(t, store, "run-stats-day-old", now.AddDate(0, 0, -2).Add(3*time.Hour), nil)
 		seedStatsResultSetForTest(t, store, "run-stats-day-new", now.Add(-time.Hour), func(reg *Registration) {

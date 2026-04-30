@@ -133,7 +133,7 @@ describe("O1 result detail hydration", () => {
         );
         const serverMarkup = renderToString(serverTree);
         const container = document.createElement("div");
-        const recoverableErrors: Error[] = [];
+        const recoverableErrors: unknown[] = [];
 
         document.body.appendChild(container);
         container.innerHTML = serverMarkup;
@@ -214,16 +214,17 @@ describe("O1 result detail hydration", () => {
 
         toLocaleStringSpy.mockImplementation(() => "16 Apr 2026, 10:15");
 
-        const pageModule = await import("@/app/(results)/results/[id]/page");
-        const Page = pageModule.default;
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
+        const Page = pageModule.ResultDetailPageContent;
         const serverTree = createElement(
             AppProviders,
             undefined,
-            await Page({ params: Promise.resolve({ id: "result-1" }) }),
+            await Page({ id: "result-1" }),
         );
         const serverMarkup = renderToString(serverTree);
         const container = document.createElement("div");
-        const recoverableErrors: Error[] = [];
+        const recoverableErrors: unknown[] = [];
 
         document.body.appendChild(container);
         container.innerHTML = serverMarkup;
@@ -273,10 +274,11 @@ describe("O1 result detail hydration", () => {
         fetchResultMock.mockResolvedValue(result);
         enrichSeqmetaMetadataMock.mockReturnValue(pendingEnrichment.promise);
 
-        const pageModule = await import("@/app/(results)/results/[id]/page");
-        const Page = pageModule.default;
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
+        const Page = pageModule.ResultDetailPageContent;
         const pagePromise = Page({
-            params: Promise.resolve({ id: "result-1" }),
+            id: "result-1",
         });
 
         const renderState = await Promise.race([
@@ -291,5 +293,24 @@ describe("O1 result detail hydration", () => {
 
         pendingEnrichment.resolve({ enrichments: {}, errors: {} });
         await pagePromise;
+    });
+
+    it("renders a loading shell without waiting for result fetches", async () => {
+        vi.stubGlobal("matchMedia", matchMediaStub);
+
+        const loadingModule = await import(
+            "@/app/(results)/results/[id]/loading"
+        );
+        const Loading = loadingModule.default;
+        const serverTree = createElement(
+            AppProviders,
+            undefined,
+            createElement(Loading),
+        );
+        const serverMarkup = renderToString(serverTree);
+
+        expect(serverMarkup).toContain("Loading result details");
+        expect(fetchResultMock).not.toHaveBeenCalled();
+        expect(fetchFilesMock).not.toHaveBeenCalled();
     });
 });
