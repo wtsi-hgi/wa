@@ -687,9 +687,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(persistedCookie).toBeTruthy();
 
         const cookieValue = persistedCookie?.split("=").slice(1).join("=");
-        expect(
-            deserializeSeqmetaCacheCookie(cookieValue).SANG001?.identifier,
-        ).toBe("SANG001");
+        expect(deserializeSeqmetaCacheCookie(cookieValue)).toEqual({});
 
         const firstMarkup = renderToStaticMarkup(
             await pageModule.ResultDetailPageContent({

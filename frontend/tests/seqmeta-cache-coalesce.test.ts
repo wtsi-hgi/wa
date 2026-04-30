@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { EnrichmentResult } from "@/lib/contracts";
-import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
+import {
+    buildSeqmetaCacheCookie,
+    deserializeSeqmetaCacheCookie,
+    serializeSeqmetaCacheCookie,
+    SeqmetaCache,
+} from "@/lib/seqmeta-cache-core";
 import { primeSeqmetaCache } from "@/lib/seqmeta-enrichment";
 
 function flushMicrotasks(): Promise<void> {
@@ -16,8 +21,31 @@ function buildEnrichment(identifier: string): EnrichmentResult {
         type: "sanger_sample_id",
         graph: {
             study: {
+                id_study_tmp: 42,
+                id_lims: "SQSCP",
                 id_study_lims: `STUDY-${identifier}`,
+                name: `Study ${identifier}`,
+                faculty_sponsor: "Dr Example",
+                state: "active",
+                abstract: "Study abstract",
+                abbreviation: "RNA",
                 accession_number: `ACC-${identifier}`,
+                description: "Study description",
+                data_release_strategy: "managed",
+                study_title: "RNA Study",
+                data_access_group: "group-a",
+                hmdmc_number: "HMDMC-1",
+                programme: "Transcriptomics",
+                created: "2026-04-20T09:00:00Z",
+                reference_genome: "GRCh38",
+                ethically_approved: true,
+                study_type: "Whole Genome Sequencing",
+                contains_human_dna: true,
+                contaminated_human_dna: false,
+                study_visibility: "Always Open",
+                ega_dac_accession_number: "EGAC00001",
+                ega_policy_accession_number: "EGAP00001",
+                data_release_timing: "Immediate",
             },
             library: {
                 library_type: `LIB-${identifier}`,
@@ -25,13 +53,33 @@ function buildEnrichment(identifier: string): EnrichmentResult {
             },
             sample: {
                 sanger_id: `SANGER-${identifier}`,
+                id_study_lims: `STUDY-${identifier}`,
                 id_sample_lims: `LIMS-${identifier}`,
+                sample_name: `Sample ${identifier}`,
+                taxon_id: 9606,
+                common_name: "Human",
+                library_type: `LIB-${identifier}`,
+                id_run: 1234,
+                lane: 1,
+                tag_index: 7,
+                irods_path: `/seq/${identifier}`,
                 study_accession_number: `ACC-${identifier}`,
+                accession_number: `ERS-${identifier}`,
             },
             samples: Array.from({ length: 5 }, (_, i) => ({
                 sanger_id: `SANGER-${identifier}-${i}`,
                 id_sample_lims: `LIMS-${identifier}-${i}`,
                 id_study_lims: `STUDY-${identifier}`,
+                sample_name: `Sample ${identifier}-${i}`,
+                taxon_id: 9606,
+                common_name: "Human",
+                library_type: `LIB-${identifier}`,
+                id_run: 1234,
+                lane: 1,
+                tag_index: i,
+                irods_path: `/seq/${identifier}-${i}`,
+                study_accession_number: `ACC-${identifier}`,
+                accession_number: `ERS-${identifier}-${i}`,
             })),
         },
         partial: false,
@@ -94,6 +142,22 @@ describe("SeqmetaCache onChange coalescing", () => {
         expect(onChange).not.toHaveBeenCalled();
     });
 
+    it("does not stringify successful enrichment graphs when checking repeated sets", () => {
+        const enrichment = {
+            ...buildEnrichment("Z"),
+            graph: {
+                toJSON() {
+                    throw new RangeError("Invalid string length");
+                },
+            },
+        } as unknown as EnrichmentResult;
+        const cache = new SeqmetaCache({ Z: enrichment }, vi.fn());
+
+        expect(() => {
+            cache.set("Z", { ...enrichment });
+        }).not.toThrow();
+    });
+
     it("coalesces multiple flush windows independently", async () => {
         const onChange = vi.fn();
         const cache = new SeqmetaCache({}, onChange);
@@ -110,5 +174,59 @@ describe("SeqmetaCache onChange coalescing", () => {
 
         const finalSnapshot = onChange.mock.calls[1]![0]!;
         expect(Object.keys(finalSnapshot).sort()).toEqual(["A", "B", "C", "D"]);
+    });
+});
+
+describe("SeqmetaCache cookie persistence", () => {
+    it("does not stringify successful enrichment graphs when serializing a cookie", () => {
+        const oversizeEnrichment = {
+            ...buildEnrichment("SAMPLE-1"),
+            graph: {
+                toJSON() {
+                    throw new RangeError("Invalid string length");
+                },
+            },
+        } as unknown as EnrichmentResult;
+
+        const serialized = serializeSeqmetaCacheCookie({
+            "SAMPLE-1": oversizeEnrichment,
+            "MISSING-1": null,
+        });
+
+        expect(deserializeSeqmetaCacheCookie(serialized)).toEqual({
+            "MISSING-1": null,
+        });
+    });
+
+    it("keeps persisted cache cookies below the browser cookie budget", () => {
+        const snapshot = Object.fromEntries(
+            Array.from({ length: 1000 }, (_, index) => [
+                `MISSING-${index.toString().padStart(4, "0")}`,
+                null,
+            ]),
+        );
+
+        const cookie = buildSeqmetaCacheCookie(snapshot);
+        const persisted = deserializeSeqmetaCacheCookie(
+            cookie.split(";")[0]!.split("=").slice(1).join("="),
+        );
+
+        expect(cookie.length).toBeLessThan(4096);
+        expect(Object.keys(persisted).length).toBeGreaterThan(0);
+        expect(Object.values(persisted).every((value) => value === null)).toBe(
+            true,
+        );
+    });
+
+    it("still reads legacy cookies that contain successful enrichments", () => {
+        const enrichment = buildEnrichment("SAMPLE-2");
+        const legacyCookieValue = encodeURIComponent(
+            JSON.stringify({ "SAMPLE-2": enrichment }),
+        );
+
+        expect(
+            deserializeSeqmetaCacheCookie(legacyCookieValue)["SAMPLE-2"]
+                ?.identifier,
+        ).toBe("SAMPLE-2");
     });
 });

@@ -2,6 +2,7 @@ import { enrichmentResultSchema, type EnrichmentResult } from "@/lib/contracts";
 
 export const SEQMETA_CACHE_COOKIE_NAME = "wa-seqmeta-cache";
 const SEQMETA_CACHE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+const SEQMETA_CACHE_COOKIE_MAX_VALUE_LENGTH = 3000;
 
 export type SeqmetaCacheSnapshot = Record<string, EnrichmentResult | null>;
 
@@ -21,11 +22,7 @@ function areCacheResultsEqual(
         return true;
     }
 
-    if (left == null || right == null) {
-        return left === right;
-    }
-
-    return JSON.stringify(left) === JSON.stringify(right);
+    return left === null && right === null;
 }
 
 export class SeqmetaCache implements SeqmetaCacheStore {
@@ -122,7 +119,33 @@ export function deserializeSeqmetaCacheCookie(
 export function serializeSeqmetaCacheCookie(
     snapshot: SeqmetaCacheSnapshot,
 ): string {
-    return encodeURIComponent(JSON.stringify(snapshot));
+    let persisted: SeqmetaCacheSnapshot = {};
+    let serialized = encodeURIComponent(JSON.stringify(persisted));
+
+    for (const [identifier, result] of Object.entries(snapshot)) {
+        if (result !== null) {
+            continue;
+        }
+
+        const candidate = {
+            ...persisted,
+            [identifier]: null,
+        };
+        const candidateSerialized = encodeURIComponent(
+            JSON.stringify(candidate),
+        );
+
+        if (
+            candidateSerialized.length > SEQMETA_CACHE_COOKIE_MAX_VALUE_LENGTH
+        ) {
+            continue;
+        }
+
+        persisted = candidate;
+        serialized = candidateSerialized;
+    }
+
+    return serialized;
 }
 
 export function buildSeqmetaCacheCookie(

@@ -31,7 +31,18 @@ function persistSeqmetaCache(
         return;
     }
 
-    document.cookie = buildSeqmetaCacheCookie(snapshot);
+    const cookie = buildSeqmetaCacheCookie(snapshot);
+    const [cookiePair = ""] = cookie.split(";");
+    const existingCookie = document.cookie
+        .split(";")
+        .map((entry) => entry.trim())
+        .find((entry) => entry.startsWith(`${cookiePair.split("=")[0]}=`));
+
+    if (existingCookie === cookiePair) {
+        return;
+    }
+
+    document.cookie = cookie;
 }
 
 export function SeqmetaCacheProvider({ children }: { children: ReactNode }) {
