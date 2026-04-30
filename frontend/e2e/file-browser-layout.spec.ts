@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 type PreviewBorderSurfaceMetrics = {
@@ -73,6 +75,67 @@ async function openFirstSinglePreview(page: Page) {
     return { preview, singleLayoutContainer };
 }
 
+async function selectDirectory(page: Page, directoryPath: string) {
+    await expect
+        .poll(async () => page.locator("[data-directory-path]").count())
+        .toBeGreaterThan(0);
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+        const directoryButton = page
+            .locator(`[data-directory-path="${directoryPath}"]`)
+            .first();
+
+        if ((await directoryButton.count()) > 0) {
+            await directoryButton.scrollIntoViewIfNeeded();
+            await expect(directoryButton).toBeVisible();
+            await directoryButton.click();
+
+            return;
+        }
+
+        const visiblePaths = await page
+            .locator("[data-directory-path]")
+            .evaluateAll((elements) =>
+                elements
+                    .map((element) =>
+                        element.getAttribute("data-directory-path"),
+                    )
+                    .filter((value): value is string => Boolean(value)),
+            );
+        const nextPath = visiblePaths
+            .filter(
+                (candidate) =>
+                    directoryPath.startsWith(`${candidate}${path.sep}`) ||
+                    directoryPath === candidate,
+            )
+            .sort((left, right) => right.length - left.length)[0];
+
+        if (!nextPath || nextPath === directoryPath) {
+            break;
+        }
+
+        const nextDirectoryButton = page
+            .locator(`[data-directory-path="${nextPath}"]`)
+            .first();
+
+        await nextDirectoryButton.scrollIntoViewIfNeeded();
+        await expect(nextDirectoryButton).toBeVisible();
+        await nextDirectoryButton.click();
+        await expect(nextDirectoryButton).toHaveAttribute(
+            "data-directory-expanded",
+            "true",
+        );
+    }
+
+    const directoryButton = page
+        .locator(`[data-directory-path="${directoryPath}"]`)
+        .first();
+
+    await directoryButton.scrollIntoViewIfNeeded();
+    await expect(directoryButton).toBeVisible();
+    await directoryButton.click();
+}
+
 async function measurePreviewBorderSurfaces(
     preview: Locator,
 ): Promise<PreviewBorderSurfaceMetrics> {
@@ -140,6 +203,26 @@ async function measurePreviewBorderSurfaces(
 }
 
 test.describe("File Browser single preview layout", () => {
+    const fixturesRoot = path.resolve(
+        process.cwd(),
+        "..",
+        ".docs",
+        "results-web",
+        "fixtures",
+        "files",
+    );
+    const rnaseqGalleryPath = path.join(
+        fixturesRoot,
+        "rnaseq",
+        "qc",
+        "images",
+        "gallery",
+    );
+    const rnaseqGalleryLowerImagePath = path.join(
+        rnaseqGalleryPath,
+        "plot-080.png",
+    );
+
     test("positions single preview to the right of file metadata at 1024px viewport", async ({
         page,
     }) => {
@@ -173,7 +256,45 @@ test.describe("File Browser single preview layout", () => {
         expect(previewBBox.y).toBeLessThan(fileBBox.y + fileBBox.height);
     });
 
-    test("row-spans multiple file rows when directory has multiple files in single preview mode", async ({
+    test("keeps the single preview visible when selecting a lower file row", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await page.setViewportSize({ width: 1024, height: 520 });
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const preview = page.locator('[data-file-browser-preview="single"]');
+        const lowerFile = page
+            .locator(`[data-file-path="${rnaseqGalleryLowerImagePath}"]`)
+            .first();
+
+        await expect(preview).toBeVisible();
+        await expect(lowerFile).toBeVisible();
+        await lowerFile.scrollIntoViewIfNeeded();
+        await lowerFile.click();
+
+        await expect(preview).toBeVisible();
+
+        const viewportMetrics = await preview.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+
+            return {
+                bottom: rect.bottom,
+                height: rect.height,
+                top: rect.top,
+                viewportHeight: window.innerHeight,
+            };
+        });
+
+        expect(viewportMetrics.height).toBeGreaterThan(120);
+        expect(viewportMetrics.top).toBeGreaterThanOrEqual(0);
+        expect(viewportMetrics.top).toBeLessThanOrEqual(24);
+        expect(viewportMetrics.bottom).toBeLessThanOrEqual(
+            viewportMetrics.viewportHeight,
+        );
+    });
+
+    test("reserves the preview column across multiple file rows in single preview mode", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
@@ -238,11 +359,13 @@ test.describe("File Browser single preview layout", () => {
             throw new Error("Missing bounding boxes for layout verification");
         }
 
-        // Preview should span from the top of the first file to at least near the bottom of the last file
-        expect(previewBBox.y).toBeLessThanOrEqual(firstFileBBox.y + 15);
-        expect(previewBBox.y + previewBBox.height).toBeGreaterThanOrEqual(
-            lastFileBBox.y + lastFileBBox.height - 15,
+        const previewGridRow = await preview.evaluate(
+            (element) => (element as HTMLElement).style.gridRow,
         );
+
+        // Preview should reserve the second column for every file row while rendering at its natural sticky height.
+        expect(previewGridRow).toBe(`1 / span ${fileCount}`);
+        expect(previewBBox.y).toBeLessThanOrEqual(firstFileBBox.y + 15);
 
         // Preview should still be to the right of all file buttons (not stacked below)
         expect(previewBBox.x).toBeGreaterThan(

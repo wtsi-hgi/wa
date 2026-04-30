@@ -474,7 +474,9 @@ describe("N1 file browser", () => {
         ) as HTMLElement | null;
 
         expect(previewPanel).toBeTruthy();
-        expect(previewPanel?.className).toContain("h-full");
+        expect(previewPanel?.className).toContain("sticky");
+        expect(previewPanel?.className).toContain("top-4");
+        expect(previewPanel?.className).toContain("self-start");
         expect(previewPanel?.className).not.toMatch(/(?:^|\s)border(?:\s|$)/);
         expect(previewPanel?.className).not.toMatch(/(?:^|\s)p-\d/);
         expect(previewPanel?.className).not.toMatch(/(?:^|\s)bg-/);
