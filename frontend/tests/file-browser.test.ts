@@ -676,7 +676,7 @@ describe("N1 file browser", () => {
         ]);
     });
 
-    it("surfaces the selected directory and preview controls", async () => {
+    it("surfaces preview height without putting paging controls in the browser header", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
         await act(async () => {
@@ -699,9 +699,11 @@ describe("N1 file browser", () => {
             );
         });
 
-        expect(container.textContent).toContain("1 preview per row");
         expect(container.textContent).toContain("Preview height");
-        expect(container.textContent).toContain("Page 2 of 3");
+        const header = container.querySelector("[data-file-browser-header]");
+
+        expect(header?.textContent).not.toContain("1 preview per row");
+        expect(header?.textContent).not.toContain("Page 2 of 3");
     });
 
     it("keeps preview height drag updates local until the slider is committed", async () => {
@@ -764,56 +766,144 @@ describe("N1 file browser", () => {
         expect(handlePreviewHeightChange).toHaveBeenCalledWith(300);
     });
 
-    it("paginates the file list in single preview mode", async () => {
+    it("renders paging and preview-mode controls on the expanded folder row and below the file list", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
-        const files = Array.from({ length: 101 }, (_, index) =>
+        const files = Array.from({ length: 250 }, (_, index) =>
             buildFile(
                 `/results/plot-${String(index + 1).padStart(3, "0")}.png`,
                 "output",
             ),
         );
         const handlePreviewPageChange = vi.fn();
+        const handlePreviewModeChange = vi.fn();
 
         await act(async () => {
             root.render(
                 createElement(FileBrowser, {
                     files,
+                    onPreviewModeChange: handlePreviewModeChange,
                     onPreviewPageChange: handlePreviewPageChange,
                     onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
                     previewMode: "single",
-                    previewPage: 1,
-                    previewPageCount: 2,
+                    previewPage: 2,
+                    previewPageCount: 3,
                     renderSinglePreview: (file: FileEntry | null): ReactNode =>
                         createElement(
                             "div",
                             { "data-testid": "single-preview" },
                             file?.path ?? "none",
                         ),
-                    visibleFiles: files.slice(0, 100),
+                    visibleFiles: files.slice(100, 200),
                 }),
             );
         });
 
-        expect(container.textContent).toContain("Page 1 of 2");
+        const folderControls = container.querySelector(
+            '[data-file-browser-folder-controls="/results"]',
+        );
+        const bottomControls = container.querySelector(
+            '[data-file-browser-bottom-controls="/results"]',
+        );
+
+        expect(folderControls).toBeTruthy();
+        expect(bottomControls).toBeTruthy();
+        expect(folderControls?.textContent).toContain("1 preview per row");
+        expect(folderControls?.textContent).toContain("Page 2 of 3");
+        expect(bottomControls?.textContent).toContain("Page 2 of 3");
         expect(
-            container.querySelector(
-                'button[data-file-path="/results/plot-100.png"]',
-            ),
-        ).toBeTruthy();
+            container.querySelector("[data-file-browser-header]")?.textContent,
+        ).not.toContain("Page 2 of 3");
         expect(
             container.querySelector(
                 'button[data-file-path="/results/plot-101.png"]',
             ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/plot-001.png"]',
+            ),
         ).toBeNull();
 
         await click(
-            Array.from(container.querySelectorAll("button")).find(
-                (button) => button.textContent === "Next",
+            folderControls?.querySelector(
+                'button[aria-label="Next preview page"]',
             ) ?? null,
         );
 
-        expect(handlePreviewPageChange).toHaveBeenCalledWith(2);
+        expect(handlePreviewPageChange).toHaveBeenCalledWith(3);
+
+        await click(
+            bottomControls?.querySelector(
+                'button[aria-label="Previous preview page"]',
+            ) ?? null,
+        );
+
+        expect(handlePreviewPageChange).toHaveBeenCalledWith(1);
+
+        await click(
+            folderControls?.querySelector(
+                'input[aria-label="1 preview per row"]',
+            ) ?? null,
+        );
+
+        expect(handlePreviewModeChange).toHaveBeenCalledWith("grid");
+
+        await act(async () => {
+            const pageSelect = folderControls?.querySelector(
+                'select[aria-label="Preview page"]',
+            ) as HTMLSelectElement | null;
+
+            if (!pageSelect) {
+                throw new Error("Missing preview page selector");
+            }
+
+            pageSelect.value = "3";
+            pageSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+
+        expect(handlePreviewPageChange).toHaveBeenCalledWith(3);
+    });
+
+    it("hides folder paging controls until the previewable folder is expanded", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/alpha/first.txt", "output"),
+                        buildFile("/results/a/plot-001.png", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "grid",
+                    previewPage: 1,
+                    previewPageCount: 2,
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement("div", {}, file.path),
+                    visibleFiles: [
+                        buildFile("/results/a/plot-001.png", "output"),
+                    ],
+                }),
+            );
+        });
+
+        expect(
+            container.querySelector(
+                '[data-file-browser-folder-controls="/results/a"]',
+            ),
+        ).toBeNull();
+
+        await click(
+            container.querySelector('button[data-directory-path="/results/a"]'),
+        );
+
+        expect(
+            container.querySelector(
+                '[data-file-browser-folder-controls="/results/a"]',
+            ),
+        ).toBeTruthy();
     });
 
     it("renders file buttons and preview as direct grid siblings in single mode", async () => {

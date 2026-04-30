@@ -660,7 +660,15 @@ test.describe("Q1 critical results flows", () => {
         await selectDirectoryForFile(page, rnaseqGalleryFirstImagePath);
         await page.getByLabel("1 preview per row").check();
 
-        await expect(page.getByText("Page 1 of 2")).toBeVisible();
+        const folderControls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+        const bottomControls = page.locator(
+            `[data-file-browser-bottom-controls="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(folderControls.getByText("Page 1 of 2")).toBeVisible();
+        await expect(bottomControls.getByText("Page 1 of 2")).toBeVisible();
         await expect(
             page.locator(
                 `[data-grid-preview-path="${rnaseqGalleryFirstImagePath}"]`,
@@ -672,14 +680,29 @@ test.describe("Q1 critical results flows", () => {
             ),
         ).toHaveCount(0);
 
-        await page.getByRole("button", { name: "Next", exact: true }).click();
+        await folderControls
+            .getByRole("button", { name: "Next preview page" })
+            .click();
 
-        await expect(page.getByText("Page 2 of 2")).toBeVisible();
+        await expect(folderControls.getByText("Page 2 of 2")).toBeVisible();
+        await expect(bottomControls.getByText("Page 2 of 2")).toBeVisible();
         await expect(
             page.locator(
                 `[data-grid-preview-path="${rnaseqGalleryPageTwoImagePath}"]`,
             ),
         ).toBeVisible();
+
+        await bottomControls
+            .getByRole("button", { name: "Previous preview page" })
+            .click();
+
+        await expect(folderControls.getByText("Page 1 of 2")).toBeVisible();
+
+        await bottomControls
+            .getByRole("combobox", { name: "Preview page" })
+            .selectOption("2");
+
+        await expect(bottomControls.getByText("Page 2 of 2")).toBeVisible();
     });
 
     test("renders seeded JSON file content after the loading state clears", async ({

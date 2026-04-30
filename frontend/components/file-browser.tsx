@@ -10,6 +10,7 @@ import {
     useState,
 } from "react";
 import {
+    ChevronLeft,
     ChevronDown,
     ChevronRight,
     Eye,
@@ -542,6 +543,99 @@ export function FileBrowser({
         </button>
     );
 
+    const renderPreviewControls = (
+        directoryPath: string,
+        placement: "folder" | "bottom",
+    ) => (
+        <div
+            className={cn(
+                "flex flex-wrap items-center gap-2 text-sm",
+                placement === "bottom"
+                    ? "col-span-full justify-end pt-1"
+                    : "justify-end",
+            )}
+            data-file-browser-bottom-controls={
+                placement === "bottom" ? directoryPath : undefined
+            }
+            data-file-browser-folder-controls={
+                placement === "folder" ? directoryPath : undefined
+            }
+        >
+            {placement === "folder" ? (
+                <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
+                    <input
+                        aria-label="1 preview per row"
+                        checked={previewMode === "grid"}
+                        className="size-4 accent-primary"
+                        onChange={(event) =>
+                            onPreviewModeChange?.(
+                                event.target.checked ? "grid" : "single",
+                            )
+                        }
+                        type="checkbox"
+                    />
+                    <span className="inline-flex items-center gap-2">
+                        <Eye
+                            className="size-4 text-primary"
+                            aria-hidden="true"
+                        />
+                        1 preview per row
+                    </span>
+                </label>
+            ) : null}
+
+            <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                <ListFilter
+                    className="size-4 text-primary"
+                    aria-hidden="true"
+                />
+                <span>
+                    Page {previewPage} of {previewPageCount}
+                </span>
+            </div>
+
+            {previewPageCount > 1 ? (
+                <div className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/75 p-1">
+                    <button
+                        type="button"
+                        aria-label="Previous preview page"
+                        className="inline-flex size-8 items-center justify-center rounded-full text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+                        disabled={previewPage <= 1}
+                        onClick={() => onPreviewPageChange?.(previewPage - 1)}
+                    >
+                        <ChevronLeft className="size-4" aria-hidden="true" />
+                    </button>
+                    <select
+                        aria-label="Preview page"
+                        className="h-8 rounded-full border border-border/70 bg-background px-2 text-sm text-foreground"
+                        onChange={(event) =>
+                            onPreviewPageChange?.(Number(event.target.value))
+                        }
+                        value={previewPage}
+                    >
+                        {Array.from(
+                            { length: previewPageCount },
+                            (_, index) => index + 1,
+                        ).map((page) => (
+                            <option key={page} value={page}>
+                                {page}
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        type="button"
+                        aria-label="Next preview page"
+                        className="inline-flex size-8 items-center justify-center rounded-full text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+                        disabled={previewPage >= previewPageCount}
+                        onClick={() => onPreviewPageChange?.(previewPage + 1)}
+                    >
+                        <ChevronRight className="size-4" aria-hidden="true" />
+                    </button>
+                </div>
+            ) : null}
+        </div>
+    );
+
     function renderDirectoryRows(
         nodes: DirectoryTreeNode[],
         depth = 0,
@@ -551,107 +645,127 @@ export function FileBrowser({
             const isSelected = node.path === effectiveSelectedDirectory;
             const hasChildren = node.children.length > 0;
             const hasFiles = node.descendantFileCount > 0;
+            const hasPreviewControls =
+                isExpanded &&
+                isSelected &&
+                displayedFiles.length > 0 &&
+                Boolean(renderGridPreview || renderSinglePreview);
             const rows: ReactNode[] = [
-                <button
+                <div
                     key={`dir-${node.path}`}
-                    type="button"
                     className={cn(
-                        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[1.25rem] border px-4 py-3 text-left transition",
+                        "grid w-full items-center gap-3 rounded-[1.25rem] border transition",
+                        hasPreviewControls
+                            ? "grid-cols-1 p-2 lg:grid-cols-[minmax(0,1fr)_auto]"
+                            : "grid-cols-1 p-0",
                         isSelected
                             ? "border-primary/45 bg-primary/10"
                             : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
                     )}
-                    data-depth={depth}
-                    data-directory-expanded={String(isExpanded)}
-                    data-directory-path={node.path}
-                    onClick={() => {
-                        const nextIsExpanded = !isExpanded;
+                    data-directory-row={node.path}
+                >
+                    <button
+                        type="button"
+                        className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[1rem] px-3 py-3 text-left transition hover:bg-background/55"
+                        data-depth={depth}
+                        data-directory-expanded={String(isExpanded)}
+                        data-directory-path={node.path}
+                        onClick={() => {
+                            const nextIsExpanded = !isExpanded;
 
-                        setCollapsedDirectories((current) => {
-                            const next = new Set(current);
+                            setCollapsedDirectories((current) => {
+                                const next = new Set(current);
 
-                            if (nextIsExpanded) {
-                                next.delete(node.path);
-                            } else {
-                                next.add(node.path);
-                            }
-
-                            return next;
-                        });
-                        setExpandedDirectories((current) => {
-                            const next = new Set(current);
-
-                            if (isExpanded) {
-                                for (const path of collectTreePaths(node)) {
-                                    next.delete(path);
+                                if (nextIsExpanded) {
+                                    next.delete(node.path);
+                                } else {
+                                    next.add(node.path);
                                 }
-                                for (const path of ancestorPaths(node.path)) {
-                                    if (path !== node.path) {
+
+                                return next;
+                            });
+                            setExpandedDirectories((current) => {
+                                const next = new Set(current);
+
+                                if (isExpanded) {
+                                    for (const path of collectTreePaths(node)) {
+                                        next.delete(path);
+                                    }
+                                    for (const path of ancestorPaths(
+                                        node.path,
+                                    )) {
+                                        if (path !== node.path) {
+                                            next.add(path);
+                                        }
+                                    }
+                                } else {
+                                    for (const path of ancestorPaths(
+                                        node.path,
+                                    )) {
                                         next.add(path);
                                     }
                                 }
-                            } else {
-                                for (const path of ancestorPaths(node.path)) {
-                                    next.add(path);
-                                }
+
+                                return next;
+                            });
+
+                            if (selectedDirectory === undefined) {
+                                setUncontrolledDirectory(node.path);
                             }
 
-                            return next;
-                        });
-
-                        if (selectedDirectory === undefined) {
-                            setUncontrolledDirectory(node.path);
-                        }
-
-                        onSelectDirectory?.(node.path);
-                    }}
-                    style={{ paddingLeft: `${depth * 1.2 + 1}rem` }}
-                >
-                    <span className="inline-flex size-6 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground">
-                        {hasChildren || hasFiles ? (
-                            isExpanded ? (
-                                <ChevronDown
-                                    className="size-4"
-                                    aria-hidden="true"
-                                />
+                            onSelectDirectory?.(node.path);
+                        }}
+                        style={{ paddingLeft: `${depth * 1.2 + 0.75}rem` }}
+                    >
+                        <span className="inline-flex size-6 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground">
+                            {hasChildren || hasFiles ? (
+                                isExpanded ? (
+                                    <ChevronDown
+                                        className="size-4"
+                                        aria-hidden="true"
+                                    />
+                                ) : (
+                                    <ChevronRight
+                                        className="size-4"
+                                        aria-hidden="true"
+                                    />
+                                )
                             ) : (
-                                <ChevronRight
-                                    className="size-4"
-                                    aria-hidden="true"
-                                />
-                            )
-                        ) : (
-                            <span className="size-4" />
-                        )}
-                    </span>
-                    <span className="min-w-0">
-                        <span className="block truncate text-base font-medium text-foreground">
-                            {node.label || directoryLabel(node.path)}
+                                <span className="size-4" />
+                            )}
                         </span>
-                        <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                            <span>
-                                {node.descendantFileCount === 0
-                                    ? hasChildren
-                                        ? "Expand to browse"
-                                        : "Empty folder"
-                                    : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
+                        <span className="min-w-0">
+                            <span className="block truncate text-base font-medium text-foreground">
+                                {node.label || directoryLabel(node.path)}
                             </span>
-                            {node.totalSize > 0 ? (
-                                <span>{formatBytes(node.totalSize)}</span>
-                            ) : null}
-                            {Object.keys(node.typeCounts).length > 0 ? (
-                                <span className="uppercase tracking-[0.18em]">
-                                    {formatTypeSummary(node.typeCounts)}
+                            <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                                <span>
+                                    {node.descendantFileCount === 0
+                                        ? hasChildren
+                                            ? "Expand to browse"
+                                            : "Empty folder"
+                                        : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
                                 </span>
-                            ) : null}
+                                {node.totalSize > 0 ? (
+                                    <span>{formatBytes(node.totalSize)}</span>
+                                ) : null}
+                                {Object.keys(node.typeCounts).length > 0 ? (
+                                    <span className="uppercase tracking-[0.18em]">
+                                        {formatTypeSummary(node.typeCounts)}
+                                    </span>
+                                ) : null}
+                            </span>
                         </span>
-                    </span>
-                    <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                        {node.descendantDirectoryCount > 0
-                            ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
-                            : "Folder"}
-                    </span>
-                </button>,
+                        <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                            {node.descendantDirectoryCount > 0
+                                ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
+                                : "Folder"}
+                        </span>
+                    </button>
+                    {hasPreviewControls
+                        ? renderPreviewControls(node.path, "folder")
+                        : null}
+                </div>,
             ];
 
             if (
@@ -710,6 +824,7 @@ export function FileBrowser({
                                       </div>
                                   </div>
                               ))}
+                        {renderPreviewControls(node.path, "bottom")}
                     </div>,
                 );
             }
@@ -727,7 +842,10 @@ export function FileBrowser({
             className="rounded-[1.75rem] border border-border/70 bg-card/85 p-4 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)] sm:p-5"
             data-file-browser="true"
         >
-            <div className="flex flex-col gap-4 border-b border-border/60 pb-5 xl:flex-row xl:items-start xl:justify-between">
+            <div
+                className="flex flex-col gap-4 border-b border-border/60 pb-5 xl:flex-row xl:items-start xl:justify-between"
+                data-file-browser-header="true"
+            >
                 <div className="flex items-center gap-3">
                     <FolderTree
                         className="size-4 text-primary"
@@ -739,72 +857,10 @@ export function FileBrowser({
                 </div>
 
                 <div className="space-y-3 xl:min-w-[24rem]">
-                    <div className="flex flex-wrap items-center gap-3">
-                        <label className="inline-flex items-center gap-3 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-sm text-foreground">
-                            <input
-                                aria-label="1 preview per row"
-                                checked={previewMode === "grid"}
-                                className="size-4 accent-primary"
-                                onChange={(event) =>
-                                    onPreviewModeChange?.(
-                                        event.target.checked
-                                            ? "grid"
-                                            : "single",
-                                    )
-                                }
-                                type="checkbox"
-                            />
-                            <span className="inline-flex items-center gap-2">
-                                <Eye
-                                    className="size-4 text-primary"
-                                    aria-hidden="true"
-                                />
-                                1 preview per row
-                            </span>
-                        </label>
-
-                        <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-sm text-muted-foreground">
-                            <ListFilter
-                                className="size-4 text-primary"
-                                aria-hidden="true"
-                            />
-                            {previewPageCount > 1
-                                ? `Page ${previewPage} of ${previewPageCount}`
-                                : previewMode === "grid"
-                                  ? "Grid previews"
-                                  : "Single preview"}
-                        </div>
-                    </div>
-
                     <PreviewHeightControl
                         onCommit={onPreviewHeightChange}
                         value={previewHeight}
                     />
-
-                    {previewPageCount > 1 ? (
-                        <div className="flex items-center justify-end gap-2">
-                            <button
-                                type="button"
-                                className="rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-                                disabled={previewPage <= 1}
-                                onClick={() =>
-                                    onPreviewPageChange?.(previewPage - 1)
-                                }
-                            >
-                                Previous
-                            </button>
-                            <button
-                                type="button"
-                                className="rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-                                disabled={previewPage >= previewPageCount}
-                                onClick={() =>
-                                    onPreviewPageChange?.(previewPage + 1)
-                                }
-                            >
-                                Next
-                            </button>
-                        </div>
-                    ) : null}
                 </div>
             </div>
 
