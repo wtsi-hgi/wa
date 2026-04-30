@@ -696,14 +696,14 @@ export function FileBrowser({
                             : displayedFiles.map((file) => (
                                   <div
                                       key={file.path}
-                                      className="grid gap-3 rounded-[1.25rem] border border-border/60 bg-background/65 p-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
+                                      className="grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
                                       data-file-browser-grid-row={file.path}
                                   >
                                       <div className="min-w-0 border-r border-border/60 pr-3">
                                           {renderFileButton(file, true, true)}
                                       </div>
                                       <div
-                                          className="min-w-0 pl-1"
+                                          className="min-w-0"
                                           data-grid-preview-path={file.path}
                                       >
                                           {renderGridPreview?.(file) ?? null}

@@ -538,15 +538,108 @@ test.describe("Q1 critical results flows", () => {
         await selectDirectoryForFile(page, rnaseqImagePath);
         await page.getByLabel("1 preview per row").check();
 
-        const thumbnailButton = page.getByRole("button", {
+        const row = page.locator(
+            `[data-file-browser-grid-row="${rnaseqImagePath}"]`,
+        );
+        const previewCell = row.locator(
+            `[data-grid-preview-path="${rnaseqImagePath}"]`,
+        );
+        const thumbnailButton = previewCell.getByRole("button", {
             name: "Open image lightbox",
         });
-        const thumbnailImage = page.getByAltText("image.png preview");
+        const thumbnailImage = previewCell.getByAltText("image.png preview");
 
+        await expect(row).toBeVisible();
+        await expect(previewCell).toBeVisible();
         await expect(page.getByText("Click to enlarge")).toBeVisible();
         await expect(thumbnailButton).toBeVisible();
         await expect(thumbnailImage).toBeVisible();
         await expect(thumbnailImage).toHaveAttribute("src", /thumb=true/);
+
+        const byteSizeOccurrences = await row.evaluate((element) => {
+            const walker = document.createTreeWalker(
+                element,
+                NodeFilter.SHOW_TEXT,
+            );
+            let count = 0;
+
+            while (walker.nextNode()) {
+                if (
+                    /^\d+(?:\.\d+)?\s(?:B|KB|MB|GB|TB)$/.test(
+                        walker.currentNode.textContent?.trim() ?? "",
+                    )
+                ) {
+                    count += 1;
+                }
+            }
+
+            return count;
+        });
+
+        expect(byteSizeOccurrences).toBe(1);
+
+        const renderedSpacing = await row.evaluate((rowElement) => {
+            const previewElement = rowElement.querySelector(
+                "[data-grid-preview-path]",
+            );
+            const buttonElement = previewElement?.querySelector(
+                'button[aria-label="Open image lightbox"]',
+            );
+
+            if (!(previewElement instanceof HTMLElement)) {
+                throw new Error("Missing grid preview cell");
+            }
+
+            if (!(buttonElement instanceof HTMLElement)) {
+                throw new Error("Missing thumbnail button");
+            }
+
+            const boxChrome = (element: Element) => {
+                const styles = window.getComputedStyle(element);
+                const sides = ["top", "right", "bottom", "left"];
+
+                return sides.reduce(
+                    (total, side) =>
+                        total +
+                        Number.parseFloat(
+                            styles.getPropertyValue(`padding-${side}`),
+                        ) +
+                        Number.parseFloat(
+                            styles.getPropertyValue(`border-${side}-width`),
+                        ),
+                    0,
+                );
+            };
+
+            return {
+                button: boxChrome(buttonElement),
+                previewCell: boxChrome(previewElement),
+                row: boxChrome(rowElement),
+            };
+        });
+
+        expect(renderedSpacing).toEqual({
+            button: 0,
+            previewCell: 0,
+            row: 0,
+        });
+
+        const [cellBox, buttonBox, imageBox] = await Promise.all([
+            previewCell.boundingBox(),
+            thumbnailButton.boundingBox(),
+            thumbnailImage.boundingBox(),
+        ]);
+
+        if (!cellBox || !buttonBox || !imageBox) {
+            throw new Error("Missing grid preview bounding boxes");
+        }
+
+        expect(Math.abs(buttonBox.x - cellBox.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(buttonBox.y - cellBox.y)).toBeLessThanOrEqual(1);
+        expect(buttonBox.width).toBeGreaterThanOrEqual(cellBox.width - 2);
+        expect(Math.abs(imageBox.x - buttonBox.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(imageBox.y - buttonBox.y)).toBeLessThanOrEqual(1);
+        expect(imageBox.width).toBeGreaterThanOrEqual(buttonBox.width - 2);
 
         await thumbnailButton.click();
 

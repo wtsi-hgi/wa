@@ -518,27 +518,17 @@ export const FileImageThumbnail = memo(
         const fileName = file.path.split("/").pop() ?? file.path;
 
         return (
-            <article className="rounded-[1.5rem] border border-border/70 bg-background/70 p-4 shadow-[0_20px_80px_-68px_rgba(48,67,98,0.8)]">
-                <div className="flex items-start justify-end gap-3">
-                    <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                        {formatBytes(file.size)}
-                    </span>
-                </div>
-
-                <div className="mt-4">
-                    <LightboxImage
-                        buttonClassName="group inline-flex w-full justify-center overflow-hidden rounded-[1.25rem] border border-border/70 bg-background/80 p-2 shadow-[0_16px_48px_-44px_rgba(48,67,98,0.7)]"
-                        fileName={fileName}
-                        fullSizeUrl={fullSizeUrl}
-                        imageClassName="w-full"
-                        maxHeightPx={height}
-                        sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
-                        thumbnailHeight={STABLE_THUMBNAIL_HEIGHT}
-                        thumbnailUrl={thumbnailUrl}
-                        thumbnailWidth={STABLE_THUMBNAIL_WIDTH}
-                    />
-                </div>
-            </article>
+            <LightboxImage
+                buttonClassName="group inline-flex w-full justify-center overflow-hidden rounded-[1.25rem] bg-background/80"
+                fileName={fileName}
+                fullSizeUrl={fullSizeUrl}
+                imageClassName="w-full"
+                maxHeightPx={height}
+                sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
+                thumbnailHeight={STABLE_THUMBNAIL_HEIGHT}
+                thumbnailUrl={thumbnailUrl}
+                thumbnailWidth={STABLE_THUMBNAIL_WIDTH}
+            />
         );
     },
     (prevProps, nextProps) => {

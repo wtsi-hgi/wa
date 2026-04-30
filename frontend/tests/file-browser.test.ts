@@ -240,13 +240,67 @@ describe("N1 file browser", () => {
         for (const row of gridRows) {
             // The per-file grid row must use unconditional side-by-side
             // grid-cols, not the xl:-prefixed variant which only applies at
-            // ≥1280px and incorrectly stacks the preview underneath at
-            // standard viewport widths.
+            // wide viewport widths and incorrectly stacks the preview
+            // underneath at standard viewport widths.
             expect(row.className).toContain("grid");
             expect(row.className).toMatch(/(?:^|\s)grid-cols-\[minmax/);
             expect(row.className).not.toMatch(/xl:grid-cols-/);
             expect(row.className).not.toMatch(/xl:items-start/);
         }
+    });
+
+    it("does not wrap grid previews in extra bordered padded containers or duplicate file size", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+        const file = buildFile("/results/a/plot.png", "output", 1048576);
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [file],
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "grid",
+                    renderGridPreview: (entry: FileEntry): ReactNode =>
+                        createElement(FileImageThumbnail, {
+                            file: entry,
+                            fullSizeUrl: `/api/file?path=${encodeURIComponent(entry.path)}`,
+                            height: 180,
+                            thumbnailUrl: `/api/file?path=${encodeURIComponent(entry.path)}&thumb=true&w=320&h=180`,
+                        }),
+                    visibleFiles: [file],
+                }),
+            );
+        });
+
+        const gridRow = container.querySelector(
+            '[data-file-browser-grid-row="/results/a/plot.png"]',
+        ) as HTMLElement | null;
+        const previewCell = container.querySelector(
+            '[data-grid-preview-path="/results/a/plot.png"]',
+        ) as HTMLElement | null;
+        const thumbnailButton = container.querySelector(
+            'button[aria-label="Open image lightbox"]',
+        ) as HTMLElement | null;
+        const sizeOccurrences =
+            gridRow?.textContent?.match(/1\.0 MB/g)?.length ?? 0;
+
+        expect(gridRow).toBeTruthy();
+        expect(previewCell).toBeTruthy();
+        expect(thumbnailButton).toBeTruthy();
+        expect(gridRow?.className).not.toMatch(
+            /(?:^|\s)(rounded(?:-|\[)|border(?:\s|-)|bg-[^\s]+|p[xytrbl]?-[^\s]+)/,
+        );
+        expect(previewCell?.className).not.toMatch(
+            /(?:^|\s)(rounded(?:-|\[)|border(?:\s|-)|bg-[^\s]+|p[xytrbl]?-[^\s]+)/,
+        );
+        expect(thumbnailButton?.className).not.toMatch(
+            /(?:^|\s)(border(?:\s|-)|p[xytrbl]?-[^\s]+)/,
+        );
+        expect(sizeOccurrences).toBe(1);
     });
 
     it("keeps the file browser to a single explorer pane without duplicate path sections", async () => {
