@@ -438,6 +438,25 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
     });
 
+    it("marks clickable seqmeta metadata values with a pointer cursor", async () => {
+        const { ResultMetadata } = await import("@/components/result-metadata");
+
+        render(
+            createElement(ResultMetadata, {
+                metadata: {
+                    seqmeta_sampleid: "SANG001",
+                },
+                enrichments: {
+                    SANG001: buildEnrichment(),
+                },
+            }),
+        );
+
+        expect(screen.getByTestId("seqmeta-badge-trigger").className).toContain(
+            "cursor-pointer",
+        );
+    });
+
     it("does not start seqmeta enrichments during server detail rendering", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({

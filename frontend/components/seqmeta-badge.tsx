@@ -503,7 +503,7 @@ export function SeqmetaBadge({
                     aria-label={`Open ${metadataKey} details`}
                     data-testid="seqmeta-badge-trigger"
                     className={cn(
-                        "inline-flex max-w-full items-center rounded-full border border-border/80 px-3 py-1 text-left text-xs font-medium tracking-[0.16em] transition hover:border-primary/45 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                        "inline-flex max-w-full cursor-pointer items-center rounded-full border border-border/80 px-3 py-1 text-left text-xs font-medium tracking-[0.16em] transition hover:border-primary/45 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                         enrichment
                             ? "bg-accent/20 text-foreground"
                             : "bg-background/80 text-muted-foreground",
