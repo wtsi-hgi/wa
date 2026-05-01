@@ -16,9 +16,11 @@ import type { EnrichmentResult, EnrichmentStudy } from "@/lib/contracts";
 import { SeqmetaCacheProvider } from "@/lib/seqmeta-cache";
 
 const enrichIdentifierMock = vi.fn();
+const fetchStudyLibrarySamplesMock = vi.fn();
 
 vi.mock("@/app/(results)/actions", () => ({
     enrichIdentifier: enrichIdentifierMock,
+    fetchStudyLibrarySamples: fetchStudyLibrarySamplesMock,
 }));
 
 function buildEnrichmentStudy(
@@ -107,6 +109,7 @@ describe("H3 enrichment state and badge", () => {
     beforeEach(() => {
         vi.resetModules();
         enrichIdentifierMock.mockReset();
+        fetchStudyLibrarySamplesMock.mockReset();
     });
 
     afterEach(() => {
@@ -146,6 +149,38 @@ describe("H3 enrichment state and badge", () => {
             );
         });
         expect(screen.queryByText("Some details unavailable")).toBeNull();
+    });
+
+    it("loads study library samples through server action for JIT expansion", async () => {
+        const { fetchLibrarySamples } = await import("@/lib/seqmeta-enrichment");
+
+        const samples = [
+            {
+                id_study_lims: "6568",
+                id_sample_lims: "LIMS001",
+                sanger_id: "SANG001",
+                sample_name: "Sample 1",
+                taxon_id: 9606,
+                common_name: "Human",
+                library_type: "RNA",
+                id_run: 1234,
+                lane: 1,
+                tag_index: 7,
+                irods_path: "/seq/1234",
+                study_accession_number: "ERP123456",
+                accession_number: "ERS123456",
+            },
+        ];
+        fetchStudyLibrarySamplesMock.mockResolvedValue(samples);
+
+        await expect(fetchLibrarySamples("6568", "RNA")).resolves.toEqual(
+            samples,
+        );
+        expect(fetchStudyLibrarySamplesMock).toHaveBeenCalledWith(
+            "6568",
+            "RNA",
+        );
+        expect(fetchStudyLibrarySamplesMock).toHaveBeenCalledTimes(1);
     });
 
     it("reuses a resolved enrichment for related sample values while looking up libraries independently", async () => {

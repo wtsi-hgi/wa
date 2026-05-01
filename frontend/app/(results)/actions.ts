@@ -8,6 +8,7 @@ import {
 } from "@/lib/backend-client";
 import {
     enrichmentResultSchema,
+    enrichmentSamplesSchema,
     errorSchema,
     fileEntrySchema,
     identifierResultSchema,
@@ -172,6 +173,18 @@ export async function fetchStudySamples(studyId: string): Promise<string[]> {
     );
 
     return samples.map((sample) => sample.sanger_id);
+}
+
+export async function fetchStudyLibrarySamples(
+    studyId: string,
+    libraryType: string,
+) {
+    const params = new URLSearchParams({ library_type: libraryType });
+
+    return seqmetaJson(
+        `/study/${encodeURIComponent(studyId)}/samples?${params.toString()}`,
+        enrichmentSamplesSchema,
+    );
 }
 
 export async function parseBackendError(response: Response): Promise<string> {
