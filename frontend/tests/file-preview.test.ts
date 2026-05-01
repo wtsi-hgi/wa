@@ -787,4 +787,59 @@ describe("O1 file preview", () => {
         expect(smallStyle).toContain("max-height: 160px");
         expect(largeImage.getAttribute("style")).toContain("max-height: 360px");
     });
+
+    it("applies maxHeight to csv previews to limit visible rows based on height", () => {
+        const csvContent = buildCsv(50);
+
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/report.csv" }),
+            content: {
+                content: csvContent,
+                contentType: "text/csv",
+            },
+            maxHeight: 220,
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
+        });
+
+        const rows = screen.getAllByRole("row");
+        // With a 220px maxHeight, the component estimates ~2 data rows plus 1 header row (3-4 total).
+        // The old behavior would show all 50 data rows (51 total with header).
+        // We verify that it's constrained to well below 20 rows.
+        expect(rows.length).toBeLessThan(20);
+        expect(rows.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("shows more csv rows when maxHeight increases", () => {
+        const csvContent = buildCsv(50);
+
+        const small = renderPreview({
+            file: buildFile({ path: "/tmp/results/report.csv" }),
+            content: {
+                content: csvContent,
+                contentType: "text/csv",
+            },
+            maxHeight: 150,
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
+        });
+
+        const smallRowCount = screen.getAllByRole("row").length;
+        small.unmount();
+
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/report.csv" }),
+            content: {
+                content: csvContent,
+                contentType: "text/csv",
+            },
+            maxHeight: 400,
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
+        });
+
+        const largeRowCount = screen.getAllByRole("row").length;
+
+        expect(largeRowCount).toBeGreaterThan(smallRowCount);
+    });
 });

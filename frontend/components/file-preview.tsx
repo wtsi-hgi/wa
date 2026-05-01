@@ -321,10 +321,12 @@ function CsvPreview({
     content,
     contentType,
     isExpanded = false,
+    maxHeight,
 }: {
     content: string;
     contentType: string;
     isExpanded?: boolean;
+    maxHeight?: number;
 }) {
     const parsed = useMemo(
         () => parseDelimitedContent(content, contentType),
@@ -369,7 +371,32 @@ function CsvPreview({
         });
     }, [filteredRows, sortDirection, sortIndex]);
 
-    const visibleRows = isExpanded ? sortedRows : sortedRows.slice(0, 100);
+    const maxRowsForHeight = useMemo(() => {
+        if (!maxHeight || isExpanded) {
+            return undefined;
+        }
+
+        // Estimate rows that fit in the given height:
+        // - Each table row is roughly 48-56px (typical shadcn/ui table styling)
+        // - Account for header text, table padding, borders, row count summary (~100px overhead)
+        // Use 52px per row as a reasonable middle estimate
+        const estimatedRowHeight = 52;
+        const estimatedOverhead = 100;
+        const availableHeight = Math.max(0, maxHeight - estimatedOverhead);
+        const maxRows = Math.floor(availableHeight / estimatedRowHeight);
+
+        // Always show at least a few rows even with small heights
+        return Math.max(3, maxRows);
+    }, [maxHeight, isExpanded]);
+
+    const visibleRows = isExpanded
+        ? sortedRows
+        : sortedRows.slice(
+              0,
+              maxRowsForHeight !== undefined
+                  ? maxRowsForHeight
+                  : Math.min(100, sortedRows.length),
+          );
 
     return (
         <div className="space-y-4">
@@ -896,6 +923,7 @@ export function FilePreview({
                                 <CsvPreview
                                     content={content.content}
                                     contentType={content.contentType}
+                                    maxHeight={maxHeight}
                                 />
                             </div>
                         </ExpandablePreview>
