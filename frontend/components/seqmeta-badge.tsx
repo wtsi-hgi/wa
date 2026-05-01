@@ -424,9 +424,31 @@ function buildHierarchicalGroups(
 
     // For library details, show samples and parent study
     if (libraryMetadata) {
+        // Collect all samples first (used for both study filtering and display)
+        const allSamples = [
+            ...(enrichment.graph.sample ? [enrichment.graph.sample] : []),
+            ...(enrichment.graph.samples ?? []),
+        ];
+
         // Show parent study/studies
         // Backend returns graph.studies (plural array) for library_type enrichment
-        const studies = enrichment.graph.studies ?? [];
+        // globally, but we should only show studies that the returned samples belong to
+        const allStudies = enrichment.graph.studies ?? [];
+
+        // Get unique study IDs from samples
+        const sampleStudyIds = new Set(
+            allSamples
+                .map((sample) => sample.id_study_lims)
+                .filter((id): id is string => Boolean(id)),
+        );
+
+        // Filter studies to only those that samples belong to
+        const studies =
+            sampleStudyIds.size > 0
+                ? allStudies.filter((study) =>
+                      sampleStudyIds.has(study.id_study_lims),
+                  )
+                : allStudies;
 
         if (studies.length > 0) {
             groups.push({
@@ -441,11 +463,6 @@ function buildHierarchicalGroups(
         }
 
         // Show samples individually
-        const allSamples = [
-            ...(enrichment.graph.sample ? [enrichment.graph.sample] : []),
-            ...(enrichment.graph.samples ?? []),
-        ];
-
         // Deduplicate samples by sanger_id + id_sample_lims
         const seenKeys = new Set<string>();
         const samples = allSamples.filter((sample) => {
