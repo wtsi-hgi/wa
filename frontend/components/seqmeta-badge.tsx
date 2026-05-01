@@ -146,6 +146,19 @@ function primaryLabel(
     return rawValue;
 }
 
+function librarySampleKey(sample: EnrichmentSample, index: number): string {
+    const keyParts = [
+        asString(sample.sanger_id) ?? "",
+        asString(sample.id_sample_lims) ?? "",
+        asString(sample.sample_name) ?? "",
+        String(sample.id_run ?? ""),
+        String(sample.lane ?? ""),
+        String(sample.tag_index ?? ""),
+    ];
+
+    return `${keyParts.join("|")}|${index}`;
+}
+
 function humanizeMissingHop(missing: MissingHop): string {
     if (missing.hop === "samples" && missing.reason === "samples_truncated") {
         return "Showing first 1000 samples";
@@ -1264,6 +1277,7 @@ export function SeqmetaBadge({
                                                                                                 {loadedSamples.map(
                                                                                                     (
                                                                                                         sample,
+                                                                                                        index,
                                                                                                     ) => {
                                                                                                         const displayName =
                                                                                                             [
@@ -1283,7 +1297,10 @@ export function SeqmetaBadge({
 
                                                                                                         return (
                                                                                                             <article
-                                                                                                                key={`${sample.sanger_id}|${sample.id_sample_lims}`}
+                                                                                                                key={librarySampleKey(
+                                                                                                                    sample,
+                                                                                                                    index,
+                                                                                                                )}
                                                                                                                 data-seqmeta-detail-key="sample"
                                                                                                                 className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-3 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
                                                                                                             >

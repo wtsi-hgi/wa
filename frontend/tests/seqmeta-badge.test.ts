@@ -1287,6 +1287,147 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(sampleButtons.length).toBeGreaterThan(2);
     });
 
+    it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        const consoleErrorSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => undefined);
+
+        const duplicateIdentitySamples = [
+            {
+                id_study_lims: "6568",
+                id_sample_lims: "SMP001",
+                sanger_id: "S1",
+                sample_name: "Sample 1",
+                taxon_id: 9606,
+                common_name: "Human",
+                library_type: "RNA PolyA",
+                id_run: 100,
+                lane: 1,
+                tag_index: 10,
+                irods_path: "/seq/100",
+                study_accession_number: "ERP123456",
+                accession_number: "ERS001",
+            },
+            {
+                id_study_lims: "6568",
+                id_sample_lims: "SMP001",
+                sanger_id: "S1",
+                sample_name: "Sample 1",
+                taxon_id: 9606,
+                common_name: "Human",
+                library_type: "RNA PolyA",
+                id_run: 100,
+                lane: 2,
+                tag_index: 11,
+                irods_path: "/seq/100",
+                study_accession_number: "ERP123456",
+                accession_number: "ERS001",
+            },
+        ];
+
+        fetchLibrarySamplesMock.mockResolvedValue(duplicateIdentitySamples);
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 42,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                            faculty_sponsor: "Dr Example",
+                            state: "active",
+                            abstract: "",
+                            abbreviation: "",
+                            accession_number: "ERP123456",
+                            description: "",
+                            data_release_strategy: "",
+                            study_title: "",
+                            data_access_group: "",
+                            hmdmc_number: "",
+                            programme: "",
+                            created: "2026-04-20T09:00:00Z",
+                            reference_genome: "",
+                            ethically_approved: false,
+                            study_type: "",
+                            contains_human_dna: false,
+                            contaminated_human_dna: false,
+                            study_visibility: "",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "",
+                        },
+                        study_detail: {
+                            study: {
+                                id_study_tmp: 42,
+                                id_lims: "SQSCP",
+                                id_study_lims: "6568",
+                                name: "RNA Seq",
+                                faculty_sponsor: "Dr Example",
+                                state: "active",
+                                abstract: "",
+                                abbreviation: "",
+                                accession_number: "ERP123456",
+                                description: "",
+                                data_release_strategy: "",
+                                study_title: "",
+                                data_access_group: "",
+                                hmdmc_number: "",
+                                programme: "",
+                                created: "2026-04-20T09:00:00Z",
+                                reference_genome: "",
+                                ethically_approved: false,
+                                study_type: "",
+                                contains_human_dna: false,
+                                contaminated_human_dna: false,
+                                study_visibility: "",
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
+                                data_release_timing: "",
+                            },
+                            library_details: [
+                                {
+                                    library_type: "RNA PolyA",
+                                    id_study_lims: "6568",
+                                    samples: [],
+                                },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        fireEvent.click(screen.getByLabelText("Show samples"));
+
+        await waitFor(() => {
+            expect(screen.getAllByText("Sample 1 / S1")).toHaveLength(2);
+        });
+
+        const duplicateKeyErrors = consoleErrorSpy.mock.calls.filter((call) =>
+            call.some(
+                (arg) =>
+                    typeof arg === "string" &&
+                    arg.includes("Encountered two children with the same key"),
+            ),
+        );
+
+        expect(duplicateKeyErrors).toHaveLength(0);
+    });
+
     it("falls back to graph.libraries for Libraries section when study_detail is absent", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
