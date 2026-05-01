@@ -125,10 +125,10 @@ type LaneDetail struct {
 
 // SampleDetail groups a sample with its sequencing lanes.
 type SampleDetail struct {
-	SangerID   string            `json:"sanger_id"`
-	SampleName string            `json:"sample_name"`
-	Sample     saga.MLWHSample   `json:"sample"`
-	Lanes      []LaneDetail      `json:"lanes"`
+	SangerID   string          `json:"sanger_id"`
+	SampleName string          `json:"sample_name"`
+	Sample     saga.MLWHSample `json:"sample"`
+	Lanes      []LaneDetail    `json:"lanes"`
 }
 
 // LibraryDetail groups a library with its samples.
@@ -156,9 +156,9 @@ type EnrichmentGraph struct {
 	Users     []saga.ProjectUser `json:"users,omitempty"`
 
 	// Hierarchical structures
-	StudyDetail   *StudyDetail   `json:"study_detail,omitempty"`
-	StudyDetails  []StudyDetail  `json:"study_details,omitempty"`
-	SampleDetail  *SampleDetail  `json:"sample_detail,omitempty"`
+	StudyDetail  *StudyDetail  `json:"study_detail,omitempty"`
+	StudyDetails []StudyDetail `json:"study_details,omitempty"`
+	SampleDetail *SampleDetail `json:"sample_detail,omitempty"`
 }
 
 // MissingHop records a hop that failed or was truncated.

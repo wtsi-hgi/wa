@@ -152,7 +152,8 @@ describe("H3 enrichment state and badge", () => {
     });
 
     it("loads study library samples through server action for JIT expansion", async () => {
-        const { fetchLibrarySamples } = await import("@/lib/seqmeta-enrichment");
+        const { fetchLibrarySamples } =
+            await import("@/lib/seqmeta-enrichment");
 
         const samples = [
             {

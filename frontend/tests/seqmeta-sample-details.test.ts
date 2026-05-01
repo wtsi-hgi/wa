@@ -20,9 +20,7 @@ import * as enrichmentModule from "@/lib/seqmeta-enrichment";
 describe("SeqmetaBadge - sample details regression (bug 4)", () => {
     beforeEach(() => {
         // Mock fetchLibrarySamples to prevent actual API calls
-        vi.spyOn(enrichmentModule, "fetchLibrarySamples").mockResolvedValue(
-            [],
-        );
+        vi.spyOn(enrichmentModule, "fetchLibrarySamples").mockResolvedValue([]);
     });
 
     afterEach(() => {
@@ -130,19 +128,23 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
         expect(directMetadataSection).toBeTruthy();
 
         // Should have multiple direct metadata fields (not just sampleid)
-        const directFields = within(directMetadataSection as HTMLElement).getAllByRole(
-            "article",
-        );
+        const directFields = within(
+            directMetadataSection as HTMLElement,
+        ).getAllByRole("article");
         expect(directFields.length).toBeGreaterThan(1);
 
         // Should show sample name
         expect(
-            within(directMetadataSection as HTMLElement).getByText("Test_Sample_Name"),
+            within(directMetadataSection as HTMLElement).getByText(
+                "Test_Sample_Name",
+            ),
         ).toBeTruthy();
 
         // Should show Sanger sample ID
         expect(
-            within(directMetadataSection as HTMLElement).getByText("WTSI_TEST_SAMPLE"),
+            within(directMetadataSection as HTMLElement).getByText(
+                "WTSI_TEST_SAMPLE",
+            ),
         ).toBeTruthy();
 
         // Should show Sample LIMS ID
@@ -152,7 +154,9 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
 
         // Should show sample accession
         expect(
-            within(directMetadataSection as HTMLElement).getByText("EGAN00001234567"),
+            within(directMetadataSection as HTMLElement).getByText(
+                "EGAN00001234567",
+            ),
         ).toBeTruthy();
     });
 
@@ -261,7 +265,9 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
 
         // Should show the library type
         expect(
-            within(librarySection as HTMLElement).getByText("Test Library Type"),
+            within(librarySection as HTMLElement).getByText(
+                "Test Library Type",
+            ),
         ).toBeTruthy();
     });
 
