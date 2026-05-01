@@ -52,9 +52,9 @@ const (
 )
 
 const (
-	ReasonUpstreamError     = "upstream_error"
-	ReasonNotFound          = "not_found"
-	ReasonSamplesTruncated  = "samples_truncated"
+	ReasonUpstreamError    = "upstream_error"
+	ReasonNotFound         = "not_found"
+	ReasonSamplesTruncated = "samples_truncated"
 )
 
 const MaxLibrarySamples = 1000
