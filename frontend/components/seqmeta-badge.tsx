@@ -178,6 +178,7 @@ function appendDetailField(
     fields: SeqmetaDetailField[],
     field: SeqmetaDetailField | null,
     rawValue?: string,
+    metadataKey?: string,
 ) {
     if (!field) {
         return;
@@ -197,10 +198,13 @@ function appendDetailField(
 
     if (!duplicate) {
         // Skip direct metadata fields whose value matches the dialog title (rawValue)
+        // EXCEPT for primary identifier fields (where field.key matches the metadata key)
+        const isPrimaryIdentifier = metadataKey && field.key === metadataKey;
         if (
             rawValue &&
             field.group === "direct" &&
-            value.toLowerCase() === rawValue.trim().toLowerCase()
+            value.toLowerCase() === rawValue.trim().toLowerCase() &&
+            !isPrimaryIdentifier
         ) {
             return;
         }
@@ -245,6 +249,7 @@ function buildDetailFields(
                   }
                 : null,
             rawValue,
+            metadataKey,
         );
         appendDetailField(
             fields,
@@ -258,6 +263,7 @@ function buildDetailFields(
                   }
                 : null,
             rawValue,
+            metadataKey,
         );
         appendDetailField(
             fields,
@@ -270,6 +276,7 @@ function buildDetailFields(
                   }
                 : null,
             rawValue,
+            metadataKey,
         );
 
         // Skip individual sample fields for study metadata with study_detail
@@ -285,6 +292,7 @@ function buildDetailFields(
                       }
                     : null,
                 rawValue,
+                metadataKey,
             );
             appendDetailField(
                 fields,
@@ -298,6 +306,7 @@ function buildDetailFields(
                       }
                     : null,
                 rawValue,
+                metadataKey,
             );
             appendDetailField(
                 fields,
@@ -311,6 +320,7 @@ function buildDetailFields(
                       }
                     : null,
                 rawValue,
+                metadataKey,
             );
             appendDetailField(
                 fields,
@@ -323,6 +333,7 @@ function buildDetailFields(
                       }
                     : null,
                 rawValue,
+                metadataKey,
             );
         }
     }
@@ -350,6 +361,7 @@ function buildDetailFields(
                     group: libraryMetadata ? "direct" : "related",
                 },
                 rawValue,
+                metadataKey,
             );
         }
     }
@@ -365,6 +377,7 @@ function buildDetailFields(
               }
             : null,
         rawValue,
+        metadataKey,
     );
     appendDetailField(
         fields,
@@ -380,6 +393,7 @@ function buildDetailFields(
               }
             : null,
         rawValue,
+        metadataKey,
     );
 
     return fields;
