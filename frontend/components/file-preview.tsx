@@ -958,13 +958,6 @@ export function FilePreview({
                             }
                         >
                             <div className="relative overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
-                                <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.24em] text-slate-300">
-                                    <Expand
-                                        className="size-4"
-                                        aria-hidden="true"
-                                    />
-                                    Syntax-highlighted preview
-                                </div>
                                 <pre
                                     className="overflow-hidden p-5 text-sm leading-7 text-slate-100"
                                     style={

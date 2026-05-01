@@ -1003,4 +1003,30 @@ describe("O1 file preview", () => {
         expect(dialogInner).not.toBeNull();
         expect(dialogInner?.className).toContain("overflow-auto");
     });
+
+    it("does not display syntax-highlighted preview banner on JSON files", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/data.json" }),
+            content: {
+                content: '{"status": "ready", "count": 42}',
+                contentType: "application/json",
+            },
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fdata.json",
+        });
+
+        expect(screen.queryByText(/syntax-highlighted preview/i)).toBeNull();
+    });
+
+    it("does not display syntax-highlighted preview banner on code files", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/script.py" }),
+            content: {
+                content: "def main():\n    print('hello')",
+                contentType: "text/x-python",
+            },
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fscript.py",
+        });
+
+        expect(screen.queryByText(/syntax-highlighted preview/i)).toBeNull();
+    });
 });
