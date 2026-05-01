@@ -1299,4 +1299,335 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("Study")).toBeTruthy();
         expect(screen.getByText("RNA Seq")).toBeTruthy();
     });
+
+    it("shows all direct metadata fields for a sample, not just sampleid", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "WTSI_wEMB10524782",
+                enrichment: buildEnrichment({
+                    identifier: "WTSI_wEMB10524782",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 6396,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                            faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
+                            state: "active",
+                            abstract: "Study abstract",
+                            abbreviation: "WTSI_wEMB",
+                            accession_number: "EGAS00001005445",
+                            description: "Detailed single cell atlas",
+                            data_release_strategy: "managed",
+                            study_title: "HCA Embryo",
+                            data_access_group: "team205 cellgeni team283",
+                            hmdmc_number: "19/0127",
+                            programme: "Cellular Genomics",
+                            created: "2021-07-05T10:08:11Z",
+                            reference_genome: "GRCh38_15_plus_hs38d1",
+                            ethically_approved: true,
+                            study_type: "Transcriptome Analysis",
+                            contains_human_dna: true,
+                            contaminated_human_dna: false,
+                            study_visibility: "Hold",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "delayed",
+                        },
+                        sample: {
+                            id_study_lims: "6568",
+                            id_sample_lims: "6050954",
+                            sanger_id: "WTSI_wEMB10524782",
+                            sample_name: "C84-WEM-2-FO-1_S2_mA",
+                            taxon_id: 9606,
+                            common_name: "human",
+                            library_type: "Chromium single cell ATAC",
+                            id_run: 42834,
+                            lane: 4,
+                            tag_index: 15,
+                            irods_path:
+                                "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                            study_accession_number: "EGAS00001005445",
+                            accession_number: "EGAN00003258234",
+                        },
+                        sample_detail: {
+                            sanger_id: "WTSI_wEMB10524782",
+                            sample_name: "C84-WEM-2-FO-1_S2_mA",
+                            sample: {
+                                id_study_lims: "6568",
+                                id_sample_lims: "6050954",
+                                sanger_id: "WTSI_wEMB10524782",
+                                sample_name: "C84-WEM-2-FO-1_S2_mA",
+                                taxon_id: 9606,
+                                common_name: "human",
+                                library_type: "Chromium single cell ATAC",
+                                id_run: 42834,
+                                lane: 4,
+                                tag_index: 15,
+                                irods_path:
+                                    "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                                study_accession_number: "EGAS00001005445",
+                                accession_number: "EGAN00003258234",
+                            },
+                            lanes: [
+                                { id_run: "42834", lane: "4", tag_index: 15 },
+                                { id_run: "42826", lane: "4", tag_index: 14 },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Direct metadata section should include multiple fields, not just sampleid
+        expect(screen.getByText("Sample name")).toBeTruthy();
+        expect(screen.getByText("C84-WEM-2-FO-1_S2_mA")).toBeTruthy();
+        expect(screen.getByText("Sanger sample ID")).toBeTruthy();
+        expect(screen.getAllByText("WTSI_wEMB10524782").length).toBeGreaterThan(
+            0,
+        );
+        expect(screen.getByText("Sample LIMS ID")).toBeTruthy();
+        expect(screen.getByText("6050954")).toBeTruthy();
+        expect(screen.getByText("Sample accession")).toBeTruthy();
+        expect(screen.getByText("EGAN00003258234")).toBeTruthy();
+    });
+
+    it("shows hierarchical related data for sample with library parent, study grandparent, and lanes", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "WTSI_wEMB10524782",
+                enrichment: buildEnrichment({
+                    identifier: "WTSI_wEMB10524782",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 6396,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                            faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
+                            state: "active",
+                            abstract: "Study abstract",
+                            abbreviation: "WTSI_wEMB",
+                            accession_number: "EGAS00001005445",
+                            description: "Detailed single cell atlas",
+                            data_release_strategy: "managed",
+                            study_title: "HCA Embryo",
+                            data_access_group: "team205 cellgeni team283",
+                            hmdmc_number: "19/0127",
+                            programme: "Cellular Genomics",
+                            created: "2021-07-05T10:08:11Z",
+                            reference_genome: "GRCh38_15_plus_hs38d1",
+                            ethically_approved: true,
+                            study_type: "Transcriptome Analysis",
+                            contains_human_dna: true,
+                            contaminated_human_dna: false,
+                            study_visibility: "Hold",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "delayed",
+                        },
+                        sample: {
+                            id_study_lims: "6568",
+                            id_sample_lims: "6050954",
+                            sanger_id: "WTSI_wEMB10524782",
+                            sample_name: "C84-WEM-2-FO-1_S2_mA",
+                            taxon_id: 9606,
+                            common_name: "human",
+                            library_type: "Chromium single cell ATAC",
+                            id_run: 42834,
+                            lane: 4,
+                            tag_index: 15,
+                            irods_path:
+                                "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                            study_accession_number: "EGAS00001005445",
+                            accession_number: "EGAN00003258234",
+                        },
+                        sample_detail: {
+                            sanger_id: "WTSI_wEMB10524782",
+                            sample_name: "C84-WEM-2-FO-1_S2_mA",
+                            sample: {
+                                id_study_lims: "6568",
+                                id_sample_lims: "6050954",
+                                sanger_id: "WTSI_wEMB10524782",
+                                sample_name: "C84-WEM-2-FO-1_S2_mA",
+                                taxon_id: 9606,
+                                common_name: "human",
+                                library_type: "Chromium single cell ATAC",
+                                id_run: 42834,
+                                lane: 4,
+                                tag_index: 15,
+                                irods_path:
+                                    "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                                study_accession_number: "EGAS00001005445",
+                                accession_number: "EGAN00003258234",
+                            },
+                            lanes: [
+                                { id_run: "42834", lane: "4", tag_index: 15 },
+                                { id_run: "42826", lane: "4", tag_index: 14 },
+                                { id_run: "42826", lane: "4", tag_index: 15 },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Should have a Library section showing the parent library
+        expect(screen.getByText("Library")).toBeTruthy();
+        expect(screen.getByText("Chromium single cell ATAC")).toBeTruthy();
+
+        // Should have a Study section showing the study the library belongs to
+        expect(screen.getByText("Study")).toBeTruthy();
+        expect(
+            screen.getByText("HCA Embryo Foetal WSSS Dev RNA Sanger"),
+        ).toBeTruthy();
+
+        // Should have a Lanes section
+        expect(screen.getByText("Lanes")).toBeTruthy();
+
+        // Should list the 3 lanes
+        expect(screen.getByText("42834_4#15")).toBeTruthy();
+        expect(screen.getByText("42826_4#14")).toBeTruthy();
+        expect(screen.getByText("42826_4#15")).toBeTruthy();
+    });
+
+    it("does not show linked samples for a sample (no sample-to-sample relations)", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "WTSI_wEMB10524782",
+                enrichment: buildEnrichment({
+                    identifier: "WTSI_wEMB10524782",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 6396,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "HCA Embryo",
+                            faculty_sponsor: "Omer",
+                            state: "active",
+                            abstract: "Study abstract",
+                            abbreviation: "WTSI_wEMB",
+                            accession_number: "EGAS00001005445",
+                            description: "Detailed single cell atlas",
+                            data_release_strategy: "managed",
+                            study_title: "HCA Embryo",
+                            data_access_group: "team205",
+                            hmdmc_number: "19/0127",
+                            programme: "Cellular Genomics",
+                            created: "2021-07-05T10:08:11Z",
+                            reference_genome: "GRCh38_15_plus_hs38d1",
+                            ethically_approved: true,
+                            study_type: "Transcriptome Analysis",
+                            contains_human_dna: true,
+                            contaminated_human_dna: false,
+                            study_visibility: "Hold",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "delayed",
+                        },
+                        sample: {
+                            id_study_lims: "6568",
+                            id_sample_lims: "6050954",
+                            sanger_id: "WTSI_wEMB10524782",
+                            sample_name: "Sample1",
+                            taxon_id: 9606,
+                            common_name: "human",
+                            library_type: "Chromium single cell ATAC",
+                            id_run: 42834,
+                            lane: 4,
+                            tag_index: 15,
+                            irods_path:
+                                "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                            study_accession_number: "EGAS00001005445",
+                            accession_number: "EGAN00003258234",
+                        },
+                        samples: [
+                            {
+                                id_study_lims: "6568",
+                                id_sample_lims: "6050954",
+                                sanger_id: "WTSI_wEMB10524782",
+                                sample_name: "Sample1",
+                            },
+                            {
+                                id_study_lims: "6568",
+                                id_sample_lims: "6050955",
+                                sanger_id: "WTSI_wEMB10524783",
+                                sample_name: "Sample2",
+                            },
+                            {
+                                id_study_lims: "6568",
+                                id_sample_lims: "6050956",
+                                sanger_id: "WTSI_wEMB10524784",
+                                sample_name: "Sample3",
+                            },
+                        ],
+                        sample_detail: {
+                            sanger_id: "WTSI_wEMB10524782",
+                            sample_name: "Sample1",
+                            sample: {
+                                id_study_lims: "6568",
+                                id_sample_lims: "6050954",
+                                sanger_id: "WTSI_wEMB10524782",
+                                sample_name: "Sample1",
+                                taxon_id: 9606,
+                                common_name: "human",
+                                library_type: "Chromium single cell ATAC",
+                                id_run: 42834,
+                                lane: 4,
+                                tag_index: 15,
+                                irods_path:
+                                    "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                                study_accession_number: "EGAS00001005445",
+                                accession_number: "EGAN00003258234",
+                            },
+                            lanes: [
+                                { id_run: "42834", lane: "4", tag_index: 15 },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Should NOT have "Linked samples" section or multiple sample rows
+        expect(screen.queryByText("Linked samples")).toBeNull();
+        expect(screen.queryByText("Sample2")).toBeNull();
+        expect(screen.queryByText("Sample3")).toBeNull();
+        expect(screen.queryByText("WTSI_wEMB10524783")).toBeNull();
+        expect(screen.queryByText("WTSI_wEMB10524784")).toBeNull();
+
+        // Should have Library and Study sections (hierarchical parent/grandparent)
+        expect(screen.getByText("Library")).toBeTruthy();
+        expect(screen.getByText("Study")).toBeTruthy();
+    });
 });
