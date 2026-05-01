@@ -177,14 +177,6 @@ function buildDetailFields(
 ): SeqmetaDetailField[] {
     const fields: SeqmetaDetailField[] = [];
 
-    appendDetailField(fields, {
-        key: metadataKey,
-        label: "Selected metadata value",
-        searchKey: metadataKey,
-        value: rawValue,
-        group: "direct",
-    });
-
     if (!enrichment) {
         return fields;
     }
@@ -198,13 +190,6 @@ function buildDetailFields(
         metadataKey === "seqmeta_sample_lims";
 
     if (!libraryMetadata) {
-        appendDetailField(fields, {
-            key: "seqmeta_type",
-            label: "Resolved seqmeta type",
-            value: enrichment.type,
-            group: "direct",
-        });
-
         appendDetailField(
             fields,
             enrichment.graph.study?.name
@@ -580,6 +565,10 @@ export function SeqmetaBadge({
                                 </h3>
                                 <p className="font-mono text-xs text-muted-foreground">
                                     {metadataKey}
+                                    {enrichment &&
+                                    !isLibraryMetadataKey(metadataKey)
+                                        ? ` (${enrichment.type})`
+                                        : null}
                                 </p>
                             </div>
                             <button
@@ -592,8 +581,63 @@ export function SeqmetaBadge({
                             </button>
                         </div>
 
-                        <div className="grid max-h-[calc(100vh-12rem)] min-h-0 gap-6 overflow-y-auto px-6 py-6 sm:px-7 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                        <div
+                            data-testid="seqmeta-dialog-body"
+                            className="max-h-[calc(100vh-12rem)] min-h-0 overflow-y-auto px-6 py-6 sm:px-7"
+                        >
                             <div className="space-y-6">
+                                {loading ||
+                                error ||
+                                (enrichment?.partial &&
+                                    missingLines.length > 0) ? (
+                                    <div className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4">
+                                        {loading ? (
+                                            <p className="text-sm text-foreground">
+                                                Looking up{" "}
+                                                {metadataLabel(
+                                                    metadataKey,
+                                                ).toLowerCase()}
+                                                .
+                                            </p>
+                                        ) : null}
+                                        {error === "not_found" ? (
+                                            <p className="text-sm text-foreground">
+                                                No enrichment matched this{" "}
+                                                {metadataLabel(
+                                                    metadataKey,
+                                                ).toLowerCase()}{" "}
+                                                value.
+                                            </p>
+                                        ) : null}
+                                        {error === "upstream_impaired" ? (
+                                            <p className="text-sm text-foreground">
+                                                Upstream services were
+                                                unavailable while resolving this{" "}
+                                                {metadataLabel(
+                                                    metadataKey,
+                                                ).toLowerCase()}{" "}
+                                                value.
+                                            </p>
+                                        ) : null}
+                                        {enrichment?.partial &&
+                                        missingLines.length > 0 ? (
+                                            <div>
+                                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                    Partial response
+                                                </p>
+                                                <div className="mt-2 space-y-2 text-sm leading-6 text-foreground">
+                                                    {missingLines.map(
+                                                        (line) => (
+                                                            <p key={line}>
+                                                                {line}
+                                                            </p>
+                                                        ),
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                ) : null}
                                 {(() => {
                                     const directFields = detailFields.filter(
                                         (field) => field.group === "direct",
@@ -728,47 +772,6 @@ export function SeqmetaBadge({
                                     );
                                 })()}
                             </div>
-
-                            <aside className="space-y-3 rounded-[1.5rem] border border-border/70 bg-background/66 p-4">
-                                <div>
-                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                        Summary
-                                    </p>
-                                    <p className="mt-2 text-sm leading-6 text-foreground">
-                                        {detailFields.length} field
-                                        {detailFields.length === 1
-                                            ? ""
-                                            : "s"}{" "}
-                                        available for this seqmeta value.
-                                    </p>
-                                </div>
-
-                                {statusLines.length > 0 ? (
-                                    <div>
-                                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                            Resolution
-                                        </p>
-                                        <div className="mt-2 space-y-2 text-sm leading-6 text-foreground">
-                                            {statusLines.map((line) => (
-                                                <p key={line}>{line}</p>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ) : null}
-
-                                {missingLines.length > 0 ? (
-                                    <div>
-                                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                            Partial response
-                                        </p>
-                                        <div className="mt-2 space-y-2 text-sm leading-6 text-foreground">
-                                            {missingLines.map((line) => (
-                                                <p key={line}>{line}</p>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ) : null}
-                            </aside>
                         </div>
                     </section>
                 </div>

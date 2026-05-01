@@ -359,9 +359,6 @@ describe("H3 enrichment state and badge", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
         expect(
-            screen.getByText("Selected library type: Chromium single cell."),
-        ).toBeTruthy();
-        expect(
             screen.queryByText("Chromium single cell 3 prime v3"),
         ).toBeNull();
         expect(screen.queryByText("Chromium single cell ATAC")).toBeNull();
@@ -663,8 +660,6 @@ describe("H3 enrichment state and badge", () => {
             .map((el) => el.getAttribute("data-seqmeta-detail-key"))
             .filter(Boolean);
 
-        expect(directKeys).toContain("seqmeta_sampleid");
-        expect(directKeys).toContain("seqmeta_type");
         expect(directKeys).toContain("sample_name");
         expect(directKeys).toContain("seqmeta_sample_lims");
         expect(directKeys).toContain("sample_accession_number");

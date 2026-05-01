@@ -239,7 +239,6 @@ describe("M1 result detail seqmeta enrichment", () => {
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
-        expect(screen.getByText("Selected metadata value")).toBeTruthy();
         expect(screen.getByText("Study name")).toBeTruthy();
         expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
         expect(
@@ -287,8 +286,6 @@ describe("M1 result detail seqmeta enrichment", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
 
-        expect(screen.getByText("Resolution")).toBeTruthy();
-        expect(screen.getByText("Selected library type: RNA.")).toBeTruthy();
         expect(
             screen.queryByText("Resolved via Sanger sample ID SANG001."),
         ).toBeNull();
@@ -336,8 +333,8 @@ describe("M1 result detail seqmeta enrichment", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
 
-        const summaryPanel = screen.getByText("Summary").closest("aside");
-        const dialogBody = summaryPanel?.parentElement;
+        const dialog = screen.getByRole("dialog");
+        const dialogBody = dialog.querySelector(".overflow-y-auto");
 
         expect(dialogBody).toBeTruthy();
         expect(dialogBody?.className).toContain("overflow-y-auto");
@@ -794,5 +791,106 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
         expect(markup).not.toContain("enrichment backend impaired");
         expect(markup).toContain("SANG001");
+    });
+
+    it("shows dialog title matching raw value with key and type in subtitle", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const dialog = screen.getByRole("dialog");
+        const title = dialog.querySelector("h3");
+
+        expect(title?.textContent).toBe("6568");
+
+        const subtitle = title?.nextElementSibling;
+
+        expect(subtitle?.textContent).toContain("seqmeta_studyid");
+        expect(subtitle?.textContent).toContain("study_id");
+    });
+
+    it("omits duplicate selected metadata value row from dialog", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.queryByText("Selected metadata value")).toBeNull();
+    });
+
+    it("omits redundant resolved seqmeta type row from dialog", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.queryByText("Resolved seqmeta type")).toBeNull();
+    });
+
+    it("omits summary and resolution aside from dialog", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.queryByText("Summary")).toBeNull();
+        expect(screen.queryByText("Resolution")).toBeNull();
     });
 });

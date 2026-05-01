@@ -345,14 +345,11 @@ test.describe("Q1 critical results flows", () => {
     test("keeps the seqmeta dialog body scrollable when content exceeds the viewport", async ({
         page,
     }) => {
-        await page.setViewportSize({ width: 720, height: 420 });
+        await page.setViewportSize({ width: 720, height: 250 });
         await openResultDetail(page, rnaseqPipelineName);
 
         const dialog = await openSeqmetaDetailsDialog(page, "seqmeta_studyid");
-        const summaryPanel = dialog
-            .getByText("Summary")
-            .locator("xpath=ancestor::aside[1]");
-        const scrollContainer = summaryPanel.locator("xpath=..");
+        const scrollContainer = dialog.getByTestId("seqmeta-dialog-body");
 
         await expect(scrollContainer).toBeVisible();
 
