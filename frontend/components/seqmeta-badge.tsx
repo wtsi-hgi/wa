@@ -621,15 +621,42 @@ function buildStatusLines(
 }
 
 async function writeClipboard(value: string): Promise<boolean> {
+    function fallbackCopyText(text: string): boolean {
+        if (
+            typeof document === "undefined" ||
+            typeof document.execCommand !== "function"
+        ) {
+            return false;
+        }
+
+        const textarea = document.createElement("textarea");
+
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        textarea.style.pointerEvents = "none";
+
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+
+        try {
+            return document.execCommand("copy");
+        } finally {
+            document.body.removeChild(textarea);
+        }
+    }
+
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-        return false;
+        return fallbackCopyText(value);
     }
 
     try {
         await navigator.clipboard.writeText(value);
         return true;
     } catch {
-        return false;
+        return fallbackCopyText(value);
     }
 }
 

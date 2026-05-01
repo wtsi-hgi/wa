@@ -473,6 +473,58 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
     });
 
+    it("falls back to document copy for seqmeta details when Clipboard API is unavailable", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
+            globalThis,
+            "navigator",
+        );
+        const execCommandMock = vi.fn().mockReturnValue(true);
+
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: {},
+        });
+        Object.defineProperty(document, "execCommand", {
+            configurable: true,
+            value: execCommandMock,
+        });
+
+        try {
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: "seqmeta_sampleid",
+                    rawValue: "SANG001",
+                    enrichment: buildEnrichment(),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            fireEvent.click(
+                screen.getAllByLabelText(/Copy seqmeta_sampleid/i)[0]!,
+            );
+
+            await waitFor(() => {
+                expect(execCommandMock).toHaveBeenCalledWith("copy");
+            });
+
+            expect(screen.getByText("Copied")).toBeTruthy();
+        } finally {
+            if (originalNavigatorDescriptor) {
+                Object.defineProperty(
+                    globalThis,
+                    "navigator",
+                    originalNavigatorDescriptor,
+                );
+            }
+        }
+    });
+
     it("does not start seqmeta enrichments during server detail rendering", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
