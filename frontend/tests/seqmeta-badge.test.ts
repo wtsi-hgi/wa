@@ -1392,10 +1392,16 @@ describe("M1 result detail seqmeta enrichment", () => {
         // Direct metadata section should include multiple fields, not just sampleid
         expect(screen.getByText("Sample name")).toBeTruthy();
         expect(screen.getByText("C84-WEM-2-FO-1_S2_mA")).toBeTruthy();
-        expect(screen.getByText("Sanger sample ID")).toBeTruthy();
-        expect(screen.getAllByText("WTSI_wEMB10524782").length).toBeGreaterThan(
-            0,
-        );
+
+        // The Sanger sample ID "WTSI_wEMB10524782" should NOT appear in the
+        // direct metadata section because it matches the dialog title (rawValue)
+        // and would be redundant
+        const dialogTitle = screen
+            .getByText("Seqmeta details")
+            .parentElement?.querySelector("h3");
+        expect(dialogTitle?.textContent).toBe("WTSI_wEMB10524782");
+
+        // But it should show other sample fields that don't duplicate the title
         expect(screen.getByText("Sample LIMS ID")).toBeTruthy();
         expect(screen.getByText("6050954")).toBeTruthy();
         expect(screen.getByText("Sample accession")).toBeTruthy();
@@ -1629,5 +1635,98 @@ describe("M1 result detail seqmeta enrichment", () => {
         // Should have Library and Study sections (hierarchical parent/grandparent)
         expect(screen.getByText("Library")).toBeTruthy();
         expect(screen.getByText("Study")).toBeTruthy();
+    });
+
+    it("omits redundant direct metadata row when value duplicates the dialog title", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        // Click on a study ID field - rawValue is the study ID
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 6396,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                            faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
+                            state: "active",
+                            abstract: "Study abstract",
+                            abbreviation: "WTSI_wEMB",
+                            accession_number: "EGAS00001005445",
+                            description: "Detailed single cell atlas",
+                            data_release_strategy: "managed",
+                            study_title: "HCA Embryo",
+                            data_access_group: "team205 cellgeni team283",
+                            hmdmc_number: "19/0127",
+                            programme: "Cellular Genomics",
+                            created: "2021-07-05T10:08:11Z",
+                            reference_genome: "GRCh38_15_plus_hs38d1",
+                            ethically_approved: true,
+                            study_type: "Transcriptome Analysis",
+                            contains_human_dna: true,
+                            contaminated_human_dna: false,
+                            study_visibility: "Hold",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "delayed",
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const dialogTitle = screen
+            .getByText("Seqmeta details")
+            .parentElement?.querySelector("h3");
+        expect(dialogTitle?.textContent).toBe("6568");
+
+        // The direct metadata section should exist and show study name and accession
+        const directMetadataSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+        expect(directMetadataSection).toBeTruthy();
+
+        expect(screen.getByText("Study name")).toBeTruthy();
+        expect(
+            screen.getByText("HCA Embryo Foetal WSSS Dev RNA Sanger"),
+        ).toBeTruthy();
+        expect(screen.getByText("Study accession")).toBeTruthy();
+        expect(screen.getByText("EGAS00001005445")).toBeTruthy();
+
+        // But it should NOT have a redundant "Study identifier" row with value "6568"
+        // because that value is already shown in the dialog title
+        const studyIdLabel = screen.queryByText("Study identifier");
+        if (studyIdLabel) {
+            // If the label exists, verify it's NOT in the direct metadata section
+            // (it might be elsewhere, but not in direct metadata)
+            const fieldCard = studyIdLabel.closest(
+                '[data-seqmeta-detail-key="study_id"]',
+            );
+            if (fieldCard) {
+                expect(directMetadataSection?.contains(fieldCard)).toBe(false);
+            }
+        }
+
+        // Alternative check: ensure the value "6568" only appears once in direct metadata
+        // (it should not appear as a field value since it's in the title)
+        if (directMetadataSection) {
+            const directMetadataText = directMetadataSection.textContent || "";
+            const titleValueCount = (
+                directMetadataText.match(/\b6568\b/g) || []
+            ).length;
+            expect(titleValueCount).toBe(0);
+        }
     });
 });

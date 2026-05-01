@@ -168,6 +168,7 @@ function humanizeMissingHop(missing: MissingHop): string {
 function appendDetailField(
     fields: SeqmetaDetailField[],
     field: SeqmetaDetailField | null,
+    rawValue?: string,
 ) {
     if (!field) {
         return;
@@ -186,6 +187,15 @@ function appendDetailField(
     );
 
     if (!duplicate) {
+        // Skip direct metadata fields whose value matches the dialog title (rawValue)
+        if (
+            rawValue &&
+            field.group === "direct" &&
+            value.toLowerCase() === rawValue.trim().toLowerCase()
+        ) {
+            return;
+        }
+
         fields.push({ ...field, value });
     }
 }
@@ -220,6 +230,7 @@ function buildDetailFields(
                       group: studyMetadata ? "direct" : "related",
                   }
                 : null,
+            rawValue,
         );
         appendDetailField(
             fields,
@@ -232,6 +243,7 @@ function buildDetailFields(
                       group: studyMetadata ? "direct" : "related",
                   }
                 : null,
+            rawValue,
         );
         appendDetailField(
             fields,
@@ -243,6 +255,7 @@ function buildDetailFields(
                       group: studyMetadata ? "direct" : "related",
                   }
                 : null,
+            rawValue,
         );
 
         appendDetailField(
@@ -255,6 +268,7 @@ function buildDetailFields(
                       group: sampleMetadata ? "direct" : "related",
                   }
                 : null,
+            rawValue,
         );
         appendDetailField(
             fields,
@@ -267,6 +281,7 @@ function buildDetailFields(
                       group: sampleMetadata ? "direct" : "related",
                   }
                 : null,
+            rawValue,
         );
         appendDetailField(
             fields,
@@ -279,6 +294,7 @@ function buildDetailFields(
                       group: sampleMetadata ? "direct" : "related",
                   }
                 : null,
+            rawValue,
         );
         appendDetailField(
             fields,
@@ -290,6 +306,7 @@ function buildDetailFields(
                       group: sampleMetadata ? "direct" : "related",
                   }
                 : null,
+            rawValue,
         );
     }
 
@@ -304,13 +321,17 @@ function buildDetailFields(
     ].filter((value): value is string => Boolean(value));
 
     for (const libraryType of libraryTypes) {
-        appendDetailField(fields, {
-            key: "seqmeta_library",
-            label: "Library type",
-            searchKey: "seqmeta_library",
-            value: libraryType,
-            group: libraryMetadata ? "direct" : "related",
-        });
+        appendDetailField(
+            fields,
+            {
+                key: "seqmeta_library",
+                label: "Library type",
+                searchKey: "seqmeta_library",
+                value: libraryType,
+                group: libraryMetadata ? "direct" : "related",
+            },
+            rawValue,
+        );
     }
 
     appendDetailField(
@@ -323,6 +344,7 @@ function buildDetailFields(
                   group: "related",
               }
             : null,
+        rawValue,
     );
     appendDetailField(
         fields,
@@ -337,6 +359,7 @@ function buildDetailFields(
                   group: "related",
               }
             : null,
+        rawValue,
     );
 
     // Only show linked samples for library metadata, not for sample metadata
@@ -376,6 +399,7 @@ function buildDetailFields(
                     group: "related",
                 };
             })(),
+            rawValue,
         );
     }
 
