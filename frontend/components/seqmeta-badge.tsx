@@ -416,22 +416,35 @@ function buildHierarchicalGroups(
         metadataKey === "seqmeta_sampleid" ||
         metadataKey === "seqmeta_sample_lims";
 
-    // For study details with hierarchy, group libraries
-    if (studyMetadata && enrichment.graph.study_detail) {
-        const libraryDetails = enrichment.graph.study_detail.library_details;
+    // For study details with hierarchy, group libraries.
+    // Prefer study_detail.library_details; fall back to graph.libraries for
+    // enrichment results cached before study_detail was introduced.
+    if (studyMetadata) {
+        const libraryItems: HierarchicalLibrary[] = [];
 
-        if (libraryDetails && libraryDetails.length > 0) {
-            const hierarchicalLibraries: HierarchicalLibrary[] =
-                libraryDetails.map((lib) => ({
+        if (enrichment.graph.study_detail?.library_details?.length) {
+            for (const lib of enrichment.graph.study_detail.library_details) {
+                libraryItems.push({
                     libraryType: lib.library_type,
                     idStudyLims: lib.id_study_lims,
                     samples: [], // Empty - samples loaded JIT on expansion
-                }));
+                });
+            }
+        } else if (enrichment.graph.libraries?.length) {
+            for (const lib of enrichment.graph.libraries) {
+                libraryItems.push({
+                    libraryType: lib.library_type,
+                    idStudyLims: lib.id_study_lims,
+                    samples: [], // Empty - samples loaded JIT on expansion
+                });
+            }
+        }
 
+        if (libraryItems.length > 0) {
             groups.push({
                 type: "libraries",
                 title: "Libraries",
-                items: hierarchicalLibraries,
+                items: libraryItems,
             });
         }
     }

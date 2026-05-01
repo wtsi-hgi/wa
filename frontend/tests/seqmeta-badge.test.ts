@@ -1235,6 +1235,101 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(sampleButtons.length).toBeGreaterThan(2);
     });
 
+    it("falls back to graph.libraries for Libraries section when study_detail is absent", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        const librarySamples = [
+            {
+                id_study_lims: "6568",
+                id_sample_lims: "SMP001",
+                sanger_id: "S1",
+                sample_name: "Sample 1",
+                taxon_id: 9606,
+                common_name: "Human",
+                library_type: "RNA",
+                id_run: 100,
+                lane: 1,
+                tag_index: 10,
+                irods_path: "/seq/100",
+                study_accession_number: "ERP123456",
+                accession_number: "ERS001",
+            },
+        ];
+
+        fetchLibrarySamplesMock.mockResolvedValue(librarySamples);
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 42,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                            faculty_sponsor: "Dr Example",
+                            state: "active",
+                            abstract: "",
+                            abbreviation: "",
+                            accession_number: "ERP123456",
+                            description: "",
+                            data_release_strategy: "",
+                            study_title: "",
+                            data_access_group: "",
+                            hmdmc_number: "",
+                            programme: "",
+                            created: "2026-04-20T09:00:00Z",
+                            reference_genome: "",
+                            ethically_approved: false,
+                            study_type: "",
+                            contains_human_dna: false,
+                            contaminated_human_dna: false,
+                            study_visibility: "",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "",
+                        },
+                        // No study_detail — simulates stale server-side cache
+                        libraries: [
+                            { library_type: "RNA", id_study_lims: "6568" },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Should show Libraries sub-section, not the flat view with duplicate labels
+        expect(screen.getByText("Libraries")).toBeTruthy();
+
+        // Library type / seqmeta_library labels must NOT be duplicated per row
+        expect(
+            screen.queryAllByText("Library type", { exact: true }).length,
+        ).toBe(0);
+
+        // Should have a Show samples button
+        const showSamplesButton = screen.getByLabelText("Show samples");
+        expect(showSamplesButton).toBeTruthy();
+
+        // Clicking triggers JIT fetch
+        fireEvent.click(showSamplesButton);
+
+        await waitFor(() => {
+            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+        });
+
+        expect(fetchLibrarySamplesMock).toHaveBeenCalledWith("6568", "RNA");
+    });
+
     it("lists samples individually for library detail and includes parent study", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
