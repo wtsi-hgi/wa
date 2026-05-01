@@ -79,7 +79,7 @@ func TestEnrichmentHierarchy(t *testing.T) {
 		convey.So(result.Graph.StudyDetail.Study, convey.ShouldResemble, *study)
 		convey.So(result.Graph.StudyDetail.LibraryDetails, convey.ShouldHaveLength, 2)
 
-		// Verify library A contains samples S1 and S2
+		// Verify libraries are listed but samples are not preloaded (loaded JIT on expansion)
 		var libA, libB *LibraryDetail
 		for i := range result.Graph.StudyDetail.LibraryDetails {
 			lib := &result.Graph.StudyDetail.LibraryDetails[i]
@@ -92,15 +92,13 @@ func TestEnrichmentHierarchy(t *testing.T) {
 		}
 
 		convey.So(libA, convey.ShouldNotBeNil)
-		convey.So(libA.Samples, convey.ShouldHaveLength, 2)
-		convey.So(libA.Samples[0].SangerID, convey.ShouldBeIn, "S1", "S2")
-		convey.So(libA.Samples[1].SangerID, convey.ShouldBeIn, "S1", "S2")
-		convey.So(libA.Samples[0].SangerID, convey.ShouldNotEqual, libA.Samples[1].SangerID)
+		convey.So(libA.Samples, convey.ShouldHaveLength, 0) // Samples loaded JIT
+		convey.So(libA.IDStudyLims, convey.ShouldEqual, "6568")
 
-		// Verify library B contains sample S3
+		// Verify library B is listed without preloaded samples
 		convey.So(libB, convey.ShouldNotBeNil)
-		convey.So(libB.Samples, convey.ShouldHaveLength, 1)
-		convey.So(libB.Samples[0].SangerID, convey.ShouldEqual, "S3")
+		convey.So(libB.Samples, convey.ShouldHaveLength, 0) // Samples loaded JIT
+		convey.So(libB.IDStudyLims, convey.ShouldEqual, "6568")
 	})
 
 	convey.Convey("H2: Sample enrichment groups lanes by run_id and lane", t, func() {
@@ -212,11 +210,15 @@ func TestEnrichmentHierarchy(t *testing.T) {
 
 		convey.So(detail1, convey.ShouldNotBeNil)
 		convey.So(detail1.LibraryDetails, convey.ShouldHaveLength, 2)
+		// Samples not preloaded (loaded JIT on expansion)
+		for _, lib := range detail1.LibraryDetails {
+			convey.So(lib.Samples, convey.ShouldHaveLength, 0)
+		}
 
 		convey.So(detail2, convey.ShouldNotBeNil)
 		convey.So(detail2.LibraryDetails, convey.ShouldHaveLength, 1)
 		convey.So(detail2.LibraryDetails[0].LibraryType, convey.ShouldEqual, "C")
-		convey.So(detail2.LibraryDetails[0].Samples, convey.ShouldHaveLength, 1)
+		convey.So(detail2.LibraryDetails[0].Samples, convey.ShouldHaveLength, 0) // Samples loaded JIT
 	})
 
 	convey.Convey("H4: Library type enrichment groups samples hierarchically by study and library", t, func() {
@@ -267,10 +269,10 @@ func TestEnrichmentHierarchy(t *testing.T) {
 
 		convey.So(detail1, convey.ShouldNotBeNil)
 		convey.So(detail1.LibraryDetails, convey.ShouldHaveLength, 1)
-		convey.So(detail1.LibraryDetails[0].Samples, convey.ShouldHaveLength, 2)
+		convey.So(detail1.LibraryDetails[0].Samples, convey.ShouldHaveLength, 0) // Samples loaded JIT
 
 		convey.So(detail2, convey.ShouldNotBeNil)
 		convey.So(detail2.LibraryDetails, convey.ShouldHaveLength, 1)
-		convey.So(detail2.LibraryDetails[0].Samples, convey.ShouldHaveLength, 1)
+		convey.So(detail2.LibraryDetails[0].Samples, convey.ShouldHaveLength, 0) // Samples loaded JIT
 	})
 }

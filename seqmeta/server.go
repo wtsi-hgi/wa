@@ -124,6 +124,18 @@ func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Filter by library_type if query parameter is present
+	libraryType := r.URL.Query().Get("library_type")
+	if libraryType != "" {
+		filtered := make([]saga.MLWHSample, 0, len(samples))
+		for _, sample := range samples {
+			if sample.LibraryType == libraryType {
+				filtered = append(filtered, sample)
+			}
+		}
+		samples = filtered
+	}
+
 	_ = writeJSON(w, http.StatusOK, samples)
 }
 

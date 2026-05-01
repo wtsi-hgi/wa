@@ -3,7 +3,14 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { ChevronDown, ChevronRight, Copy, Search, X } from "lucide-react";
+import {
+    ChevronDown,
+    ChevronRight,
+    Copy,
+    Loader2,
+    Search,
+    X,
+} from "lucide-react";
 
 import type {
     EnrichmentResult,
@@ -11,6 +18,7 @@ import type {
     LibraryDetail,
     MissingHop,
 } from "@/lib/contracts";
+import { fetchLibrarySamples } from "@/lib/seqmeta-enrichment";
 import { cn } from "@/lib/utils";
 
 type SeqmetaBadgeProps = {
@@ -31,6 +39,7 @@ type SeqmetaDetailField = {
 
 type HierarchicalLibrary = {
     libraryType: string;
+    idStudyLims: string;
     samples: EnrichmentSample[];
 };
 
@@ -219,6 +228,11 @@ function buildDetailFields(
         metadataKey === "seqmeta_sampleid" ||
         metadataKey === "seqmeta_sample_lims";
 
+    // For study metadata with study_detail, skip individual sample/library fields
+    // as they are shown hierarchically in the Libraries section
+    const skipSampleFieldsForStudy =
+        studyMetadata && enrichment.graph.study_detail;
+
     if (!libraryMetadata) {
         appendDetailField(
             fields,
@@ -258,80 +272,86 @@ function buildDetailFields(
             rawValue,
         );
 
-        appendDetailField(
-            fields,
-            enrichment.graph.sample?.sample_name
-                ? {
-                      key: "sample_name",
-                      label: "Sample name",
-                      value: enrichment.graph.sample.sample_name,
-                      group: sampleMetadata ? "direct" : "related",
-                  }
-                : null,
-            rawValue,
-        );
-        appendDetailField(
-            fields,
-            enrichment.graph.sample?.sanger_id
-                ? {
-                      key: "seqmeta_sampleid",
-                      label: "Sanger sample ID",
-                      searchKey: "seqmeta_sampleid",
-                      value: enrichment.graph.sample.sanger_id,
-                      group: sampleMetadata ? "direct" : "related",
-                  }
-                : null,
-            rawValue,
-        );
-        appendDetailField(
-            fields,
-            enrichment.graph.sample?.id_sample_lims
-                ? {
-                      key: "seqmeta_sample_lims",
-                      label: "Sample LIMS ID",
-                      searchKey: "seqmeta_sample_lims",
-                      value: enrichment.graph.sample.id_sample_lims,
-                      group: sampleMetadata ? "direct" : "related",
-                  }
-                : null,
-            rawValue,
-        );
-        appendDetailField(
-            fields,
-            enrichment.graph.sample?.accession_number
-                ? {
-                      key: "sample_accession_number",
-                      label: "Sample accession",
-                      value: enrichment.graph.sample.accession_number,
-                      group: sampleMetadata ? "direct" : "related",
-                  }
-                : null,
-            rawValue,
-        );
+        // Skip individual sample fields for study metadata with study_detail
+        if (!skipSampleFieldsForStudy) {
+            appendDetailField(
+                fields,
+                enrichment.graph.sample?.sample_name
+                    ? {
+                          key: "sample_name",
+                          label: "Sample name",
+                          value: enrichment.graph.sample.sample_name,
+                          group: sampleMetadata ? "direct" : "related",
+                      }
+                    : null,
+                rawValue,
+            );
+            appendDetailField(
+                fields,
+                enrichment.graph.sample?.sanger_id
+                    ? {
+                          key: "seqmeta_sampleid",
+                          label: "Sanger sample ID",
+                          searchKey: "seqmeta_sampleid",
+                          value: enrichment.graph.sample.sanger_id,
+                          group: sampleMetadata ? "direct" : "related",
+                      }
+                    : null,
+                rawValue,
+            );
+            appendDetailField(
+                fields,
+                enrichment.graph.sample?.id_sample_lims
+                    ? {
+                          key: "seqmeta_sample_lims",
+                          label: "Sample LIMS ID",
+                          searchKey: "seqmeta_sample_lims",
+                          value: enrichment.graph.sample.id_sample_lims,
+                          group: sampleMetadata ? "direct" : "related",
+                      }
+                    : null,
+                rawValue,
+            );
+            appendDetailField(
+                fields,
+                enrichment.graph.sample?.accession_number
+                    ? {
+                          key: "sample_accession_number",
+                          label: "Sample accession",
+                          value: enrichment.graph.sample.accession_number,
+                          group: sampleMetadata ? "direct" : "related",
+                      }
+                    : null,
+                rawValue,
+            );
+        }
     }
 
-    const libraryTypes = [
-        enrichment.graph.library?.library_type,
-        enrichment.graph.sample?.library_type,
-        ...(!libraryMetadata
-            ? (enrichment.graph.libraries ?? []).map((library) =>
-                  asString(library.library_type),
-              )
-            : []),
-    ].filter((value): value is string => Boolean(value));
+    // Skip library fields for study metadata with study_detail
+    if (!skipSampleFieldsForStudy) {
+        const libraryTypes = [
+            enrichment.graph.library?.library_type,
+            enrichment.graph.sample?.library_type,
+            ...(!libraryMetadata
+                ? (enrichment.graph.libraries ?? []).map((library) =>
+                      asString(library.library_type),
+                  )
+                : []),
+        ].filter((value): value is string => Boolean(value));
 
-    for (const libraryType of libraryTypes) {
-        appendDetailField(
-            fields,
-            {
-                key: "seqmeta_library",
-                label: "Library type",
-                searchKey: "seqmeta_library",
-                value: libraryType,
-                group: libraryMetadata ? "direct" : "related",
-            },
-            rawValue,
-        );
+        for (const libraryType of libraryTypes) {
+            appendDetailField(
+                fields,
+                {
+                    key: "seqmeta_library",
+                    label: "Library type",
+                    searchKey: "seqmeta_library",
+                    value: libraryType,
+                    group: libraryMetadata ? "direct" : "related",
+                },
+                rawValue,
+            );
+        }
     }
 
     appendDetailField(
@@ -362,47 +382,6 @@ function buildDetailFields(
         rawValue,
     );
 
-    // Only show linked samples for library metadata, not for sample metadata
-    if (!sampleMetadata) {
-        appendDetailField(
-            fields,
-            (() => {
-                const linkedSamples = Array.from(
-                    new Set(
-                        (libraryMetadata && enrichment.graph.sample
-                            ? [
-                                  enrichment.graph.sample,
-                                  ...(enrichment.graph.samples ?? []),
-                              ]
-                            : (enrichment.graph.samples ?? [])
-                        )
-                            .map((sample) => {
-                                const sampleName = asString(sample.sample_name);
-                                const sangerId = asString(sample.sanger_id);
-
-                                return [sampleName, sangerId]
-                                    .filter(Boolean)
-                                    .join(" / ");
-                            })
-                            .filter(Boolean),
-                    ),
-                );
-
-                if (linkedSamples.length === 0) {
-                    return null;
-                }
-
-                return {
-                    key: "linked_samples",
-                    label: "Linked samples",
-                    value: linkedSamples.slice(0, 5).join(", "),
-                    group: "related",
-                };
-            })(),
-            rawValue,
-        );
-    }
-
     return fields;
 }
 
@@ -431,7 +410,8 @@ function buildHierarchicalGroups(
             const hierarchicalLibraries: HierarchicalLibrary[] =
                 libraryDetails.map((lib) => ({
                     libraryType: lib.library_type,
-                    samples: lib.samples ?? [],
+                    idStudyLims: lib.id_study_lims,
+                    samples: [], // Empty - samples loaded JIT on expansion
                 }));
 
             groups.push({
@@ -492,6 +472,7 @@ function buildHierarchicalGroups(
     if (sampleMetadata && enrichment.graph.sample_detail) {
         // Show parent library
         const libraryType = enrichment.graph.sample?.library_type;
+        const idStudyLims = enrichment.graph.sample?.id_study_lims || "";
 
         if (libraryType) {
             groups.push({
@@ -500,6 +481,7 @@ function buildHierarchicalGroups(
                 items: [
                     {
                         libraryType,
+                        idStudyLims,
                         samples: [],
                     },
                 ],
@@ -640,6 +622,89 @@ export function SeqmetaBadge({
     const [expandedLibraries, setExpandedLibraries] = useState<Set<string>>(
         new Set(),
     );
+    const [loadedLibrarySamples, setLoadedLibrarySamples] = useState<
+        Map<string, EnrichmentSample[]>
+    >(new Map());
+    const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(
+        new Set(),
+    );
+
+    // Fetch library samples when a library is expanded
+    useEffect(() => {
+        const librariesGroup = hierarchicalGroups.find(
+            (g) => g.type === "libraries",
+        );
+        if (!librariesGroup) {
+            return;
+        }
+
+        const libraries = librariesGroup.items as HierarchicalLibrary[];
+        const toLoad = libraries.filter(
+            (lib) =>
+                expandedLibraries.has(lib.libraryType) &&
+                !loadedLibrarySamples.has(lib.libraryType) &&
+                !loadingLibraries.has(lib.libraryType),
+        );
+
+        if (toLoad.length === 0) {
+            return;
+        }
+
+        // Async function to handle loading
+        const loadSamples = async () => {
+            // Mark libraries as loading
+            setLoadingLibraries((prev) => {
+                const next = new Set(prev);
+                for (const lib of toLoad) {
+                    next.add(lib.libraryType);
+                }
+                return next;
+            });
+
+            // Fetch samples for each library
+            await Promise.all(
+                toLoad.map(async (lib) => {
+                    try {
+                        const samples = await fetchLibrarySamples(
+                            lib.idStudyLims,
+                            lib.libraryType,
+                        );
+                        setLoadedLibrarySamples((prev) => {
+                            const next = new Map(prev);
+                            next.set(lib.libraryType, samples ?? []);
+                            return next;
+                        });
+                    } catch (error) {
+                        console.error(
+                            `Failed to load samples for library ${lib.libraryType}:`,
+                            error,
+                        );
+                        setLoadedLibrarySamples((prev) => {
+                            const next = new Map(prev);
+                            next.set(lib.libraryType, []); // Set empty on error
+                            return next;
+                        });
+                    }
+                }),
+            );
+
+            // Clear loading state
+            setLoadingLibraries((prev) => {
+                const next = new Set(prev);
+                for (const lib of toLoad) {
+                    next.delete(lib.libraryType);
+                }
+                return next;
+            });
+        };
+
+        void loadSamples();
+    }, [
+        expandedLibraries,
+        hierarchicalGroups,
+        loadedLibrarySamples,
+        loadingLibraries,
+    ]);
 
     useEffect(() => {
         if (!dialogOpen) {
@@ -979,6 +1044,15 @@ export function SeqmetaBadge({
                                                                                     expandedLibraries.has(
                                                                                         library.libraryType,
                                                                                     );
+                                                                                const isLoading =
+                                                                                    loadingLibraries.has(
+                                                                                        library.libraryType,
+                                                                                    );
+                                                                                const loadedSamples =
+                                                                                    loadedLibrarySamples.get(
+                                                                                        library.libraryType,
+                                                                                    ) ??
+                                                                                    [];
 
                                                                                 return (
                                                                                     <div
@@ -1040,76 +1114,83 @@ export function SeqmetaBadge({
                                                                                                         />
                                                                                                         Filter
                                                                                                     </Link>
-                                                                                                    {library
-                                                                                                        .samples
-                                                                                                        .length >
-                                                                                                    0 ? (
-                                                                                                        <button
-                                                                                                            type="button"
-                                                                                                            aria-label={
-                                                                                                                isExpanded
-                                                                                                                    ? "Hide samples"
-                                                                                                                    : "Show samples"
-                                                                                                            }
-                                                                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                            onClick={() => {
-                                                                                                                const newExpanded =
-                                                                                                                    new Set(
-                                                                                                                        expandedLibraries,
-                                                                                                                    );
-
-                                                                                                                if (
-                                                                                                                    isExpanded
-                                                                                                                ) {
-                                                                                                                    newExpanded.delete(
-                                                                                                                        library.libraryType,
-                                                                                                                    );
-                                                                                                                } else {
-                                                                                                                    newExpanded.add(
-                                                                                                                        library.libraryType,
-                                                                                                                    );
-                                                                                                                }
-
-                                                                                                                setExpandedLibraries(
-                                                                                                                    newExpanded,
+                                                                                                    <button
+                                                                                                        type="button"
+                                                                                                        aria-label={
+                                                                                                            isExpanded
+                                                                                                                ? "Hide samples"
+                                                                                                                : "Show samples"
+                                                                                                        }
+                                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                        disabled={
+                                                                                                            isLoading
+                                                                                                        }
+                                                                                                        onClick={() => {
+                                                                                                            const newExpanded =
+                                                                                                                new Set(
+                                                                                                                    expandedLibraries,
                                                                                                                 );
-                                                                                                            }}
-                                                                                                        >
-                                                                                                            {isExpanded ? (
-                                                                                                                <ChevronDown
-                                                                                                                    className="size-3.5"
-                                                                                                                    aria-hidden="true"
-                                                                                                                />
-                                                                                                            ) : (
-                                                                                                                <ChevronRight
-                                                                                                                    className="size-3.5"
-                                                                                                                    aria-hidden="true"
-                                                                                                                />
-                                                                                                            )}
-                                                                                                            {
-                                                                                                                library
-                                                                                                                    .samples
-                                                                                                                    .length
-                                                                                                            }{" "}
-                                                                                                            sample
-                                                                                                            {library
-                                                                                                                .samples
-                                                                                                                .length !==
-                                                                                                            1
-                                                                                                                ? "s"
-                                                                                                                : ""}
-                                                                                                        </button>
-                                                                                                    ) : null}
+
+                                                                                                            if (
+                                                                                                                isExpanded
+                                                                                                            ) {
+                                                                                                                newExpanded.delete(
+                                                                                                                    library.libraryType,
+                                                                                                                );
+                                                                                                            } else {
+                                                                                                                newExpanded.add(
+                                                                                                                    library.libraryType,
+                                                                                                                );
+                                                                                                            }
+
+                                                                                                            setExpandedLibraries(
+                                                                                                                newExpanded,
+                                                                                                            );
+                                                                                                        }}
+                                                                                                    >
+                                                                                                        {isLoading ? (
+                                                                                                            <Loader2
+                                                                                                                className="size-3.5 animate-spin"
+                                                                                                                aria-hidden="true"
+                                                                                                            />
+                                                                                                        ) : isExpanded ? (
+                                                                                                            <ChevronDown
+                                                                                                                className="size-3.5"
+                                                                                                                aria-hidden="true"
+                                                                                                            />
+                                                                                                        ) : (
+                                                                                                            <ChevronRight
+                                                                                                                className="size-3.5"
+                                                                                                                aria-hidden="true"
+                                                                                                            />
+                                                                                                        )}
+                                                                                                        {isExpanded &&
+                                                                                                        !isLoading ? (
+                                                                                                            <>
+                                                                                                                {
+                                                                                                                    loadedSamples.length
+                                                                                                                }{" "}
+                                                                                                                sample
+                                                                                                                {loadedSamples.length !==
+                                                                                                                1
+                                                                                                                    ? "s"
+                                                                                                                    : ""}
+                                                                                                            </>
+                                                                                                        ) : isLoading ? (
+                                                                                                            "Loading..."
+                                                                                                        ) : (
+                                                                                                            "Samples"
+                                                                                                        )}
+                                                                                                    </button>
                                                                                                 </div>
                                                                                             </div>
                                                                                         </article>
                                                                                         {isExpanded &&
-                                                                                        library
-                                                                                            .samples
-                                                                                            .length >
+                                                                                        !isLoading &&
+                                                                                        loadedSamples.length >
                                                                                             0 ? (
                                                                                             <div className="ml-4 space-y-2 border-l-2 border-border/40 pl-4">
-                                                                                                {library.samples.map(
+                                                                                                {loadedSamples.map(
                                                                                                     (
                                                                                                         sample,
                                                                                                     ) => {

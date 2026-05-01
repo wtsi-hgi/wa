@@ -640,23 +640,24 @@ func buildStudyDetails(studies []saga.Study, samples []saga.MLWHSample) []StudyD
 	return studyDetails
 }
 
-// buildStudyDetail constructs a hierarchical StudyDetail grouping samples by library.
+// buildStudyDetail constructs a hierarchical StudyDetail grouping libraries without samples.
+// Samples should be loaded just-in-time when a library is expanded.
 func buildStudyDetail(study saga.Study, samples []saga.MLWHSample) *StudyDetail {
-	// Group samples by library type
-	libraryMap := make(map[string][]saga.MLWHSample)
+	// Group samples by library type to collect distinct libraries
+	libraryMap := make(map[string]struct{})
 
 	for _, sample := range samples {
-		libraryMap[sample.LibraryType] = append(libraryMap[sample.LibraryType], sample)
+		libraryMap[sample.LibraryType] = struct{}{}
 	}
 
-	// Build LibraryDetails
+	// Build LibraryDetails without preloaded samples
 	libraryDetails := make([]LibraryDetail, 0, len(libraryMap))
 
-	for libraryType, libSamples := range libraryMap {
+	for libraryType := range libraryMap {
 		libraryDetails = append(libraryDetails, LibraryDetail{
 			LibraryType: libraryType,
 			IDStudyLims: study.IDStudyLims,
-			Samples:     libSamples,
+			Samples:     []saga.MLWHSample{}, // Empty - samples loaded JIT on expansion
 		})
 	}
 

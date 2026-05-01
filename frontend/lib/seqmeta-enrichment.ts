@@ -344,3 +344,19 @@ export async function enrichSeqmetaMetadata(
         buildCachedEnrichmentState(metadata, cache),
     );
 }
+
+export async function fetchLibrarySamples(
+    studyId: string,
+    libraryType: string,
+): Promise<EnrichmentResult["graph"]["samples"]> {
+    const { seqmetaJson } = await import("@/lib/backend-client");
+    const { enrichmentSamplesSchema } = await import("@/lib/contracts");
+
+    const params = new URLSearchParams({ library_type: libraryType });
+    const samples = await seqmetaJson(
+        `/study/${encodeURIComponent(studyId)}/samples?${params.toString()}`,
+        enrichmentSamplesSchema,
+    );
+
+    return samples;
+}

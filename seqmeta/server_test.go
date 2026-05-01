@@ -450,6 +450,56 @@ func TestServerStudySamplesEndpoint(t *testing.T) {
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(strings.TrimSpace(recorder.Body.String()), convey.ShouldEqual, "[]")
 	})
+
+	convey.Convey("F2: study samples endpoint filters by library_type query parameter", t, func() {
+		// Setup provider with samples having different library types
+		provider := &MockProvider{
+			AllSamplesForStudyFunc: func(_ context.Context, requestedStudyID string) ([]saga.MLWHSample, error) {
+				return []saga.MLWHSample{
+					{SangerID: "S1", LibraryType: "RNA-Seq dUTP eukaryotic"},
+					{SangerID: "S2", LibraryType: "Standard"},
+					{SangerID: "S3", LibraryType: "RNA-Seq dUTP eukaryotic"},
+					{SangerID: "S4", LibraryType: "Standard"},
+				}, nil
+			},
+		}
+		server := NewServer(provider, store)
+
+		// Test with library_type filter
+		request := httptest.NewRequest(http.MethodGet, "/study/6568/samples?library_type=RNA-Seq+dUTP+eukaryotic", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		var result []saga.MLWHSample
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(result, convey.ShouldHaveLength, 2)
+		convey.So(result[0].SangerID, convey.ShouldEqual, "S1")
+		convey.So(result[1].SangerID, convey.ShouldEqual, "S3")
+
+		// Test with different library_type
+		request = httptest.NewRequest(http.MethodGet, "/study/6568/samples?library_type=Standard", nil)
+		recorder = httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(result, convey.ShouldHaveLength, 2)
+		convey.So(result[0].SangerID, convey.ShouldEqual, "S2")
+		convey.So(result[1].SangerID, convey.ShouldEqual, "S4")
+
+		// Test with non-matching library_type returns empty array
+		request = httptest.NewRequest(http.MethodGet, "/study/6568/samples?library_type=NonExistent", nil)
+		recorder = httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(result, convey.ShouldHaveLength, 0)
+	})
 }
 
 func TestServerListStudiesEndpoint(t *testing.T) {
