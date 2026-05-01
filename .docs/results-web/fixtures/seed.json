@@ -827,9 +827,7 @@
             }
         ],
         "metadata": {
-            "seqmeta_studyid": "3361",
-            "seqmeta_sampleid": "3361STDY5994718",
-            "seqmeta_sample_lims": "2153063",
+            "seqmeta_studyid": "6568",
             "library": "exon",
             "study": "study-alpha"
         }
@@ -924,9 +922,7 @@
             }
         ],
         "metadata": {
-            "seqmeta_studyid": "7796",
-            "seqmeta_sampleid": "Embryo-Imp15289123",
-            "seqmeta_sample_lims": "9941914",
+            "seqmeta_sampleid": "WTSI_wEMB10524782",
             "assay": "wgs",
             "priority": "urgent"
         }
@@ -1015,10 +1011,7 @@
             }
         ],
         "metadata": {
-            "seqmeta_studyid": "4861",
-            "seqmeta_sampleid": "4861STDY7771117",
-            "seqmeta_sample_lims": "3990641",
-            "seqmeta_library": "Chromium single cell",
+            "seqmeta_library": "Chromium single cell 3 prime v3",
             "panel": "haem",
             "request_group": "validation"
         }

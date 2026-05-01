@@ -21,6 +21,7 @@ type SeqmetaDetailField = {
     label: string;
     searchKey?: string;
     value: string;
+    group: "direct" | "related";
 };
 
 function asString(value: unknown): string | null {
@@ -196,6 +197,7 @@ function buildDetailFields(
         label: "Selected metadata value",
         searchKey: metadataKey,
         value: rawValue,
+        group: "direct",
     });
 
     if (!enrichment) {
@@ -203,12 +205,19 @@ function buildDetailFields(
     }
 
     const libraryMetadata = isLibraryMetadataKey(metadataKey);
+    const studyMetadata =
+        metadataKey === "seqmeta_studyid" ||
+        metadataKey === "seqmeta_study_accession";
+    const sampleMetadata =
+        metadataKey === "seqmeta_sampleid" ||
+        metadataKey === "seqmeta_sample_lims";
 
     if (!libraryMetadata) {
         appendDetailField(fields, {
             key: "seqmeta_type",
             label: "Resolved seqmeta type",
             value: enrichment.type,
+            group: "direct",
         });
 
         appendDetailField(
@@ -218,6 +227,7 @@ function buildDetailFields(
                       key: "study_name",
                       label: "Study name",
                       value: enrichment.graph.study.name,
+                      group: studyMetadata ? "direct" : "related",
                   }
                 : null,
         );
@@ -229,6 +239,7 @@ function buildDetailFields(
                       label: "Study identifier",
                       searchKey: "study_id",
                       value: enrichment.graph.study.id_study_lims,
+                      group: studyMetadata ? "direct" : "related",
                   }
                 : null,
         );
@@ -239,6 +250,7 @@ function buildDetailFields(
                       key: "study_accession_number",
                       label: "Study accession",
                       value: enrichment.graph.study.accession_number,
+                      group: studyMetadata ? "direct" : "related",
                   }
                 : null,
         );
@@ -250,6 +262,7 @@ function buildDetailFields(
                       key: "sample_name",
                       label: "Sample name",
                       value: enrichment.graph.sample.sample_name,
+                      group: sampleMetadata ? "direct" : "related",
                   }
                 : null,
         );
@@ -261,6 +274,7 @@ function buildDetailFields(
                       label: "Sanger sample ID",
                       searchKey: "seqmeta_sampleid",
                       value: enrichment.graph.sample.sanger_id,
+                      group: sampleMetadata ? "direct" : "related",
                   }
                 : null,
         );
@@ -272,6 +286,7 @@ function buildDetailFields(
                       label: "Sample LIMS ID",
                       searchKey: "seqmeta_sample_lims",
                       value: enrichment.graph.sample.id_sample_lims,
+                      group: sampleMetadata ? "direct" : "related",
                   }
                 : null,
         );
@@ -282,6 +297,7 @@ function buildDetailFields(
                       key: "sample_accession_number",
                       label: "Sample accession",
                       value: enrichment.graph.sample.accession_number,
+                      group: sampleMetadata ? "direct" : "related",
                   }
                 : null,
         );
@@ -290,9 +306,11 @@ function buildDetailFields(
     const libraryTypes = [
         enrichment.graph.library?.library_type,
         enrichment.graph.sample?.library_type,
-        ...(enrichment.graph.libraries ?? []).map((library) =>
-            asString(library.library_type),
-        ),
+        ...(!libraryMetadata
+            ? (enrichment.graph.libraries ?? []).map((library) =>
+                  asString(library.library_type),
+              )
+            : []),
     ].filter((value): value is string => Boolean(value));
 
     for (const libraryType of libraryTypes) {
@@ -301,6 +319,7 @@ function buildDetailFields(
             label: "Library type",
             searchKey: "seqmeta_library",
             value: libraryType,
+            group: libraryMetadata ? "direct" : "related",
         });
     }
 
@@ -311,6 +330,7 @@ function buildDetailFields(
                   key: "project_name",
                   label: "Project",
                   value: enrichment.graph.project.name,
+                  group: "related",
               }
             : null,
     );
@@ -324,6 +344,7 @@ function buildDetailFields(
                       .map((user) => asString(user.username))
                       .filter((value): value is string => Boolean(value))
                       .join(", "),
+                  group: "related",
               }
             : null,
     );
@@ -359,6 +380,7 @@ function buildDetailFields(
                 key: "linked_samples",
                 label: "Linked samples",
                 value: linkedSamples.slice(0, 5).join(", "),
+                group: "related",
             };
         })(),
     );
@@ -586,75 +608,140 @@ export function SeqmetaBadge({
                         </div>
 
                         <div className="grid max-h-[calc(100vh-12rem)] min-h-0 gap-6 overflow-y-auto px-6 py-6 sm:px-7 lg:grid-cols-[minmax(0,1fr)_18rem]">
-                            <div className="space-y-3">
-                                {detailFields.map((field) => {
-                                    const href = field.searchKey
-                                        ? `/?${new URLSearchParams({
-                                              [field.searchKey]: field.value,
-                                          }).toString()}`
-                                        : null;
+                            <div className="space-y-6">
+                                {(() => {
+                                    const directFields = detailFields.filter(
+                                        (field) => field.group === "direct",
+                                    );
+                                    const relatedFields = detailFields.filter(
+                                        (field) => field.group === "related",
+                                    );
 
-                                    return (
-                                        <article
-                                            key={`${field.key}:${field.value}`}
-                                            data-seqmeta-detail-key={field.key}
-                                            className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                        >
-                                            <div className="flex flex-wrap items-start justify-between gap-3">
-                                                <div className="min-w-0">
-                                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                        {field.label}
-                                                    </p>
-                                                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                                                        {field.key}
-                                                    </p>
-                                                </div>
-                                                <div className="flex flex-wrap gap-2">
-                                                    <button
-                                                        type="button"
-                                                        aria-label={`Copy ${field.key}`}
-                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                        onClick={() => {
-                                                            void writeClipboard(
-                                                                field.value,
-                                                            ).then((copied) => {
-                                                                if (copied) {
-                                                                    setCopiedKey(
-                                                                        field.key,
-                                                                    );
+                                    const renderFieldGroup = (
+                                        fields: SeqmetaDetailField[],
+                                        title: string,
+                                    ) => {
+                                        if (fields.length === 0) {
+                                            return null;
+                                        }
+
+                                        return (
+                                            <div
+                                                data-field-group={title
+                                                    .toLowerCase()
+                                                    .replace(/\s+/g, "-")}
+                                            >
+                                                <h4 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                    {title}
+                                                </h4>
+                                                <div className="space-y-3">
+                                                    {fields.map((field) => {
+                                                        const href =
+                                                            field.searchKey
+                                                                ? `/?${new URLSearchParams(
+                                                                      {
+                                                                          [field.searchKey]:
+                                                                              field.value,
+                                                                      },
+                                                                  ).toString()}`
+                                                                : null;
+
+                                                        return (
+                                                            <article
+                                                                key={`${field.key}:${field.value}`}
+                                                                data-seqmeta-detail-key={
+                                                                    field.key
                                                                 }
-                                                            });
-                                                        }}
-                                                    >
-                                                        <Copy
-                                                            className="size-3.5"
-                                                            aria-hidden="true"
-                                                        />
-                                                        {copiedKey === field.key
-                                                            ? "Copied"
-                                                            : "Copy"}
-                                                    </button>
-                                                    {href ? (
-                                                        <Link
-                                                            aria-label={`Send ${field.key} to search filter`}
-                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                            href={href}
-                                                        >
-                                                            <Search
-                                                                className="size-3.5"
-                                                                aria-hidden="true"
-                                                            />
-                                                            Filter
-                                                        </Link>
-                                                    ) : null}
+                                                                className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                            >
+                                                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                    <div className="min-w-0">
+                                                                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                                            {
+                                                                                field.label
+                                                                            }
+                                                                        </p>
+                                                                        <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                                                                            {
+                                                                                field.key
+                                                                            }
+                                                                        </p>
+                                                                    </div>
+                                                                    <div className="flex flex-wrap gap-2">
+                                                                        <button
+                                                                            type="button"
+                                                                            aria-label={`Copy ${field.key}`}
+                                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                            onClick={() => {
+                                                                                void writeClipboard(
+                                                                                    field.value,
+                                                                                ).then(
+                                                                                    (
+                                                                                        copied,
+                                                                                    ) => {
+                                                                                        if (
+                                                                                            copied
+                                                                                        ) {
+                                                                                            setCopiedKey(
+                                                                                                field.key,
+                                                                                            );
+                                                                                        }
+                                                                                    },
+                                                                                );
+                                                                            }}
+                                                                        >
+                                                                            <Copy
+                                                                                className="size-3.5"
+                                                                                aria-hidden="true"
+                                                                            />
+                                                                            {copiedKey ===
+                                                                            field.key
+                                                                                ? "Copied"
+                                                                                : "Copy"}
+                                                                        </button>
+                                                                        {href ? (
+                                                                            <Link
+                                                                                aria-label={`Send ${field.key} to search filter`}
+                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                href={
+                                                                                    href
+                                                                                }
+                                                                            >
+                                                                                <Search
+                                                                                    className="size-3.5"
+                                                                                    aria-hidden="true"
+                                                                                />
+                                                                                Filter
+                                                                            </Link>
+                                                                        ) : null}
+                                                                    </div>
+                                                                </div>
+                                                                <p className="mt-3 break-all text-sm leading-6 text-foreground">
+                                                                    {
+                                                                        field.value
+                                                                    }
+                                                                </p>
+                                                            </article>
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
-                                            <p className="mt-3 break-all text-sm leading-6 text-foreground">
-                                                {field.value}
-                                            </p>
-                                        </article>
+                                        );
+                                    };
+
+                                    return (
+                                        <>
+                                            {renderFieldGroup(
+                                                directFields,
+                                                "Direct Metadata",
+                                            )}
+                                            {renderFieldGroup(
+                                                relatedFields,
+                                                "Related Data",
+                                            )}
+                                        </>
                                     );
-                                })}
+                                })()}
                             </div>
 
                             <aside className="space-y-3 rounded-[1.5rem] border border-border/70 bg-background/66 p-4">

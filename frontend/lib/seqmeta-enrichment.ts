@@ -8,7 +8,6 @@ export type SeqmetaEnrichmentState = {
 };
 
 type SeqmetaAliasType =
-    | "library_type"
     | "sample_lims"
     | "sanger_sample_id"
     | "study_accession"
@@ -173,11 +172,9 @@ function collectSeqmetaAliases(
     add(enrichment.identifier, enrichment.type as SeqmetaAliasType);
     add(enrichment.graph.study?.id_study_lims, "study_id");
     add(enrichment.graph.study?.accession_number, "study_accession");
-    add(enrichment.graph.library?.library_type, "library_type");
     add(enrichment.graph.library?.id_study_lims, "study_id");
 
     for (const library of enrichment.graph.libraries ?? []) {
-        add(library.library_type, "library_type");
         add(library.id_study_lims, "study_id");
     }
 
@@ -191,7 +188,6 @@ function collectSeqmetaAliases(
     }) {
         add(sample.sanger_id, "sanger_sample_id");
         add(sample.id_sample_lims, "sample_lims");
-        add(sample.library_type, "library_type");
         add(sample.id_study_lims, "study_id");
         add(sample.study_accession_number, "study_accession");
         add(sample.accession_number, "sanger_sample_id");
@@ -213,6 +209,10 @@ function primeSeqmetaCacheEntry(
     enrichment: EnrichmentResult,
 ): void {
     for (const [value, type] of collectSeqmetaAliases(enrichment)) {
+        if (cache.has(value)) {
+            continue;
+        }
+
         cache.set(value, cloneEnrichmentForAlias(enrichment, value, type));
     }
 }

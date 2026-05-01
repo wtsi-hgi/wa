@@ -90,10 +90,53 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 				}
 			}
 
-			convey.So(fixtureSeqmetaKeys, convey.ShouldBeGreaterThanOrEqualTo, 2)
+			convey.So(fixtureSeqmetaKeys, convey.ShouldBeGreaterThanOrEqualTo, 1)
 			_ = index
 		}
 
-		convey.So(totalSeqmetaKeys, convey.ShouldBeGreaterThanOrEqualTo, 6)
+		convey.So(totalSeqmetaKeys, convey.ShouldBeGreaterThanOrEqualTo, 3)
+	})
+
+	convey.Convey("seed.json fixtures demonstrate distinct single seqmeta kinds", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		seedPath := filepath.Join(repoRoot, ".docs", "results-web", "fixtures", "seed.json")
+
+		raw, err := os.ReadFile(seedPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		var fixtures []map[string]any
+
+		convey.So(json.Unmarshal(raw, &fixtures), convey.ShouldBeNil)
+		convey.So(len(fixtures), convey.ShouldBeGreaterThanOrEqualTo, 3)
+
+		var hasStudyOnlyFixture, hasSampleOnlyFixture, hasLibraryOnlyFixture bool
+
+		for _, fixture := range fixtures {
+			metadata, ok := fixture["metadata"].(map[string]any)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			seqmetaKeys := []string{}
+
+			for key := range metadata {
+				if strings.HasPrefix(key, "seqmeta_") {
+					seqmetaKeys = append(seqmetaKeys, key)
+				}
+			}
+
+			if len(seqmetaKeys) == 1 {
+				switch seqmetaKeys[0] {
+				case "seqmeta_studyid":
+					hasStudyOnlyFixture = true
+				case "seqmeta_sampleid":
+					hasSampleOnlyFixture = true
+				case "seqmeta_library":
+					hasLibraryOnlyFixture = true
+				}
+			}
+		}
+
+		convey.So(hasStudyOnlyFixture, convey.ShouldBeTrue)
+		convey.So(hasSampleOnlyFixture, convey.ShouldBeTrue)
+		convey.So(hasLibraryOnlyFixture, convey.ShouldBeTrue)
 	})
 }
