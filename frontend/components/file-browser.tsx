@@ -107,14 +107,14 @@ const PreviewHeightControl = memo(function PreviewHeightControl({
     };
 
     return (
-        <label className="block rounded-[1.25rem] border border-border/70 bg-background/75 px-4 py-3 text-sm text-foreground">
-            <div className="flex items-center justify-between gap-3">
-                <span className="font-medium">Preview height</span>
-                <span className="text-muted-foreground">{draftValue}px</span>
-            </div>
+        <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
+            <span className="inline-flex items-center gap-2 text-sm font-medium">
+                <Eye className="size-4 text-primary" aria-hidden="true" />
+                <span className="whitespace-nowrap">Preview height</span>
+            </span>
             <input
                 aria-label="Preview height"
-                className="mt-3 w-full accent-primary"
+                className="h-1 w-24 accent-primary"
                 max={420}
                 min={120}
                 onBlur={commitDraftValue}
@@ -133,6 +133,9 @@ const PreviewHeightControl = memo(function PreviewHeightControl({
                 type="range"
                 value={draftValue}
             />
+            <span className="text-xs text-muted-foreground tabular-nums">
+                {draftValue}px
+            </span>
         </label>
     );
 });
@@ -562,26 +565,32 @@ export function FileBrowser({
             }
         >
             {placement === "folder" ? (
-                <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
-                    <input
-                        aria-label="1 preview per row"
-                        checked={previewMode === "grid"}
-                        className="size-4 accent-primary"
-                        onChange={(event) =>
-                            onPreviewModeChange?.(
-                                event.target.checked ? "grid" : "single",
-                            )
-                        }
-                        type="checkbox"
-                    />
-                    <span className="inline-flex items-center gap-2">
-                        <Eye
-                            className="size-4 text-primary"
-                            aria-hidden="true"
+                <>
+                    <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
+                        <input
+                            aria-label="1 preview per row"
+                            checked={previewMode === "grid"}
+                            className="size-4 accent-primary"
+                            onChange={(event) =>
+                                onPreviewModeChange?.(
+                                    event.target.checked ? "grid" : "single",
+                                )
+                            }
+                            type="checkbox"
                         />
-                        1 preview per row
-                    </span>
-                </label>
+                        <span className="inline-flex items-center gap-2">
+                            <Eye
+                                className="size-4 text-primary"
+                                aria-hidden="true"
+                            />
+                            1 preview per row
+                        </span>
+                    </label>
+                    <PreviewHeightControl
+                        onCommit={onPreviewHeightChange}
+                        value={previewHeight}
+                    />
+                </>
             ) : null}
 
             <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
@@ -843,25 +852,16 @@ export function FileBrowser({
             data-file-browser="true"
         >
             <div
-                className="flex flex-col gap-4 border-b border-border/60 pb-5 xl:flex-row xl:items-start xl:justify-between"
+                className="flex items-center gap-3 border-b border-border/60 pb-5"
                 data-file-browser-header="true"
             >
-                <div className="flex items-center gap-3">
-                    <FolderTree
-                        className="size-4 text-primary"
-                        aria-hidden="true"
-                    />
-                    <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                        File Browser
-                    </p>
-                </div>
-
-                <div className="space-y-3 xl:min-w-[24rem]">
-                    <PreviewHeightControl
-                        onCommit={onPreviewHeightChange}
-                        value={previewHeight}
-                    />
-                </div>
+                <FolderTree
+                    className="size-4 text-primary"
+                    aria-hidden="true"
+                />
+                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    File Browser
+                </p>
             </div>
 
             {previewMode === "single" ? (

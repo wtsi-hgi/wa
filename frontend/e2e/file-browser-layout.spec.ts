@@ -393,4 +393,81 @@ test.describe("File Browser single preview layout", () => {
         expect(surface.width).toBeGreaterThanOrEqual(metrics.root.width - 2);
         expect(surface.height).toBeGreaterThanOrEqual(metrics.root.height - 2);
     });
+
+    test("places the compact preview height selector next to the 1 preview per row toggle in folder controls", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        // Expand a folder with files to reveal folder controls
+        let foundFolderControls = false;
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+            const dirButtons = await page
+                .locator(
+                    '[data-directory-path][data-directory-expanded="false"]',
+                )
+                .all();
+
+            if (dirButtons.length === 0) {
+                break;
+            }
+
+            await dirButtons[0].click();
+
+            const folderControls = page.locator(
+                "[data-file-browser-folder-controls]",
+            );
+            if ((await folderControls.count()) > 0) {
+                foundFolderControls = true;
+                break;
+            }
+        }
+
+        expect(foundFolderControls).toBe(true);
+
+        const folderControls = page
+            .locator("[data-file-browser-folder-controls]")
+            .first();
+        await expect(folderControls).toBeVisible();
+
+        // Verify "1 preview per row" toggle is present
+        const previewModeToggle = folderControls.locator(
+            'input[aria-label="1 preview per row"]',
+        );
+        await expect(previewModeToggle).toBeVisible();
+
+        // Verify preview height slider is present in the same controls container
+        const previewHeightSlider = folderControls.locator(
+            'input[type="range"][aria-label="Preview height"]',
+        );
+        await expect(previewHeightSlider).toBeVisible();
+
+        // Get bounding boxes to verify they're on the same horizontal line
+        const toggleBBox = await previewModeToggle.boundingBox();
+        const sliderBBox = await previewHeightSlider.boundingBox();
+        const controlsBBox = await folderControls.boundingBox();
+
+        if (!toggleBBox || !sliderBBox || !controlsBBox) {
+            throw new Error("Missing bounding boxes for controls verification");
+        }
+
+        // Both controls should be in the same container row (similar vertical position)
+        expect(Math.abs(toggleBBox.y - sliderBBox.y)).toBeLessThan(30);
+
+        // The slider should be compact (height similar to the toggle's parent label)
+        const toggleLabel = page
+            .locator('label:has(input[aria-label="1 preview per row"])')
+            .first();
+        const toggleLabelBBox = await toggleLabel.boundingBox();
+
+        if (!toggleLabelBBox) {
+            throw new Error("Missing toggle label bounding box");
+        }
+
+        // Slider height should be compact - less than 80px total (including padding)
+        expect(sliderBBox.height).toBeLessThan(80);
+
+        // Controls should be arranged horizontally within the folder controls container
+        expect(controlsBBox.height).toBeLessThan(120);
+    });
 });

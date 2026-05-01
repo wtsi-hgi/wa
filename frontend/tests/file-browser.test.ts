@@ -678,14 +678,15 @@ describe("N1 file browser", () => {
 
     it("surfaces preview height without putting paging controls in the browser header", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+        ];
 
         await act(async () => {
             root.render(
                 createElement(FileBrowser, {
-                    files: [
-                        buildFile("/results/plot-001.png", "output"),
-                        buildFile("/results/plot-002.png", "output"),
-                    ],
+                    files,
                     onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
                     previewHeight: 180,
@@ -695,6 +696,13 @@ describe("N1 file browser", () => {
                     onPreviewHeightChange: vi.fn(),
                     onPreviewModeChange: vi.fn(),
                     onPreviewPageChange: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "grid-preview" },
+                            `preview:${file.path}`,
+                        ),
+                    visibleFiles: files,
                 }),
             );
         });
@@ -704,6 +712,16 @@ describe("N1 file browser", () => {
 
         expect(header?.textContent).not.toContain("1 preview per row");
         expect(header?.textContent).not.toContain("Page 2 of 3");
+        expect(header?.textContent).not.toContain("Preview height");
+
+        // Verify controls are in the folder controls section, not the header
+        const folderControls = container.querySelector(
+            "[data-file-browser-folder-controls]",
+        );
+
+        expect(folderControls).toBeTruthy();
+        expect(folderControls?.textContent).toContain("Preview height");
+        expect(folderControls?.textContent).toContain("1 preview per row");
     });
 
     it("keeps preview height drag updates local until the slider is committed", async () => {
