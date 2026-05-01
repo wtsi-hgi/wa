@@ -191,9 +191,11 @@ function pageSummary(total: number, page: number): string {
 
 const GalleryPreviewRow = memo(function GalleryPreviewRow({
     file,
+    maxHeight,
     resultId,
 }: {
     file: FileEntry;
+    maxHeight: number;
     resultId: string;
 }) {
     const [previewState, setPreviewState] = useState<PreviewState>(() =>
@@ -268,6 +270,7 @@ const GalleryPreviewRow = memo(function GalleryPreviewRow({
                 error={previewState.error}
                 file={file}
                 isLoading={previewState.isLoading}
+                maxHeight={maxHeight}
                 proxyUrl={buildFileUrl(resultId, file.path)}
             />
         </div>
@@ -275,11 +278,12 @@ const GalleryPreviewRow = memo(function GalleryPreviewRow({
 }, areGalleryPreviewRowPropsEqual);
 
 function areGalleryPreviewRowPropsEqual(
-    previous: { file: FileEntry; resultId: string },
-    next: { file: FileEntry; resultId: string },
+    previous: { file: FileEntry; maxHeight: number; resultId: string },
+    next: { file: FileEntry; maxHeight: number; resultId: string },
 ): boolean {
     return (
         previous.file.path === next.file.path &&
+        previous.maxHeight === next.maxHeight &&
         previous.resultId === next.resultId
     );
 }
@@ -492,6 +496,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                     <GalleryPreviewRow
                         file={file}
                         key={file.path}
+                        maxHeight={previewHeight}
                         resultId={resultId}
                     />
                 )

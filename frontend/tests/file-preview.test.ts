@@ -911,6 +911,49 @@ describe("O1 file preview", () => {
         expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
     });
 
+    it("truncates 20-row csv preview when maxHeight=220 to respect preview height setting", () => {
+        // Regression test for: "report.csv preview shows all 20 rows instead of respecting preview height"
+        // This simulates the nf-core/rnaseq fixture report.csv with 20 data rows in constrained preview mode
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/reports/report.csv" }),
+            content: {
+                content: buildCsv(20),
+                contentType: "text/csv",
+            },
+            maxHeight: 220,
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freports%2Freport.csv",
+        });
+
+        const rows = screen.getAllByRole("row");
+        // With 220px height, should show ~2-3 data rows + 1 header row (3-4 total)
+        // NOT all 20 data rows + 1 header (21 total)
+        expect(rows.length).toBeLessThan(10);
+        expect(rows.length).toBeGreaterThanOrEqual(3);
+        // Verify it's definitely truncated
+        expect(rows.length).toBeLessThan(21);
+    });
+
+    it("shows all rows for small csv when maxHeight is undefined (fallback behavior)", () => {
+        // This test documents the current behavior when maxHeight is not provided.
+        // Without maxHeight, the component falls back to showing min(100, rowCount).
+        // This is what happens in GalleryPreviewRow which doesn't pass maxHeight.
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/reports/report.csv" }),
+            content: {
+                content: buildCsv(20),
+                contentType: "text/csv",
+            },
+            // No maxHeight prop
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freports%2Freport.csv",
+        });
+
+        const rows = screen.getAllByRole("row");
+        // Without maxHeight, shows all 20 data rows + 1 header = 21 total
+        expect(rows.length).toBe(21);
+    });
+
     it("enlarged code preview allows scrolling with overflow-auto", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/script.py" }),

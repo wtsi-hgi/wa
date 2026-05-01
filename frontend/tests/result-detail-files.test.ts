@@ -455,7 +455,9 @@ describe("O1 result detail file integration", () => {
         });
     });
 
-    it("does not rerender non-image grid previews when only the preview height changes", async () => {
+    it("rerenders non-image grid previews once when preview height changes", async () => {
+        // Updated test: non-image previews (including CSV) now re-render when
+        // maxHeight changes to enable proper truncation based on preview height
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
 
@@ -492,8 +494,9 @@ describe("O1 result detail file integration", () => {
             screen.getByRole("button", { name: "preview-height-320" }),
         );
 
+        // Preview should re-render once due to maxHeight prop change
         expect(filePreviewRenderCounts.get("/tmp/results/a/report.json")).toBe(
-            settledRenderCount,
+            (settledRenderCount ?? 0) + 1,
         );
     });
 
