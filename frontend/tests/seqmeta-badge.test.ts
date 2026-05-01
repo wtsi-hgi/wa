@@ -260,6 +260,9 @@ describe("M1 result detail seqmeta enrichment", () => {
                 enrichment: buildEnrichment({
                     graph: {
                         ...buildEnrichment().graph,
+                        // Backend returns studies (plural array) for library_type enrichment
+                        study: undefined, // Remove singular study
+                        studies: [buildEnrichment().graph.study], // Use plural studies
                         samples: [
                             {
                                 sample_name: "Sample 1",
@@ -1218,33 +1221,36 @@ describe("M1 result detail seqmeta enrichment", () => {
                     identifier: "RNA",
                     type: "library_type",
                     graph: {
-                        study: {
-                            id_study_tmp: 42,
-                            id_lims: "SQSCP",
-                            id_study_lims: "6568",
-                            name: "RNA Seq",
-                            faculty_sponsor: "Dr Example",
-                            state: "active",
-                            abstract: "",
-                            abbreviation: "",
-                            accession_number: "ERP123456",
-                            description: "",
-                            data_release_strategy: "",
-                            study_title: "",
-                            data_access_group: "",
-                            hmdmc_number: "",
-                            programme: "",
-                            created: "2026-04-20T09:00:00Z",
-                            reference_genome: "",
-                            ethically_approved: false,
-                            study_type: "",
-                            contains_human_dna: false,
-                            contaminated_human_dna: false,
-                            study_visibility: "",
-                            ega_dac_accession_number: "",
-                            ega_policy_accession_number: "",
-                            data_release_timing: "",
-                        },
+                        // Backend returns studies (plural array) for library_type enrichment
+                        studies: [
+                            {
+                                id_study_tmp: 42,
+                                id_lims: "SQSCP",
+                                id_study_lims: "6568",
+                                name: "RNA Seq",
+                                faculty_sponsor: "Dr Example",
+                                state: "active",
+                                abstract: "",
+                                abbreviation: "",
+                                accession_number: "ERP123456",
+                                description: "",
+                                data_release_strategy: "",
+                                study_title: "",
+                                data_access_group: "",
+                                hmdmc_number: "",
+                                programme: "",
+                                created: "2026-04-20T09:00:00Z",
+                                reference_genome: "",
+                                ethically_approved: false,
+                                study_type: "",
+                                contains_human_dna: false,
+                                contaminated_human_dna: false,
+                                study_visibility: "",
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
+                                data_release_timing: "",
+                            },
+                        ],
                         samples: [
                             {
                                 id_study_lims: "6568",
@@ -1809,7 +1815,8 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 id_sample_lims: "LIMS002",
                             },
                         ],
-                        study: buildEnrichment().graph.study,
+                        // Backend returns studies (plural array) for library_type enrichment
+                        studies: [buildEnrichment().graph.study],
                     },
                 }),
             }),
@@ -1911,11 +1918,14 @@ describe("M1 result detail seqmeta enrichment", () => {
                     identifier: "RNA",
                     type: "library_type",
                     graph: {
-                        study: {
-                            ...buildEnrichment().graph.study,
-                            name: "HCA Study",
-                            id_study_lims: "6568",
-                        },
+                        // Backend returns studies (plural array) for library_type enrichment
+                        studies: [
+                            {
+                                ...buildEnrichment().graph.study,
+                                name: "HCA Study",
+                                id_study_lims: "6568",
+                            },
+                        ],
                         samples: [],
                     },
                 }),
@@ -2032,5 +2042,198 @@ describe("M1 result detail seqmeta enrichment", () => {
                 expect(labels).not.toContain("Sample");
             });
         });
+    });
+
+    it("does not emit duplicate React key warnings when rendering library metadata with overlapping sample data", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        // Capture console.error calls to detect React key warnings
+        const originalError = console.error;
+        const errors: string[] = [];
+        console.error = (...args: unknown[]) => {
+            const message = String(args[0]);
+            errors.push(message);
+            originalError(...args);
+        };
+
+        try {
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: "seqmeta_library",
+                    rawValue: "RNA",
+                    enrichment: buildEnrichment({
+                        graph: {
+                            ...buildEnrichment().graph,
+                            // Backend returns studies (plural array) for library_type enrichment
+                            study: undefined, // Remove singular study
+                            studies: [buildEnrichment().graph.study], // Use plural studies
+                            // graph.sample has sanger_id: "SANG001" from buildEnrichment()
+                            // Override samples array to include same ID
+                            samples: [
+                                {
+                                    sample_name: "Sample 1",
+                                    sanger_id: "SANG001",
+                                    id_sample_lims: "LIMS001",
+                                    id_study_lims: "6568",
+                                    taxon_id: 9606,
+                                    common_name: "Human",
+                                    library_type: "RNA",
+                                    id_run: 1234,
+                                    lane: 1,
+                                    tag_index: 7,
+                                    irods_path: "/seq/1234",
+                                    study_accession_number: "ERP123456",
+                                    accession_number: "ERS123456",
+                                },
+                                {
+                                    sample_name: "Sample 2",
+                                    sanger_id: "SANG002",
+                                    id_sample_lims: "LIMS002",
+                                    id_study_lims: "6568",
+                                    taxon_id: 9606,
+                                    common_name: "Human",
+                                    library_type: "RNA",
+                                    id_run: 1235,
+                                    lane: 2,
+                                    tag_index: 8,
+                                    irods_path: "/seq/1235",
+                                    study_accession_number: "ERP123456",
+                                    accession_number: "ERS123457",
+                                },
+                            ],
+                        },
+                    }),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            // Should have Samples section
+            expect(screen.getByText("Samples")).toBeTruthy();
+
+            // No duplicate key warnings
+            const duplicateKeyWarnings = errors.filter((msg) =>
+                msg.includes("Encountered two children with the same key"),
+            );
+            expect(duplicateKeyWarnings).toEqual([]);
+        } finally {
+            console.error = originalError;
+        }
+    });
+
+    it("displays study section for library metadata when study data is present", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_library",
+                rawValue: "Chromium single cell",
+                enrichment: {
+                    identifier: "Chromium single cell",
+                    type: "library_type",
+                    graph: {
+                        // Backend returns studies (plural array) for library_type enrichment
+                        studies: [
+                            {
+                                id_study_tmp: 99,
+                                id_lims: "SQSCP",
+                                id_study_lims: "7777",
+                                name: "Pilot study of dissociation methods for human gut tissues",
+                                faculty_sponsor: "Dr Smith",
+                                state: "active",
+                                abstract: "Comparing dissociation methods",
+                                abbreviation: "GutDiss",
+                                accession_number: "ERP999999",
+                                description:
+                                    "Study to compare dissociation techniques",
+                                data_release_strategy: "managed",
+                                study_title: "Gut Dissociation Pilot",
+                                data_access_group: "gut-team",
+                                hmdmc_number: "HMDMC-999",
+                                programme: "Tissue Methods",
+                                created: "2026-01-15T10:00:00Z",
+                                reference_genome: "GRCh38",
+                                ethically_approved: true,
+                                study_type: "Single Cell RNA Sequencing",
+                                contains_human_dna: true,
+                                contaminated_human_dna: false,
+                                study_visibility: "Always Open",
+                                ega_dac_accession_number: null,
+                                ega_policy_accession_number: null,
+                                data_release_timing: "Standard",
+                            },
+                        ],
+                        samples: [
+                            {
+                                id_study_lims: "7777",
+                                id_sample_lims: "SC001",
+                                sanger_id: "SANG_SC_001",
+                                sample_name: "Gut tissue A",
+                                taxon_id: 9606,
+                                common_name: "Human",
+                                library_type: "Chromium single cell",
+                                id_run: 9001,
+                                lane: 1,
+                                tag_index: 1,
+                                irods_path: "/seq/9001",
+                                study_accession_number: "ERP999999",
+                                accession_number: "ERS999001",
+                            },
+                            {
+                                id_study_lims: "7777",
+                                id_sample_lims: "SC002",
+                                sanger_id: "SANG_SC_002",
+                                sample_name: "Gut tissue B",
+                                taxon_id: 9606,
+                                common_name: "Human",
+                                library_type: "Chromium single cell",
+                                id_run: 9001,
+                                lane: 1,
+                                tag_index: 2,
+                                irods_path: "/seq/9001",
+                                study_accession_number: "ERP999999",
+                                accession_number: "ERS999002",
+                            },
+                        ],
+                    },
+                    partial: false,
+                },
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Study section should be present
+        const studyHeading = screen.getByText("Study");
+        expect(studyHeading).toBeTruthy();
+
+        // Study name should be displayed
+        expect(
+            screen.getByText(
+                "Pilot study of dissociation methods for human gut tissues",
+            ),
+        ).toBeTruthy();
+
+        // Study filter link should be available
+        expect(
+            screen.getByRole("link", {
+                name: /send study_id to search filter/i,
+            }),
+        ).toHaveProperty("href", expect.stringContaining("study_id=7777"));
+
+        // Samples section should also be present
+        expect(screen.getByText("Samples")).toBeTruthy();
+
+        // Both samples should be listed with no duplicate key warnings
+        expect(screen.getByText("Gut tissue A / SANG_SC_001")).toBeTruthy();
+        expect(screen.getByText("Gut tissue B / SANG_SC_002")).toBeTruthy();
     });
 });

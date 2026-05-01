@@ -444,28 +444,40 @@ function buildHierarchicalGroups(
 
     // For library details, show samples and parent study
     if (libraryMetadata) {
-        // Show parent study
-        if (enrichment.graph.study) {
+        // Show parent study/studies
+        // Backend returns graph.studies (plural array) for library_type enrichment
+        const studies = enrichment.graph.studies ?? [];
+
+        if (studies.length > 0) {
             groups.push({
                 type: "study",
                 title: "Study",
-                items: [
-                    {
-                        name: enrichment.graph.study.name,
-                        id: enrichment.graph.study.id_study_lims,
-                        accession:
-                            asString(enrichment.graph.study.accession_number) ??
-                            undefined,
-                    },
-                ],
+                items: studies.map((study) => ({
+                    name: study.name,
+                    id: study.id_study_lims,
+                    accession: asString(study.accession_number) ?? undefined,
+                })),
             });
         }
 
         // Show samples individually
-        const samples = [
+        const allSamples = [
             ...(enrichment.graph.sample ? [enrichment.graph.sample] : []),
             ...(enrichment.graph.samples ?? []),
         ];
+
+        // Deduplicate samples by sanger_id + id_sample_lims
+        const seenKeys = new Set<string>();
+        const samples = allSamples.filter((sample) => {
+            const key = `${sample.sanger_id}|${sample.id_sample_lims}`;
+
+            if (seenKeys.has(key)) {
+                return false;
+            }
+
+            seenKeys.add(key);
+            return true;
+        });
 
         if (samples.length > 0) {
             groups.push({
@@ -1106,10 +1118,7 @@ export function SeqmetaBadge({
 
                                                                                             return (
                                                                                                 <article
-                                                                                                    key={
-                                                                                                        sample.sanger_id ||
-                                                                                                        sample.id_sample_lims
-                                                                                                    }
+                                                                                                    key={`${sample.sanger_id}|${sample.id_sample_lims}`}
                                                                                                     data-seqmeta-detail-key="sample"
                                                                                                     className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-3 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
                                                                                                 >
@@ -1304,10 +1313,7 @@ export function SeqmetaBadge({
 
                                                                     return (
                                                                         <article
-                                                                            key={
-                                                                                sample.sanger_id ||
-                                                                                sample.id_sample_lims
-                                                                            }
+                                                                            key={`${sample.sanger_id}|${sample.id_sample_lims}`}
                                                                             data-seqmeta-detail-key="sample"
                                                                             className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
                                                                         >
