@@ -81,8 +81,9 @@ func classifySampleIdentifier(
 		Identifier: identifier,
 		Type:       identifierType,
 		Graph: EnrichmentGraph{
-			Sample:  &sample,
-			Samples: samples,
+			Sample:       &sample,
+			Samples:      samples,
+			SampleDetail: buildSampleDetail(sample, samples),
 		},
 	}
 
@@ -117,6 +118,26 @@ func missingHop(hop string, err error) MissingHop {
 	}
 
 	return MissingHop{Hop: hop, Reason: reason, Status: status}
+}
+
+// buildSampleDetail constructs a hierarchical SampleDetail grouping lanes for a sample.
+func buildSampleDetail(primarySample saga.MLWHSample, allSamples []saga.MLWHSample) *SampleDetail {
+	lanes := make([]LaneDetail, 0, len(allSamples))
+
+	for _, sample := range allSamples {
+		lanes = append(lanes, LaneDetail{
+			IDRun:    strconv.Itoa(sample.IDRun),
+			Lane:     strconv.Itoa(sample.Lane),
+			TagIndex: sample.TagIndex,
+		})
+	}
+
+	return &SampleDetail{
+		SangerID:   primarySample.SangerID,
+		SampleName: primarySample.SampleName,
+		Sample:     primarySample,
+		Lanes:      lanes,
+	}
 }
 
 func enrichSampleStudy(ctx context.Context, provider SAGAProvider, sample saga.MLWHSample, result *EnrichmentResult) error {
@@ -287,6 +308,10 @@ func enrichStudy(ctx context.Context, provider SAGAProvider, study *saga.Study, 
 
 	result.Graph.Samples = samples
 	result.Graph.Libraries = distinctLibraries(study.IDStudyLims, samples)
+
+	// Build hierarchical structure
+	result.Graph.StudyDetail = buildStudyDetail(*study, samples)
+
 	if len(result.Missing) > 0 {
 		result.Partial = true
 	}
@@ -443,6 +468,9 @@ func enrichStudiesForSamples(ctx context.Context, provider SAGAProvider, samples
 
 	result.Graph.Studies = studies
 
+	// Build hierarchical structure
+	result.Graph.StudyDetails = buildStudyDetails(studies, samples)
+
 	return nil
 }
 
@@ -586,6 +614,56 @@ func distinctLibrariesForSamples(samples []saga.MLWHSample) []Library {
 	}
 
 	return libraries
+}
+
+// buildStudyDetails constructs hierarchical StudyDetails from samples, grouping by study and library.
+func buildStudyDetails(studies []saga.Study, samples []saga.MLWHSample) []StudyDetail {
+	// Group samples by study
+	studyMap := make(map[string][]saga.MLWHSample)
+
+	for _, sample := range samples {
+		studyMap[sample.IDStudyLims] = append(studyMap[sample.IDStudyLims], sample)
+	}
+
+	// Build StudyDetails
+	studyDetails := make([]StudyDetail, 0, len(studies))
+
+	for _, study := range studies {
+		studySamples := studyMap[study.IDStudyLims]
+		if len(studySamples) == 0 {
+			continue
+		}
+
+		studyDetails = append(studyDetails, *buildStudyDetail(study, studySamples))
+	}
+
+	return studyDetails
+}
+
+// buildStudyDetail constructs a hierarchical StudyDetail grouping samples by library.
+func buildStudyDetail(study saga.Study, samples []saga.MLWHSample) *StudyDetail {
+	// Group samples by library type
+	libraryMap := make(map[string][]saga.MLWHSample)
+
+	for _, sample := range samples {
+		libraryMap[sample.LibraryType] = append(libraryMap[sample.LibraryType], sample)
+	}
+
+	// Build LibraryDetails
+	libraryDetails := make([]LibraryDetail, 0, len(libraryMap))
+
+	for libraryType, libSamples := range libraryMap {
+		libraryDetails = append(libraryDetails, LibraryDetail{
+			LibraryType: libraryType,
+			IDStudyLims: study.IDStudyLims,
+			Samples:     libSamples,
+		})
+	}
+
+	return &StudyDetail{
+		Study:          study,
+		LibraryDetails: libraryDetails,
+	}
 }
 
 func classifySangerSampleID(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {

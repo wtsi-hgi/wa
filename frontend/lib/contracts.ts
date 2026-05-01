@@ -151,6 +151,34 @@ export const projectUserSchema = z.object({
 });
 export type ProjectUser = z.infer<typeof projectUserSchema>;
 
+export const laneDetailSchema = z.object({
+    id_run: z.string(),
+    lane: z.string(),
+    tag_index: z.number(),
+});
+export type LaneDetail = z.infer<typeof laneDetailSchema>;
+
+export const sampleDetailSchema = z.object({
+    sanger_id: z.string(),
+    sample_name: z.string(),
+    sample: enrichmentSampleSchema,
+    lanes: z.array(laneDetailSchema),
+});
+export type SampleDetail = z.infer<typeof sampleDetailSchema>;
+
+export const libraryDetailSchema = z.object({
+    library_type: z.string(),
+    id_study_lims: z.string(),
+    samples: enrichmentSamplesSchema,
+});
+export type LibraryDetail = z.infer<typeof libraryDetailSchema>;
+
+export const studyDetailSchema = z.object({
+    study: enrichmentStudySchema,
+    library_details: z.array(libraryDetailSchema),
+});
+export type StudyDetail = z.infer<typeof studyDetailSchema>;
+
 export const enrichmentGraphSchema = z.object({
     study: enrichmentStudySchema.optional(),
     studies: enrichmentStudiesSchema.optional(),
@@ -160,6 +188,10 @@ export const enrichmentGraphSchema = z.object({
     libraries: z.array(libraryLinkSchema).optional(),
     project: projectSchema.optional(),
     users: z.array(projectUserSchema).optional(),
+    // Hierarchical structures
+    study_detail: studyDetailSchema.optional(),
+    study_details: z.array(studyDetailSchema).optional(),
+    sample_detail: sampleDetailSchema.optional(),
 });
 export type EnrichmentGraph = z.infer<typeof enrichmentGraphSchema>;
 

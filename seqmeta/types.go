@@ -116,6 +116,34 @@ type Library struct {
 	IDStudyLims string `json:"id_study_lims"`
 }
 
+// LaneDetail represents a lane on which a sample was sequenced.
+type LaneDetail struct {
+	IDRun    string `json:"id_run"`
+	Lane     string `json:"lane"`
+	TagIndex int    `json:"tag_index"`
+}
+
+// SampleDetail groups a sample with its sequencing lanes.
+type SampleDetail struct {
+	SangerID   string            `json:"sanger_id"`
+	SampleName string            `json:"sample_name"`
+	Sample     saga.MLWHSample   `json:"sample"`
+	Lanes      []LaneDetail      `json:"lanes"`
+}
+
+// LibraryDetail groups a library with its samples.
+type LibraryDetail struct {
+	LibraryType string            `json:"library_type"`
+	IDStudyLims string            `json:"id_study_lims"`
+	Samples     []saga.MLWHSample `json:"samples"`
+}
+
+// StudyDetail groups a study with its libraries and their samples.
+type StudyDetail struct {
+	Study          saga.Study      `json:"study"`
+	LibraryDetails []LibraryDetail `json:"library_details"`
+}
+
 // EnrichmentGraph is the flat graph envelope returned under "graph".
 type EnrichmentGraph struct {
 	Study     *saga.Study        `json:"study,omitempty"`
@@ -126,6 +154,11 @@ type EnrichmentGraph struct {
 	Libraries []Library          `json:"libraries,omitempty"`
 	Project   *saga.Project      `json:"project,omitempty"`
 	Users     []saga.ProjectUser `json:"users,omitempty"`
+
+	// Hierarchical structures
+	StudyDetail   *StudyDetail   `json:"study_detail,omitempty"`
+	StudyDetails  []StudyDetail  `json:"study_details,omitempty"`
+	SampleDetail  *SampleDetail  `json:"sample_detail,omitempty"`
 }
 
 // MissingHop records a hop that failed or was truncated.

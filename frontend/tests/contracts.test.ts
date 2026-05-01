@@ -259,4 +259,160 @@ describe("contract schemas", () => {
 
         expect(result.success).toBe(false);
     });
+
+    it("parses hierarchical enrichment structures with study_detail and library_details", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "6568",
+            type: "study_id",
+            graph: {
+                study: {
+                    id_study_tmp: 42,
+                    id_lims: "SQSCP",
+                    id_study_lims: "6568",
+                    name: "Test Study",
+                    faculty_sponsor: "Dr Example",
+                    state: "active",
+                    abstract: "",
+                    abbreviation: "",
+                    accession_number: "ERP001",
+                    description: "",
+                    data_release_strategy: "",
+                    study_title: "",
+                    data_access_group: "",
+                    hmdmc_number: "",
+                    programme: "",
+                    created: "2026-04-20T09:00:00Z",
+                    reference_genome: "",
+                    ethically_approved: false,
+                    study_type: "",
+                    contains_human_dna: false,
+                    contaminated_human_dna: false,
+                    study_visibility: "",
+                    ega_dac_accession_number: "",
+                    ega_policy_accession_number: "",
+                    data_release_timing: "",
+                },
+                study_detail: {
+                    study: {
+                        id_study_tmp: 42,
+                        id_lims: "SQSCP",
+                        id_study_lims: "6568",
+                        name: "Test Study",
+                        faculty_sponsor: "Dr Example",
+                        state: "active",
+                        abstract: "",
+                        abbreviation: "",
+                        accession_number: "ERP001",
+                        description: "",
+                        data_release_strategy: "",
+                        study_title: "",
+                        data_access_group: "",
+                        hmdmc_number: "",
+                        programme: "",
+                        created: "2026-04-20T09:00:00Z",
+                        reference_genome: "",
+                        ethically_approved: false,
+                        study_type: "",
+                        contains_human_dna: false,
+                        contaminated_human_dna: false,
+                        study_visibility: "",
+                        ega_dac_accession_number: "",
+                        ega_policy_accession_number: "",
+                        data_release_timing: "",
+                    },
+                    library_details: [
+                        {
+                            library_type: "RNA PolyA",
+                            id_study_lims: "6568",
+                            samples: [
+                                {
+                                    id_study_lims: "6568",
+                                    id_sample_lims: "SMP001",
+                                    sanger_id: "S1",
+                                    sample_name: "Sample 1",
+                                    taxon_id: 9606,
+                                    common_name: "Human",
+                                    library_type: "RNA PolyA",
+                                    id_run: 100,
+                                    lane: 1,
+                                    tag_index: 10,
+                                    irods_path: "/seq/100",
+                                    study_accession_number: "ERP001",
+                                    accession_number: "ERS001",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.graph.study_detail?.library_details).toHaveLength(1);
+            expect(result.data.graph.study_detail?.library_details[0]?.samples).toHaveLength(1);
+        }
+    });
+
+    it("parses hierarchical sample_detail with lanes", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "S1",
+            type: "sanger_sample_id",
+            graph: {
+                sample: {
+                    id_study_lims: "6568",
+                    id_sample_lims: "SMP001",
+                    sanger_id: "S1",
+                    sample_name: "Sample 1",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "RNA PolyA",
+                    id_run: 100,
+                    lane: 1,
+                    tag_index: 10,
+                    irods_path: "/seq/100",
+                    study_accession_number: "ERP001",
+                    accession_number: "ERS001",
+                },
+                sample_detail: {
+                    sanger_id: "S1",
+                    sample_name: "Sample 1",
+                    sample: {
+                        id_study_lims: "6568",
+                        id_sample_lims: "SMP001",
+                        sanger_id: "S1",
+                        sample_name: "Sample 1",
+                        taxon_id: 9606,
+                        common_name: "Human",
+                        library_type: "RNA PolyA",
+                        id_run: 100,
+                        lane: 1,
+                        tag_index: 10,
+                        irods_path: "/seq/100",
+                        study_accession_number: "ERP001",
+                        accession_number: "ERS001",
+                    },
+                    lanes: [
+                        {
+                            id_run: "100",
+                            lane: "1",
+                            tag_index: 10,
+                        },
+                        {
+                            id_run: "100",
+                            lane: "2",
+                            tag_index: 10,
+                        },
+                    ],
+                },
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.graph.sample_detail?.lanes).toHaveLength(2);
+        }
+    });
 });
