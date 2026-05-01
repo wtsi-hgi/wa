@@ -1530,6 +1530,17 @@ export function SeqmetaBadge({
                                                                                             ? "Copied"
                                                                                             : "Copy"}
                                                                                     </button>
+                                                                                    <Link
+                                                                                        aria-label="Send lane to search filter"
+                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                        href={`/?seqmeta_lane=${laneId}`}
+                                                                                    >
+                                                                                        <Search
+                                                                                            className="size-3.5"
+                                                                                            aria-hidden="true"
+                                                                                        />
+                                                                                        Filter
+                                                                                    </Link>
                                                                                 </div>
                                                                             </div>
                                                                         </article>
