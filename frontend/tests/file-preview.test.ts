@@ -842,4 +842,122 @@ describe("O1 file preview", () => {
 
         expect(largeRowCount).toBeGreaterThan(smallRowCount);
     });
+
+    it("constrained markdown preview uses overflow-hidden and shows truncation indicator", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/readme.md" }),
+            content: {
+                content: "# Title\n\n" + "Line content\n".repeat(50),
+                contentType: "text/markdown",
+            },
+            maxHeight: 200,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freadme.md",
+        });
+
+        const article = screen.getByText(/Title/i).closest("article");
+
+        expect(article).not.toBeNull();
+        expect(article?.className).not.toContain("overflow-auto");
+        expect(article?.className).not.toContain("overflow-y-auto");
+        expect(article?.className).toContain("overflow-hidden");
+
+        const truncationIndicator = screen.getByLabelText(/content truncated/i);
+        expect(truncationIndicator).toBeTruthy();
+        expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
+    });
+
+    it("constrained code preview uses overflow-hidden and shows truncation indicator", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/script.py" }),
+            content: {
+                content: "def function():\n    " + "pass\n".repeat(50),
+                contentType: "text/x-python",
+            },
+            maxHeight: 200,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fscript.py",
+        });
+
+        const pre = screen.getByText(/highlighted:/i).closest("pre");
+
+        expect(pre).not.toBeNull();
+        expect(pre?.className).not.toContain("overflow-auto");
+        expect(pre?.className).not.toContain("overflow-y-auto");
+        expect(pre?.className).toContain("overflow-hidden");
+
+        const truncationIndicator = screen.getByLabelText(/content truncated/i);
+        expect(truncationIndicator).toBeTruthy();
+        expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
+    });
+
+    it("constrained csv preview container uses overflow-hidden and shows truncation indicator", () => {
+        const { container } = renderPreview({
+            file: buildFile({ path: "/tmp/results/data.csv" }),
+            content: {
+                content: buildCsv(50),
+                contentType: "text/csv",
+            },
+            maxHeight: 200,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fdata.csv",
+        });
+
+        // Find the container with overflow-hidden class
+        const overflowHiddenContainer =
+            container.querySelector(".overflow-hidden");
+        expect(overflowHiddenContainer).not.toBeNull();
+
+        // Verify truncation indicator exists
+        const truncationIndicator = screen.getByLabelText(/content truncated/i);
+        expect(truncationIndicator).toBeTruthy();
+        expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
+    });
+
+    it("enlarged code preview allows scrolling with overflow-auto", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/script.py" }),
+            content: {
+                content: "def function():\n    " + "pass\n".repeat(50),
+                contentType: "text/x-python",
+            },
+            maxHeight: 200,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fscript.py",
+        });
+
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /enlarge script.py preview/i,
+            }),
+        );
+
+        const dialog = screen.getByRole("dialog");
+        const enlargedPre = dialog.querySelector("pre");
+
+        expect(enlargedPre).not.toBeNull();
+        expect(enlargedPre?.className).toContain("overflow-auto");
+    });
+
+    it("enlarged markdown preview allows scrolling in dialog wrapper", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/readme.md" }),
+            content: {
+                content: "# Title\n\n" + "Line content\n".repeat(50),
+                contentType: "text/markdown",
+            },
+            maxHeight: 200,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freadme.md",
+        });
+
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /enlarge readme.md preview/i,
+            }),
+        );
+
+        const dialog = screen.getByRole("dialog");
+        const dialogInner = dialog.querySelector(
+            ".max-h-\\[calc\\(100vh-8rem\\)\\]",
+        );
+
+        expect(dialogInner).not.toBeNull();
+        expect(dialogInner?.className).toContain("overflow-auto");
+    });
 });

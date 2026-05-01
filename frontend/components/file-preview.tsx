@@ -881,18 +881,25 @@ export function FilePreview({
                                 </article>
                             }
                         >
-                            <article
-                                className="max-w-none overflow-y-auto rounded-[1.5rem] border border-border/70 bg-background/75 p-6"
-                                style={
-                                    maxHeight
-                                        ? { maxHeight: `${maxHeight}px` }
-                                        : undefined
-                                }
-                            >
-                                <ReactMarkdown>
-                                    {content?.content ?? ""}
-                                </ReactMarkdown>
-                            </article>
+                            <div className="relative">
+                                <article
+                                    className="max-w-none overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-6"
+                                    style={
+                                        maxHeight
+                                            ? { maxHeight: `${maxHeight}px` }
+                                            : undefined
+                                    }
+                                >
+                                    <ReactMarkdown>
+                                        {content?.content ?? ""}
+                                    </ReactMarkdown>
+                                </article>
+                                <div
+                                    aria-label="Content truncated"
+                                    className="pointer-events-none absolute inset-x-0 bottom-0 h-16 rounded-b-[1.5rem] bg-gradient-to-t from-background/95 via-background/60 to-transparent"
+                                    data-truncated="true"
+                                />
+                            </div>
                         </ExpandablePreview>
                     ) : null}
 
@@ -910,20 +917,25 @@ export function FilePreview({
                                 />
                             }
                         >
-                            <div
-                                className={cn(
-                                    maxHeight ? "overflow-y-auto" : "",
-                                )}
-                                style={
-                                    maxHeight
-                                        ? { maxHeight: `${maxHeight}px` }
-                                        : undefined
-                                }
-                            >
-                                <CsvPreview
-                                    content={content.content}
-                                    contentType={content.contentType}
-                                    maxHeight={maxHeight}
+                            <div className="relative">
+                                <div
+                                    className="overflow-hidden"
+                                    style={
+                                        maxHeight
+                                            ? { maxHeight: `${maxHeight}px` }
+                                            : undefined
+                                    }
+                                >
+                                    <CsvPreview
+                                        content={content.content}
+                                        contentType={content.contentType}
+                                        maxHeight={maxHeight}
+                                    />
+                                </div>
+                                <div
+                                    aria-label="Content truncated"
+                                    className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background/95 via-background/60 to-transparent"
+                                    data-truncated="true"
                                 />
                             </div>
                         </ExpandablePreview>
@@ -945,7 +957,7 @@ export function FilePreview({
                                 </div>
                             }
                         >
-                            <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
+                            <div className="relative overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
                                 <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.24em] text-slate-300">
                                     <Expand
                                         className="size-4"
@@ -954,7 +966,7 @@ export function FilePreview({
                                     Syntax-highlighted preview
                                 </div>
                                 <pre
-                                    className="overflow-auto p-5 text-sm leading-7 text-slate-100"
+                                    className="overflow-hidden p-5 text-sm leading-7 text-slate-100"
                                     style={
                                         maxHeight
                                             ? { maxHeight: `${maxHeight}px` }
@@ -967,6 +979,11 @@ export function FilePreview({
                                         }}
                                     />
                                 </pre>
+                                <div
+                                    aria-label="Content truncated"
+                                    className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[color:rgba(15,23,42,0.96)] via-[color:rgba(15,23,42,0.7)] to-transparent"
+                                    data-truncated="true"
+                                />
                             </div>
                         </ExpandablePreview>
                     ) : null}
