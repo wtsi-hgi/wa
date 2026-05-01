@@ -291,20 +291,27 @@ describe("M1 result detail seqmeta enrichment", () => {
         ).toBeNull();
         expect(screen.queryByText("Study context: RNA Seq.")).toBeNull();
         expect(screen.queryByText("Resolved seqmeta type")).toBeNull();
+
+        // With the hierarchical fix, library metadata with samples now shows:
+        // - Study section with study_id filter link
+        // - Samples section with individual sample rows
+        expect(screen.getByText("Study")).toBeTruthy();
+        expect(screen.getByText("Samples")).toBeTruthy();
+
+        // Study link should be present
         expect(
-            screen.queryByRole("link", {
+            screen.getByRole("link", {
                 name: /send study_id to search filter/i,
             }),
-        ).toBeNull();
-        expect(
-            screen.queryByRole("link", {
-                name: /send seqmeta_sampleid to search filter/i,
-            }),
-        ).toBeNull();
-        expect(screen.getByText("Linked samples")).toBeTruthy();
-        expect(
-            screen.getByText("Sample 1 / SANG001, Sample 2 / SANG002"),
         ).toBeTruthy();
+
+        // Individual sample filter links should be present
+        expect(
+            screen.getAllByRole("link", {
+                name: /send seqmeta_sampleid to search filter/i,
+            }).length,
+        ).toBeGreaterThan(0);
+
         expect(screen.queryByText("Status")).toBeNull();
     });
 
@@ -892,5 +899,404 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         expect(screen.queryByText("Summary")).toBeNull();
         expect(screen.queryByText("Resolution")).toBeNull();
+    });
+
+    it("groups libraries without label duplication when study_detail hierarchy is present", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 42,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                            faculty_sponsor: "Dr Example",
+                            state: "active",
+                            abstract: "",
+                            abbreviation: "",
+                            accession_number: "ERP123456",
+                            description: "",
+                            data_release_strategy: "",
+                            study_title: "",
+                            data_access_group: "",
+                            hmdmc_number: "",
+                            programme: "",
+                            created: "2026-04-20T09:00:00Z",
+                            reference_genome: "",
+                            ethically_approved: false,
+                            study_type: "",
+                            contains_human_dna: false,
+                            contaminated_human_dna: false,
+                            study_visibility: "",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "",
+                        },
+                        study_detail: {
+                            study: {
+                                id_study_tmp: 42,
+                                id_lims: "SQSCP",
+                                id_study_lims: "6568",
+                                name: "RNA Seq",
+                                faculty_sponsor: "Dr Example",
+                                state: "active",
+                                abstract: "",
+                                abbreviation: "",
+                                accession_number: "ERP123456",
+                                description: "",
+                                data_release_strategy: "",
+                                study_title: "",
+                                data_access_group: "",
+                                hmdmc_number: "",
+                                programme: "",
+                                created: "2026-04-20T09:00:00Z",
+                                reference_genome: "",
+                                ethically_approved: false,
+                                study_type: "",
+                                contains_human_dna: false,
+                                contaminated_human_dna: false,
+                                study_visibility: "",
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
+                                data_release_timing: "",
+                            },
+                            library_details: [
+                                {
+                                    library_type: "RNA PolyA",
+                                    id_study_lims: "6568",
+                                    samples: [
+                                        {
+                                            id_study_lims: "6568",
+                                            id_sample_lims: "SMP001",
+                                            sanger_id: "S1",
+                                            sample_name: "Sample 1",
+                                            taxon_id: 9606,
+                                            common_name: "Human",
+                                            library_type: "RNA PolyA",
+                                            id_run: 100,
+                                            lane: 1,
+                                            tag_index: 10,
+                                            irods_path: "/seq/100",
+                                            study_accession_number: "ERP123456",
+                                            accession_number: "ERS001",
+                                        },
+                                    ],
+                                },
+                                {
+                                    library_type: "RNA Ribozero",
+                                    id_study_lims: "6568",
+                                    samples: [
+                                        {
+                                            id_study_lims: "6568",
+                                            id_sample_lims: "SMP002",
+                                            sanger_id: "S2",
+                                            sample_name: "Sample 2",
+                                            taxon_id: 9606,
+                                            common_name: "Human",
+                                            library_type: "RNA Ribozero",
+                                            id_run: 101,
+                                            lane: 1,
+                                            tag_index: 11,
+                                            irods_path: "/seq/101",
+                                            study_accession_number: "ERP123456",
+                                            accession_number: "ERS002",
+                                        },
+                                        {
+                                            id_study_lims: "6568",
+                                            id_sample_lims: "SMP003",
+                                            sanger_id: "S3",
+                                            sample_name: "Sample 3",
+                                            taxon_id: 9606,
+                                            common_name: "Human",
+                                            library_type: "RNA Ribozero",
+                                            id_run: 101,
+                                            lane: 2,
+                                            tag_index: 12,
+                                            irods_path: "/seq/101",
+                                            study_accession_number: "ERP123456",
+                                            accession_number: "ERS003",
+                                        },
+                                    ],
+                                },
+                                {
+                                    library_type: "WGS",
+                                    id_study_lims: "6568",
+                                    samples: [],
+                                },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Should have a Libraries section
+        expect(screen.getByText("Libraries")).toBeTruthy();
+
+        // Each library should appear once with its own copy/filter buttons
+        expect(screen.getAllByText("RNA PolyA")).toHaveLength(1);
+        expect(screen.getAllByText("RNA Ribozero")).toHaveLength(1);
+        expect(screen.getAllByText("WGS")).toHaveLength(1);
+
+        // Should not duplicate the "Library type" or "seqmeta_library" labels
+        // Each library card should have exactly one "Library type" label
+        const libraryTypeLabels = screen.queryAllByText("Library type", {
+            exact: true,
+        });
+
+        // We have 3 libraries, so we should have 3 "Library type" labels (one per library)
+        expect(libraryTypeLabels.length).toBe(3);
+
+        // Each library should have copy and filter buttons
+        const libraryButtons = screen.getAllByLabelText(/Copy|Filter/);
+
+        expect(libraryButtons.length).toBeGreaterThan(0);
+    });
+
+    it("nests samples under each library, collapsed by default and expandable", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 42,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                            faculty_sponsor: "Dr Example",
+                            state: "active",
+                            abstract: "",
+                            abbreviation: "",
+                            accession_number: "ERP123456",
+                            description: "",
+                            data_release_strategy: "",
+                            study_title: "",
+                            data_access_group: "",
+                            hmdmc_number: "",
+                            programme: "",
+                            created: "2026-04-20T09:00:00Z",
+                            reference_genome: "",
+                            ethically_approved: false,
+                            study_type: "",
+                            contains_human_dna: false,
+                            contaminated_human_dna: false,
+                            study_visibility: "",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "",
+                        },
+                        study_detail: {
+                            study: {
+                                id_study_tmp: 42,
+                                id_lims: "SQSCP",
+                                id_study_lims: "6568",
+                                name: "RNA Seq",
+                                faculty_sponsor: "Dr Example",
+                                state: "active",
+                                abstract: "",
+                                abbreviation: "",
+                                accession_number: "ERP123456",
+                                description: "",
+                                data_release_strategy: "",
+                                study_title: "",
+                                data_access_group: "",
+                                hmdmc_number: "",
+                                programme: "",
+                                created: "2026-04-20T09:00:00Z",
+                                reference_genome: "",
+                                ethically_approved: false,
+                                study_type: "",
+                                contains_human_dna: false,
+                                contaminated_human_dna: false,
+                                study_visibility: "",
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
+                                data_release_timing: "",
+                            },
+                            library_details: [
+                                {
+                                    library_type: "RNA PolyA",
+                                    id_study_lims: "6568",
+                                    samples: [
+                                        {
+                                            id_study_lims: "6568",
+                                            id_sample_lims: "SMP001",
+                                            sanger_id: "S1",
+                                            sample_name: "Sample 1",
+                                            taxon_id: 9606,
+                                            common_name: "Human",
+                                            library_type: "RNA PolyA",
+                                            id_run: 100,
+                                            lane: 1,
+                                            tag_index: 10,
+                                            irods_path: "/seq/100",
+                                            study_accession_number: "ERP123456",
+                                            accession_number: "ERS001",
+                                        },
+                                        {
+                                            id_study_lims: "6568",
+                                            id_sample_lims: "SMP002",
+                                            sanger_id: "S2",
+                                            sample_name: "Sample 2",
+                                            taxon_id: 9606,
+                                            common_name: "Human",
+                                            library_type: "RNA PolyA",
+                                            id_run: 100,
+                                            lane: 2,
+                                            tag_index: 11,
+                                            irods_path: "/seq/100",
+                                            study_accession_number: "ERP123456",
+                                            accession_number: "ERS002",
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Samples should be collapsed by default (not visible)
+        expect(screen.queryByText("Sample 1")).toBeNull();
+        expect(screen.queryByText("Sample 2")).toBeNull();
+
+        // There should be an expand button for the library with "2 samples" text
+        const expandButton = screen.getByText("2 samples").closest("button");
+
+        expect(expandButton).toBeTruthy();
+
+        // Click to expand
+        fireEvent.click(expandButton!);
+
+        await waitFor(() => {
+            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+        });
+
+        // Both samples should now be visible
+        expect(screen.getByText("Sample 2 / S2")).toBeTruthy();
+
+        // Each sample should have its own copy/filter buttons
+        const sampleButtons = screen.getAllByLabelText(/Copy|Filter/);
+
+        expect(sampleButtons.length).toBeGreaterThan(2);
+    });
+
+    it("lists samples individually for library detail and includes parent study", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_library",
+                rawValue: "RNA",
+                enrichment: buildEnrichment({
+                    identifier: "RNA",
+                    type: "library_type",
+                    graph: {
+                        study: {
+                            id_study_tmp: 42,
+                            id_lims: "SQSCP",
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                            faculty_sponsor: "Dr Example",
+                            state: "active",
+                            abstract: "",
+                            abbreviation: "",
+                            accession_number: "ERP123456",
+                            description: "",
+                            data_release_strategy: "",
+                            study_title: "",
+                            data_access_group: "",
+                            hmdmc_number: "",
+                            programme: "",
+                            created: "2026-04-20T09:00:00Z",
+                            reference_genome: "",
+                            ethically_approved: false,
+                            study_type: "",
+                            contains_human_dna: false,
+                            contaminated_human_dna: false,
+                            study_visibility: "",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "",
+                        },
+                        samples: [
+                            {
+                                id_study_lims: "6568",
+                                id_sample_lims: "SMP001",
+                                sanger_id: "S1",
+                                sample_name: "Sample 1",
+                                taxon_id: 9606,
+                                common_name: "Human",
+                                library_type: "RNA",
+                                id_run: 100,
+                                lane: 1,
+                                tag_index: 10,
+                                irods_path: "/seq/100",
+                                study_accession_number: "ERP123456",
+                                accession_number: "ERS001",
+                            },
+                            {
+                                id_study_lims: "6568",
+                                id_sample_lims: "SMP002",
+                                sanger_id: "S2",
+                                sample_name: "Sample 2",
+                                taxon_id: 9606,
+                                common_name: "Human",
+                                library_type: "RNA",
+                                id_run: 101,
+                                lane: 1,
+                                tag_index: 11,
+                                irods_path: "/seq/101",
+                                study_accession_number: "ERP123456",
+                                accession_number: "ERS002",
+                            },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Should have a Samples section
+        expect(screen.getByText("Samples")).toBeTruthy();
+
+        // Each sample should be on its own row with display name
+        expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+        expect(screen.getByText("Sample 2 / S2")).toBeTruthy();
+
+        // Should have a Study section showing the parent study
+        expect(screen.getByText("Study")).toBeTruthy();
+        expect(screen.getByText("RNA Seq")).toBeTruthy();
     });
 });
