@@ -2236,4 +2236,183 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("Gut tissue A / SANG_SC_001")).toBeTruthy();
         expect(screen.getByText("Gut tissue B / SANG_SC_002")).toBeTruthy();
     });
+
+    it("shows Related Data header before Study/Samples sections for seqmeta_library with no direct metadata", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_library",
+                rawValue: "Chromium single cell",
+                enrichment: {
+                    identifier: "Chromium single cell",
+                    type: "library_type",
+                    graph: {
+                        studies: [
+                            {
+                                id_study_tmp: 99,
+                                id_lims: "SQSCP",
+                                id_study_lims: "7777",
+                                name: "Test Study",
+                                faculty_sponsor: "Dr Test",
+                                state: "active",
+                                abstract: "Test abstract",
+                                abbreviation: "TST",
+                                accession_number: "ERP000001",
+                                description: "Test study description",
+                                data_release_strategy: "managed",
+                                study_title: "Test Study",
+                                data_access_group: "test-team",
+                                hmdmc_number: "HMDMC-001",
+                                programme: "Test Programme",
+                                created: "2026-01-15T10:00:00Z",
+                                reference_genome: "GRCh38",
+                                ethically_approved: true,
+                                study_type: "Single Cell RNA Sequencing",
+                                contains_human_dna: true,
+                                contaminated_human_dna: false,
+                                study_visibility: "Always Open",
+                                ega_dac_accession_number: null,
+                                ega_policy_accession_number: null,
+                                data_release_timing: "Standard",
+                            },
+                        ],
+                        samples: [
+                            {
+                                id_study_lims: "7777",
+                                id_sample_lims: "S001",
+                                sanger_id: "SANG_001",
+                                sample_name: "Sample A",
+                                taxon_id: 9606,
+                                common_name: "Human",
+                                library_type: "Chromium single cell",
+                                id_run: 1001,
+                                lane: 1,
+                                tag_index: 1,
+                                irods_path: "/seq/1001",
+                                study_accession_number: "ERP000001",
+                                accession_number: "ERS000001",
+                            },
+                        ],
+                    },
+                    partial: false,
+                },
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Should have a "Related Data" parent header
+        expect(screen.getByText("Related Data")).toBeTruthy();
+
+        // Study and Samples subsections should exist under Related Data
+        expect(screen.getByText("Study")).toBeTruthy();
+        expect(screen.getByText("Samples")).toBeTruthy();
+    });
+
+    it("shows Related Data header before Library/Study/Lanes sections for seqmeta_sampleid with direct metadata", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG_TEST_001",
+                enrichment: {
+                    identifier: "SANG_TEST_001",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: {
+                            id_study_tmp: 101,
+                            id_lims: "SQSCP",
+                            id_study_lims: "8888",
+                            name: "Test Sample Study",
+                            faculty_sponsor: "Dr Sample",
+                            state: "active",
+                            abstract: "Test sample abstract",
+                            abbreviation: "TSS",
+                            accession_number: "EGAS00001000001",
+                            description: "Test sample study",
+                            data_release_strategy: "managed",
+                            study_title: "Test Sample Study",
+                            data_access_group: "test-group",
+                            hmdmc_number: "19/9999",
+                            programme: "Test Programme",
+                            created: "2026-01-01T10:00:00Z",
+                            reference_genome: "GRCh38",
+                            ethically_approved: true,
+                            study_type: "Transcriptome Analysis",
+                            contains_human_dna: true,
+                            contaminated_human_dna: false,
+                            study_visibility: "Hold",
+                            ega_dac_accession_number: "",
+                            ega_policy_accession_number: "",
+                            data_release_timing: "delayed",
+                        },
+                        sample: {
+                            id_study_lims: "8888",
+                            id_sample_lims: "7000001",
+                            sanger_id: "SANG_TEST_001",
+                            sample_name: "Test Sample A",
+                            taxon_id: 9606,
+                            common_name: "human",
+                            library_type: "Chromium single cell RNA",
+                            id_run: 50001,
+                            lane: 1,
+                            tag_index: 5,
+                            irods_path:
+                                "/seq/illumina/runs/50/50001/lane1/plex5/50001_1#5.cram",
+                            study_accession_number: "EGAS00001000001",
+                            accession_number: "EGAN00004000001",
+                        },
+                        sample_detail: {
+                            sanger_id: "SANG_TEST_001",
+                            sample_name: "Test Sample A",
+                            sample: {
+                                id_study_lims: "8888",
+                                id_sample_lims: "7000001",
+                                sanger_id: "SANG_TEST_001",
+                                sample_name: "Test Sample A",
+                                taxon_id: 9606,
+                                common_name: "human",
+                                library_type: "Chromium single cell RNA",
+                                id_run: 50001,
+                                lane: 1,
+                                tag_index: 5,
+                                irods_path:
+                                    "/seq/illumina/runs/50/50001/lane1/plex5/50001_1#5.cram",
+                                study_accession_number: "EGAS00001000001",
+                                accession_number: "EGAN00004000001",
+                            },
+                            lanes: [
+                                { id_run: "50001", lane: "1", tag_index: 5 },
+                                { id_run: "50002", lane: "2", tag_index: 6 },
+                            ],
+                        },
+                    },
+                    partial: false,
+                },
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Should have Direct Metadata section (sample name, accession, etc.)
+        expect(screen.getByText("Direct Metadata")).toBeTruthy();
+
+        // Should have a "Related Data" parent header
+        expect(screen.getByText("Related Data")).toBeTruthy();
+
+        // Library, Study, and Lanes subsections should exist under Related Data
+        expect(screen.getByText("Library")).toBeTruthy();
+        expect(screen.getByText("Study")).toBeTruthy();
+        expect(screen.getByText("Lanes")).toBeTruthy();
+    });
 });

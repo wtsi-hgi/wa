@@ -943,398 +943,321 @@ export function SeqmetaBadge({
                                             );
                                         })()}
                                         {/* Show hierarchical groups for related data */}
-                                        {hierarchicalGroups.map((group) => {
-                                            if (group.type === "libraries") {
-                                                const libraries =
-                                                    group.items as HierarchicalLibrary[];
+                                        <div data-field-group="related-data">
+                                            <h4 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                Related Data
+                                            </h4>
+                                            <div className="space-y-6">
+                                                {hierarchicalGroups.map(
+                                                    (group) => {
+                                                        if (
+                                                            group.type ===
+                                                            "libraries"
+                                                        ) {
+                                                            const libraries =
+                                                                group.items as HierarchicalLibrary[];
 
-                                                return (
-                                                    <div
-                                                        key={group.title}
-                                                        data-field-group="libraries"
-                                                    >
-                                                        <h4 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                            {group.title}
-                                                        </h4>
-                                                        <div className="space-y-3">
-                                                            {libraries.map(
-                                                                (
-                                                                    library,
-                                                                    index,
-                                                                ) => {
-                                                                    const isExpanded =
-                                                                        expandedLibraries.has(
-                                                                            library.libraryType,
-                                                                        );
+                                                            return (
+                                                                <div
+                                                                    key={
+                                                                        group.title
+                                                                    }
+                                                                    data-field-group="libraries"
+                                                                >
+                                                                    <h5 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                                        {
+                                                                            group.title
+                                                                        }
+                                                                    </h5>
+                                                                    <div className="space-y-3">
+                                                                        {libraries.map(
+                                                                            (
+                                                                                library,
+                                                                                index,
+                                                                            ) => {
+                                                                                const isExpanded =
+                                                                                    expandedLibraries.has(
+                                                                                        library.libraryType,
+                                                                                    );
 
-                                                                    return (
-                                                                        <div
-                                                                            key={`${library.libraryType}-${index}`}
-                                                                            className="space-y-2"
-                                                                        >
-                                                                            <article
-                                                                                data-seqmeta-detail-key="seqmeta_library"
-                                                                                className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                            >
-                                                                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                                    <div className="min-w-0 flex-1">
-                                                                                        <p className="break-all text-sm leading-6 text-foreground">
-                                                                                            {
-                                                                                                library.libraryType
-                                                                                            }
-                                                                                        </p>
-                                                                                    </div>
-                                                                                    <div className="flex flex-wrap gap-2">
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            aria-label="Copy seqmeta_library"
-                                                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                            onClick={() => {
-                                                                                                void writeClipboard(
-                                                                                                    library.libraryType,
-                                                                                                ).then(
-                                                                                                    (
-                                                                                                        copied,
-                                                                                                    ) => {
-                                                                                                        if (
-                                                                                                            copied
-                                                                                                        ) {
-                                                                                                            setCopiedKey(
-                                                                                                                "seqmeta_library",
-                                                                                                            );
+                                                                                return (
+                                                                                    <div
+                                                                                        key={`${library.libraryType}-${index}`}
+                                                                                        className="space-y-2"
+                                                                                    >
+                                                                                        <article
+                                                                                            data-seqmeta-detail-key="seqmeta_library"
+                                                                                            className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                        >
+                                                                                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                                <div className="min-w-0 flex-1">
+                                                                                                    <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                        {
+                                                                                                            library.libraryType
                                                                                                         }
-                                                                                                    },
-                                                                                                );
-                                                                                            }}
-                                                                                        >
-                                                                                            <Copy
-                                                                                                className="size-3.5"
-                                                                                                aria-hidden="true"
-                                                                                            />
-                                                                                            {copiedKey ===
-                                                                                            "seqmeta_library"
-                                                                                                ? "Copied"
-                                                                                                : "Copy"}
-                                                                                        </button>
-                                                                                        <Link
-                                                                                            aria-label="Send seqmeta_library to search filter"
-                                                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                            href={`/?seqmeta_library=${library.libraryType}`}
-                                                                                        >
-                                                                                            <Search
-                                                                                                className="size-3.5"
-                                                                                                aria-hidden="true"
-                                                                                            />
-                                                                                            Filter
-                                                                                        </Link>
-                                                                                        {library
+                                                                                                    </p>
+                                                                                                </div>
+                                                                                                <div className="flex flex-wrap gap-2">
+                                                                                                    <button
+                                                                                                        type="button"
+                                                                                                        aria-label="Copy seqmeta_library"
+                                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                        onClick={() => {
+                                                                                                            void writeClipboard(
+                                                                                                                library.libraryType,
+                                                                                                            ).then(
+                                                                                                                (
+                                                                                                                    copied,
+                                                                                                                ) => {
+                                                                                                                    if (
+                                                                                                                        copied
+                                                                                                                    ) {
+                                                                                                                        setCopiedKey(
+                                                                                                                            "seqmeta_library",
+                                                                                                                        );
+                                                                                                                    }
+                                                                                                                },
+                                                                                                            );
+                                                                                                        }}
+                                                                                                    >
+                                                                                                        <Copy
+                                                                                                            className="size-3.5"
+                                                                                                            aria-hidden="true"
+                                                                                                        />
+                                                                                                        {copiedKey ===
+                                                                                                        "seqmeta_library"
+                                                                                                            ? "Copied"
+                                                                                                            : "Copy"}
+                                                                                                    </button>
+                                                                                                    <Link
+                                                                                                        aria-label="Send seqmeta_library to search filter"
+                                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                        href={`/?seqmeta_library=${library.libraryType}`}
+                                                                                                    >
+                                                                                                        <Search
+                                                                                                            className="size-3.5"
+                                                                                                            aria-hidden="true"
+                                                                                                        />
+                                                                                                        Filter
+                                                                                                    </Link>
+                                                                                                    {library
+                                                                                                        .samples
+                                                                                                        .length >
+                                                                                                    0 ? (
+                                                                                                        <button
+                                                                                                            type="button"
+                                                                                                            aria-label={
+                                                                                                                isExpanded
+                                                                                                                    ? "Hide samples"
+                                                                                                                    : "Show samples"
+                                                                                                            }
+                                                                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                            onClick={() => {
+                                                                                                                const newExpanded =
+                                                                                                                    new Set(
+                                                                                                                        expandedLibraries,
+                                                                                                                    );
+
+                                                                                                                if (
+                                                                                                                    isExpanded
+                                                                                                                ) {
+                                                                                                                    newExpanded.delete(
+                                                                                                                        library.libraryType,
+                                                                                                                    );
+                                                                                                                } else {
+                                                                                                                    newExpanded.add(
+                                                                                                                        library.libraryType,
+                                                                                                                    );
+                                                                                                                }
+
+                                                                                                                setExpandedLibraries(
+                                                                                                                    newExpanded,
+                                                                                                                );
+                                                                                                            }}
+                                                                                                        >
+                                                                                                            {isExpanded ? (
+                                                                                                                <ChevronDown
+                                                                                                                    className="size-3.5"
+                                                                                                                    aria-hidden="true"
+                                                                                                                />
+                                                                                                            ) : (
+                                                                                                                <ChevronRight
+                                                                                                                    className="size-3.5"
+                                                                                                                    aria-hidden="true"
+                                                                                                                />
+                                                                                                            )}
+                                                                                                            {
+                                                                                                                library
+                                                                                                                    .samples
+                                                                                                                    .length
+                                                                                                            }{" "}
+                                                                                                            sample
+                                                                                                            {library
+                                                                                                                .samples
+                                                                                                                .length !==
+                                                                                                            1
+                                                                                                                ? "s"
+                                                                                                                : ""}
+                                                                                                        </button>
+                                                                                                    ) : null}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </article>
+                                                                                        {isExpanded &&
+                                                                                        library
                                                                                             .samples
                                                                                             .length >
-                                                                                        0 ? (
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                aria-label={
-                                                                                                    isExpanded
-                                                                                                        ? "Hide samples"
-                                                                                                        : "Show samples"
-                                                                                                }
-                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                onClick={() => {
-                                                                                                    const newExpanded =
-                                                                                                        new Set(
-                                                                                                            expandedLibraries,
-                                                                                                        );
+                                                                                            0 ? (
+                                                                                            <div className="ml-4 space-y-2 border-l-2 border-border/40 pl-4">
+                                                                                                {library.samples.map(
+                                                                                                    (
+                                                                                                        sample,
+                                                                                                    ) => {
+                                                                                                        const displayName =
+                                                                                                            [
+                                                                                                                asString(
+                                                                                                                    sample.sample_name,
+                                                                                                                ),
+                                                                                                                asString(
+                                                                                                                    sample.sanger_id,
+                                                                                                                ),
+                                                                                                            ]
+                                                                                                                .filter(
+                                                                                                                    Boolean,
+                                                                                                                )
+                                                                                                                .join(
+                                                                                                                    " / ",
+                                                                                                                );
 
-                                                                                                    if (
-                                                                                                        isExpanded
-                                                                                                    ) {
-                                                                                                        newExpanded.delete(
-                                                                                                            library.libraryType,
+                                                                                                        return (
+                                                                                                            <article
+                                                                                                                key={`${sample.sanger_id}|${sample.id_sample_lims}`}
+                                                                                                                data-seqmeta-detail-key="sample"
+                                                                                                                className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-3 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                                            >
+                                                                                                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                                                    <div className="min-w-0 flex-1">
+                                                                                                                        <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                                            {
+                                                                                                                                displayName
+                                                                                                                            }
+                                                                                                                        </p>
+                                                                                                                    </div>
+                                                                                                                    <div className="flex flex-wrap gap-2">
+                                                                                                                        {sample.sanger_id ? (
+                                                                                                                            <>
+                                                                                                                                <button
+                                                                                                                                    type="button"
+                                                                                                                                    aria-label="Copy seqmeta_sampleid"
+                                                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                                                    onClick={() => {
+                                                                                                                                        void writeClipboard(
+                                                                                                                                            sample.sanger_id,
+                                                                                                                                        ).then(
+                                                                                                                                            (
+                                                                                                                                                copied,
+                                                                                                                                            ) => {
+                                                                                                                                                if (
+                                                                                                                                                    copied
+                                                                                                                                                ) {
+                                                                                                                                                    setCopiedKey(
+                                                                                                                                                        "seqmeta_sampleid",
+                                                                                                                                                    );
+                                                                                                                                                }
+                                                                                                                                            },
+                                                                                                                                        );
+                                                                                                                                    }}
+                                                                                                                                >
+                                                                                                                                    <Copy
+                                                                                                                                        className="size-3.5"
+                                                                                                                                        aria-hidden="true"
+                                                                                                                                    />
+                                                                                                                                    {copiedKey ===
+                                                                                                                                    "seqmeta_sampleid"
+                                                                                                                                        ? "Copied"
+                                                                                                                                        : "Copy"}
+                                                                                                                                </button>
+                                                                                                                                <Link
+                                                                                                                                    aria-label="Send seqmeta_sampleid to search filter"
+                                                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                                                    href={`/?seqmeta_sampleid=${sample.sanger_id}`}
+                                                                                                                                >
+                                                                                                                                    <Search
+                                                                                                                                        className="size-3.5"
+                                                                                                                                        aria-hidden="true"
+                                                                                                                                    />
+                                                                                                                                    Filter
+                                                                                                                                </Link>
+                                                                                                                            </>
+                                                                                                                        ) : null}
+                                                                                                                    </div>
+                                                                                                                </div>
+                                                                                                            </article>
                                                                                                         );
-                                                                                                    } else {
-                                                                                                        newExpanded.add(
-                                                                                                            library.libraryType,
-                                                                                                        );
-                                                                                                    }
-
-                                                                                                    setExpandedLibraries(
-                                                                                                        newExpanded,
-                                                                                                    );
-                                                                                                }}
-                                                                                            >
-                                                                                                {isExpanded ? (
-                                                                                                    <ChevronDown
-                                                                                                        className="size-3.5"
-                                                                                                        aria-hidden="true"
-                                                                                                    />
-                                                                                                ) : (
-                                                                                                    <ChevronRight
-                                                                                                        className="size-3.5"
-                                                                                                        aria-hidden="true"
-                                                                                                    />
+                                                                                                    },
                                                                                                 )}
-                                                                                                {
-                                                                                                    library
-                                                                                                        .samples
-                                                                                                        .length
-                                                                                                }{" "}
-                                                                                                sample
-                                                                                                {library
-                                                                                                    .samples
-                                                                                                    .length !==
-                                                                                                1
-                                                                                                    ? "s"
-                                                                                                    : ""}
-                                                                                            </button>
+                                                                                            </div>
                                                                                         ) : null}
                                                                                     </div>
-                                                                                </div>
-                                                                            </article>
-                                                                            {isExpanded &&
-                                                                            library
-                                                                                .samples
-                                                                                .length >
-                                                                                0 ? (
-                                                                                <div className="ml-4 space-y-2 border-l-2 border-border/40 pl-4">
-                                                                                    {library.samples.map(
-                                                                                        (
-                                                                                            sample,
-                                                                                        ) => {
-                                                                                            const displayName =
-                                                                                                [
-                                                                                                    asString(
-                                                                                                        sample.sample_name,
-                                                                                                    ),
-                                                                                                    asString(
-                                                                                                        sample.sanger_id,
-                                                                                                    ),
-                                                                                                ]
-                                                                                                    .filter(
-                                                                                                        Boolean,
-                                                                                                    )
-                                                                                                    .join(
-                                                                                                        " / ",
-                                                                                                    );
+                                                                                );
+                                                                            },
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        }
 
-                                                                                            return (
-                                                                                                <article
-                                                                                                    key={`${sample.sanger_id}|${sample.id_sample_lims}`}
-                                                                                                    data-seqmeta-detail-key="sample"
-                                                                                                    className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-3 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                                                >
-                                                                                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                                                        <div className="min-w-0 flex-1">
-                                                                                                            <p className="break-all text-sm leading-6 text-foreground">
-                                                                                                                {
-                                                                                                                    displayName
-                                                                                                                }
-                                                                                                            </p>
-                                                                                                        </div>
-                                                                                                        <div className="flex flex-wrap gap-2">
-                                                                                                            {sample.sanger_id ? (
-                                                                                                                <>
-                                                                                                                    <button
-                                                                                                                        type="button"
-                                                                                                                        aria-label="Copy seqmeta_sampleid"
-                                                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                                        onClick={() => {
-                                                                                                                            void writeClipboard(
-                                                                                                                                sample.sanger_id,
-                                                                                                                            ).then(
-                                                                                                                                (
-                                                                                                                                    copied,
-                                                                                                                                ) => {
-                                                                                                                                    if (
-                                                                                                                                        copied
-                                                                                                                                    ) {
-                                                                                                                                        setCopiedKey(
-                                                                                                                                            "seqmeta_sampleid",
-                                                                                                                                        );
-                                                                                                                                    }
-                                                                                                                                },
-                                                                                                                            );
-                                                                                                                        }}
-                                                                                                                    >
-                                                                                                                        <Copy
-                                                                                                                            className="size-3.5"
-                                                                                                                            aria-hidden="true"
-                                                                                                                        />
-                                                                                                                        {copiedKey ===
-                                                                                                                        "seqmeta_sampleid"
-                                                                                                                            ? "Copied"
-                                                                                                                            : "Copy"}
-                                                                                                                    </button>
-                                                                                                                    <Link
-                                                                                                                        aria-label="Send seqmeta_sampleid to search filter"
-                                                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                                        href={`/?seqmeta_sampleid=${sample.sanger_id}`}
-                                                                                                                    >
-                                                                                                                        <Search
-                                                                                                                            className="size-3.5"
-                                                                                                                            aria-hidden="true"
-                                                                                                                        />
-                                                                                                                        Filter
-                                                                                                                    </Link>
-                                                                                                                </>
-                                                                                                            ) : null}
-                                                                                                        </div>
-                                                                                                    </div>
-                                                                                                </article>
-                                                                                            );
-                                                                                        },
-                                                                                    )}
-                                                                                </div>
-                                                                            ) : null}
-                                                                        </div>
-                                                                    );
-                                                                },
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
+                                                        if (
+                                                            group.type ===
+                                                            "study"
+                                                        ) {
+                                                            const studies =
+                                                                group.items as {
+                                                                    name: string;
+                                                                    id: string;
+                                                                    accession?: string;
+                                                                }[];
 
-                                            if (group.type === "study") {
-                                                const studies = group.items as {
-                                                    name: string;
-                                                    id: string;
-                                                    accession?: string;
-                                                }[];
-
-                                                return (
-                                                    <div
-                                                        key={group.title}
-                                                        data-field-group="study"
-                                                    >
-                                                        <h4 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                            {group.title}
-                                                        </h4>
-                                                        <div className="space-y-3">
-                                                            {studies.map(
-                                                                (study) => (
-                                                                    <article
-                                                                        key={
-                                                                            study.id
+                                                            return (
+                                                                <div
+                                                                    key={
+                                                                        group.title
+                                                                    }
+                                                                    data-field-group="study"
+                                                                >
+                                                                    <h5 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                                        {
+                                                                            group.title
                                                                         }
-                                                                        data-seqmeta-detail-key="study"
-                                                                        className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                    >
-                                                                        <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                            <div className="min-w-0 flex-1">
-                                                                                <p className="break-all text-sm leading-6 text-foreground">
-                                                                                    {
-                                                                                        study.name
+                                                                    </h5>
+                                                                    <div className="space-y-3">
+                                                                        {studies.map(
+                                                                            (
+                                                                                study,
+                                                                            ) => (
+                                                                                <article
+                                                                                    key={
+                                                                                        study.id
                                                                                     }
-                                                                                </p>
-                                                                            </div>
-                                                                            <div className="flex flex-wrap gap-2">
-                                                                                <button
-                                                                                    type="button"
-                                                                                    aria-label="Copy study_id"
-                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                    onClick={() => {
-                                                                                        void writeClipboard(
-                                                                                            study.id,
-                                                                                        ).then(
-                                                                                            (
-                                                                                                copied,
-                                                                                            ) => {
-                                                                                                if (
-                                                                                                    copied
-                                                                                                ) {
-                                                                                                    setCopiedKey(
-                                                                                                        "study_id",
-                                                                                                    );
+                                                                                    data-seqmeta-detail-key="study"
+                                                                                    className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                >
+                                                                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                        <div className="min-w-0 flex-1">
+                                                                                            <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                {
+                                                                                                    study.name
                                                                                                 }
-                                                                                            },
-                                                                                        );
-                                                                                    }}
-                                                                                >
-                                                                                    <Copy
-                                                                                        className="size-3.5"
-                                                                                        aria-hidden="true"
-                                                                                    />
-                                                                                    {copiedKey ===
-                                                                                    "study_id"
-                                                                                        ? "Copied"
-                                                                                        : "Copy"}
-                                                                                </button>
-                                                                                <Link
-                                                                                    aria-label="Send study_id to search filter"
-                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                    href={`/?study_id=${study.id}`}
-                                                                                >
-                                                                                    <Search
-                                                                                        className="size-3.5"
-                                                                                        aria-hidden="true"
-                                                                                    />
-                                                                                    Filter
-                                                                                </Link>
-                                                                            </div>
-                                                                        </div>
-                                                                    </article>
-                                                                ),
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-
-                                            if (group.type === "samples") {
-                                                const samples =
-                                                    group.items as EnrichmentSample[];
-
-                                                return (
-                                                    <div
-                                                        key={group.title}
-                                                        data-field-group="samples"
-                                                    >
-                                                        <h4 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                            {group.title}
-                                                        </h4>
-                                                        <div className="space-y-3">
-                                                            {samples.map(
-                                                                (sample) => {
-                                                                    const displayName =
-                                                                        [
-                                                                            asString(
-                                                                                sample.sample_name,
-                                                                            ),
-                                                                            asString(
-                                                                                sample.sanger_id,
-                                                                            ),
-                                                                        ]
-                                                                            .filter(
-                                                                                Boolean,
-                                                                            )
-                                                                            .join(
-                                                                                " / ",
-                                                                            );
-
-                                                                    return (
-                                                                        <article
-                                                                            key={`${sample.sanger_id}|${sample.id_sample_lims}`}
-                                                                            data-seqmeta-detail-key="sample"
-                                                                            className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                        >
-                                                                            <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                                <div className="min-w-0 flex-1">
-                                                                                    <p className="break-all text-sm leading-6 text-foreground">
-                                                                                        {
-                                                                                            displayName
-                                                                                        }
-                                                                                    </p>
-                                                                                </div>
-                                                                                <div className="flex flex-wrap gap-2">
-                                                                                    {sample.sanger_id ? (
-                                                                                        <>
+                                                                                            </p>
+                                                                                        </div>
+                                                                                        <div className="flex flex-wrap gap-2">
                                                                                             <button
                                                                                                 type="button"
-                                                                                                aria-label="Copy seqmeta_sampleid"
+                                                                                                aria-label="Copy study_id"
                                                                                                 className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                                                                                 onClick={() => {
                                                                                                     void writeClipboard(
-                                                                                                        sample.sanger_id,
+                                                                                                        study.id,
                                                                                                     ).then(
                                                                                                         (
                                                                                                             copied,
@@ -1343,7 +1266,7 @@ export function SeqmetaBadge({
                                                                                                                 copied
                                                                                                             ) {
                                                                                                                 setCopiedKey(
-                                                                                                                    "seqmeta_sampleid",
+                                                                                                                    "study_id",
                                                                                                                 );
                                                                                                             }
                                                                                                         },
@@ -1355,14 +1278,14 @@ export function SeqmetaBadge({
                                                                                                     aria-hidden="true"
                                                                                                 />
                                                                                                 {copiedKey ===
-                                                                                                "seqmeta_sampleid"
+                                                                                                "study_id"
                                                                                                     ? "Copied"
                                                                                                     : "Copy"}
                                                                                             </button>
                                                                                             <Link
-                                                                                                aria-label="Send seqmeta_sampleid to search filter"
+                                                                                                aria-label="Send study_id to search filter"
                                                                                                 className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                href={`/?seqmeta_sampleid=${sample.sanger_id}`}
+                                                                                                href={`/?study_id=${study.id}`}
                                                                                             >
                                                                                                 <Search
                                                                                                     className="size-3.5"
@@ -1370,196 +1293,323 @@ export function SeqmetaBadge({
                                                                                                 />
                                                                                                 Filter
                                                                                             </Link>
-                                                                                        </>
-                                                                                    ) : null}
-                                                                                </div>
-                                                                            </div>
-                                                                        </article>
-                                                                    );
-                                                                },
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </article>
+                                                                            ),
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        }
 
-                                            if (group.type === "library") {
-                                                const libraries =
-                                                    group.items as HierarchicalLibrary[];
+                                                        if (
+                                                            group.type ===
+                                                            "samples"
+                                                        ) {
+                                                            const samples =
+                                                                group.items as EnrichmentSample[];
 
-                                                return (
-                                                    <div
-                                                        key={group.title}
-                                                        data-field-group="library"
-                                                    >
-                                                        <h4 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                            {group.title}
-                                                        </h4>
-                                                        <div className="space-y-3">
-                                                            {libraries.map(
-                                                                (
-                                                                    library,
-                                                                    index,
-                                                                ) => (
-                                                                    <article
-                                                                        key={`${library.libraryType}-${index}`}
-                                                                        data-seqmeta-detail-key="library"
-                                                                        className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                    >
-                                                                        <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                            <div className="min-w-0 flex-1">
-                                                                                <p className="break-all text-sm leading-6 text-foreground">
-                                                                                    {
-                                                                                        library.libraryType
-                                                                                    }
-                                                                                </p>
-                                                                            </div>
-                                                                            <div className="flex flex-wrap gap-2">
-                                                                                <button
-                                                                                    type="button"
-                                                                                    aria-label="Copy seqmeta_library"
-                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                    onClick={() => {
-                                                                                        void writeClipboard(
-                                                                                            library.libraryType,
-                                                                                        ).then(
-                                                                                            (
-                                                                                                copied,
-                                                                                            ) => {
-                                                                                                if (
-                                                                                                    copied
-                                                                                                ) {
-                                                                                                    setCopiedKey(
-                                                                                                        "seqmeta_library",
-                                                                                                    );
-                                                                                                }
-                                                                                            },
+                                                            return (
+                                                                <div
+                                                                    key={
+                                                                        group.title
+                                                                    }
+                                                                    data-field-group="samples"
+                                                                >
+                                                                    <h5 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                                        {
+                                                                            group.title
+                                                                        }
+                                                                    </h5>
+                                                                    <div className="space-y-3">
+                                                                        {samples.map(
+                                                                            (
+                                                                                sample,
+                                                                            ) => {
+                                                                                const displayName =
+                                                                                    [
+                                                                                        asString(
+                                                                                            sample.sample_name,
+                                                                                        ),
+                                                                                        asString(
+                                                                                            sample.sanger_id,
+                                                                                        ),
+                                                                                    ]
+                                                                                        .filter(
+                                                                                            Boolean,
+                                                                                        )
+                                                                                        .join(
+                                                                                            " / ",
                                                                                         );
-                                                                                    }}
-                                                                                >
-                                                                                    <Copy
-                                                                                        className="size-3.5"
-                                                                                        aria-hidden="true"
-                                                                                    />
-                                                                                    {copiedKey ===
-                                                                                    "seqmeta_library"
-                                                                                        ? "Copied"
-                                                                                        : "Copy"}
-                                                                                </button>
-                                                                                <Link
-                                                                                    aria-label="Send seqmeta_library to search filter"
-                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                    href={`/?seqmeta_library=${library.libraryType}`}
-                                                                                >
-                                                                                    <Search
-                                                                                        className="size-3.5"
-                                                                                        aria-hidden="true"
-                                                                                    />
-                                                                                    Filter
-                                                                                </Link>
-                                                                            </div>
-                                                                        </div>
-                                                                    </article>
-                                                                ),
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
 
-                                            if (group.type === "lanes") {
-                                                const lanes = group.items as {
-                                                    id_run: string;
-                                                    lane: string;
-                                                    tag_index: number;
-                                                }[];
-
-                                                return (
-                                                    <div
-                                                        key={group.title}
-                                                        data-field-group="lanes"
-                                                    >
-                                                        <h4 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                            {group.title}
-                                                        </h4>
-                                                        <div className="space-y-3">
-                                                            {lanes.map(
-                                                                (
-                                                                    lane,
-                                                                    index,
-                                                                ) => {
-                                                                    const laneId = `${lane.id_run}_${lane.lane}#${lane.tag_index}`;
-
-                                                                    return (
-                                                                        <article
-                                                                            key={`${laneId}-${index}`}
-                                                                            data-seqmeta-detail-key="lane"
-                                                                            className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                        >
-                                                                            <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                                <div className="min-w-0 flex-1">
-                                                                                    <p className="break-all text-sm leading-6 text-foreground">
-                                                                                        {
-                                                                                            laneId
-                                                                                        }
-                                                                                    </p>
-                                                                                </div>
-                                                                                <div className="flex flex-wrap gap-2">
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        aria-label="Copy lane ID"
-                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                        onClick={() => {
-                                                                                            void writeClipboard(
-                                                                                                laneId,
-                                                                                            ).then(
-                                                                                                (
-                                                                                                    copied,
-                                                                                                ) => {
-                                                                                                    if (
-                                                                                                        copied
-                                                                                                    ) {
-                                                                                                        setCopiedKey(
-                                                                                                            laneId,
-                                                                                                        );
+                                                                                return (
+                                                                                    <article
+                                                                                        key={`${sample.sanger_id}|${sample.id_sample_lims}`}
+                                                                                        data-seqmeta-detail-key="sample"
+                                                                                        className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                    >
+                                                                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                            <div className="min-w-0 flex-1">
+                                                                                                <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                    {
+                                                                                                        displayName
                                                                                                     }
-                                                                                                },
-                                                                                            );
-                                                                                        }}
-                                                                                    >
-                                                                                        <Copy
-                                                                                            className="size-3.5"
-                                                                                            aria-hidden="true"
-                                                                                        />
-                                                                                        {copiedKey ===
-                                                                                        laneId
-                                                                                            ? "Copied"
-                                                                                            : "Copy"}
-                                                                                    </button>
-                                                                                    <Link
-                                                                                        aria-label="Send lane to search filter"
-                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                        href={`/?seqmeta_lane=${laneId}`}
-                                                                                    >
-                                                                                        <Search
-                                                                                            className="size-3.5"
-                                                                                            aria-hidden="true"
-                                                                                        />
-                                                                                        Filter
-                                                                                    </Link>
-                                                                                </div>
-                                                                            </div>
-                                                                        </article>
-                                                                    );
-                                                                },
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
+                                                                                                </p>
+                                                                                            </div>
+                                                                                            <div className="flex flex-wrap gap-2">
+                                                                                                {sample.sanger_id ? (
+                                                                                                    <>
+                                                                                                        <button
+                                                                                                            type="button"
+                                                                                                            aria-label="Copy seqmeta_sampleid"
+                                                                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                            onClick={() => {
+                                                                                                                void writeClipboard(
+                                                                                                                    sample.sanger_id,
+                                                                                                                ).then(
+                                                                                                                    (
+                                                                                                                        copied,
+                                                                                                                    ) => {
+                                                                                                                        if (
+                                                                                                                            copied
+                                                                                                                        ) {
+                                                                                                                            setCopiedKey(
+                                                                                                                                "seqmeta_sampleid",
+                                                                                                                            );
+                                                                                                                        }
+                                                                                                                    },
+                                                                                                                );
+                                                                                                            }}
+                                                                                                        >
+                                                                                                            <Copy
+                                                                                                                className="size-3.5"
+                                                                                                                aria-hidden="true"
+                                                                                                            />
+                                                                                                            {copiedKey ===
+                                                                                                            "seqmeta_sampleid"
+                                                                                                                ? "Copied"
+                                                                                                                : "Copy"}
+                                                                                                        </button>
+                                                                                                        <Link
+                                                                                                            aria-label="Send seqmeta_sampleid to search filter"
+                                                                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                            href={`/?seqmeta_sampleid=${sample.sanger_id}`}
+                                                                                                        >
+                                                                                                            <Search
+                                                                                                                className="size-3.5"
+                                                                                                                aria-hidden="true"
+                                                                                                            />
+                                                                                                            Filter
+                                                                                                        </Link>
+                                                                                                    </>
+                                                                                                ) : null}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </article>
+                                                                                );
+                                                                            },
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        }
 
-                                            return null;
-                                        })}
+                                                        if (
+                                                            group.type ===
+                                                            "library"
+                                                        ) {
+                                                            const libraries =
+                                                                group.items as HierarchicalLibrary[];
+
+                                                            return (
+                                                                <div
+                                                                    key={
+                                                                        group.title
+                                                                    }
+                                                                    data-field-group="library"
+                                                                >
+                                                                    <h5 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                                        {
+                                                                            group.title
+                                                                        }
+                                                                    </h5>
+                                                                    <div className="space-y-3">
+                                                                        {libraries.map(
+                                                                            (
+                                                                                library,
+                                                                                index,
+                                                                            ) => (
+                                                                                <article
+                                                                                    key={`${library.libraryType}-${index}`}
+                                                                                    data-seqmeta-detail-key="library"
+                                                                                    className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                >
+                                                                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                        <div className="min-w-0 flex-1">
+                                                                                            <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                {
+                                                                                                    library.libraryType
+                                                                                                }
+                                                                                            </p>
+                                                                                        </div>
+                                                                                        <div className="flex flex-wrap gap-2">
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                aria-label="Copy seqmeta_library"
+                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                onClick={() => {
+                                                                                                    void writeClipboard(
+                                                                                                        library.libraryType,
+                                                                                                    ).then(
+                                                                                                        (
+                                                                                                            copied,
+                                                                                                        ) => {
+                                                                                                            if (
+                                                                                                                copied
+                                                                                                            ) {
+                                                                                                                setCopiedKey(
+                                                                                                                    "seqmeta_library",
+                                                                                                                );
+                                                                                                            }
+                                                                                                        },
+                                                                                                    );
+                                                                                                }}
+                                                                                            >
+                                                                                                <Copy
+                                                                                                    className="size-3.5"
+                                                                                                    aria-hidden="true"
+                                                                                                />
+                                                                                                {copiedKey ===
+                                                                                                "seqmeta_library"
+                                                                                                    ? "Copied"
+                                                                                                    : "Copy"}
+                                                                                            </button>
+                                                                                            <Link
+                                                                                                aria-label="Send seqmeta_library to search filter"
+                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                href={`/?seqmeta_library=${library.libraryType}`}
+                                                                                            >
+                                                                                                <Search
+                                                                                                    className="size-3.5"
+                                                                                                    aria-hidden="true"
+                                                                                                />
+                                                                                                Filter
+                                                                                            </Link>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </article>
+                                                                            ),
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        }
+
+                                                        if (
+                                                            group.type ===
+                                                            "lanes"
+                                                        ) {
+                                                            const lanes =
+                                                                group.items as {
+                                                                    id_run: string;
+                                                                    lane: string;
+                                                                    tag_index: number;
+                                                                }[];
+
+                                                            return (
+                                                                <div
+                                                                    key={
+                                                                        group.title
+                                                                    }
+                                                                    data-field-group="lanes"
+                                                                >
+                                                                    <h5 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                                                                        {
+                                                                            group.title
+                                                                        }
+                                                                    </h5>
+                                                                    <div className="space-y-3">
+                                                                        {lanes.map(
+                                                                            (
+                                                                                lane,
+                                                                                index,
+                                                                            ) => {
+                                                                                const laneId = `${lane.id_run}_${lane.lane}#${lane.tag_index}`;
+
+                                                                                return (
+                                                                                    <article
+                                                                                        key={`${laneId}-${index}`}
+                                                                                        data-seqmeta-detail-key="lane"
+                                                                                        className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                    >
+                                                                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                            <div className="min-w-0 flex-1">
+                                                                                                <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                    {
+                                                                                                        laneId
+                                                                                                    }
+                                                                                                </p>
+                                                                                            </div>
+                                                                                            <div className="flex flex-wrap gap-2">
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    aria-label="Copy lane ID"
+                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                    onClick={() => {
+                                                                                                        void writeClipboard(
+                                                                                                            laneId,
+                                                                                                        ).then(
+                                                                                                            (
+                                                                                                                copied,
+                                                                                                            ) => {
+                                                                                                                if (
+                                                                                                                    copied
+                                                                                                                ) {
+                                                                                                                    setCopiedKey(
+                                                                                                                        laneId,
+                                                                                                                    );
+                                                                                                                }
+                                                                                                            },
+                                                                                                        );
+                                                                                                    }}
+                                                                                                >
+                                                                                                    <Copy
+                                                                                                        className="size-3.5"
+                                                                                                        aria-hidden="true"
+                                                                                                    />
+                                                                                                    {copiedKey ===
+                                                                                                    laneId
+                                                                                                        ? "Copied"
+                                                                                                        : "Copy"}
+                                                                                                </button>
+                                                                                                <Link
+                                                                                                    aria-label="Send lane to search filter"
+                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                    href={`/?seqmeta_lane=${laneId}`}
+                                                                                                >
+                                                                                                    <Search
+                                                                                                        className="size-3.5"
+                                                                                                        aria-hidden="true"
+                                                                                                    />
+                                                                                                    Filter
+                                                                                                </Link>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </article>
+                                                                                );
+                                                                            },
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        }
+
+                                                        return null;
+                                                    },
+                                                )}
+                                            </div>
+                                        </div>
                                     </div>
                                 ) : (
                                     <>
