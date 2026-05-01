@@ -197,10 +197,6 @@ function collectSeqmetaAliases(
         addSampleAliases(enrichment.graph.sample);
     }
 
-    for (const sample of enrichment.graph.samples ?? []) {
-        addSampleAliases(sample);
-    }
-
     return Array.from(aliases.entries());
 }
 

@@ -184,9 +184,55 @@ describe("H3 enrichment state and badge", () => {
         expect(fetchStudyLibrarySamplesMock).toHaveBeenCalledTimes(1);
     });
 
-    it("reuses a resolved enrichment for related sample values while looking up libraries independently", async () => {
+    it("looks up sample identifiers independently so sample details do not reuse study-level enrichment", async () => {
         enrichIdentifierMock
             .mockResolvedValueOnce(buildEnrichmentResult())
+            .mockResolvedValueOnce(
+                buildEnrichmentResult({
+                    identifier: "SANG001",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: buildEnrichmentStudy(),
+                        sample: {
+                            id_study_lims: "6568",
+                            id_sample_lims: "LIMS001",
+                            sanger_id: "SANG001",
+                            sample_name: "Sample 1",
+                            taxon_id: 9606,
+                            common_name: "Human",
+                            library_type: "RNA",
+                            id_run: 1234,
+                            lane: 1,
+                            tag_index: 7,
+                            irods_path: "/seq/1234",
+                            study_accession_number: "ERP123456",
+                            accession_number: "ERS123456",
+                        },
+                        sample_detail: {
+                            sanger_id: "SANG001",
+                            sample_name: "Sample 1",
+                            sample: {
+                                id_study_lims: "6568",
+                                id_sample_lims: "LIMS001",
+                                sanger_id: "SANG001",
+                                sample_name: "Sample 1",
+                                taxon_id: 9606,
+                                common_name: "Human",
+                                library_type: "RNA",
+                                id_run: 1234,
+                                lane: 1,
+                                tag_index: 7,
+                                irods_path: "/seq/1234",
+                                study_accession_number: "ERP123456",
+                                accession_number: "ERS123456",
+                            },
+                            lanes: [
+                                { id_run: "1234", lane: "1", tag_index: 7 },
+                            ],
+                        },
+                    },
+                }),
+            )
             .mockResolvedValueOnce(
                 buildEnrichmentResult({
                     identifier: "RNA",
@@ -227,9 +273,10 @@ describe("H3 enrichment state and badge", () => {
             expect(studyRow?.textContent).toBe("6568");
         });
 
-        expect(enrichIdentifierMock).toHaveBeenCalledTimes(2);
+        expect(enrichIdentifierMock).toHaveBeenCalledTimes(3);
         expect(enrichIdentifierMock).toHaveBeenNthCalledWith(1, "6568");
-        expect(enrichIdentifierMock).toHaveBeenNthCalledWith(2, "RNA");
+        expect(enrichIdentifierMock).toHaveBeenNthCalledWith(2, "SANG001");
+        expect(enrichIdentifierMock).toHaveBeenNthCalledWith(3, "RNA");
 
         const sampleRow = document.querySelector(
             '[data-metadata-row="seqmeta_sampleid"] [data-testid="seqmeta-badge-label"]',
@@ -269,9 +316,10 @@ describe("H3 enrichment state and badge", () => {
             expect(studyRow?.textContent).toBe("6568");
         });
 
-        expect(enrichIdentifierMock).toHaveBeenCalledTimes(2);
+        expect(enrichIdentifierMock).toHaveBeenCalledTimes(3);
         expect(enrichIdentifierMock).toHaveBeenNthCalledWith(1, "6568");
-        expect(enrichIdentifierMock).toHaveBeenNthCalledWith(2, "RNA");
+        expect(enrichIdentifierMock).toHaveBeenNthCalledWith(2, "SANG001");
+        expect(enrichIdentifierMock).toHaveBeenNthCalledWith(3, "RNA");
     });
 
     it("looks up an amplicon library independently instead of showing sibling study libraries", async () => {
@@ -377,11 +425,16 @@ describe("H3 enrichment state and badge", () => {
         );
 
         await waitFor(() => {
-            expect(enrichIdentifierMock).toHaveBeenCalledTimes(2);
+            expect(enrichIdentifierMock).toHaveBeenCalledTimes(4);
         });
         expect(enrichIdentifierMock).toHaveBeenNthCalledWith(1, "4861");
         expect(enrichIdentifierMock).toHaveBeenNthCalledWith(
             2,
+            "4861STDY7771117",
+        );
+        expect(enrichIdentifierMock).toHaveBeenNthCalledWith(3, "3990641");
+        expect(enrichIdentifierMock).toHaveBeenNthCalledWith(
+            4,
             "Chromium single cell",
         );
 
