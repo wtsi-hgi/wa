@@ -350,8 +350,12 @@ describe("contract schemas", () => {
 
         expect(result.success).toBe(true);
         if (result.success) {
-            expect(result.data.graph.study_detail?.library_details).toHaveLength(1);
-            expect(result.data.graph.study_detail?.library_details[0]?.samples).toHaveLength(1);
+            expect(
+                result.data.graph.study_detail?.library_details,
+            ).toHaveLength(1);
+            expect(
+                result.data.graph.study_detail?.library_details[0]?.samples,
+            ).toHaveLength(1);
         }
     });
 
