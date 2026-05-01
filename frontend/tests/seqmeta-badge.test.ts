@@ -1052,13 +1052,13 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getAllByText("WGS")).toHaveLength(1);
 
         // Should not duplicate the "Library type" or "seqmeta_library" labels
-        // Each library card should have exactly one "Library type" label
+        // Rows in the Libraries section should NOT have "Library type" labels
         const libraryTypeLabels = screen.queryAllByText("Library type", {
             exact: true,
         });
 
-        // We have 3 libraries, so we should have 3 "Library type" labels (one per library)
-        expect(libraryTypeLabels.length).toBe(3);
+        // With the fix, library rows within the Libraries section should NOT have labels
+        expect(libraryTypeLabels.length).toBe(0);
 
         // Each library should have copy and filter buttons
         const libraryButtons = screen.getAllByLabelText(/Copy|Filter/);
@@ -1728,5 +1728,309 @@ describe("M1 result detail seqmeta enrichment", () => {
             ).length;
             expect(titleValueCount).toBe(0);
         }
+    });
+
+    it("does not duplicate 'Lane' label in rows within Lanes section", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG001",
+                enrichment: buildEnrichment({
+                    graph: {
+                        ...buildEnrichment().graph,
+                        sample_detail: {
+                            lanes: [
+                                { id_run: "12345", lane: "1", tag_index: 1 },
+                                { id_run: "12345", lane: "2", tag_index: 1 },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Section heading "Lanes" should exist
+        const lanesSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="lanes"]');
+        expect(lanesSection).toBeTruthy();
+        expect(screen.getByText("Lanes")).toBeTruthy();
+
+        // Individual lane rows should NOT have "Lane" label
+        const laneRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="lane"]');
+        expect(laneRows.length).toBe(2);
+
+        laneRows.forEach((row) => {
+            // Each row should NOT contain the redundant "Lane" label
+            const labels = Array.from(
+                row.querySelectorAll(
+                    ".text-xs.font-semibold.uppercase.tracking-\\[0\\.22em\\].text-muted-foreground",
+                ),
+            ).map((el) => el.textContent);
+            expect(labels).not.toContain("Lane");
+        });
+
+        // But values and buttons should still be present
+        expect(screen.getByText("12345_1#1")).toBeTruthy();
+        expect(screen.getByText("12345_2#1")).toBeTruthy();
+        expect(screen.getAllByLabelText(/Copy lane ID/i).length).toBe(2);
+    });
+
+    it("does not duplicate 'Sample' label in rows within Samples section", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_library",
+                rawValue: "RNA",
+                enrichment: buildEnrichment({
+                    identifier: "RNA",
+                    type: "library_type",
+                    graph: {
+                        samples: [
+                            {
+                                sample_name: "Sample 1",
+                                sanger_id: "SANG001",
+                                id_sample_lims: "LIMS001",
+                            },
+                            {
+                                sample_name: "Sample 2",
+                                sanger_id: "SANG002",
+                                id_sample_lims: "LIMS002",
+                            },
+                        ],
+                        study: buildEnrichment().graph.study,
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Section heading "Samples" should exist
+        const samplesSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="samples"]');
+        expect(samplesSection).toBeTruthy();
+        expect(screen.getByText("Samples")).toBeTruthy();
+
+        // Individual sample rows should NOT have "Sample" label
+        const sampleRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="sample"]');
+        expect(sampleRows.length).toBe(2);
+
+        sampleRows.forEach((row) => {
+            // Each row should NOT contain the redundant "Sample" label
+            const labels = Array.from(
+                row.querySelectorAll(
+                    ".text-xs.font-semibold.uppercase.tracking-\\[0\\.22em\\].text-muted-foreground",
+                ),
+            ).map((el) => el.textContent);
+            expect(labels).not.toContain("Sample");
+        });
+
+        // But values and buttons should still be present
+        expect(screen.getByText("Sample 1 / SANG001")).toBeTruthy();
+        expect(screen.getByText("Sample 2 / SANG002")).toBeTruthy();
+    });
+
+    it("does not duplicate 'Library type' label in rows within Library section", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG001",
+                enrichment: buildEnrichment({
+                    graph: {
+                        ...buildEnrichment().graph,
+                        sample_detail: {
+                            lanes: [],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Section heading "Library" should exist
+        const librarySection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="library"]');
+        expect(librarySection).toBeTruthy();
+        expect(screen.getByText("Library")).toBeTruthy();
+
+        // Individual library rows should NOT have "Library type" label
+        const libraryRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="library"]');
+        expect(libraryRows.length).toBe(1);
+
+        libraryRows.forEach((row) => {
+            // Each row should NOT contain the redundant "Library type" label
+            const labels = Array.from(
+                row.querySelectorAll(
+                    ".text-xs.font-semibold.uppercase.tracking-\\[0\\.22em\\].text-muted-foreground",
+                ),
+            ).map((el) => el.textContent);
+            expect(labels).not.toContain("Library type");
+        });
+
+        // But values and buttons should still be present
+        expect(screen.getByText("RNA")).toBeTruthy();
+    });
+
+    it("does not duplicate 'Study name' label in rows within Study section", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_library",
+                rawValue: "RNA",
+                enrichment: buildEnrichment({
+                    identifier: "RNA",
+                    type: "library_type",
+                    graph: {
+                        study: {
+                            ...buildEnrichment().graph.study,
+                            name: "HCA Study",
+                            id_study_lims: "6568",
+                        },
+                        samples: [],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Section heading "Study" should exist
+        const studySection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="study"]');
+        expect(studySection).toBeTruthy();
+        expect(screen.getByText("Study")).toBeTruthy();
+
+        // Individual study rows should NOT have "Study name" label
+        const studyRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="study"]');
+        expect(studyRows.length).toBe(1);
+
+        studyRows.forEach((row) => {
+            // Each row should NOT contain the redundant "Study name" label
+            const labels = Array.from(
+                row.querySelectorAll(
+                    ".text-xs.font-semibold.uppercase.tracking-\\[0\\.22em\\].text-muted-foreground",
+                ),
+            ).map((el) => el.textContent);
+            expect(labels).not.toContain("Study name");
+        });
+
+        // But values and buttons should still be present
+        expect(screen.getByText("HCA Study")).toBeTruthy();
+    });
+
+    it("does not duplicate 'Library type' label in Libraries section with nested samples", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: buildEnrichment().graph.study,
+                        study_detail: {
+                            library_details: [
+                                {
+                                    library_type: "RNA",
+                                    samples: [
+                                        {
+                                            sample_name: "Sample 1",
+                                            sanger_id: "SANG001",
+                                            id_sample_lims: "LIMS001",
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        // Section heading "Libraries" should exist
+        const librariesSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="libraries"]');
+        expect(librariesSection).toBeTruthy();
+        expect(screen.getByText("Libraries")).toBeTruthy();
+
+        // Library rows should NOT have "Library type" label
+        const libraryRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="seqmeta_library"]');
+        expect(libraryRows.length).toBe(1);
+
+        libraryRows.forEach((row) => {
+            const labels = Array.from(
+                row.querySelectorAll(
+                    ".text-xs.font-semibold.uppercase.tracking-\\[0\\.22em\\].text-muted-foreground",
+                ),
+            ).map((el) => el.textContent);
+            expect(labels).not.toContain("Library type");
+        });
+
+        // Nested sample rows should also NOT have "Sample" label when expanded
+        fireEvent.click(screen.getByLabelText("Show samples"));
+
+        await waitFor(() => {
+            const nestedSampleRows = screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelectorAll('[data-seqmeta-detail-key="sample"]');
+            expect(nestedSampleRows.length).toBeGreaterThan(0);
+
+            nestedSampleRows.forEach((row) => {
+                const labels = Array.from(
+                    row.querySelectorAll(
+                        ".text-xs.font-semibold.uppercase.tracking-\\[0\\.22em\\].text-muted-foreground",
+                    ),
+                ).map((el) => el.textContent);
+                expect(labels).not.toContain("Sample");
+            });
+        });
     });
 });

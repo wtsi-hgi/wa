@@ -966,11 +966,7 @@ export function SeqmetaBadge({
                                                                             >
                                                                                 <div className="flex flex-wrap items-start justify-between gap-3">
                                                                                     <div className="min-w-0 flex-1">
-                                                                                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                                                            Library
-                                                                                            type
-                                                                                        </p>
-                                                                                        <p className="mt-3 break-all text-sm leading-6 text-foreground">
+                                                                                        <p className="break-all text-sm leading-6 text-foreground">
                                                                                             {
                                                                                                 library.libraryType
                                                                                             }
@@ -1119,10 +1115,7 @@ export function SeqmetaBadge({
                                                                                                 >
                                                                                                     <div className="flex flex-wrap items-start justify-between gap-3">
                                                                                                         <div className="min-w-0 flex-1">
-                                                                                                            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                                                                                Sample
-                                                                                                            </p>
-                                                                                                            <p className="mt-2 break-all text-sm leading-6 text-foreground">
+                                                                                                            <p className="break-all text-sm leading-6 text-foreground">
                                                                                                                 {
                                                                                                                     displayName
                                                                                                                 }
@@ -1219,11 +1212,7 @@ export function SeqmetaBadge({
                                                                     >
                                                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                                                             <div className="min-w-0 flex-1">
-                                                                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                                                    Study
-                                                                                    name
-                                                                                </p>
-                                                                                <p className="mt-3 break-all text-sm leading-6 text-foreground">
+                                                                                <p className="break-all text-sm leading-6 text-foreground">
                                                                                     {
                                                                                         study.name
                                                                                     }
@@ -1324,10 +1313,7 @@ export function SeqmetaBadge({
                                                                         >
                                                                             <div className="flex flex-wrap items-start justify-between gap-3">
                                                                                 <div className="min-w-0 flex-1">
-                                                                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                                                        Sample
-                                                                                    </p>
-                                                                                    <p className="mt-3 break-all text-sm leading-6 text-foreground">
+                                                                                    <p className="break-all text-sm leading-6 text-foreground">
                                                                                         {
                                                                                             displayName
                                                                                         }
@@ -1416,11 +1402,7 @@ export function SeqmetaBadge({
                                                                     >
                                                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                                                             <div className="min-w-0 flex-1">
-                                                                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                                                    Library
-                                                                                    type
-                                                                                </p>
-                                                                                <p className="mt-3 break-all text-sm leading-6 text-foreground">
+                                                                                <p className="break-all text-sm leading-6 text-foreground">
                                                                                     {
                                                                                         library.libraryType
                                                                                     }
@@ -1510,10 +1492,7 @@ export function SeqmetaBadge({
                                                                         >
                                                                             <div className="flex flex-wrap items-start justify-between gap-3">
                                                                                 <div className="min-w-0 flex-1">
-                                                                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                                                        Lane
-                                                                                    </p>
-                                                                                    <p className="mt-3 break-all text-sm leading-6 text-foreground">
+                                                                                    <p className="break-all text-sm leading-6 text-foreground">
                                                                                         {
                                                                                             laneId
                                                                                         }
