@@ -125,7 +125,7 @@ describe("H3 enrichment state and badge", () => {
         });
     }
 
-    it("shows the study name without a banner for a full study enrichment", async () => {
+    it("shows the raw study ID in the badge even with enrichment available", async () => {
         enrichIdentifierMock.mockResolvedValue(buildEnrichmentResult());
         const { ResultMetadataEnrichment } =
             await import("@/components/result-metadata-enrichment");
@@ -142,10 +142,9 @@ describe("H3 enrichment state and badge", () => {
 
         await waitFor(() => {
             expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
-                "Cancer Programme",
+                "6568",
             );
         });
-        expect(screen.queryByText("study_id: 6568")).toBeNull();
         expect(screen.queryByText("Some details unavailable")).toBeNull();
     });
 
@@ -189,7 +188,7 @@ describe("H3 enrichment state and badge", () => {
                 '[data-metadata-row="seqmeta_studyid"] [data-testid="seqmeta-badge-label"]',
             );
 
-            expect(studyRow?.textContent).toBe("Cancer Programme");
+            expect(studyRow?.textContent).toBe("6568");
         });
 
         expect(enrichIdentifierMock).toHaveBeenCalledTimes(2);
@@ -231,7 +230,7 @@ describe("H3 enrichment state and badge", () => {
                 '[data-metadata-row="seqmeta_studyid"] [data-testid="seqmeta-badge-label"]',
             );
 
-            expect(studyRow?.textContent).toBe("Cancer Programme");
+            expect(studyRow?.textContent).toBe("6568");
         });
 
         expect(enrichIdentifierMock).toHaveBeenCalledTimes(2);
@@ -396,7 +395,7 @@ describe("H3 enrichment state and badge", () => {
 
         await waitFor(() => {
             expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
-                "Cancer Programme",
+                "6568",
             );
         });
     });
@@ -444,7 +443,7 @@ describe("H3 enrichment state and badge", () => {
 
         await waitFor(() => {
             expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
-                "Replacement Study",
+                "7777",
             );
         });
 
@@ -452,7 +451,7 @@ describe("H3 enrichment state and badge", () => {
 
         await waitFor(() => {
             expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
-                "Replacement Study",
+                "7777",
             );
         });
     });

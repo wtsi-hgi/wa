@@ -114,21 +114,6 @@ function primaryLabel(
     rawValue: string,
     enrichment: EnrichmentResult | null,
 ): string {
-    if (!enrichment) {
-        return rawValue;
-    }
-
-    if (
-        enrichment.type === "study_id" ||
-        enrichment.type === "study_accession"
-    ) {
-        return (
-            asString(enrichment.graph.study?.name) ??
-            asString(enrichment.graph.study?.accession_number) ??
-            rawValue
-        );
-    }
-
     return rawValue;
 }
 

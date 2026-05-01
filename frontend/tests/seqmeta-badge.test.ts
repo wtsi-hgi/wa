@@ -344,7 +344,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(dialogBody?.className).toContain("max-h-[calc(100vh-12rem)]");
     });
 
-    it("uses the study name as the badge label for a full study enrichment", async () => {
+    it("displays the raw metadata value in the badge, not enriched study name", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
         render(
@@ -359,9 +359,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
 
         expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
-            "RNA Seq",
+            "6568",
         );
-        expect(screen.queryByText("study_id: 6568")).toBeNull();
     });
 
     it("shows the raw value with a failure indicator and unavailable tooltip when enrichment fails", async () => {
