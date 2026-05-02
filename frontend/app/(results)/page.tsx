@@ -55,6 +55,26 @@ function toResultSet(entry: ResultSet | SearchResult): ResultSet {
 }
 
 function toMetaSuggestionKey(metaKey: string): string {
+    if (
+        metaKey === "study" ||
+        metaKey === "study_id" ||
+        metaKey === "seqmeta_studyid" ||
+        metaKey === "seqmeta_study_accession"
+    ) {
+        return "study";
+    }
+
+    if (
+        metaKey === "sample" ||
+        metaKey === "sample_id" ||
+        metaKey === "sample_name" ||
+        metaKey === "sample_accession_number" ||
+        metaKey === "seqmeta_sampleid" ||
+        metaKey === "seqmeta_sample_lims"
+    ) {
+        return "sample";
+    }
+
     return metaKey.startsWith("seqmeta_") ? metaKey : `meta_${metaKey}`;
 }
 
@@ -67,7 +87,7 @@ function buildSuggestionValues(
     const entries = [...stats.recent, ...tableData];
 
     for (const study of studies) {
-        appendSuggestion(suggestions, "study_id", study.id_study_lims);
+        appendSuggestion(suggestions, "study", study.id_study_lims);
     }
 
     for (const pipeline of stats.pipelines) {
@@ -107,7 +127,7 @@ function buildSuggestionValues(
         }
 
         for (const sampleId of searchResult?.matched_samples ?? []) {
-            appendSuggestion(suggestions, "seqmeta_sampleid", sampleId);
+            appendSuggestion(suggestions, "sample", sampleId);
         }
     }
 
@@ -165,7 +185,7 @@ export default async function ResultsLandingPage({
     const resolvedSearchParams = normalizeSearchParams(rawSearchParams);
     const returnHref = buildReturnHref(rawSearchParams);
     const hasSearch = Object.keys(resolvedSearchParams).length > 0;
-    const studyActive = (resolvedSearchParams.study_id?.length ?? 0) > 0;
+    const studyActive = (resolvedSearchParams.study?.length ?? 0) > 0;
 
     let stats = emptyStats;
     let statsError: string | null = null;

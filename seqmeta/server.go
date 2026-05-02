@@ -27,6 +27,7 @@ package seqmeta
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/wtsi-hgi/wa/saga"
@@ -124,6 +126,15 @@ func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(samples) == 0 && looksLikeStudyAccession(studyID) {
+		samples, err = s.resolveByAccession(r.Context(), studyID)
+		if err != nil {
+			_ = writeError(w, http.StatusBadGateway, err.Error())
+
+			return
+		}
+	}
+
 	// Filter by library_type if query parameter is present
 	libraryType := r.URL.Query().Get("library_type")
 	if libraryType != "" {
@@ -137,6 +148,18 @@ func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = writeJSON(w, http.StatusOK, samples)
+}
+
+// looksLikeStudyAccession returns true if s is non-empty and contains at least
+// one letter, indicating it is a study accession rather than a numeric study ID.
+func looksLikeStudyAccession(s string) bool {
+	for _, ch := range s {
+		if unicode.IsLetter(ch) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (s *Server) handleStudyDiff(w http.ResponseWriter, r *http.Request) {
@@ -422,6 +445,23 @@ func writeJSONBytes(w http.ResponseWriter, status int, body []byte) error {
 
 func writeError(w http.ResponseWriter, status int, message string) error {
 	return writeJSON(w, status, map[string]string{"error": message})
+}
+
+// resolveByAccession looks up studies to find one whose AccessionNumber matches
+// the given accession, then returns all samples for that study's numeric ID.
+func (s *Server) resolveByAccession(ctx context.Context, accession string) ([]saga.MLWHSample, error) {
+	studies, err := s.provider.AllStudies(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, study := range studies {
+		if study.AccessionNumber == accession {
+			return s.provider.AllSamplesForStudy(ctx, study.IDStudyLims)
+		}
+	}
+
+	return []saga.MLWHSample{}, nil
 }
 
 // ServerOption configures a Server.

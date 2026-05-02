@@ -462,19 +462,19 @@ describe("J1 dashboard with search builder and recent results", () => {
         });
 
         fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
-        fireEvent.click(screen.getByRole("option", { name: /study id/i }));
-        const valueInput = screen.getByLabelText(/study id value/i);
+        fireEvent.click(screen.getByRole("option", { name: /study/i }));
+        const valueInput = screen.getByLabelText(/study value/i);
 
         fireEvent.change(valueInput, {
             target: { value: "656" },
         });
 
         expect(valueInput.getAttribute("list")).toBe(
-            "filter-suggestions-study_id",
+            "filter-suggestions-study",
         );
         expect(
             container.querySelector(
-                "datalist#filter-suggestions-study_id option[value='6568']",
+                "datalist#filter-suggestions-study option[value='6568']",
             ),
         ).toBeNull();
         expect(fetchStudiesMock).not.toHaveBeenCalled();
@@ -484,7 +484,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         });
         fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
-        expect(pushMock).toHaveBeenCalledWith("/?study_id=6568");
+        expect(pushMock).toHaveBeenCalledWith("/?study=6568");
 
         await act(async () => {
             root?.unmount();
@@ -601,9 +601,9 @@ describe("J1 dashboard with search builder and recent results", () => {
             } satisfies SearchResult,
         ]);
 
-        const markup = await renderDashboard({ study_id: "6568" });
+        const markup = await renderDashboard({ study: "6568" });
 
-        expect(searchResultsMock).toHaveBeenCalledWith({ study_id: ["6568"] });
+        expect(searchResultsMock).toHaveBeenCalledWith({ study: ["6568"] });
         expect(markup).toContain("Matched Samples");
         expect(markup).toContain("SANG22, SANG77");
     });

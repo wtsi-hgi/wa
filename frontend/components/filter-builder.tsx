@@ -32,9 +32,27 @@ type FieldOption = {
     placeholder: string;
 };
 
+const combinedStudyMetaKeys = new Set([
+    "study",
+    "study_id",
+    "seqmeta_studyid",
+    "seqmeta_study_accession",
+]);
+
+const combinedSampleMetaKeys = new Set([
+    "sample",
+    "sample_id",
+    "sample_name",
+    "sample_accession_number",
+    "seqmeta_sampleid",
+    "seqmeta_sample_lims",
+]);
+
 const coreFieldOptions: FieldOption[] = [
     { key: "user", label: "Requester", placeholder: "alice" },
     { key: "operator", label: "Operator", placeholder: "operator-1" },
+    { key: "study", label: "Study", placeholder: "6568 or ERP012345" },
+    { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
     {
         key: "pipeline_name",
         label: "Pipeline name",
@@ -72,19 +90,16 @@ function toMetaQueryKey(metaKey: string): string {
 
 function getFieldOptions(
     metaKeys: string[],
-    seqmetaAvailable: boolean,
+    _seqmetaAvailable: boolean,
 ): FieldOption[] {
     const options = [...coreFieldOptions];
 
-    if (seqmetaAvailable) {
-        options.push({
-            key: "study_id",
-            label: "Study ID",
-            placeholder: "6568",
-        });
-    }
-
     const dynamicOptions = metaKeys
+        .filter(
+            (metaKey) =>
+                !combinedStudyMetaKeys.has(metaKey) &&
+                !combinedSampleMetaKeys.has(metaKey),
+        )
         .map((metaKey) => ({
             key: toMetaQueryKey(metaKey),
             label: toTitleCase(metaKey),

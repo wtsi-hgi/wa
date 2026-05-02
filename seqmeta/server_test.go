@@ -500,6 +500,42 @@ func TestServerStudySamplesEndpoint(t *testing.T) {
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(result, convey.ShouldHaveLength, 0)
 	})
+
+	convey.Convey("Bug 3: study samples endpoint falls back to AllStudies lookup when accession-based study ID returns no samples", t, func() {
+		studies := []saga.Study{
+			{IDStudyLims: "6468", AccessionNumber: "EGAS00001005445"},
+			{IDStudyLims: "1234", AccessionNumber: "EGA00001"},
+		}
+		accessionSamples := []saga.MLWHSample{
+			{SangerID: "ACC1"},
+			{SangerID: "ACC2"},
+		}
+		provider := &MockProvider{
+			AllSamplesForStudyFunc: func(_ context.Context, requestedStudyID string) ([]saga.MLWHSample, error) {
+				if requestedStudyID == "6468" {
+					return accessionSamples, nil
+				}
+
+				return []saga.MLWHSample{}, nil
+			},
+			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
+				return studies, nil
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/study/EGAS00001005445/samples", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		var result []saga.MLWHSample
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(result, convey.ShouldHaveLength, 2)
+		convey.So(result[0].SangerID, convey.ShouldEqual, "ACC1")
+		convey.So(result[1].SangerID, convey.ShouldEqual, "ACC2")
+	})
 }
 
 func TestServerListStudiesEndpoint(t *testing.T) {

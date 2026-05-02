@@ -116,7 +116,7 @@ describe("K1 filter builder component", () => {
         expect(pushMock).toHaveBeenCalledWith("/?user=alice&user=bob");
     });
 
-    it("uses the shared autocomplete input flow for study_id filters", async () => {
+    it("uses the shared autocomplete input flow for combined Study filters", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
         const { container } = render(
@@ -126,26 +126,26 @@ describe("K1 filter builder component", () => {
                 seqmetaAvailable: true,
                 studies: [],
                 suggestionValues: {
-                    study_id: ["6568", "7777"],
+                    study: ["6568", "7777"],
                 },
             }),
         );
 
         fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
-        fireEvent.click(screen.getByRole("option", { name: /study id/i }));
+        fireEvent.click(screen.getByRole("option", { name: /study/i }));
 
-        const studyInput = await screen.findByLabelText(/study id value/i);
+        const studyInput = await screen.findByLabelText(/study value/i);
 
         fireEvent.change(studyInput, {
             target: { value: "656" },
         });
 
         expect(studyInput.getAttribute("list")).toBe(
-            "filter-suggestions-study_id",
+            "filter-suggestions-study",
         );
         expect(
             container.querySelector(
-                "datalist#filter-suggestions-study_id option[value='6568']",
+                "datalist#filter-suggestions-study option[value='6568']",
             ),
         ).toBeTruthy();
 
@@ -154,7 +154,36 @@ describe("K1 filter builder component", () => {
         });
         fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
-        expect(pushMock).toHaveBeenCalledWith("/?study_id=6568");
+        expect(pushMock).toHaveBeenCalledWith("/?study=6568");
+    });
+
+    it("adds combined Sample filters and sends the logical sample key", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: [
+                    "seqmeta_sampleid",
+                    "seqmeta_sample_lims",
+                    "sample_name",
+                ],
+                seqmetaAvailable: true,
+                studies: [],
+                suggestionValues: {
+                    sample: ["SANG1001", "SMP1001", "SAMPLE-A"],
+                },
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(screen.getByRole("option", { name: /^sample$/i }));
+        fireEvent.change(screen.getByLabelText(/sample value/i), {
+            target: { value: "SMP1001" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+        expect(pushMock).toHaveBeenCalledWith("/?sample=SMP1001");
     });
 
     it("shows cached suggestions for non-study fields and applies a selected value", async () => {

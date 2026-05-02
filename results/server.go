@@ -41,6 +41,22 @@ import (
 	"github.com/wtsi-hgi/wa/saga"
 )
 
+var combinedStudyMetaKeys = []string{
+	"study",
+	"study_id",
+	"seqmeta_studyid",
+	"seqmeta_study_accession",
+}
+
+var combinedSampleMetaKeys = []string{
+	"sample",
+	"sample_id",
+	"sample_name",
+	"sample_accession_number",
+	"seqmeta_sampleid",
+	"seqmeta_sample_lims",
+}
+
 // SeqmetaSampleResolver resolves study IDs to seqmeta sample IDs.
 type SeqmetaSampleResolver struct {
 	baseURL string
@@ -242,6 +258,17 @@ func multiSearchParamsFromRequest(r *http.Request) MultiSearchParams {
 	return params
 }
 
+func combinedStudySearchValues(r *http.Request) []string {
+	return mergeSearchValues(
+		combinedSearchValues(r, "study"),
+		combinedSearchValues(r, "study_id"),
+	)
+}
+
+func combinedSearchValues(r *http.Request, key string) []string {
+	return nonEmptySearchValues(r.URL.Query()[key])
+}
+
 func writeDomainError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
@@ -259,6 +286,30 @@ func writeDomainError(w http.ResponseWriter, err error) {
 	default:
 		writeServerError(w, http.StatusInternalServerError, err.Error())
 	}
+}
+
+func filterCombinedAliasMatches(results []ResultSet, studyValues []string, sampleValues []string) []ResultSet {
+	hasStudy := len(studyValues) > 0
+	hasSample := len(sampleValues) > 0
+
+	if !hasStudy && !hasSample {
+		return results
+	}
+
+	filtered := make([]ResultSet, 0, len(results))
+
+	for _, result := range results {
+		studyMatch := hasStudy && resultMatchesCombinedAliases(result.Metadata, combinedStudyMetaKeys, studyValues)
+		sampleMatch := hasSample && resultMatchesCombinedAliases(result.Metadata, combinedSampleMetaKeys, sampleValues)
+
+		if !studyMatch && !sampleMatch {
+			continue
+		}
+
+		filtered = append(filtered, result)
+	}
+
+	return filtered
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -317,41 +368,52 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	studyID := strings.TrimSpace(r.URL.Query().Get("study_id"))
-	if studyID == "" {
-		results, err := s.store.SearchMulti(r.Context(), multiSearchParamsFromRequest(r))
-		if err != nil {
-			writeDomainError(w, err)
-
-			return
-		}
-
-		writeJSON(w, http.StatusOK, results)
-
-		return
-	}
-
-	if s.resolver == nil || strings.TrimSpace(s.resolver.baseURL) == "" {
-		writeServerError(w, http.StatusBadRequest, "seqmeta not configured")
-
-		return
-	}
-
-	resolvedSamples, err := s.resolver.SamplesForStudy(r.Context(), studyID)
-	if err != nil {
-		writeDomainError(w, err)
-
-		return
-	}
-
-	if len(resolvedSamples) == 0 {
-		writeJSON(w, http.StatusOK, []SearchResult{})
-
-		return
-	}
-
 	params := multiSearchParamsFromRequest(r)
-	params.Meta["seqmeta_sampleid"] = mergeSearchValues(params.Meta["seqmeta_sampleid"], resolvedSamples)
+	studyValues := combinedStudySearchValues(r)
+	sampleValues := combinedSearchValues(r, "sample")
+	sampleValues = mergeSearchValues(sampleValues, params.Meta["seqmeta_sampleid"])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta["seqmeta_sample_lims"])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_name"])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_id"])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_accession_number"])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample"])
+	studyValues = mergeSearchValues(studyValues, params.Meta["seqmeta_studyid"])
+	studyValues = mergeSearchValues(studyValues, params.Meta["seqmeta_study_accession"])
+	delete(params.Meta, "seqmeta_studyid")
+	delete(params.Meta, "seqmeta_study_accession")
+
+	delete(params.Meta, "seqmeta_sampleid")
+	delete(params.Meta, "seqmeta_sample_lims")
+	delete(params.Meta, "sample_name")
+	delete(params.Meta, "sample_id")
+	delete(params.Meta, "sample_accession_number")
+	delete(params.Meta, "sample")
+
+	legacyStudyIDUsed := len(combinedSearchValues(r, "study_id")) > 0
+
+	resolvedSamples := []string{}
+	if len(studyValues) > 0 {
+		if s.resolver == nil || strings.TrimSpace(s.resolver.baseURL) == "" {
+			if legacyStudyIDUsed {
+				writeServerError(w, http.StatusBadRequest, "seqmeta not configured")
+
+				return
+			}
+		} else {
+			for _, studyValue := range studyValues {
+				samples, err := s.resolver.SamplesForStudy(r.Context(), studyValue)
+				if err != nil {
+					writeDomainError(w, err)
+
+					return
+				}
+
+				resolvedSamples = mergeSearchValues(resolvedSamples, samples)
+			}
+
+			sampleValues = mergeSearchValues(sampleValues, resolvedSamples)
+		}
+	}
 
 	results, err := s.store.SearchMulti(r.Context(), params)
 	if err != nil {
@@ -360,7 +422,15 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, wrapSearchResults(results, resolvedSamples))
+	results = filterCombinedAliasMatches(results, studyValues, sampleValues)
+
+	if len(studyValues) > 0 && len(resolvedSamples) > 0 {
+		writeJSON(w, http.StatusOK, wrapSearchResults(results, resolvedSamples))
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, results)
 }
 
 func mergeSearchValues(existing []string, incoming []string) []string {
@@ -526,6 +596,28 @@ func (s *Server) handleDeleteResultByID(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func resultMatchesCombinedAliases(metadata map[string]string, aliasKeys []string, values []string) bool {
+	values = nonEmptySearchValues(values)
+	if len(values) == 0 {
+		return true
+	}
+
+	for _, key := range aliasKeys {
+		value, ok := metadata[key]
+		if !ok {
+			continue
+		}
+
+		for _, queryValue := range values {
+			if value == queryValue {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func decodeJSONBody(body io.ReadCloser, target any) error {
