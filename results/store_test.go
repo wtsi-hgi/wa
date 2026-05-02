@@ -454,6 +454,42 @@ func TestStoreSearchMulti(t *testing.T) {
 		convey.So(results, convey.ShouldHaveLength, 2)
 		convey.So([]string{results[0].OutputDirectory, results[1].OutputDirectory}, convey.ShouldResemble, []string{"/data/a/project-1", "/data/b/project-2"})
 	})
+
+	convey.Convey("Bug 4: Given SearchMulti with OrMeta having study-alias and sample-alias conditions, then results matching any condition are returned and non-matching excluded", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-tag", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_studyid": "6568"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-tag", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-unrelated", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG99"}
+		}))
+
+		results, err := store.SearchMulti(ctx, MultiSearchParams{
+			OrMeta: []map[string][]string{
+				{"seqmeta_studyid":  {"6568"}},
+				{"study":            {"6568"}},
+				{"seqmeta_sampleid": {"SANG1", "SANG2"}},
+			},
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 2)
+
+		runKeys := make([]string, len(results))
+		for i, r := range results {
+			runKeys[i] = r.RunKey
+		}
+
+		convey.So(runKeys, convey.ShouldContain, "run-study-tag")
+		convey.So(runKeys, convey.ShouldContain, "run-sample-tag")
+	})
 }
 
 func TestStoreGet(t *testing.T) {

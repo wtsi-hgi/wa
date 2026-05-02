@@ -673,6 +673,45 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results, convey.ShouldHaveLength, 1)
 		convey.So(results[0].ResultSet.Metadata["seqmeta_sampleid"], convey.ShouldEqual, "SANG1")
 	})
+
+	convey.Convey("Bug 4: Given study=6568 with resolver, nf-core/rnaseq tagged with seqmeta_studyid=6568 and nf-core/sarek tagged with resolved sample SANG42 are both found via SQL OR, excluding unrelated results", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-rnaseq", func(reg *Registration) {
+			reg.PipelineName = "nf-core/rnaseq"
+			reg.Metadata = map[string]string{"seqmeta_studyid": "6568"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sarek", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.PipelineName = "nf-core/sarek"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG42"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-unrelated", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_studyid": "9999"}
+		}))
+
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG42"}}},
+		})
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+
+		runKeys := make([]string, len(results))
+		for i, r := range results {
+			runKeys[i] = r.ResultSet.RunKey
+		}
+
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(runKeys, convey.ShouldContain, "run-rnaseq")
+		convey.So(runKeys, convey.ShouldContain, "run-sarek")
+	})
 }
 
 func TestServerGetStats(t *testing.T) {

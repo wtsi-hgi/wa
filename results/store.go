@@ -698,7 +698,6 @@ func appendMultiMetadataSearchFilters(filters []string, args []any, metadata map
 
 			continue
 		}
-
 		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
 		filters = append(filters, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM result_metadata rm
@@ -724,6 +723,48 @@ func sortedMultiMetadataKeys(metadata map[string][]string) []string {
 	sort.Strings(keys)
 
 	return keys
+}
+
+func appendOrMetaSearchFilter(filters []string, args []any, orMeta []map[string][]string) ([]string, []any) {
+	if len(orMeta) == 0 {
+		return filters, args
+	}
+
+	clauses := make([]string, 0, len(orMeta))
+
+	for _, condition := range orMeta {
+		for key, values := range condition {
+			values = nonEmptySearchValues(values)
+			if len(values) == 0 {
+				continue
+			}
+
+			if len(values) == 1 {
+				clauses = append(clauses, `EXISTS (SELECT 1 FROM result_metadata rm WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value = ?)`)
+				args = append(args, key, values[0])
+
+				continue
+			}
+
+			placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
+			clauses = append(clauses, fmt.Sprintf(`EXISTS (SELECT 1 FROM result_metadata rm WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value IN (%s))`, placeholders))
+			args = append(args, key)
+
+			for _, v := range values {
+				args = append(args, v)
+			}
+		}
+	}
+
+	if len(clauses) == 0 {
+		return filters, args
+	}
+
+	if len(clauses) == 1 {
+		return append(filters, clauses[0]), args
+	}
+
+	return append(filters, "("+strings.Join(clauses, " OR ")+")"), args
 }
 
 func nonEmptySearchValues(values []string) []string {
@@ -890,6 +931,7 @@ func (s *Store) SearchMulti(ctx context.Context, params MultiSearchParams) ([]Re
 	filters, args = appendMultiValueSearchFilter(filters, args, "run_key", params.RunKey)
 	filters, args = appendMultiPrefixFilter(filters, args, "output_directory", params.OutputDirPrefix)
 	filters, args = appendMultiMetadataSearchFilters(filters, args, params.Meta)
+	filters, args = appendOrMetaSearchFilter(filters, args, params.OrMeta)
 
 	return querySearchResults(ctx, conn, filters, args)
 }

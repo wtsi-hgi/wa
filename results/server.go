@@ -288,30 +288,6 @@ func writeDomainError(w http.ResponseWriter, err error) {
 	}
 }
 
-func filterCombinedAliasMatches(results []ResultSet, studyValues []string, sampleValues []string) []ResultSet {
-	hasStudy := len(studyValues) > 0
-	hasSample := len(sampleValues) > 0
-
-	if !hasStudy && !hasSample {
-		return results
-	}
-
-	filtered := make([]ResultSet, 0, len(results))
-
-	for _, result := range results {
-		studyMatch := hasStudy && resultMatchesCombinedAliases(result.Metadata, combinedStudyMetaKeys, studyValues)
-		sampleMatch := hasSample && resultMatchesCombinedAliases(result.Metadata, combinedSampleMetaKeys, sampleValues)
-
-		if !studyMatch && !sampleMatch {
-			continue
-		}
-
-		filtered = append(filtered, result)
-	}
-
-	return filtered
-}
-
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -415,14 +391,24 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for _, key := range combinedStudyMetaKeys {
+		if len(studyValues) > 0 {
+			params.OrMeta = append(params.OrMeta, map[string][]string{key: studyValues})
+		}
+	}
+
+	for _, key := range combinedSampleMetaKeys {
+		if len(sampleValues) > 0 {
+			params.OrMeta = append(params.OrMeta, map[string][]string{key: sampleValues})
+		}
+	}
+
 	results, err := s.store.SearchMulti(r.Context(), params)
 	if err != nil {
 		writeDomainError(w, err)
 
 		return
 	}
-
-	results = filterCombinedAliasMatches(results, studyValues, sampleValues)
 
 	if len(studyValues) > 0 && len(resolvedSamples) > 0 {
 		writeJSON(w, http.StatusOK, wrapSearchResults(results, resolvedSamples))
@@ -596,28 +582,6 @@ func (s *Server) handleDeleteResultByID(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func resultMatchesCombinedAliases(metadata map[string]string, aliasKeys []string, values []string) bool {
-	values = nonEmptySearchValues(values)
-	if len(values) == 0 {
-		return true
-	}
-
-	for _, key := range aliasKeys {
-		value, ok := metadata[key]
-		if !ok {
-			continue
-		}
-
-		for _, queryValue := range values {
-			if value == queryValue {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func decodeJSONBody(body io.ReadCloser, target any) error {

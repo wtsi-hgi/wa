@@ -123,6 +123,10 @@ type MultiSearchParams struct {
 	RunKey             []string
 	OutputDirPrefix    []string
 	Meta               map[string][]string
+	// OrMeta, if non-empty, is a list of single-key meta conditions ORed together.
+	// A result must match at least one condition. Each element maps one meta key to
+	// one or more values.
+	OrMeta []map[string][]string
 }
 
 // DailyCount is registrations per day.
