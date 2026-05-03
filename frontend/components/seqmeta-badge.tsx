@@ -249,10 +249,9 @@ function buildDetailFields(
         metadataKey === "seqmeta_sampleid" ||
         metadataKey === "seqmeta_sample_lims";
 
-    // For study metadata with study_detail, skip individual sample/library fields
-    // as they are shown hierarchically in the Libraries section
-    const skipSampleFieldsForStudy =
-        studyMetadata && enrichment.graph.study_detail;
+    // Study detail modals should never synthesize flat sample/library rows.
+    // This avoids stale cached study responses rendering misleading legacy rows.
+    const skipSampleFieldsForStudy = studyMetadata;
 
     if (!libraryMetadata) {
         appendDetailField(
@@ -296,7 +295,7 @@ function buildDetailFields(
             metadataKey,
         );
 
-        // Skip individual sample fields for study metadata with study_detail
+        // Skip individual sample fields for study metadata.
         if (!skipSampleFieldsForStudy) {
             appendDetailField(
                 fields,
@@ -355,7 +354,7 @@ function buildDetailFields(
         }
     }
 
-    // Skip library fields for study metadata with study_detail
+    // Skip library fields for study metadata.
     if (!skipSampleFieldsForStudy) {
         const libraryTypes = [
             enrichment.graph.library?.library_type,
