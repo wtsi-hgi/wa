@@ -105,6 +105,10 @@ function isLibraryMetadataKey(metadataKey: string): boolean {
     return metadataKey === "seqmeta_library";
 }
 
+function copiedStateKey(fieldKey: string, fieldValue: string): string {
+    return `${fieldKey}:${fieldValue}`;
+}
+
 function enrichmentTypeLabel(type: string): string {
     if (type === "sanger_sample_id") {
         return "Sanger sample ID";
@@ -1128,6 +1132,11 @@ export function SeqmetaBadge({
                                                                                     expandedLibraries.has(
                                                                                         library.libraryType,
                                                                                     );
+                                                                                const libraryCopyKey =
+                                                                                    copiedStateKey(
+                                                                                        "seqmeta_library",
+                                                                                        library.libraryType,
+                                                                                    );
                                                                                 const isLoading =
                                                                                     loadingLibraries.has(
                                                                                         library.libraryType,
@@ -1171,7 +1180,7 @@ export function SeqmetaBadge({
                                                                                                                         copied
                                                                                                                     ) {
                                                                                                                         setCopiedKey(
-                                                                                                                            "seqmeta_library",
+                                                                                                                            libraryCopyKey,
                                                                                                                         );
                                                                                                                     }
                                                                                                                 },
@@ -1183,7 +1192,7 @@ export function SeqmetaBadge({
                                                                                                             aria-hidden="true"
                                                                                                         />
                                                                                                         {copiedKey ===
-                                                                                                        "seqmeta_library"
+                                                                                                        libraryCopyKey
                                                                                                             ? "Copied"
                                                                                                             : "Copy"}
                                                                                                     </button>
@@ -1403,69 +1412,77 @@ export function SeqmetaBadge({
                                                                         {studies.map(
                                                                             (
                                                                                 study,
-                                                                            ) => (
-                                                                                <article
-                                                                                    key={
-                                                                                        study.id
-                                                                                    }
-                                                                                    data-seqmeta-detail-key="study"
-                                                                                    className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                                >
-                                                                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                                        <div className="min-w-0 flex-1">
-                                                                                            <p className="break-all text-sm leading-6 text-foreground">
-                                                                                                {
-                                                                                                    study.name
-                                                                                                }
-                                                                                            </p>
+                                                                            ) => {
+                                                                                const studyCopyKey =
+                                                                                    copiedStateKey(
+                                                                                        "study_id",
+                                                                                        study.id,
+                                                                                    );
+
+                                                                                return (
+                                                                                    <article
+                                                                                        key={
+                                                                                            study.id
+                                                                                        }
+                                                                                        data-seqmeta-detail-key="study"
+                                                                                        className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                    >
+                                                                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                            <div className="min-w-0 flex-1">
+                                                                                                <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                    {
+                                                                                                        study.name
+                                                                                                    }
+                                                                                                </p>
+                                                                                            </div>
+                                                                                            <div className="flex flex-wrap gap-2">
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    aria-label="Copy study_id"
+                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                    onClick={() => {
+                                                                                                        void writeClipboard(
+                                                                                                            study.name,
+                                                                                                        ).then(
+                                                                                                            (
+                                                                                                                copied,
+                                                                                                            ) => {
+                                                                                                                if (
+                                                                                                                    copied
+                                                                                                                ) {
+                                                                                                                    setCopiedKey(
+                                                                                                                        studyCopyKey,
+                                                                                                                    );
+                                                                                                                }
+                                                                                                            },
+                                                                                                        );
+                                                                                                    }}
+                                                                                                >
+                                                                                                    <Copy
+                                                                                                        className="size-3.5"
+                                                                                                        aria-hidden="true"
+                                                                                                    />
+                                                                                                    {copiedKey ===
+                                                                                                    studyCopyKey
+                                                                                                        ? "Copied"
+                                                                                                        : "Copy"}
+                                                                                                </button>
+                                                                                                <Link
+                                                                                                    aria-label="Send study_id to search filter"
+                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                    href={`/?study_id=${study.id}`}
+                                                                                                >
+                                                                                                    <Search
+                                                                                                        className="size-3.5"
+                                                                                                        aria-hidden="true"
+                                                                                                    />
+                                                                                                    Filter
+                                                                                                </Link>
+                                                                                            </div>
                                                                                         </div>
-                                                                                        <div className="flex flex-wrap gap-2">
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                aria-label="Copy study_id"
-                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                onClick={() => {
-                                                                                                    void writeClipboard(
-                                                                                                        study.id,
-                                                                                                    ).then(
-                                                                                                        (
-                                                                                                            copied,
-                                                                                                        ) => {
-                                                                                                            if (
-                                                                                                                copied
-                                                                                                            ) {
-                                                                                                                setCopiedKey(
-                                                                                                                    "study_id",
-                                                                                                                );
-                                                                                                            }
-                                                                                                        },
-                                                                                                    );
-                                                                                                }}
-                                                                                            >
-                                                                                                <Copy
-                                                                                                    className="size-3.5"
-                                                                                                    aria-hidden="true"
-                                                                                                />
-                                                                                                {copiedKey ===
-                                                                                                "study_id"
-                                                                                                    ? "Copied"
-                                                                                                    : "Copy"}
-                                                                                            </button>
-                                                                                            <Link
-                                                                                                aria-label="Send study_id to search filter"
-                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                href={`/?study_id=${study.id}`}
-                                                                                            >
-                                                                                                <Search
-                                                                                                    className="size-3.5"
-                                                                                                    aria-hidden="true"
-                                                                                                />
-                                                                                                Filter
-                                                                                            </Link>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                </article>
-                                                                            ),
+                                                                                    </article>
+                                                                                );
+                                                                            },
                                                                         )}
                                                                     </div>
                                                                 </div>

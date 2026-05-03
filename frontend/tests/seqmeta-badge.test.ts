@@ -2556,6 +2556,247 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("Gut tissue B / SANG_SC_002")).toBeTruthy();
     });
 
+    it("marks only the clicked library row copy button as Copied", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
+            globalThis,
+            "navigator",
+        );
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
+
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: {
+                clipboard: {
+                    writeText: writeTextMock,
+                },
+            },
+        });
+
+        try {
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: "seqmeta_studyid",
+                    rawValue: "6568",
+                    enrichment: buildEnrichment({
+                        identifier: "6568",
+                        type: "study_id",
+                        graph: {
+                            study: {
+                                id_study_tmp: 42,
+                                id_lims: "SQSCP",
+                                id_study_lims: "6568",
+                                name: "RNA Seq",
+                                faculty_sponsor: "Dr Example",
+                                state: "active",
+                                abstract: "",
+                                abbreviation: "",
+                                accession_number: "ERP123456",
+                                description: "",
+                                data_release_strategy: "",
+                                study_title: "",
+                                data_access_group: "",
+                                hmdmc_number: "",
+                                programme: "",
+                                created: "2026-04-20T09:00:00Z",
+                                reference_genome: "",
+                                ethically_approved: false,
+                                study_type: "",
+                                contains_human_dna: false,
+                                contaminated_human_dna: false,
+                                study_visibility: "",
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
+                                data_release_timing: "",
+                            },
+                            study_detail: {
+                                study: {
+                                    id_study_tmp: 42,
+                                    id_lims: "SQSCP",
+                                    id_study_lims: "6568",
+                                    name: "RNA Seq",
+                                    faculty_sponsor: "Dr Example",
+                                    state: "active",
+                                    abstract: "",
+                                    abbreviation: "",
+                                    accession_number: "ERP123456",
+                                    description: "",
+                                    data_release_strategy: "",
+                                    study_title: "",
+                                    data_access_group: "",
+                                    hmdmc_number: "",
+                                    programme: "",
+                                    created: "2026-04-20T09:00:00Z",
+                                    reference_genome: "",
+                                    ethically_approved: false,
+                                    study_type: "",
+                                    contains_human_dna: false,
+                                    contaminated_human_dna: false,
+                                    study_visibility: "",
+                                    ega_dac_accession_number: "",
+                                    ega_policy_accession_number: "",
+                                    data_release_timing: "",
+                                },
+                                samples: [],
+                                library_details: [
+                                    {
+                                        library_type: "RNA PolyA",
+                                        id_study_lims: "6568",
+                                        samples: [],
+                                    },
+                                    {
+                                        library_type: "WGS",
+                                        id_study_lims: "6568",
+                                        samples: [],
+                                    },
+                                ],
+                            },
+                        },
+                    }),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            const copyButtons =
+                screen.getAllByLabelText(/Copy seqmeta_library/i);
+            expect(copyButtons).toHaveLength(2);
+
+            fireEvent.click(copyButtons[0]!);
+
+            await waitFor(() => {
+                expect(writeTextMock).toHaveBeenCalledWith("RNA PolyA");
+                expect(copyButtons[0]!.textContent).toContain("Copied");
+            });
+            expect(copyButtons[1]!.textContent).toContain("Copy");
+        } finally {
+            if (originalNavigatorDescriptor) {
+                Object.defineProperty(
+                    globalThis,
+                    "navigator",
+                    originalNavigatorDescriptor,
+                );
+            }
+        }
+    });
+
+    it("copies study visible name while keeping study_id filter links", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
+            globalThis,
+            "navigator",
+        );
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
+
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: {
+                clipboard: {
+                    writeText: writeTextMock,
+                },
+            },
+        });
+
+        try {
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: "seqmeta_library",
+                    rawValue: "Chromium single cell",
+                    enrichment: {
+                        identifier: "Chromium single cell",
+                        type: "library_type",
+                        graph: {
+                            studies: [
+                                {
+                                    id_study_tmp: 99,
+                                    id_lims: "SQSCP",
+                                    id_study_lims: "7777",
+                                    name: "Pilot study of dissociation methods for human gut tissues",
+                                    faculty_sponsor: "Dr Smith",
+                                    state: "active",
+                                    abstract: "Comparing dissociation methods",
+                                    abbreviation: "GutDiss",
+                                    accession_number: "ERP999999",
+                                    description:
+                                        "Study to compare dissociation techniques",
+                                    data_release_strategy: "managed",
+                                    study_title: "Gut Dissociation Pilot",
+                                    data_access_group: "gut-team",
+                                    hmdmc_number: "HMDMC-999",
+                                    programme: "Tissue Methods",
+                                    created: "2026-01-15T10:00:00Z",
+                                    reference_genome: "GRCh38",
+                                    ethically_approved: true,
+                                    study_type: "Single Cell RNA Sequencing",
+                                    contains_human_dna: true,
+                                    contaminated_human_dna: false,
+                                    study_visibility: "Always Open",
+                                    ega_dac_accession_number: null,
+                                    ega_policy_accession_number: null,
+                                    data_release_timing: "Standard",
+                                },
+                            ],
+                            samples: [
+                                {
+                                    id_study_lims: "7777",
+                                    id_sample_lims: "SC001",
+                                    sanger_id: "SANG_SC_001",
+                                    sample_name: "Gut tissue A",
+                                    taxon_id: 9606,
+                                    common_name: "Human",
+                                    library_type: "Chromium single cell",
+                                    id_run: 9001,
+                                    lane: 1,
+                                    tag_index: 1,
+                                    irods_path: "/seq/9001",
+                                    study_accession_number: "ERP999999",
+                                    accession_number: "ERS999001",
+                                },
+                            ],
+                        },
+                        partial: false,
+                    },
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: /copy study_id/i,
+                }),
+            );
+
+            await waitFor(() => {
+                expect(writeTextMock).toHaveBeenCalledWith(
+                    "Pilot study of dissociation methods for human gut tissues",
+                );
+            });
+
+            expect(
+                screen.getByRole("link", {
+                    name: /send study_id to search filter/i,
+                }),
+            ).toHaveProperty("href", expect.stringContaining("study_id=7777"));
+        } finally {
+            if (originalNavigatorDescriptor) {
+                Object.defineProperty(
+                    globalThis,
+                    "navigator",
+                    originalNavigatorDescriptor,
+                );
+            }
+        }
+    });
+
     it("shows Related Data header before Study/Samples sections for seqmeta_library with no direct metadata", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
