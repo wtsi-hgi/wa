@@ -48,10 +48,13 @@ const combinedSampleMetaKeys = new Set([
     "seqmeta_sample_lims",
 ]);
 
+const combinedLibraryMetaKeys = new Set(["library", "seqmeta_library"]);
+
 const coreFieldOptions: FieldOption[] = [
     { key: "user", label: "Requester", placeholder: "alice" },
     { key: "operator", label: "Operator", placeholder: "operator-1" },
     { key: "study", label: "Study", placeholder: "6568 or ERP012345" },
+    { key: "library", label: "Library", placeholder: "RNA or WGS" },
     { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
     {
         key: "pipeline_name",
@@ -98,6 +101,7 @@ function getFieldOptions(
         .filter(
             (metaKey) =>
                 !combinedStudyMetaKeys.has(metaKey) &&
+                !combinedLibraryMetaKeys.has(metaKey) &&
                 !combinedSampleMetaKeys.has(metaKey),
         )
         .map((metaKey) => ({

@@ -712,6 +712,139 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(runKeys, convey.ShouldContain, "run-rnaseq")
 		convey.So(runKeys, convey.ShouldContain, "run-sarek")
 	})
+
+	convey.Convey("Bug 3: Given library=RNA, direct library metadata, seqmeta_library metadata, resolver-derived samples, and resolver-derived lanes are all included", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"library": "RNA"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-seqmeta", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_library": "RNA"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "LIBS1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-lane", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-4"
+			reg.Metadata = map[string]string{"seqmeta_lane": "100_1#1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-unrelated", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-5"
+			reg.Metadata = map[string]string{"library": "WGS"}
+		}))
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /enrich/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("id") != "RNA" {
+				w.WriteHeader(http.StatusNotFound)
+
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"graph":{"samples":[{"sanger_id":"LIBS1","id_run":100,"lane":1,"tag_index":1}]}}`)
+		})
+		seqmeta := httptest.NewServer(mux)
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?library=RNA", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		runKeys := make([]string, len(results))
+		for i, result := range results {
+			runKeys[i] = result.RunKey
+		}
+
+		convey.So(results, convey.ShouldHaveLength, 4)
+		convey.So(runKeys, convey.ShouldContain, "run-library-direct")
+		convey.So(runKeys, convey.ShouldContain, "run-library-seqmeta")
+		convey.So(runKeys, convey.ShouldContain, "run-library-sample")
+		convey.So(runKeys, convey.ShouldContain, "run-library-lane")
+	})
+
+	convey.Convey("Bug 4: Given sample=SANGX with resolver-derived lanes, sample search includes lane-only result sets", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANGX"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-lane", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_lane": "200_2#7"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-unrelated", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_lane": "999_9#9"}
+		}))
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /enrich/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("id") != "SANGX" {
+				w.WriteHeader(http.StatusNotFound)
+
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"graph":{"sample_detail":{"lanes":[{"id_run":"200","lane":"2","tag_index":7}]}}}`)
+		})
+		seqmeta := httptest.NewServer(mux)
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?sample=SANGX", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		runKeys := make([]string, len(results))
+		for i, result := range results {
+			runKeys[i] = result.RunKey
+		}
+
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(runKeys, convey.ShouldContain, "run-sample-direct")
+		convey.So(runKeys, convey.ShouldContain, "run-sample-lane")
+	})
+
+	convey.Convey("Bug 4: repeated study lookups reuse resolver cache to avoid duplicate upstream requests", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-cache", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG-CACHE"}
+		}))
+
+		studyHits := 0
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /study/{id}/samples", func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("id") != "6568" {
+				w.WriteHeader(http.StatusNotFound)
+
+				return
+			}
+
+			studyHits++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[{"sanger_id":"SANG-CACHE","id_run":300,"lane":3,"tag_index":11}]`)
+		})
+		seqmeta := httptest.NewServer(mux)
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		first := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
+		second := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
+
+		convey.So(first.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(second.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(studyHits, convey.ShouldEqual, 1)
+	})
 }
 
 func TestServerGetStats(t *testing.T) {

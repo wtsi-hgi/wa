@@ -273,7 +273,7 @@ function buildDetailFields(
                 ? {
                       key: "study_id",
                       label: "Study identifier",
-                      searchKey: "study_id",
+                      searchKey: "study",
                       value: enrichment.graph.study.id_study_lims,
                       group: studyMetadata ? "direct" : "related",
                   }
@@ -316,7 +316,7 @@ function buildDetailFields(
                     ? {
                           key: "seqmeta_sampleid",
                           label: "Sanger sample ID",
-                          searchKey: "seqmeta_sampleid",
+                          searchKey: "sample",
                           value: enrichment.graph.sample.sanger_id,
                           group: sampleMetadata ? "direct" : "related",
                       }
@@ -330,7 +330,7 @@ function buildDetailFields(
                     ? {
                           key: "seqmeta_sample_lims",
                           label: "Sample LIMS ID",
-                          searchKey: "seqmeta_sample_lims",
+                          searchKey: "sample",
                           value: enrichment.graph.sample.id_sample_lims,
                           group: sampleMetadata ? "direct" : "related",
                       }
@@ -372,7 +372,7 @@ function buildDetailFields(
                 {
                     key: "seqmeta_library",
                     label: "Library type",
-                    searchKey: "seqmeta_library",
+                    searchKey: "library",
                     value: libraryType,
                     group: libraryMetadata ? "direct" : "related",
                 },
@@ -1196,9 +1196,9 @@ export function SeqmetaBadge({
                                                                                                             : "Copy"}
                                                                                                     </button>
                                                                                                     <Link
-                                                                                                        aria-label="Send seqmeta_library to search filter"
+                                                                                                        aria-label="Send library to search filter"
                                                                                                         className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                        href={`/?seqmeta_library=${library.libraryType}`}
+                                                                                                        href={`/?library=${library.libraryType}`}
                                                                                                     >
                                                                                                         <Search
                                                                                                             className="size-3.5"
@@ -1355,9 +1355,9 @@ export function SeqmetaBadge({
                                                                                                                                         : "Copy"}
                                                                                                                                 </button>
                                                                                                                                 <Link
-                                                                                                                                    aria-label="Send seqmeta_sampleid to search filter"
+                                                                                                                                    aria-label="Send sample to search filter"
                                                                                                                                     className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                                                    href={`/?seqmeta_sampleid=${sample.sanger_id}`}
+                                                                                                                                    href={`/?sample=${sample.sanger_id}`}
                                                                                                                                 >
                                                                                                                                     <Search
                                                                                                                                         className="size-3.5"
@@ -1467,9 +1467,9 @@ export function SeqmetaBadge({
                                                                                                         : "Copy"}
                                                                                                 </button>
                                                                                                 <Link
-                                                                                                    aria-label="Send study_id to search filter"
+                                                                                                    aria-label="Send study to search filter"
                                                                                                     className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                    href={`/?study_id=${study.id}`}
+                                                                                                    href={`/?study=${study.id}`}
                                                                                                 >
                                                                                                     <Search
                                                                                                         className="size-3.5"
@@ -1577,9 +1577,9 @@ export function SeqmetaBadge({
                                                                                                                 : "Copy"}
                                                                                                         </button>
                                                                                                         <Link
-                                                                                                            aria-label="Send seqmeta_sampleid to search filter"
+                                                                                                            aria-label="Send sample to search filter"
                                                                                                             className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                            href={`/?seqmeta_sampleid=${sample.sanger_id}`}
+                                                                                                            href={`/?sample=${sample.sanger_id}`}
                                                                                                         >
                                                                                                             <Search
                                                                                                                 className="size-3.5"
@@ -1671,9 +1671,9 @@ export function SeqmetaBadge({
                                                                                                     : "Copy"}
                                                                                             </button>
                                                                                             <Link
-                                                                                                aria-label="Send seqmeta_library to search filter"
+                                                                                                aria-label="Send library to search filter"
                                                                                                 className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                href={`/?seqmeta_library=${library.libraryType}`}
+                                                                                                href={`/?library=${library.libraryType}`}
                                                                                             >
                                                                                                 <Search
                                                                                                     className="size-3.5"

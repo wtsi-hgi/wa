@@ -186,6 +186,31 @@ describe("K1 filter builder component", () => {
         expect(pushMock).toHaveBeenCalledWith("/?sample=SMP1001");
     });
 
+    it("adds combined Library filters and sends the logical library key", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["library", "seqmeta_library"],
+                seqmetaAvailable: true,
+                studies: [],
+                suggestionValues: {
+                    library: ["RNA", "WGS"],
+                },
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(screen.getByRole("option", { name: /^library$/i }));
+        fireEvent.change(screen.getByLabelText(/library value/i), {
+            target: { value: "RNA" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+        expect(pushMock).toHaveBeenCalledWith("/?library=RNA");
+    });
+
     it("shows cached suggestions for non-study fields and applies a selected value", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 

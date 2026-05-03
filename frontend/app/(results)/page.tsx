@@ -75,6 +75,10 @@ function toMetaSuggestionKey(metaKey: string): string {
         return "sample";
     }
 
+    if (metaKey === "library" || metaKey === "seqmeta_library") {
+        return "library";
+    }
+
     return metaKey.startsWith("seqmeta_") ? metaKey : `meta_${metaKey}`;
 }
 

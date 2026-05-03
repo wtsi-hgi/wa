@@ -257,7 +257,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                     name: /send study_id to search filter/i,
                 })
                 .getAttribute("href"),
-        ).toBe("/?study_id=6568");
+        ).toBe("/?study=6568");
     });
 
     it("renders seqmeta_library details without singular sample or study guesses", async () => {
@@ -314,14 +314,14 @@ describe("M1 result detail seqmeta enrichment", () => {
         // Study link should be present
         expect(
             screen.getByRole("link", {
-                name: /send study_id to search filter/i,
+                name: /send study to search filter/i,
             }),
         ).toBeTruthy();
 
         // Individual sample filter links should be present
         expect(
             screen.getAllByRole("link", {
-                name: /send seqmeta_sampleid to search filter/i,
+                name: /send sample to search filter/i,
             }).length,
         ).toBeGreaterThan(0);
 
@@ -2544,9 +2544,9 @@ describe("M1 result detail seqmeta enrichment", () => {
         // Study filter link should be available
         expect(
             screen.getByRole("link", {
-                name: /send study_id to search filter/i,
+                name: /send study to search filter/i,
             }),
-        ).toHaveProperty("href", expect.stringContaining("study_id=7777"));
+        ).toHaveProperty("href", expect.stringContaining("study=7777"));
 
         // Samples section should also be present
         expect(screen.getByText("Samples")).toBeTruthy();
@@ -2684,7 +2684,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
-    it("copies study visible name while keeping study_id filter links", async () => {
+    it("copies study visible name while keeping study filter links", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
         const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
             globalThis,
@@ -2783,9 +2783,9 @@ describe("M1 result detail seqmeta enrichment", () => {
 
             expect(
                 screen.getByRole("link", {
-                    name: /send study_id to search filter/i,
+                    name: /send study to search filter/i,
                 }),
-            ).toHaveProperty("href", expect.stringContaining("study_id=7777"));
+            ).toHaveProperty("href", expect.stringContaining("study=7777"));
         } finally {
             if (originalNavigatorDescriptor) {
                 Object.defineProperty(
@@ -3530,7 +3530,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         // Each sample row should have copy and filter buttons
         const copyButtons = screen.getAllByLabelText(/Copy seqmeta_sampleid/i);
         const filterButtons = screen.getAllByLabelText(
-            /Send seqmeta_sampleid to search filter/i,
+            /Send sample to search filter/i,
         );
         expect(copyButtons.length).toBe(2);
         expect(filterButtons.length).toBe(2);
