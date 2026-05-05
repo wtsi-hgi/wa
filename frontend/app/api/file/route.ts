@@ -114,6 +114,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const id = request.nextUrl.searchParams.get("id")?.trim();
     const path = request.nextUrl.searchParams.get("path")?.trim();
     const download = request.nextUrl.searchParams.get("download");
+    const lineLimit = request.nextUrl.searchParams.get("line_limit")?.trim();
     const thumbnail = request.nextUrl.searchParams.get("thumb");
     const thumbnailWidth = clampDimension(
         request.nextUrl.searchParams.get("w"),
@@ -134,6 +135,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const query = new URLSearchParams({ path });
     if (download === "true") {
         query.set("download", "true");
+    }
+    if (lineLimit) {
+        query.set("line_limit", lineLimit);
     }
 
     let response: Response;
@@ -181,6 +185,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const headers = new Headers();
     const contentType = response.headers.get("content-type");
     const contentDisposition = response.headers.get("content-disposition");
+    const previewTruncated = response.headers.get("x-preview-truncated");
 
     if (contentType) {
         headers.set("content-type", contentType);
@@ -188,6 +193,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (contentDisposition) {
         headers.set("content-disposition", contentDisposition);
+    }
+
+    if (previewTruncated) {
+        headers.set("x-preview-truncated", previewTruncated);
     }
 
     if (download !== "true") {

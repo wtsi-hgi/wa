@@ -218,6 +218,21 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Body.Len(), convey.ShouldBeLessThanOrEqualTo, 50)
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, largeContent[:50])
 	})
+
+	convey.Convey("A1.14: Given an oversized registered TSV file, when previewed with line_limit, then status is 200 with only the requested lines and truncation metadata", t, func() {
+		payload := []byte("sample\tstatus\nalpha\tready\nbeta\tpending\ngamma\tfailed\n")
+		server, resultID, path := newFileServerScenarioForTestWithOptions(t, []ServerOption{WithMaxPreviewBytes(16)}, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "report.tsv"), payload)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 12, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&line_limit=2", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Body.String(), convey.ShouldEqual, "sample\tstatus\nalpha\tready\n")
+		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "true")
+	})
 }
 
 func newFileServerScenarioForTest(t *testing.T, files func(root string) []FileEntry) (*Server, string, string) {

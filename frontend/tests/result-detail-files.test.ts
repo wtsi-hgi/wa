@@ -455,6 +455,62 @@ describe("O1 result detail file integration", () => {
         });
     });
 
+    it("requests line-limited inline previews for line-readable text files", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        fetchMock.mockResolvedValue(
+            new Response("sample\tstatus\nalpha\tready\n", {
+                headers: {
+                    "content-type": "text/tab-separated-values",
+                    "x-preview-truncated": "true",
+                },
+                status: 200,
+            }),
+        );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/a/report.tsv")],
+                resultId: "result-1",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv&line_limit=4",
+            );
+        });
+    });
+
+    it("requests line-limited inline previews for gzip-compressed tsv files", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        fetchMock.mockResolvedValue(
+            new Response("sample\tstatus\nalpha\tready\n", {
+                headers: {
+                    "content-type": "text/tab-separated-values",
+                    "x-preview-truncated": "true",
+                },
+                status: 200,
+            }),
+        );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/a/report.tsv.gz")],
+                resultId: "result-1",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv.gz&line_limit=4",
+            );
+        });
+    });
+
     it("rerenders non-image grid previews once when preview height changes", async () => {
         // Updated test: non-image previews (including CSV) now re-render when
         // maxHeight changes to enable proper truncation based on preview height

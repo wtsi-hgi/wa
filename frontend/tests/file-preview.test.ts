@@ -476,6 +476,30 @@ describe("O1 file preview", () => {
         ).toContain("download=true");
     });
 
+    it("treats loading gzip-compressed tsv files as previewable before content arrives", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/report.tsv.gz" }),
+            isLoading: true,
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.tsv.gz",
+        });
+
+        expect(
+            screen.queryByText(/inspect the selected asset inline/i),
+        ).toBeNull();
+        expect(screen.getByText(/loading preview/i)).toBeTruthy();
+        expect(
+            screen.queryByText(
+                /this file type is not previewable in the browser/i,
+            ),
+        ).toBeNull();
+        expect(
+            screen
+                .getByRole("link", { name: /download file/i })
+                .getAttribute("href"),
+        ).toContain("download=true");
+    });
+
     it("does not show inline csv controls before the preview is enlarged", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/report.csv" }),
@@ -909,6 +933,23 @@ describe("O1 file preview", () => {
         const truncationIndicator = screen.getByLabelText(/content truncated/i);
         expect(truncationIndicator).toBeTruthy();
         expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
+    });
+
+    it("shows a visible truncation note when inline preview content was line-limited", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/data.tsv" }),
+            content: {
+                content: "sample\tstatus\nalpha\tready\n",
+                contentType: "text/tab-separated-values",
+                truncated: true,
+            },
+            maxHeight: 220,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fdata.tsv",
+        });
+
+        expect(
+            screen.getByText(/preview truncated after the first lines/i),
+        ).toBeTruthy();
     });
 
     it("truncates 20-row csv preview when maxHeight=220 to respect preview height setting", () => {

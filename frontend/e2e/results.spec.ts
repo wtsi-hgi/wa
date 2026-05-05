@@ -500,8 +500,11 @@ test.describe("Q1 critical results flows", () => {
         const preview = page.locator('[data-file-browser-preview="single"]');
 
         await expect(preview).toBeVisible();
-        // Initial preview is height-constrained: shows only 3 rows (minimum) of the 20 total
-        await expect(preview.getByText("Showing 3 of 20 rows")).toBeVisible();
+        // Initial preview loads only the preview-sized rows and marks the content as truncated.
+        await expect(preview.getByText("Showing 3 preview rows")).toBeVisible();
+        await expect(
+            preview.getByText(/preview truncated after the first lines/i),
+        ).toBeVisible();
         await expect(
             preview.getByRole("button", { name: "Sort by sample_id" }),
         ).toHaveCount(0);
@@ -515,8 +518,11 @@ test.describe("Q1 critical results flows", () => {
         });
 
         await expect(dialog).toBeVisible();
-        // Enlarged view shows all rows and exposes table controls
-        await expect(dialog.getByText("Showing 20 of 20 rows")).toBeVisible();
+        // Enlarged view keeps the preview subset but exposes table controls for it.
+        await expect(dialog.getByText("Showing 3 preview rows")).toBeVisible();
+        await expect(
+            dialog.getByText(/preview truncated after the first lines/i),
+        ).toBeVisible();
         await expect(
             dialog.getByRole("button", { name: "Sort by sample_id" }),
         ).toBeVisible();

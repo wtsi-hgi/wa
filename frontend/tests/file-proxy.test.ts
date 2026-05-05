@@ -207,6 +207,33 @@ describe("P1 file content streaming API route", () => {
         });
     });
 
+    it("forwards line-limited preview requests and preserves truncation metadata", async () => {
+        resultsRawMock.mockResolvedValue(
+            new Response("sample\tstatus\nalpha\tready\n", {
+                status: 200,
+                headers: {
+                    "content-type": "text/tab-separated-values",
+                    "x-preview-truncated": "true",
+                },
+            }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest("id=abc&path=%2Fout%2Freport.tsv&line_limit=2"),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            "/results/abc/file?path=%2Fout%2Freport.tsv&line_limit=2",
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("x-preview-truncated")).toBe("true");
+        await expect(response.text()).resolves.toBe(
+            "sample\tstatus\nalpha\tready\n",
+        );
+    });
+
     it("returns 400 when id or path is missing", async () => {
         const { GET } = await import("@/app/api/file/route");
 

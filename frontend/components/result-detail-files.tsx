@@ -21,7 +21,7 @@ type ResultDetailFilesProps = {
 };
 
 type PreviewState = {
-    content?: { content: string; contentType: string };
+    content?: { content: string; contentType: string; truncated?: boolean };
     error?: FilePreviewError;
     isLoading: boolean;
     path: string | null;
@@ -30,13 +30,17 @@ type PreviewState = {
 type FileUrlOptions = {
     download?: boolean;
     height?: number;
+    lineLimit?: number;
     thumbnail?: boolean;
     width?: number;
 };
 
 const thumbnailsPerPage = 100;
 const defaultPreviewHeight = 220;
+const defaultDelimitedPreviewLineLimit = 4;
+const defaultTextPreviewLineLimit = 8;
 const thumbnailRenderHeight = 420;
+const compressedExtensions = new Set(["gz"]);
 const imageExtensions = new Set([
     "avif",
     "bmp",
@@ -66,6 +70,44 @@ const proxyOnlyExtensions = new Set([
     "tiff",
     "webp",
 ]);
+const delimitedExtensions = new Set(["csv", "tsv"]);
+const lineReadableExtensions = new Set([
+    "csv",
+    "json",
+    "jsonl",
+    "log",
+    "markdown",
+    "md",
+    "py",
+    "sh",
+    "text",
+    "tsv",
+    "txt",
+    "xml",
+    "yaml",
+    "yml",
+]);
+
+function effectiveExtensionFromPath(path: string): string {
+    const name = path.split("/").pop() ?? path;
+    const extensions = name
+        .split(".")
+        .slice(1)
+        .map((extension) => extension.toLowerCase())
+        .filter((extension) => extension.length > 0);
+
+    if (extensions.length === 0) {
+        return "";
+    }
+
+    const lastExtension = extensions.at(-1) ?? "";
+
+    if (compressedExtensions.has(lastExtension) && extensions.length > 1) {
+        return extensions.at(-2) ?? lastExtension;
+    }
+
+    return lastExtension;
+}
 
 class PreviewRequestError extends Error {
     constructor(
@@ -113,6 +155,10 @@ function buildFileUrl(
         query.set("download", "true");
     }
 
+    if (options.lineLimit) {
+        query.set("line_limit", String(options.lineLimit));
+    }
+
     if (options.thumbnail) {
         query.set("thumb", "true");
         query.set(
@@ -126,15 +172,29 @@ function buildFileUrl(
 }
 
 function shouldFetchInlinePreview(path: string): boolean {
-    const extension = path.split(".").pop()?.toLowerCase() ?? "";
+    const extension = effectiveExtensionFromPath(path);
 
     return !proxyOnlyExtensions.has(extension);
 }
 
 function isImageFile(path: string): boolean {
-    const extension = path.split(".").pop()?.toLowerCase() ?? "";
+    const extension = effectiveExtensionFromPath(path);
 
     return imageExtensions.has(extension);
+}
+
+function previewLineLimitForPath(path: string): number {
+    const extension = effectiveExtensionFromPath(path);
+
+    if (!lineReadableExtensions.has(extension)) {
+        return 0;
+    }
+
+    if (delimitedExtensions.has(extension)) {
+        return defaultDelimitedPreviewLineLimit;
+    }
+
+    return defaultTextPreviewLineLimit;
 }
 
 function buildPreviewState(file: FileEntry | null): PreviewState {
@@ -149,8 +209,12 @@ function buildPreviewState(file: FileEntry | null): PreviewState {
 async function fetchPreviewContent(
     resultId: string,
     path: string,
-): Promise<{ content: string; contentType: string }> {
-    const response = await fetch(buildFileUrl(resultId, path));
+): Promise<{ content: string; contentType: string; truncated?: boolean }> {
+    const response = await fetch(
+        buildFileUrl(resultId, path, {
+            lineLimit: previewLineLimitForPath(path),
+        }),
+    );
 
     if (!response.ok) {
         const contentType = response.headers.get("content-type") ?? "";
@@ -175,6 +239,7 @@ async function fetchPreviewContent(
     return {
         content: await response.text(),
         contentType: response.headers.get("content-type") ?? "text/plain",
+        truncated: response.headers.get("x-preview-truncated") === "true",
     };
 }
 

@@ -30,6 +30,7 @@ hljs.registerLanguage("python", python);
 hljs.registerLanguage("xml", xml);
 
 const nonPreviewableExtensions = new Set(["bam", "cram", "h5", "hdf5"]);
+const compressedExtensions = new Set(["gz"]);
 const STABLE_THUMBNAIL_HEIGHT = 420;
 const STABLE_THUMBNAIL_WIDTH = Math.max(
     320,
@@ -65,7 +66,7 @@ export type FilePreviewError = {
 
 export type FilePreviewProps = {
     file: FileEntry;
-    content?: { content: string; contentType: string };
+    content?: { content: string; contentType: string; truncated?: boolean };
     error?: FilePreviewError;
     isLoading?: boolean;
     maxHeight?: number;
@@ -122,8 +123,29 @@ function extensionFromPath(path: string): string {
     return name.slice(index + 1).toLowerCase();
 }
 
+function effectiveExtensionFromPath(path: string): string {
+    const name = path.split("/").pop() ?? path;
+    const extensions = name
+        .split(".")
+        .slice(1)
+        .map((extension) => extension.toLowerCase())
+        .filter((extension) => extension.length > 0);
+
+    if (extensions.length === 0) {
+        return "";
+    }
+
+    const lastExtension = extensions.at(-1) ?? "";
+
+    if (compressedExtensions.has(lastExtension) && extensions.length > 1) {
+        return extensions.at(-2) ?? lastExtension;
+    }
+
+    return lastExtension;
+}
+
 function guessRendererFromPath(path: string): PreviewRenderer {
-    const extension = extensionFromPath(path);
+    const extension = effectiveExtensionFromPath(path);
 
     if (extension === "svg") {
         return "svg";
@@ -151,7 +173,7 @@ function guessRendererFromPath(path: string): PreviewRenderer {
 function isPreviewable(renderer: PreviewRenderer, path: string): boolean {
     return (
         renderer !== "binary" &&
-        !nonPreviewableExtensions.has(extensionFromPath(path))
+        !nonPreviewableExtensions.has(effectiveExtensionFromPath(path))
     );
 }
 
@@ -243,6 +265,15 @@ function DownloadIconLink({
     );
 }
 
+function TruncationNote() {
+    return (
+        <p className="mt-3 rounded-[1rem] border border-border/70 bg-background/60 px-4 py-3 text-sm text-muted-foreground">
+            Preview truncated after the first lines. Download the file to
+            inspect the full content.
+        </p>
+    );
+}
+
 function ExpandablePreview({
     children,
     dialogContent,
@@ -322,11 +353,13 @@ function CsvPreview({
     contentType,
     isExpanded = false,
     maxHeight,
+    truncated = false,
 }: {
     content: string;
     contentType: string;
     isExpanded?: boolean;
     maxHeight?: number;
+    truncated?: boolean;
 }) {
     const parsed = useMemo(
         () => parseDelimitedContent(content, contentType),
@@ -402,7 +435,9 @@ function CsvPreview({
         <div className="space-y-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <p className="text-sm text-muted-foreground">
-                    Showing {visibleRows.length} of {parsed.rows.length} rows
+                    {truncated
+                        ? `Showing ${visibleRows.length} preview rows`
+                        : `Showing ${visibleRows.length} of ${parsed.rows.length} rows`}
                 </p>
                 {isExpanded ? (
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -874,31 +909,41 @@ export function FilePreview({
                         <ExpandablePreview
                             fileName={fileName}
                             dialogContent={
-                                <article className="max-w-none rounded-[1.5rem] border border-border/70 bg-background/75 p-6 text-foreground">
-                                    <ReactMarkdown>
-                                        {content?.content ?? ""}
-                                    </ReactMarkdown>
-                                </article>
+                                <div>
+                                    <article className="max-w-none rounded-[1.5rem] border border-border/70 bg-background/75 p-6 text-foreground">
+                                        <ReactMarkdown>
+                                            {content?.content ?? ""}
+                                        </ReactMarkdown>
+                                    </article>
+                                    {content?.truncated ? (
+                                        <TruncationNote />
+                                    ) : null}
+                                </div>
                             }
                         >
-                            <div className="relative">
-                                <article
-                                    className="max-w-none overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-6"
-                                    style={
-                                        maxHeight
-                                            ? { maxHeight: `${maxHeight}px` }
-                                            : undefined
-                                    }
-                                >
-                                    <ReactMarkdown>
-                                        {content?.content ?? ""}
-                                    </ReactMarkdown>
-                                </article>
-                                <div
-                                    aria-label="Content truncated"
-                                    className="pointer-events-none absolute inset-x-0 bottom-0 h-16 rounded-b-[1.5rem] bg-gradient-to-t from-background/95 via-background/60 to-transparent"
-                                    data-truncated="true"
-                                />
+                            <div>
+                                <div className="relative">
+                                    <article
+                                        className="max-w-none overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-6"
+                                        style={
+                                            maxHeight
+                                                ? {
+                                                      maxHeight: `${maxHeight}px`,
+                                                  }
+                                                : undefined
+                                        }
+                                    >
+                                        <ReactMarkdown>
+                                            {content?.content ?? ""}
+                                        </ReactMarkdown>
+                                    </article>
+                                    <div
+                                        aria-label="Content truncated"
+                                        className="pointer-events-none absolute inset-x-0 bottom-0 h-16 rounded-b-[1.5rem] bg-gradient-to-t from-background/95 via-background/60 to-transparent"
+                                        data-truncated="true"
+                                    />
+                                </div>
+                                {content?.truncated ? <TruncationNote /> : null}
                             </div>
                         </ExpandablePreview>
                     ) : null}
@@ -910,33 +955,45 @@ export function FilePreview({
                         <ExpandablePreview
                             fileName={fileName}
                             dialogContent={
-                                <CsvPreview
-                                    content={content.content}
-                                    contentType={content.contentType}
-                                    isExpanded
-                                />
-                            }
-                        >
-                            <div className="relative">
-                                <div
-                                    className="overflow-hidden"
-                                    style={
-                                        maxHeight
-                                            ? { maxHeight: `${maxHeight}px` }
-                                            : undefined
-                                    }
-                                >
+                                <div>
                                     <CsvPreview
                                         content={content.content}
                                         contentType={content.contentType}
-                                        maxHeight={maxHeight}
+                                        isExpanded
+                                        truncated={content.truncated}
+                                    />
+                                    {content.truncated ? (
+                                        <TruncationNote />
+                                    ) : null}
+                                </div>
+                            }
+                        >
+                            <div>
+                                <div className="relative">
+                                    <div
+                                        className="overflow-hidden"
+                                        style={
+                                            maxHeight
+                                                ? {
+                                                      maxHeight: `${maxHeight}px`,
+                                                  }
+                                                : undefined
+                                        }
+                                    >
+                                        <CsvPreview
+                                            content={content.content}
+                                            contentType={content.contentType}
+                                            maxHeight={maxHeight}
+                                            truncated={content.truncated}
+                                        />
+                                    </div>
+                                    <div
+                                        aria-label="Content truncated"
+                                        className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background/95 via-background/60 to-transparent"
+                                        data-truncated="true"
                                     />
                                 </div>
-                                <div
-                                    aria-label="Content truncated"
-                                    className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background/95 via-background/60 to-transparent"
-                                    data-truncated="true"
-                                />
+                                {content.truncated ? <TruncationNote /> : null}
                             </div>
                         </ExpandablePreview>
                     ) : null}
@@ -945,8 +1002,36 @@ export function FilePreview({
                         <ExpandablePreview
                             fileName={fileName}
                             dialogContent={
-                                <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
-                                    <pre className="overflow-auto p-5 text-sm leading-7 text-slate-100">
+                                <div>
+                                    <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
+                                        <pre className="overflow-auto p-5 text-sm leading-7 text-slate-100">
+                                            <code
+                                                dangerouslySetInnerHTML={{
+                                                    __html:
+                                                        highlightedContent ??
+                                                        "",
+                                                }}
+                                            />
+                                        </pre>
+                                    </div>
+                                    {content?.truncated ? (
+                                        <TruncationNote />
+                                    ) : null}
+                                </div>
+                            }
+                        >
+                            <div>
+                                <div className="relative overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
+                                    <pre
+                                        className="overflow-hidden p-5 text-sm leading-7 text-slate-100"
+                                        style={
+                                            maxHeight
+                                                ? {
+                                                      maxHeight: `${maxHeight}px`,
+                                                  }
+                                                : undefined
+                                        }
+                                    >
                                         <code
                                             dangerouslySetInnerHTML={{
                                                 __html:
@@ -954,29 +1039,13 @@ export function FilePreview({
                                             }}
                                         />
                                     </pre>
-                                </div>
-                            }
-                        >
-                            <div className="relative overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
-                                <pre
-                                    className="overflow-hidden p-5 text-sm leading-7 text-slate-100"
-                                    style={
-                                        maxHeight
-                                            ? { maxHeight: `${maxHeight}px` }
-                                            : undefined
-                                    }
-                                >
-                                    <code
-                                        dangerouslySetInnerHTML={{
-                                            __html: highlightedContent ?? "",
-                                        }}
+                                    <div
+                                        aria-label="Content truncated"
+                                        className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[color:rgba(15,23,42,0.96)] via-[color:rgba(15,23,42,0.7)] to-transparent"
+                                        data-truncated="true"
                                     />
-                                </pre>
-                                <div
-                                    aria-label="Content truncated"
-                                    className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[color:rgba(15,23,42,0.96)] via-[color:rgba(15,23,42,0.7)] to-transparent"
-                                    data-truncated="true"
-                                />
+                                </div>
+                                {content?.truncated ? <TruncationNote /> : null}
                             </div>
                         </ExpandablePreview>
                     ) : null}
