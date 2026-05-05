@@ -38,6 +38,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -292,6 +293,38 @@ exec %q "$@"
 		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
 
 		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh starts the results server without putting the DB path on the command line", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			env: map[string]string{
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		cmdline := waitForRunDevChildCommandLineForTest(t, process.Command.Process.Pid, " results serve ")
+
+		convey.So(cmdline, convey.ShouldContainSubstring, " results serve ")
+		convey.So(cmdline, convey.ShouldNotContainSubstring, " --db ")
+		convey.So(cmdline, convey.ShouldNotContainSubstring, snapshot.ResultsDBPath)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -807,6 +840,55 @@ func runDevPathExistsWithinForTest(path string, timeout time.Duration) bool {
 	}
 
 	return runDevPathExistsForTest(path)
+}
+
+func waitForRunDevChildCommandLineForTest(t *testing.T, parentPID int, substring string) string {
+	t.Helper()
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		childPIDs, err := runDevChildPIDsForTest(parentPID)
+		if err == nil {
+			for _, childPID := range childPIDs {
+				cmdline, readErr := os.ReadFile(filepath.Join("/proc", strconv.Itoa(childPID), "cmdline"))
+				if readErr != nil {
+					continue
+				}
+
+				formatted := " " + strings.ReplaceAll(string(cmdline), "\x00", " ") + " "
+				if strings.Contains(formatted, substring) {
+					return formatted
+				}
+			}
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for child process containing %q", substring)
+
+	return ""
+}
+
+func runDevChildPIDsForTest(parentPID int) ([]int, error) {
+	command := exec.Command("ps", "-o", "pid=", "--ppid", strconv.Itoa(parentPID))
+	output, err := command.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	fields := strings.Fields(string(output))
+	childPIDs := make([]int, 0, len(fields))
+	for _, field := range fields {
+		childPID, convErr := strconv.Atoi(field)
+		if convErr != nil {
+			return nil, convErr
+		}
+
+		childPIDs = append(childPIDs, childPID)
+	}
+
+	return childPIDs, nil
 }
 
 func splitRunDevOriginsForTest(raw string) []string {

@@ -58,6 +58,31 @@ func TestResultsServeCommand(t *testing.T) {
 	originalListen := listenFunc
 	defer func() { listenFunc = originalListen }()
 
+	convey.Convey("results serve rejects password-bearing MySQL DSNs on the command line", t, func() {
+		_, err := resolveResultsServeDBDSN("user:secret@tcp(localhost:3306)/results", true)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "must not be supplied on the command line")
+	})
+
+	convey.Convey("results serve can combine a passwordless MySQL DSN with WA_RESULTS_DB_PASSWORD", t, func() {
+		t.Setenv("WA_RESULTS_DB_PASSWORD", "secret")
+
+		dsn, err := resolveResultsServeDBDSN("user@tcp(localhost:3306)/results", true)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(dsn, convey.ShouldEqual, "user:secret@tcp(localhost:3306)/results")
+	})
+
+	convey.Convey("results serve falls back to WA_RESULTS_DB_PATH without exposing it as a flag default", t, func() {
+		t.Setenv("WA_RESULTS_DB_PATH", "user:secret@tcp(localhost:3306)/results")
+
+		dsn, err := resolveResultsServeDBDSN("results.db", false)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(dsn, convey.ShouldEqual, "user:secret@tcp(localhost:3306)/results")
+	})
+
 	convey.Convey("H1.1: Given results serve --port 0 --db :memory:, when started, then POST /results with valid JSON returns 201", t, func() {
 		addrCh := make(chan string, 1)
 		listenFunc = resultsServeListenFuncForTest(addrCh)

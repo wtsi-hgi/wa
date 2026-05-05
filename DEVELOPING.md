@@ -135,7 +135,8 @@ The wrapper and `run-dev.sh` enforce the following:
 
 These are set by the scenario `.env*` files and are not scenario-specific:
 `WA_RESULTS_BACKEND_URL`, `WA_SEQMETA_BACKEND_URL`, `WA_RESULTS_DB_PATH`,
-`SAGA_API_TOKEN`, `WA_STUDIES_CACHE_TTL_SECONDS`, `WA_DEV_ALLOWED_ORIGINS`.
+`WA_RESULTS_DB_PASSWORD`, `SAGA_API_TOKEN`, `WA_STUDIES_CACHE_TTL_SECONDS`,
+`WA_DEV_ALLOWED_ORIGINS`.
 Backend URLs are derived inside `run-dev.sh` from the active scenario's
 `WA_TEST_*` / `WA_DEV_*` / `WA_PROD_*` ports — do not set them by hand.
 
@@ -172,6 +173,11 @@ go build -o wa .
 
 # Start results server (SQLite for dev)
 ./wa results serve --port 8090 --db dev.db
+
+# Start results server (MySQL without exposing the password on argv)
+export WA_RESULTS_DB_PATH='user@tcp(db-host:3306)/wa_results'
+export WA_RESULTS_DB_PASSWORD='super-secret'
+./wa results serve --port 8090
 
 # Start seqmeta server (requires SAGA token)
 ./wa seqmeta serve --port 8091 --db seqmeta.db --token "$SAGA_API_TOKEN"
@@ -272,12 +278,18 @@ migrations needed.
 
 ### Production (MySQL)
 
-Pass a MySQL DSN to `--db` instead of a file path:
+Use either an env-supplied full DSN or a passwordless `--db` value plus
+`WA_RESULTS_DB_PASSWORD`:
 
 ```bash
-wa results serve --port 8090 --db 'user:pass@tcp(db-host:3306)/wa_results'
+export WA_RESULTS_DB_PATH='user:pass@tcp(db-host:3306)/wa_results'
+wa results serve --port 8090
+
+export WA_RESULTS_DB_PASSWORD='super-secret'
+wa results serve --port 8090 --db 'user@tcp(db-host:3306)/wa_results'
 ```
 
+Password-bearing DSNs are rejected on the command line.
 The DSN is detected by the presence of `@tcp(` or `@unix(` in the string.
 Tables are auto-created on startup, same as SQLite.
 
@@ -330,9 +342,11 @@ manager (systemd, supervisor, etc.) to keep them running.
 
 ```bash
 # Results API (MySQL for production)
+export WA_RESULTS_DB_PATH='user@tcp(db-host:3306)/wa_results'
+export WA_RESULTS_DB_PASSWORD='super-secret'
 wa results serve \
   --port 8090 \
-  --db 'user:pass@tcp(db-host:3306)/wa_results' \
+  --db 'user@tcp(db-host:3306)/wa_results' \
   --seqmeta-url http://localhost:8091
 
 # Seqmeta API
@@ -350,10 +364,12 @@ WA_SEQMETA_BACKEND_URL=http://localhost:8091 \
 
 ### Environment variables for production
 
-| Variable                       | Required     | Description                          |
-| ------------------------------ | ------------ | ------------------------------------ |
-| `SAGA_API_TOKEN`               | For seqmeta  | SAGA API authentication token        |
-| `WA_RESULTS_BACKEND_URL`       | For frontend | Results API URL (server-side only)   |
-| `WA_SEQMETA_BACKEND_URL`       | For frontend | Seqmeta API URL (server-side only)   |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | No           | Study list cache TTL (default: 300)  |
-| `PORT`                         | No           | Frontend listen port (default: 3000) |
+| Variable                       | Required     | Description                                      |
+| ------------------------------ | ------------ | ------------------------------------------------ |
+| `WA_RESULTS_DB_PATH`           | For results  | SQLite path, full DSN, or passwordless MySQL DSN |
+| `WA_RESULTS_DB_PASSWORD`       | Optional     | MySQL password paired with a passwordless DSN    |
+| `SAGA_API_TOKEN`               | For seqmeta  | SAGA API authentication token                    |
+| `WA_RESULTS_BACKEND_URL`       | For frontend | Results API URL (server-side only)               |
+| `WA_SEQMETA_BACKEND_URL`       | For frontend | Seqmeta API URL (server-side only)               |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | No           | Study list cache TTL (default: 300)              |
+| `PORT`                         | No           | Frontend listen port (default: 3000)             |

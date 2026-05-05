@@ -41,10 +41,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/wa/results"
 
-	_ "github.com/go-sql-driver/mysql"
 	_ "modernc.org/sqlite"
 )
 
@@ -159,6 +159,51 @@ func newResultsCommand() *cobra.Command {
 	command.AddCommand(newResultsServeCommand())
 
 	return command
+}
+
+func resolveResultsServeDBDSN(flagValue string, flagChanged bool) (string, error) {
+	dsn := strings.TrimSpace(flagValue)
+	if !flagChanged {
+		if envValue := firstEnv("WA_RESULTS_DB_PATH"); envValue != "" {
+			dsn = envValue
+		}
+	}
+
+	if dsn == "" {
+		return "", errors.New("results database path or DSN must not be empty")
+	}
+
+	password := firstEnv("WA_RESULTS_DB_PASSWORD")
+
+	return resolveResultsMySQLPassword(dsn, password, flagChanged)
+}
+
+func resolveResultsMySQLPassword(dsn string, password string, rejectEmbeddedPassword bool) (string, error) {
+	trimmedDSN := strings.TrimSpace(dsn)
+	if resultsDBDriverName(trimmedDSN) != "mysql" {
+		return trimmedDSN, nil
+	}
+
+	config, err := mysql.ParseDSN(trimmedDSN)
+	if err != nil {
+		return "", fmt.Errorf("parse MySQL DSN: %w", err)
+	}
+
+	if config.Passwd != "" {
+		if rejectEmbeddedPassword {
+			return "", errors.New("MySQL database passwords must not be supplied on the command line; use WA_RESULTS_DB_PATH or WA_RESULTS_DB_PASSWORD instead")
+		}
+
+		return trimmedDSN, nil
+	}
+
+	if strings.TrimSpace(password) == "" {
+		return trimmedDSN, nil
+	}
+
+	config.Passwd = password
+
+	return config.FormatDSN(), nil
 }
 
 func validateResultsSQLiteDBPath(dsn string) error {
@@ -742,7 +787,12 @@ func newResultsServeCommand() *cobra.Command {
 		Use:   "serve",
 		Short: "Serve the results HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			db, err := openResultsDB(dbPath)
+			dsn, err := resolveResultsServeDBDSN(dbPath, cmd.Flags().Changed("db"))
+			if err != nil {
+				return err
+			}
+
+			db, err := openResultsDB(dsn)
 			if err != nil {
 				return err
 			}
@@ -789,7 +839,7 @@ func newResultsServeCommand() *cobra.Command {
 	}
 
 	command.Flags().IntVar(&port, "port", 8080, "Port to bind")
-	command.Flags().StringVar(&dbPath, "db", "results.db", "SQLite database path or MySQL DSN")
+	command.Flags().StringVar(&dbPath, "db", "results.db", "SQLite database path or MySQL DSN without a password; defaults to WA_RESULTS_DB_PATH when unset")
 	command.Flags().StringVar(&seqmetaURL, "seqmeta-url", firstEnv("WA_SEQMETA_BACKEND_URL"), "Base URL for seqmeta validation (defaults to WA_SEQMETA_BACKEND_URL)")
 	command.Flags().DurationVar(&seqmetaTimeout, "seqmeta-timeout", 30*time.Second, "Timeout for seqmeta validation requests")
 

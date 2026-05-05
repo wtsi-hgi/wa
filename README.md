@@ -69,7 +69,10 @@ wa results get --files <id>
 wa results serve --port 8090 --db results.db
 ```
 
-Use a MySQL DSN for production: `--db 'user:pass@tcp(host:3306)/dbname'`.
+For MySQL, either export `WA_RESULTS_DB_PATH='user:pass@tcp(host:3306)/dbname'`
+and run `wa results serve --port 8090`, or pass a passwordless DSN with
+`--db 'user@tcp(host:3306)/dbname'` and export `WA_RESULTS_DB_PASSWORD`.
+Password-bearing DSNs are rejected on the command line.
 Add `--seqmeta-url http://host:8091` to enable seqmeta validation of
 `seqmeta_*` metadata fields.
 

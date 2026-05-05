@@ -430,7 +430,7 @@ unset WA_SEQMETA_BACKEND_URL
 : >"$FRONTEND_LOG"
 
 printf 'Starting results server on %s (mode=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario"
-"$BIN_PATH" results serve --port "$results_port" --db "$DB_PATH" >"$RESULTS_LOG" 2>&1 &
+"$BIN_PATH" results serve --port "$results_port" >"$RESULTS_LOG" 2>&1 &
 PIDS+=("$!")
 
 wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict"
