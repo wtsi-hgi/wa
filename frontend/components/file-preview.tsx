@@ -36,6 +36,7 @@ const STABLE_THUMBNAIL_WIDTH = Math.max(
     320,
     Math.round(STABLE_THUMBNAIL_HEIGHT * 1.6),
 );
+const EXPANDED_TABLE_PAGE_SIZE = 1000;
 const imageExtensions = new Set([
     "png",
     "jpg",
@@ -183,6 +184,15 @@ function buildDownloadUrl(proxyUrl: string): string {
     }
 
     return `${proxyUrl}${proxyUrl.includes("?") ? "&" : "?"}download=true`;
+}
+
+function buildPreviewInstanceKey(
+    path: string,
+    contentType: string,
+    content: string,
+    mode: "inline" | "expanded",
+): string {
+    return [path, contentType, content, mode].join("\u0000");
 }
 
 function parseDelimitedContent(
@@ -366,6 +376,10 @@ function CsvPreview({
         [content, contentType],
     );
     const [filterValue, setFilterValue] = useState("");
+    const [currentPage, setCurrentPage] = useState(1);
+    const [expandedTableReady, setExpandedTableReady] = useState(
+        !isExpanded || parsed.rows.length <= EXPANDED_TABLE_PAGE_SIZE,
+    );
     const [sortIndex, setSortIndex] = useState<number | null>(null);
     const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
@@ -404,6 +418,20 @@ function CsvPreview({
         });
     }, [filteredRows, sortDirection, sortIndex]);
 
+    useEffect(() => {
+        if (expandedTableReady) {
+            return undefined;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            setExpandedTableReady(true);
+        }, 0);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+        };
+    }, [expandedTableReady]);
+
     const maxRowsForHeight = useMemo(() => {
         if (!maxHeight || isExpanded) {
             return undefined;
@@ -422,8 +450,20 @@ function CsvPreview({
         return Math.max(3, maxRows);
     }, [maxHeight, isExpanded]);
 
+    const totalExpandedPages = isExpanded
+        ? Math.max(1, Math.ceil(sortedRows.length / EXPANDED_TABLE_PAGE_SIZE))
+        : 1;
+    const safeCurrentPage = Math.min(currentPage, totalExpandedPages);
+    const expandedPageStartIndex =
+        (safeCurrentPage - 1) * EXPANDED_TABLE_PAGE_SIZE;
+
     const visibleRows = isExpanded
-        ? sortedRows
+        ? totalExpandedPages > 1
+            ? sortedRows.slice(
+                  expandedPageStartIndex,
+                  expandedPageStartIndex + EXPANDED_TABLE_PAGE_SIZE,
+              )
+            : sortedRows
         : sortedRows.slice(
               0,
               maxRowsForHeight !== undefined
@@ -431,13 +471,25 @@ function CsvPreview({
                   : Math.min(100, sortedRows.length),
           );
 
+    const expandedPageEndIndex = expandedPageStartIndex + visibleRows.length;
+
+    if (isExpanded && !expandedTableReady) {
+        return (
+            <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
+                Loading full preview...
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <p className="text-sm text-muted-foreground">
-                    {truncated
-                        ? `Showing ${visibleRows.length} preview rows`
-                        : `Showing ${visibleRows.length} of ${parsed.rows.length} rows`}
+                    {isExpanded && totalExpandedPages > 1
+                        ? `Showing rows ${expandedPageStartIndex + 1}-${expandedPageEndIndex} of ${sortedRows.length}`
+                        : truncated
+                          ? `Showing ${visibleRows.length} preview rows`
+                          : `Showing ${visibleRows.length} of ${parsed.rows.length} rows`}
                 </p>
                 {isExpanded ? (
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -450,13 +502,53 @@ function CsvPreview({
                             <input
                                 aria-label="Filter rows"
                                 className="w-full rounded-full border border-border/70 bg-background px-10 py-2 text-sm text-foreground outline-none transition focus:border-primary sm:w-64"
-                                onChange={(event) =>
-                                    setFilterValue(event.target.value)
-                                }
+                                onChange={(event) => {
+                                    setCurrentPage(1);
+                                    setFilterValue(event.target.value);
+                                }}
                                 placeholder="Filter rows"
                                 value={filterValue}
                             />
                         </label>
+                        {totalExpandedPages > 1 ? (
+                            <div className="flex items-center gap-2 self-start sm:self-auto">
+                                <button
+                                    type="button"
+                                    aria-label="Previous page"
+                                    className="inline-flex items-center rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                                    disabled={safeCurrentPage === 1}
+                                    onClick={() =>
+                                        setCurrentPage((page) =>
+                                            Math.max(1, page - 1),
+                                        )
+                                    }
+                                >
+                                    Previous
+                                </button>
+                                <span className="text-sm text-muted-foreground">
+                                    Page {safeCurrentPage} of{" "}
+                                    {totalExpandedPages}
+                                </span>
+                                <button
+                                    type="button"
+                                    aria-label="Next page"
+                                    className="inline-flex items-center rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                                    disabled={
+                                        safeCurrentPage === totalExpandedPages
+                                    }
+                                    onClick={() =>
+                                        setCurrentPage((page) =>
+                                            Math.min(
+                                                totalExpandedPages,
+                                                page + 1,
+                                            ),
+                                        )
+                                    }
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        ) : null}
                     </div>
                 ) : null}
             </div>
@@ -474,6 +566,7 @@ function CsvPreview({
                                             className="inline-flex items-center gap-2 rounded-full px-2 py-1 text-left text-sm font-medium text-foreground transition hover:bg-muted/50"
                                             onClick={() => {
                                                 if (sortIndex === index) {
+                                                    setCurrentPage(1);
                                                     setSortDirection(
                                                         (current) =>
                                                             current === "asc"
@@ -483,6 +576,7 @@ function CsvPreview({
                                                     return;
                                                 }
 
+                                                setCurrentPage(1);
                                                 setSortIndex(index);
                                                 setSortDirection("asc");
                                             }}
@@ -505,7 +599,9 @@ function CsvPreview({
                     </TableHeader>
                     <TableBody>
                         {visibleRows.map((row, rowIndex) => (
-                            <TableRow key={`${row.join("|")}-${rowIndex}`}>
+                            <TableRow
+                                key={`${expandedPageStartIndex + rowIndex}`}
+                            >
                                 {parsed.headers.map((header, columnIndex) => (
                                     <TableCell
                                         key={`${header}-${rowIndex}-${columnIndex}`}
@@ -957,6 +1053,12 @@ export function FilePreview({
                             dialogContent={
                                 <div>
                                     <CsvPreview
+                                        key={buildPreviewInstanceKey(
+                                            file.path,
+                                            content.contentType,
+                                            content.content,
+                                            "expanded",
+                                        )}
                                         content={content.content}
                                         contentType={content.contentType}
                                         isExpanded
@@ -981,6 +1083,12 @@ export function FilePreview({
                                         }
                                     >
                                         <CsvPreview
+                                            key={buildPreviewInstanceKey(
+                                                file.path,
+                                                content.contentType,
+                                                content.content,
+                                                "inline",
+                                            )}
                                             content={content.content}
                                             contentType={content.contentType}
                                             maxHeight={maxHeight}

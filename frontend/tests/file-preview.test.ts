@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+    act,
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { highlightAutoMock } = vi.hoisted(() => ({
@@ -373,6 +379,103 @@ describe("O1 file preview", () => {
         expect(dialog).toBeTruthy();
         expect(screen.getByText("Showing 120 of 120 rows")).toBeTruthy();
         expect(dialog.querySelectorAll("tr")).toHaveLength(121);
+    });
+
+    it("shows an explicit loading state before mounting the enlarged csv preview", () => {
+        vi.useFakeTimers();
+
+        try {
+            renderPreview({
+                file: buildFile({ path: "/tmp/results/report.csv" }),
+                content: {
+                    content: buildCsv(2505),
+                    contentType: "text/csv",
+                },
+            });
+
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: /enlarge report.csv preview/i,
+                }),
+            );
+
+            const dialog = screen.getByRole("dialog", {
+                name: /enlarged report.csv preview/i,
+            });
+
+            expect(dialog).toBeTruthy();
+            expect(screen.getByText(/loading full preview/i)).toBeTruthy();
+            expect(
+                screen.queryByText("Showing rows 1-1000 of 2505"),
+            ).toBeNull();
+
+            act(() => {
+                vi.runAllTimers();
+            });
+
+            expect(screen.queryByText(/loading full preview/i)).toBeNull();
+            expect(
+                screen.getByText("Showing rows 1-1000 of 2505"),
+            ).toBeTruthy();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("paginates large enlarged csv previews to 1000 rows per page", () => {
+        vi.useFakeTimers();
+
+        try {
+            renderPreview({
+                file: buildFile({ path: "/tmp/results/report.csv" }),
+                content: {
+                    content: buildCsv(2505),
+                    contentType: "text/csv",
+                },
+            });
+
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: /enlarge report.csv preview/i,
+                }),
+            );
+
+            act(() => {
+                vi.runAllTimers();
+            });
+
+            const dialog = screen.getByRole("dialog", {
+                name: /enlarged report.csv preview/i,
+            });
+            const getDialogBodyRows = () =>
+                Array.from(dialog.querySelectorAll("tbody tr")).map(
+                    (row) => row.textContent ?? "",
+                );
+
+            expect(
+                screen.getByText("Showing rows 1-1000 of 2505"),
+            ).toBeTruthy();
+            expect(screen.getByText("Page 1 of 3")).toBeTruthy();
+            expect(dialog.querySelectorAll("tbody tr")).toHaveLength(1000);
+            expect(getDialogBodyRows()[0]).toContain("bar-1");
+            expect(
+                getDialogBodyRows().some((rowText) =>
+                    rowText.includes("foo-1002"),
+                ),
+            ).toBe(false);
+
+            fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+
+            expect(
+                screen.getByText("Showing rows 1001-2000 of 2505"),
+            ).toBeTruthy();
+            expect(screen.getByText("Page 2 of 3")).toBeTruthy();
+            expect(dialog.querySelectorAll("tbody tr")).toHaveLength(1000);
+            expect(getDialogBodyRows()[0]).toContain("bar-1001");
+            expect(getDialogBodyRows()[1]).toContain("foo-1002");
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it.each(nonImagePreviewCases)(

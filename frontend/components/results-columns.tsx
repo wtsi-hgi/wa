@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import { ArrowUpDown } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 
@@ -54,9 +52,9 @@ function linkedCell(
     returnHref: string,
 ) {
     return (
-        <Link href={detailHref(id, returnHref)} className={className}>
+        <a href={detailHref(id, returnHref)} className={className}>
             {value}
-        </Link>
+        </a>
     );
 }
 
@@ -314,14 +312,14 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) => (
-                <Link
+                <a
                     href={detailHref(row.original.id, returnHref)}
                     className="text-muted-foreground"
                 >
                     {row.original.matchedSamples.length > 0
                         ? row.original.matchedSamples.join(", ")
                         : "-"}
-                </Link>
+                </a>
             ),
         });
     }
