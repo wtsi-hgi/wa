@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -42,20 +43,43 @@ type resultSetWithFilesForTest struct {
 }
 
 func TestResultsGetCommand(t *testing.T) {
-	convey.Convey("defaultResultsServerURL ignores the legacy server env var and falls back to localhost when the results backend env var is unset", t, func() {
+	convey.Convey("defaultResultsServerURL derives the results server URL from the active dev port", t, func() {
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "")
+
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "http://127.0.0.1:3672")
+	})
+
+	convey.Convey("defaultResultsServerURL derives the results server URL from the active prod port", t, func() {
+		t.Setenv("WA_ENV", "production")
+		t.Setenv("WA_PROD_RESULTS_PORT", "8090")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "")
+
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "http://127.0.0.1:8090")
+	})
+
+	convey.Convey("defaultResultsServerURL ignores unrelated server env vars and falls back to localhost when no active results port is set", t, func() {
 		legacyServerEnvVar := "WA" + "_SERVER" + "_URL"
 		t.Setenv(legacyServerEnvVar, "http://legacy.example:9999")
-		t.Setenv("WA_RESULTS_BACKEND_URL", "")
+		t.Setenv("WA_ENV", "")
+		t.Setenv("WA_TEST_RESULTS_PORT", "")
+		t.Setenv("WA_DEV_RESULTS_PORT", "")
+		t.Setenv("WA_PROD_RESULTS_PORT", "")
 
 		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "http://localhost:8080")
 	})
 
-	convey.Convey("results get falls back to WA_RESULTS_BACKEND_URL when --server is unset", t, func() {
+	convey.Convey("results get falls back to the active scenario results port when --server is unset", t, func() {
 		result := testResultSetForCommand()
 		server := newResultsGetServerForTest(result, nil)
 		defer server.Close()
 
-		t.Setenv("WA_RESULTS_BACKEND_URL", server.URL)
+		serverURL, err := url.Parse(server.URL)
+		convey.So(err, convey.ShouldBeNil)
+
+		t.Setenv("WA_ENV", "test")
+		t.Setenv("WA_TEST_RESULTS_PORT", serverURL.Port())
 
 		output, err := executeRootCommandForTest(t, []string{"results", "get", result.ID})
 

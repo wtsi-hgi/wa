@@ -149,7 +149,7 @@ func newResultsCommand() *cobra.Command {
 		},
 	}
 
-	command.PersistentFlags().StringVar(&options.serverURL, "server", defaultResultsServerURL(), "Results server base URL (defaults to WA_RESULTS_BACKEND_URL)")
+	command.PersistentFlags().StringVar(&options.serverURL, "server", defaultResultsServerURL(), "Results server base URL (defaults to the active WA_*_RESULTS_PORT)")
 
 	command.AddCommand(newResultsRegisterCommand(options))
 	command.AddCommand(newResultsSearchCommand(options))
@@ -159,6 +159,19 @@ func newResultsCommand() *cobra.Command {
 	command.AddCommand(newResultsServeCommand())
 
 	return command
+}
+
+func activeResultsPort() string {
+	switch firstEnv("WA_ENV") {
+	case "test":
+		return firstEnv("WA_TEST_RESULTS_PORT")
+	case "development":
+		return firstEnv("WA_DEV_RESULTS_PORT")
+	case "production":
+		return firstEnv("WA_PROD_RESULTS_PORT")
+	default:
+		return ""
+	}
 }
 
 func resolveResultsServeDBDSN(flagValue string, flagChanged bool) (string, error) {
@@ -759,8 +772,8 @@ func rescanResults(ctx context.Context, serverURL, resultID string, files []resu
 }
 
 func defaultResultsServerURL() string {
-	if serverURL := firstEnv("WA_RESULTS_BACKEND_URL"); serverURL != "" {
-		return serverURL
+	if port := activeResultsPort(); port != "" {
+		return "http://127.0.0.1:" + port
 	}
 
 	return "http://localhost:8080"

@@ -63,6 +63,16 @@ wa results search --pipeline my-pipeline --user jdoe
 wa results get --files <id>
 ```
 
+When you run the CLI against a stack started via the scenario env files, use the
+matching wrapper command. `wa results ...` then defaults `--server` to
+`http://127.0.0.1:<active results port>` from that scenario's
+`WA_*_RESULTS_PORT`.
+
+```bash
+scripts/wa-env.sh dev -- wa results search --pipeline my-pipeline
+scripts/wa-env.sh prod -- wa results register /path/to/output --user jdoe
+```
+
 ### Start the results API server
 
 ```bash

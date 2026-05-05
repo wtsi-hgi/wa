@@ -97,9 +97,9 @@ Only one env file is loaded per scenario. Each file pins `WA_ENV` to the
 canonical value for its scenario, and `scripts/wa-env.sh` validates that
 `WA_ENV` matches the requested target before running anything. `WA_TEST_*`
 ports are exported only in test mode; `WA_DEV_*` only in dev mode; and
-`WA_PROD_*` only in prod mode. Backend URLs (`WA_RESULTS_BACKEND_URL`,
-`WA_SEQMETA_BACKEND_URL`) are derived from these ports inside `run-dev.sh`,
-not hand-edited.
+`WA_PROD_*` only in prod mode. `wa results ...` derives its default `--server`
+URL from the active scenario's results port, while `run-dev.sh` derives the
+frontend backend URLs from those same ports.
 
 | File                | Tracked? | Loaded by    | Holds                                                                                                                     |
 | ------------------- | -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
@@ -131,14 +131,15 @@ The wrapper and `run-dev.sh` enforce the following:
   or failed. Run `make clean-test-tmp` to perform the same cleanup
   manually.
 
-### Runtime variables (consumed by the Go binaries and the Next.js runtime)
+### Runtime variables
 
-These are set by the scenario `.env*` files and are not scenario-specific:
-`WA_RESULTS_BACKEND_URL`, `WA_SEQMETA_BACKEND_URL`, `WA_RESULTS_DB_PATH`,
-`WA_RESULTS_DB_PASSWORD`, `SAGA_API_TOKEN`, `WA_STUDIES_CACHE_TTL_SECONDS`,
-`WA_DEV_ALLOWED_ORIGINS`.
-Backend URLs are derived inside `run-dev.sh` from the active scenario's
-`WA_TEST_*` / `WA_DEV_*` / `WA_PROD_*` ports — do not set them by hand.
+The scenario `.env*` files supply `WA_RESULTS_DB_PATH`,
+`WA_RESULTS_DB_PASSWORD`, `SAGA_API_TOKEN`,
+`WA_STUDIES_CACHE_TTL_SECONDS`, `WA_DEV_ALLOWED_ORIGINS`, and the relevant
+`WA_*_RESULTS_PORT` / `WA_*_SEQMETA_PORT` / `WA_*_FRONTEND_PORT` variables.
+`wa results ...` uses `WA_ENV` plus the active `WA_*_RESULTS_PORT` to choose
+its default `--server` URL. `run-dev.sh` uses those same ports to export
+`WA_RESULTS_BACKEND_URL` and `WA_SEQMETA_BACKEND_URL` for the frontend.
 
 ### Accessing `make dev` from a remote host
 
@@ -173,6 +174,9 @@ go build -o wa .
 
 # Start results server (SQLite for dev)
 ./wa results serve --port 8090 --db dev.db
+
+# Run the results CLI against the dev stack described by .env.dev
+scripts/wa-env.sh dev -- ./wa results search --pipeline nf-pipe
 
 # Start results server (MySQL without exposing the password on argv)
 export WA_RESULTS_DB_PATH='user@tcp(db-host:3306)/wa_results'
