@@ -24,8 +24,16 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# env files: keep .example siblings and the committed .env.test, ignore the
+# private dev/prod copies (which carry SAGA tokens, DB paths, etc.).
 .env
+.env.dev
+.env.prod
+.env.local
+.env.*.local
+# The `*.test` rule above (for Go test binaries) would otherwise match
+# .env.test; re-include it so the committed test env file is tracked.
+!.env.test
 
 # Generated local SQLite state
 seqmeta.db

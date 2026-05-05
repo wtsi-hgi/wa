@@ -107,8 +107,17 @@ instructions.
 Quick start:
 
 ```bash
-# Start all services (Go backend + Next.js frontend) for local dev
-make run
+# Run the dev stack (real SAGA, persistent SQLite DB, no fixtures)
+make dev
+
+# Same, but seed demo fixtures into the dev DB for browsing
+make dev-fixtures
+
+# Run all tests (Go + Vitest + Playwright). Hermetic — never touches dev/prod.
+make test
+
+# Run the production stack (requires .env.prod)
+make prod
 ```
 
 ## Licence

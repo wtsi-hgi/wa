@@ -3,9 +3,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-frontend_port="${WA_TEST_FRONTEND_PORT:-3000}"
-results_port="${WA_TEST_RESULTS_PORT:-8090}"
-seqmeta_port="${WA_TEST_SEQMETA_PORT:-8091}"
+frontend_port=""
+results_port=""
+seqmeta_port=""
+scenario="test"
+fixtures_requested=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,14 +35,37 @@ while [[ $# -gt 0 ]]; do
       seqmeta_port="${1#*=}"
       shift
       ;;
+    -m|--mode)
+      scenario="${2:?missing value for $1}"
+      shift 2
+      ;;
+    --mode=*)
+      scenario="${1#*=}"
+      shift
+      ;;
+    --fixtures)
+      fixtures_requested=1
+      shift
+      ;;
     -h|--help)
       cat <<'EOF'
 Usage: ./run-dev.sh [options]
 
 Options:
-  -f, --frontend-port PORT  Frontend port (default: 3000)
-  -r, --results-port PORT   Results API port (default: 8090)
-  -s, --seqmeta-port PORT   Seqmeta API port (default: 8091)
+  -m, --mode SCENARIO       One of test (default), dev, prod
+      --fixtures            Seed demo fixtures (only valid in --mode dev)
+  -f, --frontend-port PORT  Frontend port (test default: 3000)
+  -r, --results-port PORT   Results API port (test default: 8090)
+  -s, --seqmeta-port PORT   Seqmeta API port (test default: 8091)
+
+Scenario behaviour:
+  test  Ephemeral mktemp DB under .tmp/ (deleted on shutdown). Fixtures are
+        always seeded. Used by `make test` via Playwright.
+  dev   Persistent DB at WA_RESULTS_DB_PATH (created if missing, never
+        deleted). Refuses to start if WA_ENV=production. Pass --fixtures to
+        also seed demo data.
+  prod  Persistent DB at WA_RESULTS_DB_PATH. Requires WA_ENV=production.
+        Refuses --fixtures. Refuses if any WA_TEST_*_PORT is set.
 EOF
       exit 0
       ;;
@@ -50,6 +75,88 @@ EOF
       ;;
   esac
 done
+
+case "$scenario" in
+  test|dev|prod) ;;
+  *)
+    printf 'run-dev.sh: unknown --mode %q (expected test, dev, or prod)\n' "$scenario" >&2
+    exit 64
+    ;;
+esac
+
+# Scenario-specific guards. These run before any port allocation so a wrong
+# environment can never spawn servers.
+if [[ "$scenario" == "dev" && "${WA_ENV:-}" == "production" ]]; then
+  printf 'run-dev.sh: refusing to run --mode dev with WA_ENV=production.\n' >&2
+  exit 1
+fi
+
+if [[ "$scenario" == "prod" ]]; then
+  if [[ "${WA_ENV:-}" != "production" ]]; then
+    printf 'run-dev.sh: --mode prod requires WA_ENV=production (got %q).\n' "${WA_ENV:-}" >&2
+    exit 1
+  fi
+
+  if (( fixtures_requested )); then
+    printf 'run-dev.sh: --fixtures is not permitted in --mode prod.\n' >&2
+    exit 1
+  fi
+
+  for var in WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT; do
+    if [[ -n "${!var:-}" ]]; then
+      printf 'run-dev.sh: refusing to run --mode prod with %s set.\n' "$var" >&2
+      exit 1
+    fi
+  done
+fi
+
+if (( fixtures_requested )) && [[ "$scenario" != "dev" ]]; then
+  printf 'run-dev.sh: --fixtures is only valid with --mode dev.\n' >&2
+  exit 1
+fi
+
+if [[ "$scenario" == "test" && -n "${WA_RESULTS_DB_PATH:-}" ]]; then
+  printf 'run-dev.sh: refusing to run --mode test with WA_RESULTS_DB_PATH set.\n' >&2
+  printf 'Test mode always uses an ephemeral mktemp database.\n' >&2
+  exit 1
+fi
+
+if [[ "$scenario" != "test" && -z "${WA_RESULTS_DB_PATH:-}" ]]; then
+  printf 'run-dev.sh: --mode %s requires WA_RESULTS_DB_PATH to be set.\n' "$scenario" >&2
+  exit 1
+fi
+
+# Default ports per scenario, only used when no explicit flag was passed.
+default_port_for() {
+  local kind="$1"
+  case "$scenario" in
+    test)
+      case "$kind" in
+        frontend) printf '%s' "${WA_TEST_FRONTEND_PORT:-3000}" ;;
+        results)  printf '%s' "${WA_TEST_RESULTS_PORT:-8090}" ;;
+        seqmeta)  printf '%s' "${WA_TEST_SEQMETA_PORT:-8091}" ;;
+      esac
+      ;;
+    dev)
+      case "$kind" in
+        frontend) printf '%s' "${WA_DEV_FRONTEND_PORT:?WA_DEV_FRONTEND_PORT required for --mode dev}" ;;
+        results)  printf '%s' "${WA_DEV_RESULTS_PORT:?WA_DEV_RESULTS_PORT required for --mode dev}" ;;
+        seqmeta)  printf '%s' "${WA_DEV_SEQMETA_PORT:?WA_DEV_SEQMETA_PORT required for --mode dev}" ;;
+      esac
+      ;;
+    prod)
+      case "$kind" in
+        frontend) printf '%s' "${WA_PROD_FRONTEND_PORT:?WA_PROD_FRONTEND_PORT required for --mode prod}" ;;
+        results)  printf '%s' "${WA_PROD_RESULTS_PORT:?WA_PROD_RESULTS_PORT required for --mode prod}" ;;
+        seqmeta)  printf '%s' "${WA_PROD_SEQMETA_PORT:?WA_PROD_SEQMETA_PORT required for --mode prod}" ;;
+      esac
+      ;;
+  esac
+}
+
+frontend_port="${frontend_port:-$(default_port_for frontend)}"
+results_port="${results_port:-$(default_port_for results)}"
+seqmeta_port="${seqmeta_port:-$(default_port_for seqmeta)}"
 
 validate_port() {
   local value="$1"
@@ -70,9 +177,24 @@ validate_port "$frontend_port" "frontend port"
 validate_port "$results_port" "results port"
 validate_port "$seqmeta_port" "seqmeta port"
 
-export WA_TEST_FRONTEND_PORT="$frontend_port"
-export WA_TEST_RESULTS_PORT="$results_port"
-export WA_TEST_SEQMETA_PORT="$seqmeta_port"
+# Always export WA_ENV so child processes (Next.js, Go binaries, tests) can
+# branch on the active scenario. The wrapper sets it to the canonical value
+# matching this run.
+case "$scenario" in
+  test) export WA_ENV="test" ;;
+  dev)  export WA_ENV="development" ;;
+  prod) export WA_ENV="production" ;;
+esac
+
+# WA_TEST_*_PORT is only exported in test mode so dev/prod children cannot
+# accidentally pick up the test-scoped vars.
+if [[ "$scenario" == "test" ]]; then
+  export WA_TEST_FRONTEND_PORT="$frontend_port"
+  export WA_TEST_RESULTS_PORT="$results_port"
+  export WA_TEST_SEQMETA_PORT="$seqmeta_port"
+else
+  unset WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT
+fi
 
 # Assemble the Next.js dev server's allowedDevOrigins so developers hitting the
 # dev server from a non-localhost host (e.g. a remote workstation or laptop
@@ -156,6 +278,7 @@ mkdir -p "$TMP_DIR" "$LOG_DIR"
 
 PIDS=()
 DB_PATH=""
+DB_EPHEMERAL=0
 CLEANED_UP=0
 
 cleanup() {
@@ -180,7 +303,7 @@ cleanup() {
     fi
   done
 
-  if [[ -n "$DB_PATH" ]]; then
+  if (( DB_EPHEMERAL )) && [[ -n "$DB_PATH" ]]; then
     rm -f "$DB_PATH"
   fi
 
@@ -281,7 +404,24 @@ NODE
 printf 'Building Go binary at %s\n' "$BIN_PATH"
 go build -o "$BIN_PATH" .
 
-DB_PATH="$(mktemp "$TMP_DIR/results-dev.XXXXXX.sqlite")"
+# Choose the database path per scenario: test gets a throwaway file under
+# .tmp/ that is removed on shutdown; dev/prod use the persistent path the
+# operator configured in their env file.
+if [[ "$scenario" == "test" ]]; then
+  DB_PATH="$(mktemp "$TMP_DIR/results-dev.XXXXXX.sqlite")"
+  DB_EPHEMERAL=1
+else
+  DB_PATH="$WA_RESULTS_DB_PATH"
+  DB_EPHEMERAL=0
+  # Only create the parent directory for SQLite-style paths. MySQL DSNs
+  # contain `@tcp(` or `@unix(` and must not be touched as filesystem paths.
+  if [[ "$DB_PATH" != *"@tcp("* && "$DB_PATH" != *"@unix("* ]]; then
+    db_dir="$(dirname "$DB_PATH")"
+    if [[ -n "$db_dir" && "$db_dir" != "." ]]; then
+      mkdir -p "$db_dir"
+    fi
+  fi
+fi
 export WA_RESULTS_DB_PATH="$DB_PATH"
 export WA_RESULTS_BACKEND_URL="http://127.0.0.1:$results_port"
 unset WA_SEQMETA_BACKEND_URL
@@ -289,14 +429,25 @@ unset WA_SEQMETA_BACKEND_URL
 : >"$RESULTS_LOG"
 : >"$FRONTEND_LOG"
 
-printf 'Starting results server on %s\n' "$WA_RESULTS_BACKEND_URL"
+printf 'Starting results server on %s (mode=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario"
 "$BIN_PATH" results serve --port "$results_port" --db "$DB_PATH" >"$RESULTS_LOG" 2>&1 &
 PIDS+=("$!")
 
 wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict"
 
-printf 'Seeding fixtures from %s\n' "$SEED_PATH"
-seed_results >>"$RESULTS_LOG" 2>&1
+seed_fixtures=0
+case "$scenario" in
+  test) seed_fixtures=1 ;;
+  dev)  seed_fixtures=$fixtures_requested ;;
+  prod) seed_fixtures=0 ;;
+esac
+
+if (( seed_fixtures )); then
+  printf 'Seeding fixtures from %s\n' "$SEED_PATH"
+  seed_results >>"$RESULTS_LOG" 2>&1
+else
+  printf 'Skipping fixture seed (mode=%s, --fixtures not requested)\n' "$scenario"
+fi
 
 if [[ -n "$SEQMETA_CMD" ]]; then
   export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"

@@ -23,102 +23,130 @@ wa/
 ├── saga/                # SAGA API client library
 ├── seqmeta/             # Sequence metadata cache
 ├── frontend/            # Next.js web UI
-├── run-dev.sh           # One-command dev environment
+├── run-dev.sh           # Bring-up script used by `make dev`, `make prod`, and Playwright
+├── scripts/
+│   └── wa-env.sh        # Loads exactly one of .env.test/.env.dev/.env.prod
 ├── .docs/               # Specs and proposal
 │   ├── proposal.md
 │   ├── results-rest/spec.md
 │   ├── results-web/spec.md
 │   ├── saga/spec.md
 │   └── seqmeta/spec.md
-└── .env.example         # Environment variable template
+├── .env.test            # Committed defaults for `make test`
+├── .env.dev.example     # Template for `.env.dev` (gitignored, holds SAGA token)
+└── .env.prod.example    # Template for `.env.prod` (gitignored, production values)
 ```
 
 ## Quick Start
 
-The `run-dev.sh` script, called by `make run` builds the Go binary, starts all
-backend servers with a temporary SQLite database, seeds test fixtures, waits for
-the required seqmeta validation path when enabled, and starts the Next.js dev
-server:
+The repository ships three isolated scenarios — **test**, **dev**, **prod** —
+each driven by exactly one env file. The `scripts/wa-env.sh` wrapper loads the
+right file per `make` target and refuses cross-scenario contamination, so you
+cannot accidentally run tests against your dev database or bring up the dev
+stack with production credentials.
 
 ```bash
 # Install frontend dependencies first
 cd frontend && pnpm install && cd ..
 
-# Optional: copy the root env template to override run/test ports locally
-cp .env.example .env
+# Copy the dev env template (committed) to the gitignored .env.dev and edit it
+cp .env.dev.example .env.dev
+# Open .env.dev and set SAGA_API_TOKEN, ports, and WA_RESULTS_DB_PATH
 
-# Start everything
-make run
+# Run the dev stack — persistent DB, real SAGA, NO fixtures
+make dev
+
+# Same but also seed demo fixtures (.docs/results-web/fixtures/seed.json)
+make dev-fixtures
+# (or `make dev FIXTURES=1`)
 ```
 
-Default ports (configurable via flags):
+`make dev` builds the `wa` binary, starts the results and seqmeta servers
+against the persistent SQLite database at `WA_RESULTS_DB_PATH` (creating the
+file and parent directory if missing — never deleting it on shutdown), and
+starts the Next.js dev server. Logs go to `logs/`.
 
-| Service     | Port | Flag                     |
-| ----------- | ---- | ------------------------ |
-| Frontend    | 3000 | `-f` / `--frontend-port` |
-| Results API | 8090 | `-r` / `--results-port`  |
-| Seqmeta API | 8091 | `-s` / `--seqmeta-port`  |
+The seqmeta server only starts if `SAGA_API_TOKEN` is set in `.env.dev`.
 
-The seqmeta server only starts if `SAGA_API_TOKEN` is set.
+## Make targets
 
-Once ready, the script prints URLs for all services. Logs go to `logs/`.
+| Target              | Env file loaded   | Purpose                                                                                                  |
+| ------------------- | ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `make dev`          | `.env.dev`        | Bring up the dev stack with a persistent DB and no fixtures.                                              |
+| `make dev FIXTURES=1` | `.env.dev`      | Same as `make dev`, plus seed demo fixtures into the dev DB.                                              |
+| `make dev-fixtures` | `.env.dev`        | Alias for `make dev FIXTURES=1`.                                                                          |
+| `make prod`         | `.env.prod`       | Bring up the production stack. Refuses to start without `.env.prod` or with any test/dev port set.        |
+| `make test`         | `.env.test`       | Run Go + Vitest + Playwright. Always uses ephemeral DBs and refuses an inherited `WA_RESULTS_DB_PATH`.    |
+| `make test-go`      | `.env.test`       | Just the Go suite.                                                                                        |
+| `make test-frontend`| `.env.test`       | Just Vitest.                                                                                              |
+| `make test-e2e`     | `.env.test`       | Just Playwright. Internally drives `run-dev.sh --mode test`.                                              |
+| `make lint`         | _(none)_          | `golangci-lint` and `pnpm lint`.                                                                          |
+| `make format`       | _(none)_          | `gofmt`, `cleanorder`, and `prettier`.                                                                    |
+| `make run`          | `.env.dev`        | Deprecated alias for `make dev` (prints a warning).                                                       |
 
-## Makefile workflow
+Defaults applied when an env file does not pin a port:
 
-Use the top-level `Makefile` for repo-wide development commands:
+| Service     | Test | Dev (`.env.dev`)        | Prod (`.env.prod`)       |
+| ----------- | ---- | ----------------------- | ------------------------ |
+| Frontend    | 3000 | `WA_DEV_FRONTEND_PORT`  | `WA_PROD_FRONTEND_PORT`  |
+| Results API | 8090 | `WA_DEV_RESULTS_PORT`   | `WA_PROD_RESULTS_PORT`   |
+| Seqmeta API | 8091 | `WA_DEV_SEQMETA_PORT`   | `WA_PROD_SEQMETA_PORT`   |
 
-```bash
-# Optional: load local overrides for run/test ports and tokens
-cp .env.example .env
+## Environment files
 
-# Start the dev environment
-make run
+Only one env file is loaded per scenario. Each file pins `WA_ENV` to the
+canonical value for its scenario, and `scripts/wa-env.sh` validates that
+`WA_ENV` matches the requested target before running anything. `WA_TEST_*`
+ports are exported only in test mode; `WA_DEV_*` only in dev mode; and
+`WA_PROD_*` only in prod mode. Backend URLs (`WA_RESULTS_BACKEND_URL`,
+`WA_SEQMETA_BACKEND_URL`) are derived from these ports inside `run-dev.sh`,
+not hand-edited.
 
-# Lint Go and frontend code
-make lint
+| File              | Tracked? | Loaded by   | Holds                                                                          |
+| ----------------- | -------- | ----------- | ------------------------------------------------------------------------------ |
+| `.env.test`       | yes      | `make test` | Test ports + `WA_ENV=test`. No DB path. No SAGA token.                          |
+| `.env.dev.example`| yes      | _(template)_| Dev ports, dev DB path, `SAGA_API_TOKEN=` placeholder, `WA_ENV=development`.    |
+| `.env.dev`        | no       | `make dev`  | Your local copy of the above with real values, including a real SAGA token.     |
+| `.env.prod.example`| yes     | _(template)_| Prod ports, prod DB DSN/path placeholder, `WA_ENV=production`.                  |
+| `.env.prod`       | no       | `make prod` | Your production values. Required for `make prod`; absent ⇒ clear error.         |
 
-# Apply formatting for Go and frontend code
-make format
+### Safety guarantees
 
-# Run Go and frontend tests
-make test
-```
+The wrapper and `run-dev.sh` enforce the following:
 
-Available targets:
+- `make test` and `make dev` refuse to start if `WA_ENV=production` is
+  inherited from the shell.
+- `make test` refuses to start if `WA_RESULTS_DB_PATH` is set in the
+  environment, so a stray export cannot point tests at a configured dev or
+  prod database.
+- `make prod` refuses to start when `.env.prod` is missing, when the loaded
+  file does not set `WA_ENV=production`, when any `WA_TEST_*` or `WA_DEV_*`
+  port var is inherited, or when `--fixtures` is requested.
+- `run-dev.sh --mode test` always uses an ephemeral `mktemp` SQLite DB
+  beneath `.tmp/` and removes it on shutdown.
+- `run-dev.sh --mode dev` and `--mode prod` use the persistent
+  `WA_RESULTS_DB_PATH` and never delete the database on shutdown.
 
-| Target        | Description                                                             |
-| ------------- | ----------------------------------------------------------------------- |
-| `make run`    | Calls `./run-dev.sh` to build and start the dev environment             |
-| `make lint`   | Runs `golangci-lint run ./...` and `pnpm lint`                          |
-| `make format` | Runs `gofmt`, `cleanorder`, and `prettier --write`                      |
-| `make test`   | Runs Go tests, frontend Vitest tests, and frontend Playwright e2e tests |
+### Variable rename map
 
-`run-dev.sh` is intentionally limited to bring-up only. Linting, formatting,
-and testing now live behind `make` targets instead of blocking startup.
+| Old (mixed)              | New                                                |
+| ------------------------ | -------------------------------------------------- |
+| `WA_TEST_FRONTEND_PORT`  | `WA_TEST_FRONTEND_PORT` (test only) / `WA_DEV_FRONTEND_PORT` (dev) / `WA_PROD_FRONTEND_PORT` (prod) |
+| `WA_TEST_RESULTS_PORT`   | `WA_TEST_RESULTS_PORT` / `WA_DEV_RESULTS_PORT` / `WA_PROD_RESULTS_PORT`                              |
+| `WA_TEST_SEQMETA_PORT`   | `WA_TEST_SEQMETA_PORT` / `WA_DEV_SEQMETA_PORT` / `WA_PROD_SEQMETA_PORT`                              |
+| _(none)_                 | `WA_ENV` — `test`, `development`, or `production`                                                    |
 
-The Makefile automatically loads root `.env` if it exists. Use it to pin local
-ports for `make run` and the Playwright-backed portion of `make test`, and to
-provide `SAGA_API_TOKEN` for seqmeta-backed development runs.
+Unchanged (consumed by Go binaries and the Next.js runtime regardless of
+scenario): `WA_RESULTS_BACKEND_URL`, `WA_SEQMETA_BACKEND_URL`,
+`WA_RESULTS_DB_PATH`, `SAGA_API_TOKEN`, `WA_STUDIES_CACHE_TTL_SECONDS`,
+`WA_DEV_ALLOWED_ORIGINS`.
 
-SAGA endpoint overrides are flag-only: use `--base-url` with `wa saga inspect`
-or `wa seqmeta ...` when you need a non-default SAGA host. There is no
-`SAGA_BASE_URL` environment variable.
-
-Root Makefile environment variables:
-
-| Variable                 | Default   | Used by                                                                                                             |
-| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------- |
-| `WA_TEST_FRONTEND_PORT`  | `3000`    | `make run` frontend port and `make test` Playwright frontend port override                                          |
-| `WA_TEST_RESULTS_PORT`   | `8090`    | `make run` results API port and `make test` Playwright results API port override                                    |
-| `WA_TEST_SEQMETA_PORT`   | `8091`    | `make run` seqmeta API port and `make test` Playwright seqmeta API port override                                    |
-| `WA_DEV_ALLOWED_ORIGINS` | _(empty)_ | Extra comma-separated hostnames to allow cross-origin access to Next.js dev resources (`/_next/*`, HMR). See below. |
-
-### Accessing `make run` from a remote host
+### Accessing `make dev` from a remote host
 
 Next.js 16 blocks cross-origin requests to dev resources (`/_next/*`, HMR,
 RSC payloads) by default. If you browse the dev server from a machine whose
 hostname differs from the one running `run-dev.sh` — e.g. opening a browser
-on your laptop to `http://<dev-host>:3000` — the browser loads the HTML but
+on your laptop to `http://<dev-host>:3671` — the browser loads the HTML but
 every JS chunk is blocked, React never hydrates, and filters, tabs,
 file-preview clicks and similar controls silently do nothing. Only plain
 `<a>` links keep working.
@@ -129,10 +157,10 @@ file-preview clicks and similar controls silently do nothing. Only plain
 - the current machine's `hostname -f` and `hostname -s`
 - anything you already set in `WA_DEV_ALLOWED_ORIGINS`
 
-Set `WA_DEV_ALLOWED_ORIGINS` in the root `.env` (comma separated) if you need
-to add hostnames that are not covered by the defaults. Wildcards follow the
+Set `WA_DEV_ALLOWED_ORIGINS` in `.env.dev` (comma separated) if you need to
+add hostnames that are not covered by the defaults. Wildcards follow the
 Next.js 16 `allowedDevOrigins` syntax (`*` matches one DNS segment). The
-setting is ignored when `NODE_ENV=production`.
+setting is ignored when `WA_ENV=production`.
 
 ## Manual Setup
 
@@ -160,8 +188,8 @@ pnpm install
 pnpm dev                      # Starts on http://localhost:3000
 ```
 
-For `make run` and Playwright-backed `make test`, set `WA_TEST_*_PORT` values
-in the repo root `.env` instead.
+For `make dev`/`make prod`/Playwright-backed `make test`, set the
+appropriate `WA_*_PORT` values in `.env.dev`/`.env.prod`/`.env.test` instead.
 
 Frontend environment variables (set in `.env.local` or environment):
 
@@ -170,7 +198,7 @@ Frontend environment variables (set in `.env.local` or environment):
 | `WA_RESULTS_BACKEND_URL`       | `http://localhost:8090` | Results API base URL                                                                                                                                   |
 | `WA_SEQMETA_BACKEND_URL`       | _(empty)_               | Seqmeta API base URL (omit to disable)                                                                                                                 |
 | `WA_STUDIES_CACHE_TTL_SECONDS` | `300`                   | Study list cache lifetime                                                                                                                              |
-| `WA_DEV_ALLOWED_ORIGINS`       | _(empty)_               | Dev-only; extra hostnames merged into Next.js `allowedDevOrigins` (see "Accessing `make run` from a remote host" above). Ignored in production builds. |
+| `WA_DEV_ALLOWED_ORIGINS`       | _(empty)_               | Dev-only; extra hostnames merged into Next.js `allowedDevOrigins` (see "Accessing `make dev` from a remote host" above). Ignored in production builds. |
 
 ## Testing
 

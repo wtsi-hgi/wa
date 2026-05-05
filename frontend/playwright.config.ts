@@ -107,7 +107,7 @@ const frontendStartCommand = [
             `pnpm exec next build && exec pnpm exec next start --port ${frontendPort}`,
         )}`,
     )}`,
-    `bash ../run-dev.sh --frontend-port ${frontendPort} --results-port ${resultsPort} --seqmeta-port ${seqmetaPort}`,
+    `bash ../run-dev.sh --mode test --frontend-port ${frontendPort} --results-port ${resultsPort} --seqmeta-port ${seqmetaPort}`,
 ].join(" ");
 
 export default defineConfig({

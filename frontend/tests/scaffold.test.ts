@@ -57,15 +57,50 @@ describe("G1 scaffold", () => {
         expect(envExample).toContain("WA_STUDIES_CACHE_TTL_SECONDS=");
     });
 
-    it("documents the root run and test port overrides", () => {
-        const envExample = readFileSync(
-            path.join(repoRoot, ".env.example"),
+    it("documents the per-scenario root env files", () => {
+        const testEnv = readFileSync(
+            path.join(repoRoot, ".env.test"),
+            "utf8",
+        );
+        const devExample = readFileSync(
+            path.join(repoRoot, ".env.dev.example"),
+            "utf8",
+        );
+        const prodExample = readFileSync(
+            path.join(repoRoot, ".env.prod.example"),
             "utf8",
         );
 
-        expect(envExample).toContain("WA_TEST_FRONTEND_PORT=");
-        expect(envExample).toContain("WA_TEST_RESULTS_PORT=");
-        expect(envExample).toContain("WA_TEST_SEQMETA_PORT=");
+        expect(testEnv).toContain("WA_ENV=test");
+        expect(testEnv).toContain("WA_TEST_FRONTEND_PORT=");
+        expect(testEnv).toContain("WA_TEST_RESULTS_PORT=");
+        expect(testEnv).toContain("WA_TEST_SEQMETA_PORT=");
+        expect(testEnv).not.toMatch(/^WA_RESULTS_DB_PATH=/m);
+
+        expect(devExample).toContain("WA_ENV=development");
+        expect(devExample).toContain("WA_DEV_FRONTEND_PORT=");
+        expect(devExample).toContain("WA_DEV_RESULTS_PORT=");
+        expect(devExample).toContain("WA_DEV_SEQMETA_PORT=");
+        expect(devExample).toContain("WA_RESULTS_DB_PATH=");
+        expect(devExample).toContain("SAGA_API_TOKEN=");
+
+        expect(prodExample).toContain("WA_ENV=production");
+        expect(prodExample).toContain("WA_PROD_FRONTEND_PORT=");
+        expect(prodExample).toContain("WA_PROD_RESULTS_PORT=");
+        expect(prodExample).toContain("WA_PROD_SEQMETA_PORT=");
+        expect(prodExample).toContain("WA_RESULTS_DB_PATH=");
+    });
+
+    it("commits .env.test so make test works on a fresh clone", () => {
+        const tracked = execFileSync(
+            "git",
+            ["ls-files", "--error-unmatch", ".env.test"],
+            { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] },
+        )
+            .toString()
+            .trim();
+
+        expect(tracked).toBe(".env.test");
     });
 
     it("uses the shadcn new-york style and utility alias", () => {
@@ -100,6 +135,8 @@ describe("G1 scaffold", () => {
         expect(configModule.default.resolve?.alias?.["@"]).toBe(
             frontendRoot + path.sep,
         );
-        expect(existsSync(path.join(repoRoot, ".env.example"))).toBe(true);
+        expect(existsSync(path.join(repoRoot, ".env.test"))).toBe(true);
+        expect(existsSync(path.join(repoRoot, ".env.dev.example"))).toBe(true);
+        expect(existsSync(path.join(repoRoot, ".env.prod.example"))).toBe(true);
     });
 });

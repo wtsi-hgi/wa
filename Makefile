@@ -1,18 +1,62 @@
-.PHONY: run lint lint-go lint-frontend format format-go format-frontend test test-go test-frontend test-e2e
-
--include .env
-
-.EXPORT_ALL_VARIABLES:
+.PHONY: help dev dev-fixtures prod run lint lint-go lint-frontend format format-go format-frontend test test-go test-frontend test-e2e
 
 FRONTEND_DIR := frontend
-WA_TEST_FRONTEND_PORT ?= 3000
-WA_TEST_RESULTS_PORT ?= 8090
-WA_TEST_SEQMETA_PORT ?= 8091
-CGO_ENABLED = 0
+# Force pure-Go builds for all `go` invocations below (matches the `-tags
+# netgo` builds used in test/dev/prod recipes).
+export CGO_ENABLED := 0
 
+# Each scenario sources exactly one env file via scripts/wa-env.sh and is
+# isolated from the others. See DEVELOPING.md for details.
+WA_ENV_TEST  := scripts/wa-env.sh test --
+WA_ENV_DEV   := scripts/wa-env.sh dev --
+WA_ENV_PROD  := scripts/wa-env.sh prod --
+
+# Convenience flag for `make dev FIXTURES=1`.
+DEV_FIXTURES_FLAG := $(if $(filter 1 yes true,$(FIXTURES)),--fixtures,)
+
+help:
+	@printf 'Usage: make <target>\n\n'
+	@printf 'Bring-up:\n'
+	@printf '  dev               Run the dev stack (no fixtures). Persistent DB from .env.dev.\n'
+	@printf '  dev FIXTURES=1    Same as above but seed demo fixtures.\n'
+	@printf '  dev-fixtures      Alias for `make dev FIXTURES=1`.\n'
+	@printf '  prod              Run the production stack. Requires .env.prod with WA_ENV=production.\n'
+	@printf '  run               Deprecated alias for `make dev`.\n\n'
+	@printf 'Quality:\n'
+	@printf '  lint              Run Go and frontend linters.\n'
+	@printf '  format            Apply Go and frontend formatters.\n'
+	@printf '  test              Run Go + Vitest + Playwright tests under .env.test.\n'
+
+# ---- Test scenario --------------------------------------------------------
+# Hermetic: ephemeral DBs, throwaway ports, never touches dev/prod state.
+test: test-go test-frontend test-e2e
+
+test-go:
+	$(WA_ENV_TEST) go test -tags netgo --count 1 ./...
+
+test-frontend:
+	$(WA_ENV_TEST) bash -c 'cd $(FRONTEND_DIR) && pnpm test'
+
+test-e2e:
+	$(WA_ENV_TEST) bash -c 'cd $(FRONTEND_DIR) && pnpm exec playwright test'
+
+# ---- Dev scenario ---------------------------------------------------------
+dev:
+	$(WA_ENV_DEV) ./run-dev.sh --mode dev $(DEV_FIXTURES_FLAG)
+
+dev-fixtures:
+	$(MAKE) dev FIXTURES=1
+
+# Deprecated alias retained for muscle memory; forwards to `make dev`.
 run:
-	./run-dev.sh --frontend-port $(WA_TEST_FRONTEND_PORT) --results-port $(WA_TEST_RESULTS_PORT) --seqmeta-port $(WA_TEST_SEQMETA_PORT)
+	@printf 'warning: `make run` is deprecated; use `make dev` (or `make dev-fixtures`).\n' >&2
+	$(MAKE) dev
 
+# ---- Production scenario --------------------------------------------------
+prod:
+	$(WA_ENV_PROD) ./run-dev.sh --mode prod
+
+# ---- Lint and format (no scenario binding) -------------------------------
 lint: lint-go lint-frontend
 
 lint-go:
@@ -29,14 +73,3 @@ format-go:
 
 format-frontend:
 	cd $(FRONTEND_DIR) && pnpm format
-
-test: test-go test-frontend test-e2e
-
-test-go:
-	go test -tags netgo --count 1 ./...
-
-test-frontend:
-	cd $(FRONTEND_DIR) && pnpm test
-
-test-e2e:
-	cd $(FRONTEND_DIR) && WA_TEST_FRONTEND_PORT=$(WA_TEST_FRONTEND_PORT) WA_TEST_RESULTS_PORT=$(WA_TEST_RESULTS_PORT) WA_TEST_SEQMETA_PORT=$(WA_TEST_SEQMETA_PORT) pnpm exec playwright test
