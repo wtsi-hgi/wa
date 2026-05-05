@@ -12,7 +12,7 @@ Key behaviours:
 - Per-entity SHA256 watermarking with tombstones for removals.
 - First poll returns all current results as "added".
 - Atomic failure: saga errors or result delivery failures prevent
-   any store update.
+  any store update.
 - Identifier validation via live SAGA lookup returning type + full
   matched object.
 - Generic `Diff[T]` function works with any saga type; REST API
@@ -224,7 +224,7 @@ type SAGAProvider interface {
    then the study is returned with no error.
 2. Given a `MockProvider` configured to return `saga.ErrNotFound`
    for `GetStudy`, when called, then `errors.Is(err,
-   saga.ErrNotFound)` is true.
+saga.ErrNotFound)` is true.
 
 ### A2: ClientAdapter
 
@@ -286,7 +286,7 @@ func (s *Store) Close() error
 1. Given path `":memory:"`, when `OpenStore(":memory:")` is called,
    then error is nil and store is non-nil.
 2. Given a `t.TempDir()` path, when `OpenStore(filepath.Join(dir,
-   "test.db"))` is called, then the file is created on disk.
+"test.db"))` is called, then the file is created on disk.
 3. Given an open store, when `Close()` is called, then no error.
 4. Given a closed store, when `Close()` is called again, then no
    panic.
@@ -314,7 +314,7 @@ the same query key not present in the new map are left unchanged
 1. Given an empty store, when `LoadEntries("q1")` is called, then
    result is an empty map (not nil) with no error.
 2. Given `SaveEntries("q1", map with "e1" hash "abc"
-   Tombstone=false)`, when `LoadEntries("q1")` is called, then
+Tombstone=false)`, when `LoadEntries("q1")` is called, then
    the map has key `"e1"` with `EntryHash == "abc"` and
    `Tombstone == false`.
 3. Given existing entry `"e1"` with hash `"abc"`, when
@@ -472,7 +472,7 @@ Uses query key `"sample_files:<sangerID>"` and `idFunc` returning
 
 1. Given mock provider returning 1 file for `"SANG1"` and an
    empty store, when `DiffSampleFiles(ctx, provider, store,
-   "SANG1")` is called, then `len(Added) == 1`.
+"SANG1")` is called, then `len(Added) == 1`.
 2. Given mock provider returns error, then error is returned and
    store is unchanged.
 3. Given a prior diff with 2 files, when mock now returns 1 file
@@ -799,8 +799,8 @@ all prior phases. Sequential.
   `tombstone=1`. Not re-reported on subsequent diffs. Reappearing
   entries are reported as "added" again.
 - **Atomic failure:** Saga errors in convenience wrappers or result
-   delivery failures prevent watermark updates, so the store is not
-   advanced unless the diff is successfully produced and delivered.
+  delivery failures prevent watermark updates, so the store is not
+  advanced unless the diff is successfully produced and delivered.
 - **Validation priority:** Study ID first (cheapest single-entity
   lookup), then study accession (reuses `AllStudies` once), then
   all sample fields (reuses `AllSamples` once), then projects.

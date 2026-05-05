@@ -164,14 +164,14 @@ uniqueness of the natural key pair.
 
 ### REST API Routes (chi)
 
-| Method | Path                   | Action                 |
-|--------|------------------------|------------------------|
-| POST   | /results               | Upsert result set      |
-| GET    | /results               | Search (query params)  |
-| GET    | /results/{id}          | Get one result set     |
-| GET    | /results/{id}/files    | Get file list          |
-| PUT    | /results/{id}/files    | Replace output files   |
-| DELETE | /results/{id}          | Hard delete            |
+| Method | Path                | Action                |
+| ------ | ------------------- | --------------------- |
+| POST   | /results            | Upsert result set     |
+| GET    | /results            | Search (query params) |
+| GET    | /results/{id}       | Get one result set    |
+| GET    | /results/{id}/files | Get file list         |
+| PUT    | /results/{id}/files | Replace output files  |
+| DELETE | /results/{id}       | Hard delete           |
 
 Responses: `application/json`.
 Error body: `{"error":"<message>"}`.
@@ -185,12 +185,12 @@ Server-side during POST. Each metadata key with `seqmeta_`
 prefix triggers `GET <seqmeta-url>/validate/<value>`. The
 suffix maps to an expected `IdentifierType`:
 
-| Metadata key        | Suffix       | Expected type        |
-|---------------------|--------------|----------------------|
-| seqmeta_runid       | runid        | run_id               |
-| seqmeta_studyid     | studyid      | study_id             |
-| seqmeta_sampleid    | sampleid     | sanger_sample_id     |
-| seqmeta_librarytype | librarytype  | library_type         |
+| Metadata key        | Suffix      | Expected type    |
+| ------------------- | ----------- | ---------------- |
+| seqmeta_runid       | runid       | run_id           |
+| seqmeta_studyid     | studyid     | study_id         |
+| seqmeta_sampleid    | sampleid    | sanger_sample_id |
+| seqmeta_librarytype | librarytype | library_type     |
 
 Unknown `seqmeta_*` suffixes not in the map -> 400.
 Type mismatch -> 422. Seqmeta unreachable/timeout -> 502.
@@ -210,23 +210,23 @@ var SeqmetaFieldTypes = map[string]string{
 ### Key Building
 
 - `CompositeKeyID(pipelineIdentifier, runKey)`:
-   for inputs without embedded NUL bytes,
-   `hex(SHA256(pipelineIdentifier + "\x00" + runKey))`.
-   If either side contains `"\x00"`, use an unambiguous
-   length-prefixed byte serialization before hashing so
-   distinct natural-key pairs cannot collide.
+  for inputs without embedded NUL bytes,
+  `hex(SHA256(pipelineIdentifier + "\x00" + runKey))`.
+  If either side contains `"\x00"`, use an unambiguous
+  length-prefixed byte serialization before hashing so
+  distinct natural-key pairs cannot collide.
 - `BuildRunKey(runID, additionalUnique)`: URL-query-encoded
   string from sorted key=value pairs. E.g.
   `BuildRunKey("48522", "random_exon")` ->
   `"runid=48522&unique=random_exon"`. Empty additionalUnique
   -> `"runid=48522"`.
 - `DetectPipeline(workflowPath)`: if file is in a git
-   checkout, returns `(workflowScopedIdentifier, repoName,
-   commitHash)`, where the identifier combines the git remote
-   (or repo root path when no remote exists) with the
-   workflow-relative path so multiple workflows in one repo do
-   not collide. If not in git, returns `(cleanedAbsPath,
-  parentDirName, hex(SHA256(fileContents)))`. Never fails
+  checkout, returns `(workflowScopedIdentifier, repoName,
+ commitHash)`, where the identifier combines the git remote
+  (or repo root path when no remote exists) with the
+  workflow-relative path so multiple workflows in one repo do
+  not collide. If not in git, returns `(cleanedAbsPath,
+parentDirName, hex(SHA256(fileContents)))`. Never fails
   unless file is unreadable.
 
 ### Search Query Parameters
@@ -239,6 +239,7 @@ Special: `output_dir_prefix` -> `WHERE output_directory LIKE
 ?` with pattern built as `prefix + "%"` in Go.
 
 Metadata fields (exact match on result_metadata):
+
 - `meta_X=V` -> strips `meta_` prefix, searches
   `meta_key='X'` AND `value='V'`.
 - `seqmeta_X=V` -> no prefix stripping, searches
@@ -360,7 +361,7 @@ func DetectPipeline(workflowPath string) (
    `https://github.com/org/nf_splicing.git` and HEAD at
    commit `abc123`, when `DetectPipeline("/repo/main.nf")`
    is called, then `identifier ==
-   "https://github.com/org/nf_splicing.git"`,
+"https://github.com/org/nf_splicing.git"`,
    `name == "nf_splicing"`, `version == "abc123"`.
    (Test creates a real git repo in `t.TempDir()`.)
 2. Given a git repo with no remote, when called, then
@@ -482,12 +483,12 @@ files and metadata, inserts new ones. Returns the full
    `Requester="alice"`, `Operator="bob"`, 2 files, and
    metadata `{"library":"exon"}`, when `Upsert` is called,
    then returned ResultSet has `ID ==
-   CompositeKeyID("pipe","run")`, `Requester == "alice"`,
+CompositeKeyID("pipe","run")`, `Requester == "alice"`,
    `CreatedAt` is recent, and `Metadata["library"] == "exon"`.
 2. Given a result set already exists with `CreatedAt == T1`,
    when `Upsert` is called again with same key but
    `Requester="charlie"`, then returned `Requester ==
-   "charlie"`, `CreatedAt == T1` (preserved), and
+"charlie"`, `CreatedAt == T1` (preserved), and
    `UpdatedAt > T1`.
 3. Given upsert with 3 files, then a second upsert with 1
    file for the same key, when files are retrieved, then
@@ -546,12 +547,12 @@ Metadata filters join against result_metadata.
    is called, then `len(results) == 1`.
 3. Given result sets with output directories `/a/b/c` and
    `/a/d/e`, when `Search(ctx,
-   SearchParams{OutputDirPrefix:"/a/b"})` is called, then
+SearchParams{OutputDirPrefix:"/a/b"})` is called, then
    `len(results) == 1`.
 4. Given empty `SearchParams{}`, when called, then all stored
    result sets are returned.
 5. Given `SearchParams{Requester:"alice",
-   PipelineName:"nf"}`, when called, then only result sets
+PipelineName:"nf"}`, when called, then only result sets
    matching BOTH filters are returned.
 6. Given no matching results, when searched, then returned
    slice is empty (not nil) with no error.
@@ -795,8 +796,7 @@ As a consumer, I want to permanently delete a result set.
 **Acceptance tests:**
 
 1. Given a stored result set, when `DELETE /results/{id}`,
-   then status 204 and subsequent `GET /results/{id}` returns
-   404.
+   then status 204 and subsequent `GET /results/{id}` returns 404.
 2. Given non-existent ID, then status 404.
 
 ---
@@ -820,12 +820,14 @@ func NewRootCommand() *cobra.Command
 ```
 
 Root command `wa` with subcommands:
+
 - `saga` (with `inspect` sub-subcommand)
 - `seqmeta` (with `diff`, `validate`, `serve`)
 - `results` (with `register`, `search`, `get`, `delete`,
   `rescan`, `serve`)
 
 Migration:
+
 - Move `main.go` inspector logic to `cmd/saga.go`. The
   `inspect` subcommand accepts the same flags (`--token`,
   `--base-url`, `--timeout`) and positional argument.
@@ -898,6 +900,7 @@ wa results register \
 ```
 
 Flags:
+
 - `--server` (persistent, default `$WA_RESULTS_BACKEND_URL` or
   `http://localhost:8080`)
 - `--user`, `--operator`, `--command` (string)
@@ -919,7 +922,7 @@ JSON to stdout.
 1. Given an `httptest.Server` as the results server and a
    `t.TempDir()` with 2 files, when `register` is run with
    `--user alice --operator bob --runid 48522
-   --additional-unique exon --nextflow-workflow <path>`,
+--additional-unique exon --nextflow-workflow <path>`,
    then stdout is valid JSON with `"id"` field and server
    received a POST with 2 output files.
 2. Given `--json` flag, when Registration JSON is piped to
@@ -946,7 +949,7 @@ Prints JSON array to stdout.
 **Acceptance tests:**
 
 1. Given a server with 2 result sets, when `search --user
-   alice` is run, then stdout is valid JSON array with
+alice` is run, then stdout is valid JSON array with
    matching results.
 2. Given no matches, then stdout is `[]`.
 
@@ -997,9 +1000,9 @@ CLI scans `<dir>` locally, builds file list, PUTs to server.
 **Acceptance tests:**
 
 1. Given a registered result set and a `t.TempDir()` with 3
-   files (1 new since registration), when `rescan <id>
-   <dir>` is run, then the server's file list for that ID
-   has 3 output files.
+   files (1 new since registration), when `rescan <id> <dir>`
+   is run, then the server's file list for that ID has 3
+   output files.
 2. Given non-existent ID, then exit code is non-zero.
 
 ---
@@ -1026,6 +1029,7 @@ creates `results.NewSeqmetaValidator`, creates
 `results.NewServer`, listens on the given port.
 
 Flags:
+
 - `--port` (int, default 8080)
 - `--db` (string, default `"results.db"`)
 - `--seqmeta-url` (string, default empty = no validation)
@@ -1037,7 +1041,7 @@ Flags:
    started, then server accepts HTTP requests and
    `POST /results` with valid JSON returns 201.
 2. Given `results serve --port 0 --db :memory: --seqmeta-url
-   <httptest.URL>`, when a result with `seqmeta_runid` is
+<httptest.URL>`, when a result with `seqmeta_runid` is
    POST'd, then the seqmeta server receives a validation
    request.
 3. Given `results serve --port abc`, then exit code is
@@ -1086,15 +1090,15 @@ correctly, PRAGMA foreign_keys is silently ignored.
    second call.
 5. Given 3 result sets with requesters "alice", "alice",
    "bob", when `Search(ctx,
-   SearchParams{Requester:"alice"})` is called, then
+SearchParams{Requester:"alice"})` is called, then
    `len(results) == 2`.
 6. Given a result set with `metadata={"library":"exon"}`,
    when `Search(ctx,
-   SearchParams{Meta:map{"library":"exon"}})` is called,
+SearchParams{Meta:map{"library":"exon"}})` is called,
    then `len(results) == 1`.
 7. Given result sets with output directories `/a/b/c` and
    `/a/d/e`, when `Search(ctx,
-   SearchParams{OutputDirPrefix:"/a/b"})` is called, then
+SearchParams{OutputDirPrefix:"/a/b"})` is called, then
    `len(results) == 1`.
 8. Given a result set with 2 output files and 1 input file,
    when `GetFiles(ctx, id)` is called, then
@@ -1132,7 +1136,7 @@ through their Cobra command paths, so that the full wiring
 All commands are invoked through Cobra:
 
 - **Server:** `NewRootCommand().SetArgs(["results",
-  "serve", "--port", "0", "--db", "<tempfile>"])`
+"serve", "--port", "0", "--db", "<tempfile>"])`
   executed in a goroutine. The test captures stdout to
   extract the actual listen port.
 - **CLI commands:** each exercised via
@@ -1155,37 +1159,37 @@ directories with real files.
 
 1. Given a server started via
    `NewRootCommand().SetArgs(["results", "serve",
-   "--port", "0", "--db", "<tempfile>"])` in a
+"--port", "0", "--db", "<tempfile>"])` in a
    goroutine, and a `t.TempDir()` with 2 output files and
    1 input file, when `NewRootCommand().SetArgs(["results",
-   "register", "--server", "http://localhost:<port>",
-   ...])` is called, then stdout is JSON with correct ID,
+"register", "--server", "http://localhost:<port>",
+...])` is called, then stdout is JSON with correct ID,
    requester, and file count.
 2. Given a registered result set, when
    `NewRootCommand().SetArgs(["results", "search",
-   "--server", ..., "--user", "<requester>"])` is
+"--server", ..., "--user", "<requester>"])` is
    called, then stdout JSON array contains the registered
    result set.
 3. Given a registered result set, when
    `NewRootCommand().SetArgs(["results", "get",
-   "--server", ..., "<id>"])` is called, then stdout
+"--server", ..., "<id>"])` is called, then stdout
    JSON contains full result set with metadata.
 4. Given `NewRootCommand().SetArgs(["results", "get",
-   "--server", ..., "--files", "<id>"])`, then stdout
+"--server", ..., "--files", "<id>"])`, then stdout
    JSON includes file entries with correct kinds and sizes.
 5. Given output directory modified (1 file added), when
    `NewRootCommand().SetArgs(["results", "rescan",
-   "--server", ..., "<id>", "<dir>"])` is called,
+"--server", ..., "<id>", "<dir>"])` is called,
    then a subsequent `get --files` shows updated output
    file count.
 6. Given `NewRootCommand().SetArgs(["results", "delete",
-   "--server", ..., "<id>"])`, when a subsequent
+"--server", ..., "<id>"])`, when a subsequent
    `get <id>` is called, then exit code is non-zero
    (not found).
 7. Given `WA_RESULTS_TEST_MYSQL_DSN` is set, when the
    server is started via `NewRootCommand().SetArgs(
-   ["results", "serve", "--port", "0", "--db",
-   "<dsn>"])` (DSN contains `@`, selecting MySQL
+["results", "serve", "--port", "0", "--db",
+"<dsn>"])` (DSN contains `@`, selecting MySQL
    driver), then the same 6 tests above pass against the
    MySQL-backed server. When unset, the MySQL variant is
    skipped via `t.Skip`.

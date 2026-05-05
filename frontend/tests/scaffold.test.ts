@@ -58,10 +58,7 @@ describe("G1 scaffold", () => {
     });
 
     it("documents the per-scenario root env files", () => {
-        const testEnv = readFileSync(
-            path.join(repoRoot, ".env.test"),
-            "utf8",
-        );
+        const testEnv = readFileSync(path.join(repoRoot, ".env.test"), "utf8");
         const devExample = readFileSync(
             path.join(repoRoot, ".env.dev.example"),
             "utf8",

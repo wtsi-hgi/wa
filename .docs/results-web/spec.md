@@ -32,6 +32,7 @@ Key behaviours:
 **New file:** `results/server_file.go` - file content handler.
 
 **Modified files:**
+
 - `results/server.go` - register new routes, update
   `searchParamsFromRequest` for multi-value OR, add stats and
   meta-keys handlers, add study-ID search helper.
@@ -43,17 +44,17 @@ Key behaviours:
 
 **New route table additions (chi):**
 
-| Method | Path                    | Action                    |
-|--------|-------------------------|---------------------------|
-| GET    | /results/{id}/file      | Serve file content        |
-| GET    | /results/stats          | Aggregate statistics      |
-| GET    | /results/meta-keys      | Distinct metadata keys    |
+| Method | Path               | Action                 |
+| ------ | ------------------ | ---------------------- |
+| GET    | /results/{id}/file | Serve file content     |
+| GET    | /results/stats     | Aggregate statistics   |
+| GET    | /results/meta-keys | Distinct metadata keys |
 
 **Existing route changes:**
 
-| Method | Path       | Change                             |
-|--------|------------|------------------------------------|
-| GET    | /results   | Multi-value OR + study_id shortcut |
+| Method | Path     | Change                             |
+| ------ | -------- | ---------------------------------- |
+| GET    | /results | Multi-value OR + study_id shortcut |
 
 ### seqmeta/ package additions
 
@@ -61,10 +62,10 @@ Key behaviours:
 
 **New route table additions (chi):**
 
-| Method | Path                  | Action                 |
-|--------|-----------------------|------------------------|
-| GET    | /studies              | List all studies       |
-| GET    | /study/{id}/samples   | List samples for study |
+| Method | Path                | Action                 |
+| ------ | ------------------- | ---------------------- |
+| GET    | /studies            | List all studies       |
+| GET    | /study/{id}/samples | List samples for study |
 
 ### New types
 
@@ -136,6 +137,7 @@ to stream the bytes of a registered file, so that the frontend
 can preview or download it.
 
 The handler:
+
 1. Looks up the result set by `{id}` (404 if missing).
 2. Calls `store.GetFiles` and checks the requested `path` is
    in the registered file list (403 if not registered).
@@ -152,7 +154,7 @@ The handler:
    `{"error":"file exceeds preview limit"}` and header
    `X-File-Size: <bytes>`.
 7. If `download=true`, sets `Content-Disposition: attachment;
-   filename="<basename>"` and streams without size cap.
+filename="<basename>"` and streams without size cap.
 8. Sets `Content-Type` header and streams file bytes.
 
 **Package:** `results/`
@@ -198,8 +200,7 @@ Route registered as:
    `"file not found on disk"`.
 6. Given result set ID does not exist, when requested, then
    status 404.
-7. Given no `path` query param, when requested, then status
-   400.
+7. Given no `path` query param, when requested, then status 400.
 8. Given a registered `.gz` file containing gzipped CSV data
    (inner name `data.csv`), when requested without
    `download=true`, then status 200, `Content-Type` is
@@ -228,6 +229,7 @@ return dashboard statistics, so that the frontend landing page
 loads efficiently without fetching all result sets.
 
 Query params:
+
 - `recent` (int, default 10): number of most-recent result
   sets to return as mini summaries, ordered by `created_at`
   descending.
@@ -427,6 +429,7 @@ multi-step lookups.
 
 When `study_id` query param is present and the server has a
 configured seqmeta URL:
+
 1. Call `GET <seqmeta-url>/study/<study_id>/samples` to get
    `[]saga.MLWHSample`.
 2. Extract unique `SangerID` values from the sample list.
@@ -677,6 +680,7 @@ pnpm, shadcn/ui, Tailwind v4, and proper config, so that
 frontend development can begin.
 
 Files created:
+
 - `frontend/package.json` with Next.js 16, React 19,
   shadcn/ui deps, Tailwind v4, Zod, recharts, sonner,
   next-themes, lucide-react, vitest, @tanstack/react-table.
@@ -698,22 +702,22 @@ Files created:
 - `frontend/components/ui/toaster.tsx` wrapping sonner.
 - `frontend/lib/utils.ts` with `cn()` helper.
 - `frontend/.env.example`:
-  ```text
-  FRONTEND_PORT=3000
-  WA_RESULTS_BACKEND_URL=http://localhost:8090
-  WA_SEQMETA_BACKEND_URL=
-  WA_STUDIES_CACHE_TTL_SECONDS=300
-  ```
+    ```text
+    FRONTEND_PORT=3000
+    WA_RESULTS_BACKEND_URL=http://localhost:8090
+    WA_SEQMETA_BACKEND_URL=
+    WA_STUDIES_CACHE_TTL_SECONDS=300
+    ```
 - Root `.env.example`:
-  ```text
-  FRONTEND_PORT=3000
-  WA_RESULTS_BACKEND_URL=http://localhost:8090
-  WA_SEQMETA_BACKEND_URL=
-  WA_STUDIES_CACHE_TTL_SECONDS=300
-  WA_RESULTS_DB_PATH=./dev.db
-  SAGA_API_TOKEN=
-  SAGA_BASE_URL=
-  ```
+    ```text
+    FRONTEND_PORT=3000
+    WA_RESULTS_BACKEND_URL=http://localhost:8090
+    WA_SEQMETA_BACKEND_URL=
+    WA_STUDIES_CACHE_TTL_SECONDS=300
+    WA_RESULTS_DB_PATH=./dev.db
+    SAGA_API_TOKEN=
+    SAGA_BASE_URL=
+    ```
 
 Route group `(results)/` for results pages. Later frontends
 use separate route groups (e.g. `(samplepicker)/`).
@@ -762,34 +766,32 @@ returns the raw `Response` object (for binary streaming).
 
 ```typescript
 export class BackendRequestError extends Error {
-  constructor(
-    public status: number,
-    public body: unknown,
-    message?: string
-  ) {
-    super(message ?? `Backend request failed: ${status}`)
-  }
+    constructor(
+        public status: number,
+        public body: unknown,
+        message?: string,
+    ) {
+        super(message ?? `Backend request failed: ${status}`);
+    }
 }
 
 export class BackendUnavailableError extends Error {
-  constructor(service: string) {
-    super(`${service} backend URL not configured`)
-  }
+    constructor(service: string) {
+        super(`${service} backend URL not configured`);
+    }
 }
 
 export async function resultsJson<T>(
-  path: string,
-  schema: ZodSchema<T>
-): Promise<T>
+    path: string,
+    schema: ZodSchema<T>,
+): Promise<T>;
 
 export async function seqmetaJson<T>(
-  path: string,
-  schema: ZodSchema<T>
-): Promise<T>
+    path: string,
+    schema: ZodSchema<T>,
+): Promise<T>;
 
-export async function resultsRaw(
-  path: string
-): Promise<Response>
+export async function resultsRaw(path: string): Promise<Response>;
 ```
 
 **Acceptance tests:**
@@ -827,89 +829,92 @@ boundary.
 ```typescript
 // Core types
 export const fileEntrySchema = z.object({
-  path: z.string(),
-  mtime: z.string(),
-  size: z.number(),
-  kind: z.enum(['output', 'input', 'pipeline']),
-})
-export type FileEntry = z.infer<typeof fileEntrySchema>
+    path: z.string(),
+    mtime: z.string(),
+    size: z.number(),
+    kind: z.enum(["output", "input", "pipeline"]),
+});
+export type FileEntry = z.infer<typeof fileEntrySchema>;
 
 export const resultSetSchema = z.object({
-  id: z.string(),
-  pipeline_identifier: z.string(),
-  run_key: z.string(),
-  requester: z.string(),
-  operator: z.string(),
-  command: z.string(),
-  pipeline_name: z.string(),
-  pipeline_version: z.string(),
-  output_directory: z.string(),
-  metadata: z.record(z.string(), z.string()),
-  created_at: z.string(),
-  updated_at: z.string(),
-})
-export type ResultSet = z.infer<typeof resultSetSchema>
+    id: z.string(),
+    pipeline_identifier: z.string(),
+    run_key: z.string(),
+    requester: z.string(),
+    operator: z.string(),
+    command: z.string(),
+    pipeline_name: z.string(),
+    pipeline_version: z.string(),
+    output_directory: z.string(),
+    metadata: z.record(z.string(), z.string()),
+    created_at: z.string(),
+    updated_at: z.string(),
+});
+export type ResultSet = z.infer<typeof resultSetSchema>;
 
 export const searchResultSchema = z.object({
-  result_set: resultSetSchema,
-  matched_samples: z.array(z.string()).optional(),
-})
-export type SearchResult = z.infer<typeof searchResultSchema>
+    result_set: resultSetSchema,
+    matched_samples: z.array(z.string()).optional(),
+});
+export type SearchResult = z.infer<typeof searchResultSchema>;
 
 // Stats
 export const dailyCountSchema = z.object({
-  date: z.string(),
-  count: z.number(),
-})
+    date: z.string(),
+    count: z.number(),
+});
 
 export const pipelineCountSchema = z.object({
-  pipeline_name: z.string(),
-  count: z.number(),
-})
+    pipeline_name: z.string(),
+    count: z.number(),
+});
 
 export const statsResultSchema = z.object({
-  total: z.number(),
-  recent: z.array(resultSetSchema),
-  daily: z.array(dailyCountSchema),
-  pipelines: z.array(pipelineCountSchema),
-})
-export type StatsResult = z.infer<typeof statsResultSchema>
+    total: z.number(),
+    recent: z.array(resultSetSchema),
+    daily: z.array(dailyCountSchema),
+    pipelines: z.array(pipelineCountSchema),
+});
+export type StatsResult = z.infer<typeof statsResultSchema>;
 
 // Meta keys
-export const metaKeysSchema = z.array(z.string())
+export const metaKeysSchema = z.array(z.string());
 
 // Seqmeta
 export const identifierResultSchema = z.object({
-  identifier: z.string(),
-  type: z.string(),
-  object: z.unknown(),
-})
-export type IdentifierResult =
-  z.infer<typeof identifierResultSchema>
+    identifier: z.string(),
+    type: z.string(),
+    object: z.unknown(),
+});
+export type IdentifierResult = z.infer<typeof identifierResultSchema>;
 
-export const studySchema = z.object({
-  id_study_lims: z.number(),
-  name: z.string(),
-}).passthrough()
-export type Study = z.infer<typeof studySchema>
+export const studySchema = z
+    .object({
+        id_study_lims: z.number(),
+        name: z.string(),
+    })
+    .passthrough();
+export type Study = z.infer<typeof studySchema>;
 
-export const studiesSchema = z.array(studySchema)
+export const studiesSchema = z.array(studySchema);
 
-export const sampleSchema = z.object({
-  sanger_id: z.string(),
-}).passthrough()
+export const sampleSchema = z
+    .object({
+        sanger_id: z.string(),
+    })
+    .passthrough();
 
-export const samplesSchema = z.array(sampleSchema)
+export const samplesSchema = z.array(sampleSchema);
 
 // Error
 export const errorSchema = z.object({
-  error: z.string(),
-})
+    error: z.string(),
+});
 
 // Health
 export const healthSchema = z.object({
-  status: z.string(),
-})
+    status: z.string(),
+});
 ```
 
 **Acceptance tests:**
@@ -952,8 +957,8 @@ failure returns `{"status":"unhealthy"}` with 503.
 **Test file:** `frontend/tests/health.test.ts`
 
 ```typescript
-export const dynamic = 'force-dynamic'
-export async function GET(): Promise<NextResponse>
+export const dynamic = "force-dynamic";
+export async function GET(): Promise<NextResponse>;
 ```
 
 **Acceptance tests:**
@@ -978,6 +983,7 @@ quickly understand the system state and start searching.
 Server Component at `(results)/page.tsx`. Reads URL
 `searchParams`. If no search params, fetches stats via
 `fetchStats()` Server Action and displays:
+
 - Stat cards: total result sets, distinct pipelines count,
   registrations today.
 - Bar chart (recharts `BarChart`) showing daily registration
@@ -1000,35 +1006,33 @@ on this page.
 Server Actions in `frontend/app/(results)/actions.ts`:
 
 ```typescript
-'use server'
+"use server";
 
 export async function fetchStats(
-  recent?: number, days?: number
-): Promise<StatsResult>
+    recent?: number,
+    days?: number,
+): Promise<StatsResult>;
 
 export async function searchResults(
-  params: Record<string, string[]>
-): Promise<ResultSet[] | SearchResult[]>
+    params: Record<string, string[]>,
+): Promise<ResultSet[] | SearchResult[]>;
 
-export async function fetchMetaKeys(): Promise<string[]>
+export async function fetchMetaKeys(): Promise<string[]>;
 
-export async function fetchStudies(): Promise<Study[]>
+export async function fetchStudies(): Promise<Study[]>;
 
-export async function fetchResult(
-  id: string
-): Promise<ResultSet>
+export async function fetchResult(id: string): Promise<ResultSet>;
 
-export async function fetchFiles(
-  id: string
-): Promise<FileEntry[]>
+export async function fetchFiles(id: string): Promise<FileEntry[]>;
 
 export async function fetchFileContent(
-  id: string, path: string
-): Promise<{ content: string; contentType: string }>
+    id: string,
+    path: string,
+): Promise<{ content: string; contentType: string }>;
 
 export async function validateIdentifier(
-  value: string
-): Promise<IdentifierResult | null>
+    value: string,
+): Promise<IdentifierResult | null>;
 ```
 
 `StatsCards` component:
@@ -1037,11 +1041,11 @@ export async function validateIdentifier(
 
 ```typescript
 interface StatsCardsProps {
-  total: number
-  pipelineCount: number
-  todayCount: number
+    total: number;
+    pipelineCount: number;
+    todayCount: number;
 }
-export function StatsCards(props: StatsCardsProps): JSX.Element
+export function StatsCards(props: StatsCardsProps): JSX.Element;
 ```
 
 `DailyChart` component:
@@ -1050,9 +1054,9 @@ export function StatsCards(props: StatsCardsProps): JSX.Element
 
 ```typescript
 interface DailyChartProps {
-  data: DailyCount[]
+    data: DailyCount[];
 }
-export function DailyChart(props: DailyChartProps): JSX.Element
+export function DailyChart(props: DailyChartProps): JSX.Element;
 ```
 
 **Acceptance tests:**
@@ -1088,6 +1092,7 @@ available fields: `requester`, `operator`, `pipeline_name`,
 plus dynamic metadata keys fetched via `fetchMetaKeys()`.
 
 After selecting a field:
+
 - For `study_id`: show `StudyCombobox` (K2).
 - For other fields: show a text `Input`.
 - User enters value, presses Enter or clicks "Add".
@@ -1109,13 +1114,11 @@ Repeated params for OR within a field.
 
 ```typescript
 interface FilterBuilderProps {
-  metaKeys: string[]
-  seqmetaAvailable: boolean
-  currentFilters: Record<string, string[]>
+    metaKeys: string[];
+    seqmetaAvailable: boolean;
+    currentFilters: Record<string, string[]>;
 }
-export function FilterBuilder(
-  props: FilterBuilderProps
-): JSX.Element
+export function FilterBuilder(props: FilterBuilderProps): JSX.Element;
 ```
 
 **File:** `frontend/lib/search-params.ts`
@@ -1124,13 +1127,13 @@ export function FilterBuilder(
 ```typescript
 // Parse URLSearchParams into grouped filter map.
 export function parseSearchFilters(
-  params: URLSearchParams
-): Record<string, string[]>
+    params: URLSearchParams,
+): Record<string, string[]>;
 
 // Build URLSearchParams from filter map.
 export function buildSearchQuery(
-  filters: Record<string, string[]>
-): URLSearchParams
+    filters: Record<string, string[]>,
+): URLSearchParams;
 ```
 
 **Acceptance tests:**
@@ -1171,11 +1174,9 @@ Only rendered when `seqmetaAvailable` is true.
 
 ```typescript
 interface StudyComboboxProps {
-  onSelect: (studyId: string) => void
+    onSelect: (studyId: string) => void;
 }
-export function StudyCombobox(
-  props: StudyComboboxProps
-): JSX.Element
+export function StudyCombobox(props: StudyComboboxProps): JSX.Element;
 ```
 
 **Acceptance tests:**
@@ -1202,6 +1203,7 @@ the Next.js server with a configurable TTL, so that
 The cache stores the last `Study[]` response and its fetch
 timestamp. `WA_STUDIES_CACHE_TTL_SECONDS` env var controls
 the TTL (default 300). When `getStudies()` is called:
+
 1. If cached data exists and age < TTL, return cached data.
 2. Otherwise call `seqmetaJson('/studies', studiesSchema)`,
    store the result, and return it.
@@ -1211,10 +1213,10 @@ the TTL (default 300). When `getStudies()` is called:
 // TTL is read from WA_STUDIES_CACHE_TTL_SECONDS (default
 // 300 seconds).
 
-export function getStudies(): Promise<Study[]>
+export function getStudies(): Promise<Study[]>;
 
 // For testing: reset the cache.
-export function resetStudiesCache(): void
+export function resetStudiesCache(): void;
 ```
 
 The `fetchStudies()` Server Action in
@@ -1266,12 +1268,10 @@ Rows link to `/results/{id}`.
 
 ```typescript
 interface ResultsTableProps {
-  data: ResultSet[] | SearchResult[]
-  studyActive?: boolean
+    data: ResultSet[] | SearchResult[];
+    studyActive?: boolean;
 }
-export function ResultsTable(
-  props: ResultsTableProps
-): JSX.Element
+export function ResultsTable(props: ResultsTableProps): JSX.Element;
 ```
 
 When `studyActive` is true and data items are
@@ -1297,7 +1297,7 @@ hidden when `studyActive` is false or data is plain
    `operator`, and `id` columns are hidden.
 6. Given `studyActive=true` and data is `SearchResult[]`
    where one entry has `matched_samples: ["SANG1",
-   "SANG2"]`, then a "Matched Samples" column is visible
+"SANG2"]`, then a "Matched Samples" column is visible
    and that row shows "SANG1, SANG2".
 7. Given `studyActive=false`, then no "Matched Samples"
    column is shown.
@@ -1339,13 +1339,11 @@ tooltip "enrichment unavailable".
 
 ```typescript
 interface SeqmetaBadgeProps {
-  rawValue: string
-  enrichment: IdentifierResult | null
-  error?: boolean
+    rawValue: string;
+    enrichment: IdentifierResult | null;
+    error?: boolean;
 }
-export function SeqmetaBadge(
-  props: SeqmetaBadgeProps
-): JSX.Element
+export function SeqmetaBadge(props: SeqmetaBadgeProps): JSX.Element;
 ```
 
 Seqmeta enrichment cache (client-side):
@@ -1357,14 +1355,15 @@ Seqmeta enrichment cache (client-side):
 // Keyed by raw identifier value. Shared across pages
 // via React context to avoid redundant validateIdentifier
 // calls when navigating between result sets.
-export const SeqmetaCacheContext =
-  React.createContext<SeqmetaCache>(new SeqmetaCache())
+export const SeqmetaCacheContext = React.createContext<SeqmetaCache>(
+    new SeqmetaCache(),
+);
 
 export class SeqmetaCache {
-  private cache: Map<string, IdentifierResult | null>
-  get(value: string): IdentifierResult | null | undefined
-  set(value: string, result: IdentifierResult | null): void
-  has(value: string): boolean
+    private cache: Map<string, IdentifierResult | null>;
+    get(value: string): IdentifierResult | null | undefined;
+    set(value: string, result: IdentifierResult | null): void;
+    has(value: string): boolean;
 }
 ```
 
@@ -1426,42 +1425,38 @@ expand if there is only one.
 
 ```typescript
 interface FileBrowserProps {
-  files: FileEntry[]
-  onSelectFile: (file: FileEntry) => void
-  selectedPath?: string
+    files: FileEntry[];
+    onSelectFile: (file: FileEntry) => void;
+    selectedPath?: string;
 }
-export function FileBrowser(
-  props: FileBrowserProps
-): JSX.Element
+export function FileBrowser(props: FileBrowserProps): JSX.Element;
 ```
 
 Tree node type (internal):
 
 ```typescript
 interface TreeNode {
-  name: string
-  path: string
-  isDir: boolean
-  size?: number
-  mtime?: string
-  children: TreeNode[]
-  fileCount: number
-  typeCounts: Record<string, number>
+    name: string;
+    path: string;
+    isDir: boolean;
+    size?: number;
+    mtime?: string;
+    children: TreeNode[];
+    fileCount: number;
+    typeCounts: Record<string, number>;
 }
 ```
 
 ```typescript
 // Build tree from flat file list.
-export function buildFileTree(
-  files: FileEntry[]
-): TreeNode[]
+export function buildFileTree(files: FileEntry[]): TreeNode[];
 ```
 
 **Acceptance tests:**
 
 1. Given files `[{path:"/out/a/1.txt", kind:"output"},
-   {path:"/out/a/2.txt", kind:"output"},
-   {path:"/in/b.fastq", kind:"input"}]`, when "Outputs"
+{path:"/out/a/2.txt", kind:"output"},
+{path:"/in/b.fastq", kind:"input"}]`, when "Outputs"
    tab is active, then tree shows folder "out" > "a" with
    2 files. "Inputs" tab shows "in" with 1 file.
 2. Given "Pipeline" tab with 0 files, then tab shows
@@ -1497,6 +1492,7 @@ without leaving the browser.
 
 Client component. When a file is selected in the file
 browser, fetches content:
+
 - Text-based types (code, CSV, markdown, HTML, SVG): calls
   `fetchFileContent(id, path)` Server Action which uses
   `resultsRaw` to fetch the raw bytes and read the
@@ -1507,16 +1503,16 @@ browser, fetches content:
 
 Renderer selection by Content-Type:
 
-| Content-Type pattern      | Renderer                      |
-|---------------------------|-------------------------------|
-| `image/*`                 | `<img>` via proxy URL         |
-| `text/csv`, `text/tab-*`  | Table (first 100 rows)        |
-| `text/markdown`           | Rendered markdown              |
-| `text/html`               | Sandboxed `<iframe>`          |
-| `image/svg+xml`           | `<img src=...>` (no inline)   |
-| `application/pdf`         | `<iframe>` via proxy URL      |
+| Content-Type pattern                      | Renderer                      |
+| ----------------------------------------- | ----------------------------- |
+| `image/*`                                 | `<img>` via proxy URL         |
+| `text/csv`, `text/tab-*`                  | Table (first 100 rows)        |
+| `text/markdown`                           | Rendered markdown             |
+| `text/html`                               | Sandboxed `<iframe>`          |
+| `image/svg+xml`                           | `<img src=...>` (no inline)   |
+| `application/pdf`                         | `<iframe>` via proxy URL      |
 | `text/*`, `application/json`, source code | Syntax-highlighted code block |
-| `application/octet-stream` | File info + path display      |
+| `application/octet-stream`                | File info + path display      |
 
 CSV/TSV: parse with simple split, render in a shadcn/ui
 `Table`. Show first 100 rows with "Showing 100 of N rows"
@@ -1551,22 +1547,19 @@ download button.
 
 ```typescript
 interface FilePreviewProps {
-  resultId: string
-  file: FileEntry
-  content?: { content: string; contentType: string }
-  proxyUrl: string
+    resultId: string;
+    file: FileEntry;
+    content?: { content: string; contentType: string };
+    proxyUrl: string;
 }
-export function FilePreview(
-  props: FilePreviewProps
-): JSX.Element
+export function FilePreview(props: FilePreviewProps): JSX.Element;
 ```
 
 ```typescript
 // Select renderer type from Content-Type header.
 export function selectRenderer(
-  contentType: string
-): 'image' | 'csv' | 'markdown' | 'html' | 'svg'
-   | 'pdf' | 'code' | 'binary'
+    contentType: string,
+): "image" | "csv" | "markdown" | "html" | "svg" | "pdf" | "code" | "binary";
 ```
 
 **Acceptance tests:**
@@ -1639,16 +1632,14 @@ On Go server error, returns the error status and JSON body.
 **Test file:** `frontend/tests/file-proxy.test.ts`
 
 ```typescript
-export const dynamic = 'force-dynamic'
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse>
+export const dynamic = "force-dynamic";
+export async function GET(request: NextRequest): Promise<NextResponse>;
 ```
 
 **Acceptance tests:**
 
 1. Given Go backend returns 200 with `Content-Type:
-   image/png` and binary body, when
+image/png` and binary body, when
    `GET /api/file?id=abc&path=/out/img.png`, then response
    has same Content-Type and body is streamed through.
 2. Given `download=true`, then response includes
@@ -1671,12 +1662,14 @@ compiled `wa results serve`, so that critical browser flows
 are verified end-to-end.
 
 Playwright config:
+
 - `webServer` compiles Go (`go build`), starts
   `wa results serve` with a temp SQLite DB seeded from
   fixtures, and starts Next.js dev server.
 - Tests run in Chromium.
 
 Test file covers:
+
 1. **Search flow**: load `/`, add a filter for requester,
    verify table updates with matching results.
 2. **Result detail**: click a result row, verify
@@ -1693,16 +1686,16 @@ Test file covers:
 ```typescript
 // playwright.config.ts
 export default defineConfig({
-  testDir: './e2e',
-  webServer: [
-    {
-      command: 'bash ../run-dev.sh',
-      port: 3000,
-      reuseExistingServer: true,
-      timeout: 120_000,
-    },
-  ],
-})
+    testDir: "./e2e",
+    webServer: [
+        {
+            command: "bash ../run-dev.sh",
+            port: 3000,
+            reuseExistingServer: true,
+            timeout: 120_000,
+        },
+    ],
+});
 ```
 
 **Acceptance tests:**
@@ -1731,6 +1724,7 @@ Server Actions and API routes WITHOUT a browser, so that
 backend integration is tested cheaply.
 
 Test setup (Vitest `globalSetup`):
+
 1. `go build -o .tmp/wa .` from the repo root.
 2. Create temp SQLite DB, start `wa results serve` on a
    random port, seed fixtures from
@@ -1788,6 +1782,7 @@ environment is ready with one command.
 **File:** `run-dev.sh` (repo root)
 
 `run-dev.sh` behaviour:
+
 1. Parse flags: `-f`/`--frontend-port` (default 3000),
    `-r`/`--results-port` (default 8090),
    `-s`/`--seqmeta-port` (default 8091).
@@ -1819,6 +1814,7 @@ sets with varied pipelines, requesters, and metadata
 **File:** `.docs/results-web/fixtures/files/`
 
 Sample files committed to the repo:
+
 - `report.csv` -- 20-row CSV
 - `image.png` -- small PNG
 - `pipeline.nf` -- Nextflow code
@@ -1865,26 +1861,34 @@ fixtures/
 
 ```json
 [
-  {
-    "pipeline_identifier": "https://github.com/org/nf-rnaseq",
-    "run_key": "runid=48522&unique=exon_lib",
-    "requester": "alice",
-    "operator": "bob",
-    "command": "nextflow run nf-rnaseq",
-    "pipeline_name": "nf-core/rnaseq",
-    "pipeline_version": "3.14.0",
-    "output_directory": ".docs/results-web/fixtures/files",
-    "files": [
-      {"path": "report.csv", "mtime": "...", "size": 500,
-       "kind": "output"},
-      {"path": "image.png", "mtime": "...", "size": 1024,
-       "kind": "output"}
-    ],
-    "metadata": {
-      "seqmeta_sampleid": "SANG001",
-      "library": "exon"
+    {
+        "pipeline_identifier": "https://github.com/org/nf-rnaseq",
+        "run_key": "runid=48522&unique=exon_lib",
+        "requester": "alice",
+        "operator": "bob",
+        "command": "nextflow run nf-rnaseq",
+        "pipeline_name": "nf-core/rnaseq",
+        "pipeline_version": "3.14.0",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "report.csv",
+                "mtime": "...",
+                "size": 500,
+                "kind": "output"
+            },
+            {
+                "path": "image.png",
+                "mtime": "...",
+                "size": 1024,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "seqmeta_sampleid": "SANG001",
+            "library": "exon"
+        }
     }
-  }
 ]
 ```
 
@@ -1974,6 +1978,7 @@ result sets). Server-side pagination can be added later.
 ### Seqmeta graceful degradation
 
 When `WA_SEQMETA_BACKEND_URL` is not configured:
+
 - Study search filter is hidden.
 - Seqmeta enrichment badges show raw values.
 - No errors or blocked renders.

@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import http from "node:http";
 
-const port = Number(process.argv[2] ?? process.env.WA_TEST_FRONTEND_PORT ?? 3000);
+const port = Number(
+    process.argv[2] ?? process.env.WA_TEST_FRONTEND_PORT ?? 3000,
+);
 const snapshotPath = process.env.WA_RUN_DEV_ENV_SNAPSHOT;
 
 if (!snapshotPath) {

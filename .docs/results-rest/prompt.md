@@ -39,6 +39,7 @@ metadata associated with them.
 From the splicing analysis pipeline (see `.tmp/splicing_files.txt`):
 
 Directory structure:
+
 ```
 lehner_splicing/
   1_irods_to_lustre/   (user creates, runs irods_to_lustre to get fastqs)
@@ -73,6 +74,7 @@ lehner_splicing/
 ```
 
 The operator runs a command like:
+
 ```
 nextflow run -resume /lustre/.../nf_splicing/main.nf \
   -with-trace run_48522.nf_trace.txt \
@@ -85,6 +87,7 @@ nextflow run -resume /lustre/.../nf_splicing/main.nf \
 
 This creates all files under `output_files/random_exon/run_48522/` which form
 a single result set. The result set metadata would be:
+
 - user: the scientist who requested the analysis
 - operator: the person who ran the nextflow command
 - command: the full nextflow command line
@@ -104,6 +107,7 @@ type varies (e.g. run_48522, hek_22, I2, i6_4).
 The system should optionally integrate with the seqmeta component (specified in
 `.docs/seqmeta/spec.md`, not yet implemented) to validate incoming sequence
 metadata. When seqmeta is configured:
+
 - Validate identifiers (study IDs, sample IDs, etc.) against the seqmeta
   validation endpoint before accepting result sets.
 - If seqmeta is not configured or unavailable, skip validation and accept
@@ -113,6 +117,7 @@ metadata. When seqmeta is configured:
 
 A CLI (using Cobra) that makes it easy for a human or simple script to use
 the REST API to:
+
 - Register a new result set (providing all the metadata fields).
 - Scan a directory to automatically discover output files and their mtimes.
 - List/search existing result sets with filters.
@@ -138,12 +143,12 @@ command after a pipeline completes to register all outputs.
 - Search: query-string filter params on pre-defined fields AND on arbitrary
   operator-supplied metadata keys in a `meta_` namespace, with exact value
   matching. Example: `?pipeline_name=nf_splicing&pipeline_version=commithash
-  &user=alice&operator=joe&meta_librarytype=muta_exon&seqmeta_runid=48522`.
+&user=alice&operator=joe&meta_librarytype=muta_exon&seqmeta_runid=48522`.
 - Package structure: `results/` package with CLI subcommands in a unified
   `wa` binary (e.g. `wa results register ...`, `wa results search ...`),
   not a separate binary. The main binary lives in `cmd/` or project root.
 - Result set natural key: operator supplies `--nextflow_workflow /path/to/main.nf
-  --runid 48522 --additional_unique random_exon`. The CLI can detect if main.nf
+--runid 48522 --additional_unique random_exon`. The CLI can detect if main.nf
   is in a git checkout and auto-derive pipeline_repo_url, pipeline_name,
   pipeline_version (commit hash). The system builds a consistent composite key
   like `(pipeline_repo_url, "seqmeta:runid=48522&unique=random_exon")`.
@@ -200,9 +205,9 @@ command after a pipeline completes to register all outputs.
   relative to a new parent output directory, without having to know anything
   else about them. Migration CLI does not need to be implemented in MVP, but
   database and search must support the possibility.
-- Database schema: normalized separate tables — result_sets (composite key
+- Database schema: normalized separate tables — result*sets (composite key
   fields + SHA256 ID), result_files (result_id + path + mtime + size),
-  result_metadata (result_id + key + value for arbitrary meta_* fields).
+  result_metadata (result_id + key + value for arbitrary meta*\* fields).
 - Git auto-detection fallback: if pipeline file is in a git checkout, extract
   repo URL + commit hash for pipeline_identifier and pipeline_version. If not
   in git, use the file's normalised absolute path as pipeline_identifier and
@@ -211,7 +216,7 @@ command after a pipeline completes to register all outputs.
 - Seqmeta timeout: synchronous blocking call with configurable timeout;
   if seqmeta is unreachable or times out, fail registration with HTTP 502.
   Strict only, no lenient/warning mode.
-- Metadata search: exact-match only on meta_* fields. No wildcards,
+- Metadata search: exact-match only on meta\_\* fields. No wildcards,
   substring matching, or composite operators for MVP.
 - File list delivery: GET /results/{id}/files returns a full JSON array
   response. No streaming or pagination for MVP.
@@ -231,8 +236,8 @@ command after a pipeline completes to register all outputs.
   GET /results/{id}/files (file list), PUT /results/{id}/files (rescan),
   DELETE /results/{id}.
 - All pre-defined result set fields are searchable via query params: user,
-  operator, pipeline_name, pipeline_version, pipeline_identifier, run_key.
-  Also searchable: seqmeta_* namespace and meta_* namespace, all exact match.
+  operator, pipeline*name, pipeline_version, pipeline_identifier, run_key.
+  Also searchable: seqmeta*\_ namespace and meta\_\_ namespace, all exact match.
 - CLI subcommands under `wa results`: register, search, get, delete, rescan.
   Each maps 1:1 to a REST endpoint.
 - Entry point: root main.go defers to a cmd/ package containing eg.
@@ -242,6 +247,7 @@ command after a pipeline completes to register all outputs.
 ## Tech Stack
 
 Per `.docs/proposal.md`:
+
 - Go backend with chi router
 - SQLite for tests/local dev, MySQL for production
 - GoConvey testing
@@ -258,7 +264,7 @@ Per `.docs/proposal.md`:
   When unset, tests are skipped with `t.Skip`.
 - The spec must include end-to-end integration tests that exercise the compiled
   `wa` binary through the CLI. These tests should: start a real `wa results
-  serve` server (using SQLite :memory: or a temp file), then exercise the CLI
+serve` server (using SQLite :memory: or a temp file), then exercise the CLI
   commands (`register`, `search`, `get`, `rescan`, `delete`) against the
   running server, verifying the full round-trip from CLI to REST to DB and
   back. These confirm the binary actually works as a deployed unit.

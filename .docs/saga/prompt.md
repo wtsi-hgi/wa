@@ -22,6 +22,7 @@ The API is a NinjaAPI (Django Ninja) REST API documented at
 ## API Endpoints
 
 ### Core Endpoints
+
 - `GET /api/` — Root (health check)
 - `GET /api/version` — Returns `{ rev: string|null }`
 - `GET /api/auth/me` — Current user info (requires session auth)
@@ -29,6 +30,7 @@ The API is a NinjaAPI (Django Ninja) REST API documented at
 - `GET /api/users/` — List users
 
 ### MLWH (Sequencescape/Multi-LIMS Warehouse) Integration
+
 - `GET /api/integrations/mlwh/studies` — Paginated list of studies
 - `GET /api/integrations/mlwh/studies/{study_id}` — Single study detail
 - `GET /api/integrations/mlwh/samples` — Paginated list of samples
@@ -37,6 +39,7 @@ The API is a NinjaAPI (Django Ninja) REST API documented at
 - `GET /api/integrations/mlwh/data_release_strategy` — List data release strategies
 
 ### iRODS Integration
+
 - `GET /api/integrations/irods/` — iRODS root
 - `GET /api/integrations/irods/samples` — Paginated list of iRODS samples
 - `GET /api/integrations/irods/samples/{sanger_id}` — Files for a specific sample
@@ -44,6 +47,7 @@ The API is a NinjaAPI (Django Ninja) REST API documented at
 - `GET /api/integrations/irods/analysis-types` — List of analysis types
 
 ### Projects
+
 - `GET /api/projects/` — List projects
 - `POST /api/projects/` — Add project
 - `GET /api/projects/{project_id}` — Get project details
@@ -58,6 +62,7 @@ The API is a NinjaAPI (Django Ninja) REST API documented at
 - `DELETE /api/projects/{project_id}/users/{user_id}` — Remove user
 
 ### Saga Samples & Studies (internal Saga entities)
+
 - `GET /api/samples/` — List saga samples
 - `POST /api/samples/` — Create saga sample
 - `GET /api/samples/{source}/{source_id}` — Get sample from source
@@ -65,6 +70,7 @@ The API is a NinjaAPI (Django Ninja) REST API documented at
 - `GET /api/studies/` — List saga studies
 
 ### Other Integrations (STAN, FreezerPro, HuMFre, OMERO, SlideTracker)
+
 - `GET /api/integrations/stan/samples` — STAN samples
 - `GET /api/integrations/stan/samples/{sample_id}/slots/{slot_id}` — STAN detail
 - `GET /api/integrations/stan/works` — STAN works
@@ -91,107 +97,126 @@ The API is a NinjaAPI (Django Ninja) REST API documented at
 ## Response Structures (from real API exploration)
 
 ### Paginated Response
+
 Most list endpoints return: `{ items: [...], total: N, offset: N, limit: N }`
 Some return `{ items: [...], total: null }` (e.g. MLWH samples).
 
 ### MLWH Study (from GET /api/integrations/mlwh/studies/{id})
+
 ```json
 {
-  "id_study_tmp": 3328,
-  "id_lims": "SQSCP",
-  "id_study_lims": "3361",
-  "name": "IHTP_ISC_IBDCA_Edinburgh",
-  "faculty_sponsor": "David Adams",
-  "state": "active",
-  "abstract": "...",
-  "abbreviation": "3361STDY",
-  "accession_number": "EGAS00001001129",
-  "description": "...",
-  "data_release_strategy": "managed",
-  "study_title": "IBDCA_Edinburgh",
-  "data_access_group": "team145 as45 dr9 cancer",
-  "hmdmc_number": "14/061",
-  "programme": "Other",
-  "created": "2014-10-20T08:23:32Z",
-  "reference_genome": "Homo_sapiens (1000Genomes_hs37d5)",
-  "ethically_approved": true,
-  "study_type": "Exome Sequencing",
-  "contains_human_dna": true,
-  "contaminated_human_dna": false,
-  "study_visibility": "Hold",
-  "ega_dac_accession_number": "EGAC00001000000",
-  "ega_policy_accession_number": "EGAP00001000001",
-  "data_release_timing": "standard"
+    "id_study_tmp": 3328,
+    "id_lims": "SQSCP",
+    "id_study_lims": "3361",
+    "name": "IHTP_ISC_IBDCA_Edinburgh",
+    "faculty_sponsor": "David Adams",
+    "state": "active",
+    "abstract": "...",
+    "abbreviation": "3361STDY",
+    "accession_number": "EGAS00001001129",
+    "description": "...",
+    "data_release_strategy": "managed",
+    "study_title": "IBDCA_Edinburgh",
+    "data_access_group": "team145 as45 dr9 cancer",
+    "hmdmc_number": "14/061",
+    "programme": "Other",
+    "created": "2014-10-20T08:23:32Z",
+    "reference_genome": "Homo_sapiens (1000Genomes_hs37d5)",
+    "ethically_approved": true,
+    "study_type": "Exome Sequencing",
+    "contains_human_dna": true,
+    "contaminated_human_dna": false,
+    "study_visibility": "Hold",
+    "ega_dac_accession_number": "EGAC00001000000",
+    "ega_policy_accession_number": "EGAP00001000001",
+    "data_release_timing": "standard"
 }
 ```
 
 ### MLWH Sample (from GET /api/integrations/mlwh/samples)
+
 ```json
 {
-  "id_study_lims": "3361",
-  "id_sample_lims": "2153063",
-  "sanger_id": "3361STDY5994718",
-  "sample_name": "2L_tumour",
-  "taxon_id": 9606,
-  "common_name": "Homo Sapien",
-  "library_type": "Agilent Pulldown",
-  "id_run": 14966,
-  "lane": 8,
-  "tag_index": 50,
-  "irods_path": "/seq/14966/14966_8#50.cram",
-  "study_accession_number": "EGAS00001001129",
-  "accession_number": "EGAN00001258081"
+    "id_study_lims": "3361",
+    "id_sample_lims": "2153063",
+    "sanger_id": "3361STDY5994718",
+    "sample_name": "2L_tumour",
+    "taxon_id": 9606,
+    "common_name": "Homo Sapien",
+    "library_type": "Agilent Pulldown",
+    "id_run": 14966,
+    "lane": 8,
+    "tag_index": 50,
+    "irods_path": "/seq/14966/14966_8#50.cram",
+    "study_accession_number": "EGAS00001001129",
+    "accession_number": "EGAN00001258081"
 }
 ```
+
 Note: The same sample can appear multiple times (different runs/lanes).
 
 ### iRODS Sample (from GET /api/integrations/irods/samples)
+
 ```json
 {
-  "id": 263,
-  "name": "",
-  "source": "IRODS",
-  "source_id": "626137912",
-  "data": {
-    "path": "/seq/illumina/cellranger-arc/...",
-    "avu:study": ["HCA Embryo Foetal WSSS Dev RNA Sanger"],
-    "avu:id_run": ["40121", "40812"],
-    "avu:sample": ["WTSI_wEMB10524782", "WTSI_wEMB10524686"],
-    "avu:study_id": ["6568"],
-    "avu:sample_id": ["6050954", "6136211"],
-    "avu:library_type": ["Chromium single cell 3 prime v3", "Chromium single cell ATAC"],
-    "avu:analysis_type": ["cellranger-arc count"],
-    "avu:sample_common_name": ["human"],
-    "avu:sample_supplier_name": ["C84-WEM-2-FO-1_S2_mA", "C84-WEM-2-FO-1_S2_mG"],
-    "avu:study_accession_number": ["EGAS00001005445"],
-    "avu:sample_accession_number": ["EGAN00003258234", "EGAN00003265974"]
-  },
-  "curated": {},
-  "parent": null
+    "id": 263,
+    "name": "",
+    "source": "IRODS",
+    "source_id": "626137912",
+    "data": {
+        "path": "/seq/illumina/cellranger-arc/...",
+        "avu:study": ["HCA Embryo Foetal WSSS Dev RNA Sanger"],
+        "avu:id_run": ["40121", "40812"],
+        "avu:sample": ["WTSI_wEMB10524782", "WTSI_wEMB10524686"],
+        "avu:study_id": ["6568"],
+        "avu:sample_id": ["6050954", "6136211"],
+        "avu:library_type": [
+            "Chromium single cell 3 prime v3",
+            "Chromium single cell ATAC"
+        ],
+        "avu:analysis_type": ["cellranger-arc count"],
+        "avu:sample_common_name": ["human"],
+        "avu:sample_supplier_name": [
+            "C84-WEM-2-FO-1_S2_mA",
+            "C84-WEM-2-FO-1_S2_mG"
+        ],
+        "avu:study_accession_number": ["EGAS00001005445"],
+        "avu:sample_accession_number": ["EGAN00003258234", "EGAN00003265974"]
+    },
+    "curated": {},
+    "parent": null
 }
 ```
 
 ### iRODS Sample Detail (from GET /api/integrations/irods/samples/{sanger_id})
+
 ```json
 {
-  "items": [{
-    "id": 626137912,
-    "collection": "/seq/illumina/cellranger-arc/...",
-    "metadata": [
-      {"name": "sample_common_name", "value": "human"},
-      {"name": "library_type", "value": "Chromium single cell 3 prime v3"},
-      {"name": "id_run", "value": "40121"},
-      {"name": "sample", "value": "WTSI_wEMB10524782"},
-      {"name": "study_id", "value": "6568"},
-      {"name": "analysis_type", "value": "cellranger-arc count"}
-    ]
-  }],
-  "total": 1
+    "items": [
+        {
+            "id": 626137912,
+            "collection": "/seq/illumina/cellranger-arc/...",
+            "metadata": [
+                { "name": "sample_common_name", "value": "human" },
+                {
+                    "name": "library_type",
+                    "value": "Chromium single cell 3 prime v3"
+                },
+                { "name": "id_run", "value": "40121" },
+                { "name": "sample", "value": "WTSI_wEMB10524782" },
+                { "name": "study_id", "value": "6568" },
+                { "name": "analysis_type", "value": "cellranger-arc count" }
+            ]
+        }
+    ],
+    "total": 1
 }
 ```
 
 ### Pagination Query Parameters
+
 All paginated endpoints accept:
+
 - `page` (default: 1)
 - `pageSize` (default: 100)
 - `sortField` (optional string)
@@ -200,6 +225,7 @@ All paginated endpoints accept:
 - `export` (optional string)
 
 ### Analysis Types
+
 Available values: "cellranger multi", "spaceranger count", "cellranger count",
 "cellranger-atac count", "cellranger-arc count".
 
@@ -207,6 +233,7 @@ Available values: "cellranger multi", "spaceranger count", "cellranger count",
 
 Use `github.com/wtsi-hgi/activecache` for caching API results. The activecache
 library provides:
+
 - `New[K, V](duration, fn func(K) (V, error)) *Cache[K, V]` — create cache
 - `Get(key K) (V, error)` — get or fetch and cache
 - `Remove(key K) bool` — remove from cache
@@ -235,6 +262,7 @@ duration should be configurable by the caller when creating the client.
    with MLWH sample data.
 
 For use cases 3 and 4, filtering should support:
+
 - File/analysis type (e.g. "cellranger count", "spaceranger count")
 - Any iRODS AVU metadata field
 - MLWH metadata fields (when cross-referencing)
@@ -242,10 +270,13 @@ For use cases 3 and 4, filtering should support:
 ## Testing
 
 ### Unit/Mock Tests
+
 Standard mock HTTP server tests for all client methods.
 
 ### Integration Tests
+
 Real API integration tests that:
+
 - Skip when `SAGA_TEST_API_TOKEN` env var is not set
 - Use the token from that env var for authentication
 - Test against the real API with known sample/study data
@@ -256,6 +287,7 @@ Real API integration tests that:
   samples in study, files for sample, files for study)
 
 ## Notes
+
 - The iRODS samples list endpoint has 116 total entries (manageable size).
 - MLWH studies total: 8129.
 - Some endpoints can be slow (>10s), so caching is important.
@@ -269,6 +301,7 @@ Real API integration tests that:
 - HTTP headers are case-insensitive; OpenAPI spec names it `X-API-Key`.
 
 ## Notes
+
 - Phase 1 covers Core, MLWH, iRODS, and Projects endpoints. Phase 2 covers the
   remaining integrations (STAN, FreezerPro, HuMFre, OMERO, SlideTracker).
 - The client uses sub-clients per integration (e.g. `client.MLWH().ListStudies()`,

@@ -19,6 +19,7 @@ saga (cmd/saga.go), seqmeta (cmd/seqmeta.go), results
 (cmd/results.go stub, including serve stub).
 
 Migration tasks:
+
 - Move main.go inspector logic to cmd/saga.go as `inspect`
   subcommand under `saga`, preserving all flags.
 - Move cmd/seqmeta/main.go to cmd/seqmeta.go, preserving all

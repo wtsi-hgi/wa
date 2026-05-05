@@ -1,0 +1,22 @@
+# Tooling output / scratch
+node_modules/
+.next/
+.tmp/
+logs/
+test-results/
+coverage/
+
+# Package manager state
+pnpm-lock.yaml
+
+# NDJSON test fixtures (one JSON object per line; prettier would mangle them)
+test_*.json
+
+# Demo fixtures served verbatim by `make dev-fixtures`. Tests assert on their
+# preview content, so reformatting would break e2e expectations.
+.docs/results-web/fixtures/
+
+# Frontend has its own prettier pass run from inside frontend/ via
+# `pnpm format`, which uses frontend/.prettierignore. The root pass skips it
+# to avoid double-formatting.
+frontend/

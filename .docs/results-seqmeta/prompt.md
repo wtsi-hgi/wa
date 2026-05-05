@@ -188,9 +188,9 @@ requirements.
 - **Partial-graph response shape and status codes.** When the primary
   hop (classification) succeeds, return HTTP 200 with a body of the
   form `{ "identifier": "...", "type": "...", "graph": { ... populated
-  hops ... }, "partial": true|false, "missing": [{ "hop":
-  "<hop_name>", "reason": "<machine_code>", "status": <upstream_http>
-  }] }`. Use HTTP 404 only when the identifier cannot be classified on
+hops ... }, "partial": true|false, "missing": [{ "hop":
+"<hop_name>", "reason": "<machine_code>", "status": <upstream_http>
+}] }`. Use HTTP 404 only when the identifier cannot be classified on
   any working hop. Use HTTP 502 only when every attempted hop failed
   with a transient/5xx error (no primary classification possible). The
   spec must enumerate the hop names and failure `reason` codes.

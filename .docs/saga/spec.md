@@ -322,6 +322,7 @@ Max: 3s, Factor: 1.5}` and `UntilLimit{Max: 3}` combined with
 ### HTTP layer
 
 All requests include:
+
 - `X-Api-Key: <apiKey>` header
 - `User-Agent: wtsi-hgi/wa` header
 
@@ -852,15 +853,9 @@ AVUs are collected from all iRODS files into a single deduplicated
 1. Given mock MLWH returning 2 rows for sample `"S1"` (different
    runs) and mock iRODS returning 1 file with metadata
    `[{name:"study_id", value:"100"}, {name:"library_type",
-   value:"Chromium"}]`, when `SampleAllMetadata(ctx, "S1")` is
-   called, then:
-   - `SangerID` is `"S1"`
-   - `MLWH` has 2 entries
-   - `IRODSFiles` has 1 entry
-   - `AVUs["study_id"]` is `["100"]`
-   - `AVUs["library_type"]` is `["Chromium"]`
-   - `SampleName`, `TaxonID`, `CommonName` are from the first MLWH
-     row.
+value:"Chromium"}]`, when `SampleAllMetadata(ctx, "S1")` is
+   called, then: - `SangerID` is `"S1"` - `MLWH` has 2 entries - `IRODSFiles` has 1 entry - `AVUs["study_id"]` is `["100"]` - `AVUs["library_type"]` is `["Chromium"]` - `SampleName`, `TaxonID`, `CommonName` are from the first MLWH
+   row.
 2. Given MLWH returns samples but iRODS returns 404, then result
    still contains MLWH data with empty IRODSFiles and AVUs.
 3. Given neither MLWH nor iRODS has the sample, then `ErrNotFound`
@@ -902,7 +897,7 @@ Calls `IRODS().GetSampleFiles()` then applies client-side filtering.
    `FilterOptions{AnalysisType: AnalysisCellrangerCount}`, then
    result has 2 files.
 2. Given `FilterOptions{Metadata: map[string][]string{
-   "library_type": {"Chromium single cell 3 prime v3"}}}`, when
+"library_type": {"Chromium single cell 3 prime v3"}}}`, when
    called, then only files with that library_type are returned.
 3. Given nil FilterOptions, then all files are returned unfiltered.
 4. Given empty result from iRODS, then `Files` is empty slice.
@@ -936,7 +931,7 @@ for each. Applies client-side filtering.
 4. Given no samples found anywhere, then `Files` is empty slice.
 5. Given MLWH cross-reference path is used and
    `FilterOptions{Metadata: map[string][]string{
-   "common_name": {"Homo Sapien"}}}` is applied, when called, then
+"common_name": {"Homo Sapien"}}}` is applied, when called, then
    only files whose MLWH sample has `CommonName == "Homo Sapien"`
    are returned.
 

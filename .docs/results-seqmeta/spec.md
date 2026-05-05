@@ -632,16 +632,9 @@ func Enrich(ctx context.Context, provider SAGAProvider,
 1. Given study lookups fail client-side (4xx), and
    `FindSamplesBySangerID("S1")` returns one sample with
    `IDStudyLims == "6568"` and `LibraryType == "RNA PolyA"`, and
-   `StudyForSample(sample)` returns a study, when called, then:
-    - `Type == IdentifierSangerSampleID`
-    - `Graph.Sample.SangerID == "S1"`
-    - `len(Graph.Samples) == 1`
-    - `Graph.Study.IDStudyLims == "6568"`
-    - `Graph.Library == &Library{LibraryType:"RNA PolyA",
-IDStudyLims:"6568"}`
-    - `Partial == false`
-    - `StudyForSampleCalls == 1`,
-      `FindSamplesBySangerIDCalls == 1`, `AllSamplesCalls == 0`.
+   `StudyForSample(sample)` returns a study, when called, then: - `Type == IdentifierSangerSampleID` - `Graph.Sample.SangerID == "S1"` - `len(Graph.Samples) == 1` - `Graph.Study.IDStudyLims == "6568"` - `Graph.Library == &Library{LibraryType:"RNA PolyA",
+IDStudyLims:"6568"}` - `Partial == false` - `StudyForSampleCalls == 1`,
+   `FindSamplesBySangerIDCalls == 1`, `AllSamplesCalls == 0`.
 2. Given `FindSamplesBySangerID` returns one sample but
    `StudyForSample` returns `saga.ErrServerError`, then
    `Partial == true`, `Graph.Study == nil`, `Missing` contains

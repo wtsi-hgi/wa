@@ -18,7 +18,7 @@ timeout time.Duration) *SeqmetaValidator` and
 `(v *SeqmetaValidator) ValidateMetadata(ctx context.Context,
 metadata map[string]string) error` in `results/validate.go`.
 Also define `SeqmetaFieldTypes` map and `SeqmetaValidator`
-struct in `results/types.go`. Validates seqmeta_* metadata
+struct in `results/types.go`. Validates seqmeta\_\* metadata
 fields against a remote seqmeta service via HTTP GET. Returns
 appropriate sentinel errors for unknown suffixes, type
 mismatches, and unreachable servers. Covers all 7 acceptance

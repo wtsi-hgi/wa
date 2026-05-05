@@ -9,29 +9,29 @@ integrating with the REST API specified in `.docs/results-rest/spec.md`.
 
 1. **Next.js 16 App Router frontend** following the exact same patterns as the
    "hello world" implementation at https://github.com/wtsi-hgi/llm-knowledge-base:
-   - Server Actions call the Go backend server-to-server (backend URL never
-     exposed to browser)
-   - `lib/backend-client.ts` thin fetch wrapper used by Server Actions
-   - `lib/contracts.ts` Zod schemas mirroring Go API JSON responses
-   - `run-dev.sh` script at repo root that starts frontend + backend together,
-     runs lint/format/tests before starting, writes logs to `./logs/`
-   - `.env` / `.env.example` configuration for ports and backend URL
-   - Same ThemeProvider, TooltipProvider, Toaster pattern from layout.tsx
-   - Health check proxy route at `/api/health` for external monitors
-   - Vitest for unit tests, same vitest.config.ts pattern
-   - pnpm as package manager
-   - shadcn/ui components (new-york style, neutral base colour, lucide icons)
-   - Tailwind CSS v4 with `@theme` design tokens
+    - Server Actions call the Go backend server-to-server (backend URL never
+      exposed to browser)
+    - `lib/backend-client.ts` thin fetch wrapper used by Server Actions
+    - `lib/contracts.ts` Zod schemas mirroring Go API JSON responses
+    - `run-dev.sh` script at repo root that starts frontend + backend together,
+      runs lint/format/tests before starting, writes logs to `./logs/`
+    - `.env` / `.env.example` configuration for ports and backend URL
+    - Same ThemeProvider, TooltipProvider, Toaster pattern from layout.tsx
+    - Health check proxy route at `/api/health` for external monitors
+    - Vitest for unit tests, same vitest.config.ts pattern
+    - pnpm as package manager
+    - shadcn/ui components (new-york style, neutral base colour, lucide icons)
+    - Tailwind CSS v4 with `@theme` design tokens
 
 2. **Backend is the Go `wa results serve` command** (not FastAPI). The frontend
    communicates with it via the REST API endpoints defined in
    `.docs/results-rest/spec.md`:
-   - `POST /results` — register a result set
-   - `GET /results` — search with query params
-   - `GET /results/{id}` — get one result set
-   - `GET /results/{id}/files` — get file list
-   - `PUT /results/{id}/files` — replace output files
-   - `DELETE /results/{id}` — hard delete
+    - `POST /results` — register a result set
+    - `GET /results` — search with query params
+    - `GET /results/{id}` — get one result set
+    - `GET /results/{id}/files` — get file list
+    - `PUT /results/{id}/files` — replace output files
+    - `DELETE /results/{id}` — hard delete
 
 3. **Optional seqmeta integration** for enhanced searching. When a seqmeta
    service URL is configured, the UI can resolve identifiers to find related
@@ -39,51 +39,51 @@ integrating with the REST API specified in `.docs/results-rest/spec.md`.
    samples in that study, then searches results for any that match those sample
    identifiers via `seqmeta_sampleid` metadata. The seqmeta REST API is
    specified in `.docs/seqmeta/spec.md`:
-   - `GET /validate/{identifier}` — classify an identifier (study_id,
-     sanger_sample_id, etc.)
-   - `GET /diff/study/{id}` — get samples for a study
+    - `GET /validate/{identifier}` — classify an identifier (study_id,
+      sanger_sample_id, etc.)
+    - `GET /diff/study/{id}` — get samples for a study
 
 4. **Advanced search UI** that is easy and intuitive:
-   - Search by all result set fields: requester, operator, pipeline_name,
-     pipeline_version, pipeline_identifier, run_key, output_dir_prefix
-   - Search by metadata key-value pairs (meta_X=V, seqmeta_X=V)
-   - When seqmeta is available, search by study name/ID to find results with
-     matching sample identifiers
-   - Filters are combinable (AND logic)
-   - Clear, sortable results table
+    - Search by all result set fields: requester, operator, pipeline_name,
+      pipeline_version, pipeline_identifier, run_key, output_dir_prefix
+    - Search by metadata key-value pairs (meta_X=V, seqmeta_X=V)
+    - When seqmeta is available, search by study name/ID to find results with
+      matching sample identifiers
+    - Filters are combinable (AND logic)
+    - Clear, sortable results table
 
 5. **Folder tree view** — one of the primary views:
-   - Build a tree from the file list of a result set
-   - Expandable/collapsible folders
-   - Quick summary of file types per folder (without displaying massive file
-     lists for large folders)
-   - Ability to expand to show full folder contents with file details
+    - Build a tree from the file list of a result set
+    - Expandable/collapsible folders
+    - Quick summary of file types per folder (without displaying massive file
+      lists for large folders)
+    - Ability to expand to show full folder contents with file details
 
 6. **Rich file preview/display** when viewing full folder contents:
-   - **Images** (png, jpg, gif, svg, webp): clickable thumbnails
-   - **CSV/TSV**: "thumbnail" table of first few rows, clickable to show full
-     table with sorting/filtering
-   - **Markdown**: rendered via markdown parser
-   - **Code files** (py, go, js, ts, sh, etc.): syntax highlighting
-   - **HTML**: rendered inline in an iframe or similar
-   - **Gzipped files**: transparently decompressed before preview
-   - **PDF**: embedded viewer or thumbnail
-   - Wide variety of common file format support with sensible fallbacks
+    - **Images** (png, jpg, gif, svg, webp): clickable thumbnails
+    - **CSV/TSV**: "thumbnail" table of first few rows, clickable to show full
+      table with sorting/filtering
+    - **Markdown**: rendered via markdown parser
+    - **Code files** (py, go, js, ts, sh, etc.): syntax highlighting
+    - **HTML**: rendered inline in an iframe or similar
+    - **Gzipped files**: transparently decompressed before preview
+    - **PDF**: embedded viewer or thumbnail
+    - Wide variety of common file format support with sensible fallbacks
 
 7. **File organisation** for multi-frontend repo:
-   - Frontend code lives under a path that supports multiple sub-product
-     frontends (e.g. `frontend/results/` or similar)
-   - Shared components and utilities (like seqmeta search, backend-client,
-     common UI patterns) live in a shared location that other frontends
-     (e.g. samplepicker) can reuse
-   - Each frontend has its own App Router pages but shares components/lib
+    - Frontend code lives under a path that supports multiple sub-product
+      frontends (e.g. `frontend/results/` or similar)
+    - Shared components and utilities (like seqmeta search, backend-client,
+      common UI patterns) live in a shared location that other frontends
+      (e.g. samplepicker) can reuse
+    - Each frontend has its own App Router pages but shares components/lib
 
 8. **Testing**:
-   - Unit tests via Vitest for contracts, components, and utilities
-   - Mock REST API server for most testing (MSW or similar)
-   - **Real integration tests** that test the frontend works with a real
-     compiled `wa results serve` binary — start the Go server, start the
-     frontend, exercise key flows
+    - Unit tests via Vitest for contracts, components, and utilities
+    - Mock REST API server for most testing (MSW or similar)
+    - **Real integration tests** that test the frontend works with a real
+      compiled `wa results serve` binary — start the Go server, start the
+      frontend, exercise key flows
 
 9. **UI quality**: Take full advantage of Tailwind CSS v4 + shadcn/ui for
    beauty, interactivity, and consistency. Prefer pre-existing shadcn/ui

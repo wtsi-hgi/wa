@@ -1,4 +1,4 @@
-.PHONY: help dev dev-fixtures prod lint lint-go lint-frontend format format-go format-frontend test test-go test-frontend test-e2e
+.PHONY: help dev dev-fixtures prod lint lint-go lint-frontend lint-prettier-root format format-go format-frontend format-prettier-root test test-go test-frontend test-e2e
 
 FRONTEND_DIR := frontend
 # Force pure-Go builds for all `go` invocations below (matches the `-tags
@@ -51,7 +51,7 @@ prod:
 	$(WA_ENV_PROD) ./run-dev.sh --mode prod
 
 # ---- Lint and format (no scenario binding) -------------------------------
-lint: lint-go lint-frontend
+lint: lint-go lint-frontend lint-prettier-root
 
 lint-go:
 	golangci-lint run ./...
@@ -59,7 +59,12 @@ lint-go:
 lint-frontend:
 	cd $(FRONTEND_DIR) && pnpm lint
 
-format: format-go format-frontend
+# Prettier --check on root-level files (markdown, JSON, etc.) using the same
+# config and binary as the frontend, mirroring what VS Code applies on save.
+lint-prettier-root:
+	$(FRONTEND_DIR)/node_modules/.bin/prettier --check .
+
+format: format-go format-frontend format-prettier-root
 
 format-go:
 	git ls-files '*.go' | xargs -r gofmt -w
@@ -67,3 +72,7 @@ format-go:
 
 format-frontend:
 	cd $(FRONTEND_DIR) && pnpm format
+
+# Prettier --write on root-level files. Excludes governed by .prettierignore.
+format-prettier-root:
+	$(FRONTEND_DIR)/node_modules/.bin/prettier --write .
