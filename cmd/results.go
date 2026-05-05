@@ -50,6 +50,13 @@ import (
 
 var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
+var resultsRegisterSeqmetaFlagMetaKeys = map[string]string{
+	"seqmeta-runid":       "seqmeta_runid",
+	"seqmeta-studyid":     "seqmeta_studyid",
+	"seqmeta-sampleid":    "seqmeta_sampleid",
+	"seqmeta-librarytype": "seqmeta_librarytype",
+}
+
 type resultSetWithFiles struct {
 	results.ResultSet
 	Files []results.FileEntry `json:"files"`
@@ -255,6 +262,10 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var additionalUnique string
 	var inputFiles []string
 	var metaValues []string
+	var seqmetaRunID string
+	var seqmetaStudyID string
+	var seqmetaSampleID string
+	var seqmetaLibraryType string
 	var includeHidden bool
 	var useJSON bool
 
@@ -278,6 +289,12 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 				additionalUnique,
 				inputFiles,
 				metaValues,
+				map[string]string{
+					"seqmeta_runid":       seqmetaRunID,
+					"seqmeta_studyid":     seqmetaStudyID,
+					"seqmeta_sampleid":    seqmetaSampleID,
+					"seqmeta_librarytype": seqmetaLibraryType,
+				},
 				includeHidden,
 				useJSON,
 			)
@@ -302,6 +319,10 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Additional value used to disambiguate the run key")
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
+	command.Flags().StringVar(&seqmetaRunID, "seqmeta-runid", "", "Convenience for --meta seqmeta_runid=value")
+	command.Flags().StringVar(&seqmetaStudyID, "seqmeta-studyid", "", "Convenience for --meta seqmeta_studyid=value")
+	command.Flags().StringVar(&seqmetaSampleID, "seqmeta-sampleid", "", "Convenience for --meta seqmeta_sampleid=value")
+	command.Flags().StringVar(&seqmetaLibraryType, "seqmeta-librarytype", "", "Convenience for --meta seqmeta_librarytype=value")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 
@@ -319,6 +340,7 @@ func buildResultsRegistrationForCommand(
 	additionalUnique string,
 	inputFiles []string,
 	metaValues []string,
+	seqmetaMetadata map[string]string,
 	includeHidden bool,
 	useJSON bool,
 ) (*results.Registration, error) {
@@ -356,7 +378,7 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("--runid or --additional-unique is required")
 	}
 
-	metadata, err := parseResultsMetadataFilters(metaValues)
+	metadata, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
 	if err != nil {
 		return nil, err
 	}
@@ -423,6 +445,38 @@ func decodeResultsRegistration(input io.Reader) (*results.Registration, error) {
 	}
 
 	return &registration, nil
+}
+
+func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[string]string) (map[string]string, error) {
+	metadata, err := parseResultsMetadataFilters(metaValues)
+	if err != nil {
+		return nil, err
+	}
+
+	for key, value := range seqmetaMetadata {
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedValue == "" {
+			continue
+		}
+
+		if _, exists := metadata[key]; exists {
+			return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", key, resultsRegisterSeqmetaFlagName(key))
+		}
+
+		metadata[key] = trimmedValue
+	}
+
+	return metadata, nil
+}
+
+func resultsRegisterSeqmetaFlagName(metaKey string) string {
+	for flagName, key := range resultsRegisterSeqmetaFlagMetaKeys {
+		if key == metaKey {
+			return flagName
+		}
+	}
+
+	return metaKey
 }
 
 func registerResults(ctx context.Context, serverURL string, registration *results.Registration) ([]byte, error) {

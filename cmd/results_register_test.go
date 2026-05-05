@@ -397,6 +397,92 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(result.ID, convey.ShouldEqual, "updated-result")
 	})
 
+	convey.Convey("Bug 4: Given dedicated seqmeta flags, when register is run, then they are sent as equivalent seqmeta metadata entries", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "seqmeta-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--nextflow-workflow", workflowPath,
+			"--seqmeta-runid", "RUN-42",
+			"--seqmeta-studyid", "6568",
+			"--seqmeta-sampleid", "SANG123",
+			"--seqmeta-librarytype", "RNA PolyA",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
+			"seqmeta_runid":       "RUN-42",
+			"seqmeta_studyid":     "6568",
+			"seqmeta_sampleid":    "SANG123",
+			"seqmeta_librarytype": "RNA PolyA",
+		})
+	})
+
+	convey.Convey("Bug 4: Given a seqmeta key supplied via both a dedicated flag and --meta, when register is run, then it returns a clear duplicate-key error before sending a request", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		requestCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--nextflow-workflow", workflowPath,
+			"--seqmeta-runid", "RUN-42",
+			"--meta", "seqmeta_runid=RUN-42",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "seqmeta_runid")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "supplied via both")
+		convey.So(requestCount, convey.ShouldEqual, 0)
+	})
+
 	convey.Convey("G1.4: Given missing --user, then the command returns an error and stderr contains the error", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")

@@ -48,8 +48,16 @@ wa results register /path/to/output \
   --operator jdoe \
   --command "nextflow run pipeline" \
   --nextflow-workflow /path/to/main.nf \
-  --runid my-run-001
+  --runid my-run-001 \
+  --seqmeta-studyid 6568 \
+  --seqmeta-sampleid SANG123
+
 ```
+
+Dedicated `--seqmeta-runid`, `--seqmeta-studyid`, `--seqmeta-sampleid`, and
+`--seqmeta-librarytype` flags are convenience shorthands for the equivalent
+`--meta seqmeta_...=value` entries. Do not supply the same seqmeta key both
+ways in one command.
 
 ### Search results
 
