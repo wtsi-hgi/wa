@@ -29,7 +29,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
     });
 
     it("shows complete direct metadata for sample enrichment (not just sampleid)", async () => {
-        // Sample enrichment data similar to WTSI_wEMB10524782 from make run fixture
+        // Sample enrichment data similar to WTSI_wEMB10524782 from make dev-fixtures fixture
         const enrichment: EnrichmentResult = {
             identifier: "WTSI_TEST_SAMPLE",
             type: "sanger_sample_id",

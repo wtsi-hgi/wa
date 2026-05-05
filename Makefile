@@ -1,4 +1,4 @@
-.PHONY: help dev dev-fixtures prod run lint lint-go lint-frontend format format-go format-frontend test test-go test-frontend test-e2e
+.PHONY: help dev dev-fixtures prod lint lint-go lint-frontend format format-go format-frontend test test-go test-frontend test-e2e
 
 FRONTEND_DIR := frontend
 # Force pure-Go builds for all `go` invocations below (matches the `-tags
@@ -20,8 +20,7 @@ help:
 	@printf '  dev               Run the dev stack (no fixtures). Persistent DB from .env.dev.\n'
 	@printf '  dev FIXTURES=1    Same as above but seed demo fixtures.\n'
 	@printf '  dev-fixtures      Alias for `make dev FIXTURES=1`.\n'
-	@printf '  prod              Run the production stack. Requires .env.prod with WA_ENV=production.\n'
-	@printf '  run               Deprecated alias for `make dev`.\n\n'
+	@printf '  prod              Run the production stack. Requires .env.prod with WA_ENV=production.\n\n'
 	@printf 'Quality:\n'
 	@printf '  lint              Run Go and frontend linters.\n'
 	@printf '  format            Apply Go and frontend formatters.\n'
@@ -46,11 +45,6 @@ dev:
 
 dev-fixtures:
 	$(MAKE) dev FIXTURES=1
-
-# Deprecated alias retained for muscle memory; forwards to `make dev`.
-run:
-	@printf 'warning: `make run` is deprecated; use `make dev` (or `make dev-fixtures`).\n' >&2
-	$(MAKE) dev
 
 # ---- Production scenario --------------------------------------------------
 prod:

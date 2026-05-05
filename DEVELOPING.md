@@ -82,7 +82,6 @@ The seqmeta server only starts if `SAGA_API_TOKEN` is set in `.env.dev`.
 | `make test-e2e`     | `.env.test`       | Just Playwright. Internally drives `run-dev.sh --mode test`.                                              |
 | `make lint`         | _(none)_          | `golangci-lint` and `pnpm lint`.                                                                          |
 | `make format`       | _(none)_          | `gofmt`, `cleanorder`, and `prettier`.                                                                    |
-| `make run`          | `.env.dev`        | Deprecated alias for `make dev` (prints a warning).                                                       |
 
 Defaults applied when an env file does not pin a port:
 
@@ -127,19 +126,13 @@ The wrapper and `run-dev.sh` enforce the following:
 - `run-dev.sh --mode dev` and `--mode prod` use the persistent
   `WA_RESULTS_DB_PATH` and never delete the database on shutdown.
 
-### Variable rename map
+### Runtime variables (consumed by the Go binaries and the Next.js runtime)
 
-| Old (mixed)              | New                                                |
-| ------------------------ | -------------------------------------------------- |
-| `WA_TEST_FRONTEND_PORT`  | `WA_TEST_FRONTEND_PORT` (test only) / `WA_DEV_FRONTEND_PORT` (dev) / `WA_PROD_FRONTEND_PORT` (prod) |
-| `WA_TEST_RESULTS_PORT`   | `WA_TEST_RESULTS_PORT` / `WA_DEV_RESULTS_PORT` / `WA_PROD_RESULTS_PORT`                              |
-| `WA_TEST_SEQMETA_PORT`   | `WA_TEST_SEQMETA_PORT` / `WA_DEV_SEQMETA_PORT` / `WA_PROD_SEQMETA_PORT`                              |
-| _(none)_                 | `WA_ENV` — `test`, `development`, or `production`                                                    |
-
-Unchanged (consumed by Go binaries and the Next.js runtime regardless of
-scenario): `WA_RESULTS_BACKEND_URL`, `WA_SEQMETA_BACKEND_URL`,
-`WA_RESULTS_DB_PATH`, `SAGA_API_TOKEN`, `WA_STUDIES_CACHE_TTL_SECONDS`,
-`WA_DEV_ALLOWED_ORIGINS`.
+These are set by the scenario `.env*` files and are not scenario-specific:
+`WA_RESULTS_BACKEND_URL`, `WA_SEQMETA_BACKEND_URL`, `WA_RESULTS_DB_PATH`,
+`SAGA_API_TOKEN`, `WA_STUDIES_CACHE_TTL_SECONDS`, `WA_DEV_ALLOWED_ORIGINS`.
+Backend URLs are derived inside `run-dev.sh` from the active scenario's
+`WA_TEST_*` / `WA_DEV_*` / `WA_PROD_*` ports — do not set them by hand.
 
 ### Accessing `make dev` from a remote host
 
@@ -183,15 +176,16 @@ go build -o wa .
 
 ```bash
 cd frontend
-cp .env.example .env.local    # Edit if using non-default backend URLs
 pnpm install
-pnpm dev                      # Starts on http://localhost:3000
+WA_RESULTS_BACKEND_URL=http://localhost:8090 pnpm dev   # Starts on http://localhost:3000
 ```
 
-For `make dev`/`make prod`/Playwright-backed `make test`, set the
-appropriate `WA_*_PORT` values in `.env.dev`/`.env.prod`/`.env.test` instead.
+Normally you do not need to run the frontend by hand — `make dev` / `make prod`
+start it for you and source the right env file. Use the manual command only
+when you are debugging the frontend in isolation against an already-running Go
+backend.
 
-Frontend environment variables (set in `.env.local` or environment):
+Frontend environment variables (read from the process environment):
 
 | Variable                       | Default                 | Description                                                                                                                                            |
 | ------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
