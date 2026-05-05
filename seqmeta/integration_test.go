@@ -28,6 +28,7 @@ package seqmeta
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -53,6 +54,11 @@ type enrichMatrixCase struct {
 	expectation  enrichMatrixExpectation
 }
 
+type integrationSkipReporterStub struct {
+	skipped bool
+	message string
+}
+
 var liveEnrichMatrixCases = []enrichMatrixCase{
 	{identifier: "5993", expectedType: IdentifierStudyID, expectation: enrichExpectationEndToEnd},
 	{identifier: "5994", expectedType: IdentifierStudyID, expectation: enrichExpectationEndToEnd},
@@ -64,6 +70,13 @@ var liveEnrichMatrixCases = []enrichMatrixCase{
 	{identifier: "Agilent Pulldown", expectedType: IdentifierLibraryType, expectation: enrichExpectationEndToEnd},
 	{identifier: "34134", expectedType: IdentifierRunID, expectation: enrichExpectationEndToEnd},
 	{identifier: "40121", expectedType: IdentifierRunID, expectation: enrichExpectationEndToEnd},
+}
+
+func (p *integrationSkipReporterStub) Helper() {}
+
+func (p *integrationSkipReporterStub) Skip(args ...any) {
+	p.skipped = true
+	p.message = fmt.Sprint(args...)
 }
 
 func sampleLinkedMatrixCases() []enrichMatrixCase {
@@ -118,11 +131,35 @@ func assertLiveEnrichment(t *testing.T, result *EnrichmentResult, testCase enric
 	}
 }
 
+func TestRequireIntegrationToken(t *testing.T) {
+	convey.Convey("Given the live seqmeta integration token helper", t, func() {
+		convey.Convey("when neither token variable is present, then the integration test is skipped cleanly", func() {
+			t.Setenv("SAGA_API_TOKEN", "")
+			t.Setenv("SAGA_TEST_API_TOKEN", "")
+			reporter := &integrationSkipReporterStub{}
+
+			token := requireIntegrationToken(reporter)
+
+			convey.So(token, convey.ShouldBeBlank)
+			convey.So(reporter.skipped, convey.ShouldBeTrue)
+			convey.So(reporter.message, convey.ShouldEqual, "SAGA_API_TOKEN or SAGA_TEST_API_TOKEN not set")
+		})
+
+		convey.Convey("when SAGA_API_TOKEN is present, then it is preferred without skipping", func() {
+			t.Setenv("SAGA_API_TOKEN", " primary-token ")
+			t.Setenv("SAGA_TEST_API_TOKEN", "secondary-token")
+			reporter := &integrationSkipReporterStub{}
+
+			token := requireIntegrationToken(reporter)
+
+			convey.So(token, convey.ShouldEqual, " primary-token ")
+			convey.So(reporter.skipped, convey.ShouldBeFalse)
+		})
+	})
+}
+
 func TestIntegrationEnrichMatrix(t *testing.T) {
-	token := os.Getenv("SAGA_TEST_API_TOKEN")
-	if token == "" {
-		t.Skip("SAGA_TEST_API_TOKEN not set")
-	}
+	token := requireIntegrationToken(t)
 
 	client := mustNewSeqmetaIntegrationClient(t, token)
 	provider := NewClientAdapter(client)
@@ -167,10 +204,7 @@ func TestIntegrationEnrichMatrix(t *testing.T) {
 }
 
 func TestIntegrationEnrichSampleLinkedUnsupportedIdentifiersFailFast(t *testing.T) {
-	token := os.Getenv("SAGA_TEST_API_TOKEN")
-	if token == "" {
-		t.Skip("SAGA_TEST_API_TOKEN not set")
-	}
+	token := requireIntegrationToken(t)
 
 	client := mustNewSeqmetaIntegrationClient(t, token)
 	provider := NewClientAdapter(client)
@@ -222,6 +256,30 @@ func TestIntegrationEnrichSampleLinkedUnsupportedIdentifiersFailFast(t *testing.
 			})
 		}
 	})
+}
+
+func integrationTokenForTest() string {
+	if token := os.Getenv("SAGA_API_TOKEN"); token != "" {
+		return token
+	}
+
+	return os.Getenv("SAGA_TEST_API_TOKEN")
+}
+
+type integrationSkipReporter interface {
+	Helper()
+	Skip(args ...any)
+}
+
+func requireIntegrationToken(reporter integrationSkipReporter) string {
+	reporter.Helper()
+
+	token := integrationTokenForTest()
+	if token == "" {
+		reporter.Skip("SAGA_API_TOKEN or SAGA_TEST_API_TOKEN not set")
+	}
+
+	return token
 }
 
 func mustNewSeqmetaIntegrationClient(t *testing.T, token string) *saga.Client {

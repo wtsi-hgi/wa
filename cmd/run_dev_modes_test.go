@@ -27,6 +27,7 @@ package cmd
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -130,6 +131,28 @@ func TestRunDevModeGuards(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_ENV=production")
 	})
+
+	convey.Convey("scripts/wa-env.sh test does not inject a SAGA token without a developer token source", t, func() {
+		repoRoot := createWaEnvRepoForTest(t, false, "")
+
+		stdout, stderr, err := runWaEnvForTest(t, repoRoot, []string{"test", "--", "env"}, nil, []string{"WA_ENV", "SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RESULTS_DB_PATH"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr, convey.ShouldBeBlank)
+		convey.So(stdout, convey.ShouldContainSubstring, "WA_ENV=test")
+		convey.So(stdout, convey.ShouldNotContainSubstring, "SAGA_API_TOKEN=")
+	})
+
+	convey.Convey("scripts/wa-env.sh test exposes an optional .env.dev SAGA token to live integration tests", t, func() {
+		repoRoot := createWaEnvRepoForTest(t, true, "WA_ENV=development\nSAGA_API_TOKEN=integration-token\n")
+
+		stdout, stderr, err := runWaEnvForTest(t, repoRoot, []string{"test", "--", "env"}, nil, []string{"WA_ENV", "SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RESULTS_DB_PATH"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr, convey.ShouldBeBlank)
+		convey.So(stdout, convey.ShouldContainSubstring, "WA_ENV=test")
+		convey.So(stdout, convey.ShouldContainSubstring, "SAGA_API_TOKEN=integration-token")
+	})
 }
 
 // runRunDevExpectingFailureForTest invokes run-dev.sh with the given args and
@@ -154,6 +177,63 @@ func runRunDevExpectingFailureForTest(t *testing.T, repoRoot string, args []stri
 // runWaEnvExpectingFailureForTest invokes scripts/wa-env.sh with the given
 // args and environment overrides, expecting a non-zero exit.
 func runWaEnvExpectingFailureForTest(t *testing.T, repoRoot string, args []string, env map[string]string, unsetEnv []string) (string, string, error) {
+	t.Helper()
+
+	command := exec.Command("bash", append([]string{filepath.Join(repoRoot, "scripts", "wa-env.sh")}, args...)...) //nolint:gosec
+	command.Dir = repoRoot
+	command.Env = applyTestEnvForTest(env, unsetEnv)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	command.Stdout = stdout
+	command.Stderr = stderr
+
+	err := command.Run()
+
+	return stdout.String(), stderr.String(), err
+}
+
+func createWaEnvRepoForTest(t *testing.T, includeDevEnv bool, devEnvContents string) string {
+	t.Helper()
+
+	actualRepoRoot := runDevRepoRootForTest(t)
+	tempRepoRoot := t.TempDir()
+	scriptsDir := filepath.Join(tempRepoRoot, "scripts")
+	writeWaEnvFixtureFileForTest(t, filepath.Join(scriptsDir, "wa-env.sh"), mustReadFileForTest(t, filepath.Join(actualRepoRoot, "scripts", "wa-env.sh")), 0o755)
+	writeWaEnvFixtureFileForTest(t, filepath.Join(tempRepoRoot, ".env.test"), []byte("WA_ENV=test\n"), 0o600)
+
+	if includeDevEnv {
+		writeWaEnvFixtureFileForTest(t, filepath.Join(tempRepoRoot, ".env.dev"), []byte(devEnvContents), 0o600)
+	}
+
+	return tempRepoRoot
+}
+
+func writeWaEnvFixtureFileForTest(t *testing.T, path string, contents []byte, mode os.FileMode) {
+	t.Helper()
+
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	if err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+
+	err = os.WriteFile(path, contents, mode)
+	if err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func mustReadFileForTest(t *testing.T, path string) []byte {
+	t.Helper()
+
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	return contents
+}
+
+func runWaEnvForTest(t *testing.T, repoRoot string, args []string, env map[string]string, unsetEnv []string) (string, string, error) {
 	t.Helper()
 
 	command := exec.Command("bash", append([]string{filepath.Join(repoRoot, "scripts", "wa-env.sh")}, args...)...) //nolint:gosec

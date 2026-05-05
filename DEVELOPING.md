@@ -70,18 +70,18 @@ The seqmeta server only starts if `SAGA_API_TOKEN` is set in `.env.dev`.
 
 ## Make targets
 
-| Target                | Env file loaded | Purpose                                                                                                |
-| --------------------- | --------------- | ------------------------------------------------------------------------------------------------------ |
-| `make dev`            | `.env.dev`      | Bring up the dev stack with a persistent DB and no fixtures.                                           |
-| `make dev FIXTURES=1` | `.env.dev`      | Same as `make dev`, plus seed demo fixtures into the dev DB.                                           |
-| `make dev-fixtures`   | `.env.dev`      | Alias for `make dev FIXTURES=1`.                                                                       |
-| `make prod`           | `.env.prod`     | Bring up the production stack. Refuses to start without `.env.prod` or with any test/dev port set.     |
-| `make test`           | `.env.test`     | Run Go + Vitest + Playwright. Always uses ephemeral DBs and refuses an inherited `WA_RESULTS_DB_PATH`. |
-| `make test-go`        | `.env.test`     | Just the Go suite.                                                                                     |
-| `make test-frontend`  | `.env.test`     | Just Vitest.                                                                                           |
-| `make test-e2e`       | `.env.test`     | Just Playwright. Internally drives `run-dev.sh --mode test`.                                           |
-| `make lint`           | _(none)_        | `golangci-lint` and `pnpm lint`.                                                                       |
-| `make format`         | _(none)_        | `gofmt`, `cleanorder`, and `prettier`.                                                                 |
+| Target                | Env file loaded | Purpose                                                                                                                                                                                |
+| --------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make dev`            | `.env.dev`      | Bring up the dev stack with a persistent DB and no fixtures.                                                                                                                           |
+| `make dev FIXTURES=1` | `.env.dev`      | Same as `make dev`, plus seed demo fixtures into the dev DB.                                                                                                                           |
+| `make dev-fixtures`   | `.env.dev`      | Alias for `make dev FIXTURES=1`.                                                                                                                                                       |
+| `make prod`           | `.env.prod`     | Bring up the production stack. Refuses to start without `.env.prod` or with any test/dev port set.                                                                                     |
+| `make test`           | `.env.test`     | Run Go + Vitest + Playwright. Always uses ephemeral DBs, refuses an inherited `WA_RESULTS_DB_PATH`, and optionally reuses `SAGA_API_TOKEN` from `.env.dev` for live integration tests. |
+| `make test-go`        | `.env.test`     | Just the Go suite.                                                                                                                                                                     |
+| `make test-frontend`  | `.env.test`     | Just Vitest.                                                                                                                                                                           |
+| `make test-e2e`       | `.env.test`     | Just Playwright. Internally drives `run-dev.sh --mode test`.                                                                                                                           |
+| `make lint`           | _(none)_        | `golangci-lint` and `pnpm lint`.                                                                                                                                                       |
+| `make format`         | _(none)_        | `gofmt`, `cleanorder`, and `prettier`.                                                                                                                                                 |
 
 Defaults applied when an env file does not pin a port:
 
@@ -101,13 +101,13 @@ ports are exported only in test mode; `WA_DEV_*` only in dev mode; and
 `WA_SEQMETA_BACKEND_URL`) are derived from these ports inside `run-dev.sh`,
 not hand-edited.
 
-| File                | Tracked? | Loaded by    | Holds                                                                        |
-| ------------------- | -------- | ------------ | ---------------------------------------------------------------------------- |
-| `.env.test`         | yes      | `make test`  | Test ports + `WA_ENV=test`. No DB path. No SAGA token.                       |
-| `.env.dev.example`  | yes      | _(template)_ | Dev ports, dev DB path, `SAGA_API_TOKEN=` placeholder, `WA_ENV=development`. |
-| `.env.dev`          | no       | `make dev`   | Your local copy of the above with real values, including a real SAGA token.  |
-| `.env.prod.example` | yes      | _(template)_ | Prod ports, prod DB DSN/path placeholder, `WA_ENV=production`.               |
-| `.env.prod`         | no       | `make prod`  | Your production values. Required for `make prod`; absent ⇒ clear error.      |
+| File                | Tracked? | Loaded by    | Holds                                                                                                                     |
+| ------------------- | -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `.env.test`         | yes      | `make test`  | Test ports + `WA_ENV=test`. No DB path. No committed SAGA token; live tests may optionally reuse the one from `.env.dev`. |
+| `.env.dev.example`  | yes      | _(template)_ | Dev ports, dev DB path, `SAGA_API_TOKEN=` placeholder, `WA_ENV=development`.                                              |
+| `.env.dev`          | no       | `make dev`   | Your local copy of the above with real values, including a real SAGA token.                                               |
+| `.env.prod.example` | yes      | _(template)_ | Prod ports, prod DB DSN/path placeholder, `WA_ENV=production`.                                                            |
+| `.env.prod`         | no       | `make prod`  | Your production values. Required for `make prod`; absent ⇒ clear error.                                                   |
 
 ### Safety guarantees
 

@@ -96,6 +96,21 @@ set -a
 source "$env_file"
 set +a
 
+if [[ "$mode" == "test" && -z "${SAGA_API_TOKEN:-}" && -f "$repo_root/.env.dev" ]]; then
+  # Optional live SAGA-backed integration tests run under `make test`, but the
+  # real token still lives only in the gitignored dev env file.
+  optional_saga_token="$({
+    set -a
+    # shellcheck disable=SC1090
+    source "$repo_root/.env.dev"
+    printf '%s' "${SAGA_API_TOKEN:-}"
+  })"
+
+  if [[ -n "$optional_saga_token" ]]; then
+    export SAGA_API_TOKEN="$optional_saga_token"
+  fi
+fi
+
 # Final sanity check on WA_ENV. We do this after sourcing so the env file
 # itself is the authoritative source for WA_ENV.
 if [[ "${WA_ENV:-}" != "$expected_wa_env" ]]; then

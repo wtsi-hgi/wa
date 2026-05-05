@@ -61,6 +61,11 @@ type probeReporterStub struct {
 	failures []string
 }
 
+type integrationSkipReporterStub struct {
+	skipped bool
+	message string
+}
+
 func (p *probeReporterStub) Helper() {}
 
 func (p *probeReporterStub) Logf(format string, args ...any) {
@@ -69,6 +74,13 @@ func (p *probeReporterStub) Logf(format string, args ...any) {
 
 func (p *probeReporterStub) Fatalf(format string, args ...any) {
 	p.failures = append(p.failures, fmt.Sprintf(format, args...))
+}
+
+func (p *integrationSkipReporterStub) Helper() {}
+
+func (p *integrationSkipReporterStub) Skip(args ...any) {
+	p.skipped = true
+	p.message = fmt.Sprint(args...)
 }
 
 func TestAssertSupportedFilterResult(t *testing.T) {
@@ -86,6 +98,33 @@ func TestAssertSupportedFilterResult(t *testing.T) {
 	})
 }
 
+func TestRequireIntegrationToken(t *testing.T) {
+	Convey("Given the live SAGA integration token helper", t, func() {
+		Convey("when neither token variable is present, then the integration test is skipped cleanly", func() {
+			t.Setenv("SAGA_API_TOKEN", "")
+			t.Setenv("SAGA_TEST_API_TOKEN", "")
+			reporter := &integrationSkipReporterStub{}
+
+			token := requireIntegrationToken(reporter)
+
+			So(token, ShouldBeBlank)
+			So(reporter.skipped, ShouldBeTrue)
+			So(reporter.message, ShouldEqual, "SAGA_API_TOKEN or SAGA_TEST_API_TOKEN not set")
+		})
+
+		Convey("when SAGA_API_TOKEN is present, then it is preferred without skipping", func() {
+			t.Setenv("SAGA_API_TOKEN", " primary-token ")
+			t.Setenv("SAGA_TEST_API_TOKEN", "secondary-token")
+			reporter := &integrationSkipReporterStub{}
+
+			token := requireIntegrationToken(reporter)
+
+			So(token, ShouldEqual, "primary-token")
+			So(reporter.skipped, ShouldBeFalse)
+		})
+	})
+}
+
 func assertSupportedFilterResult(t *testing.T, filterKey string, err error) {
 	t.Helper()
 	assertSupportedFilterResultWithReporter(t, filterKey, err)
@@ -95,10 +134,7 @@ func assertSupportedFilterResult(t *testing.T, filterKey string, err error) {
 }
 
 func TestIntegration(t *testing.T) {
-	token := os.Getenv("SAGA_TEST_API_TOKEN")
-	if token == "" {
-		t.Skip("SAGA_TEST_API_TOKEN not set")
-	}
+	token := requireIntegrationToken(t)
 
 	Convey("Given a valid SAGA API token", t, func() {
 		ctx := context.Background()
@@ -213,6 +249,30 @@ func mustNewIntegrationClient(t *testing.T, token string) *Client {
 	return client
 }
 
+func integrationTokenForTest() string {
+	if token := strings.TrimSpace(os.Getenv("SAGA_API_TOKEN")); token != "" {
+		return token
+	}
+
+	return strings.TrimSpace(os.Getenv("SAGA_TEST_API_TOKEN"))
+}
+
+type integrationSkipReporter interface {
+	Helper()
+	Skip(args ...any)
+}
+
+func requireIntegrationToken(reporter integrationSkipReporter) string {
+	reporter.Helper()
+
+	token := integrationTokenForTest()
+	if token == "" {
+		reporter.Skip("SAGA_API_TOKEN or SAGA_TEST_API_TOKEN not set")
+	}
+
+	return token
+}
+
 func studyNameLooksKnown(name string) bool {
 	lowerName := strings.ToLower(name)
 
@@ -220,10 +280,7 @@ func studyNameLooksKnown(name string) bool {
 }
 
 func TestFilterProbes(t *testing.T) {
-	token := os.Getenv("SAGA_TEST_API_TOKEN")
-	if token == "" {
-		t.Skip("SAGA_TEST_API_TOKEN not set")
-	}
+	token := requireIntegrationToken(t)
 
 	Convey("Given a valid SAGA API token", t, func() {
 		ctx := context.Background()
