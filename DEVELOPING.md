@@ -125,6 +125,11 @@ The wrapper and `run-dev.sh` enforce the following:
   beneath `.tmp/` and removes it on shutdown.
 - `run-dev.sh --mode dev` and `--mode prod` use the persistent
   `WA_RESULTS_DB_PATH` and never delete the database on shutdown.
+- `make test` always cleans up its `.tmp/` artefacts (the built `wa`
+  binary, the Playwright port-allocation cache, and any stray ephemeral
+  SQLite DBs) on completion, regardless of whether the sub-suites passed
+  or failed. Run `make clean-test-tmp` to perform the same cleanup
+  manually.
 
 ### Runtime variables (consumed by the Go binaries and the Next.js runtime)
 

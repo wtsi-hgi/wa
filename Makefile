@@ -1,4 +1,4 @@
-.PHONY: help dev dev-fixtures prod lint lint-go lint-frontend lint-prettier-root format format-go format-frontend format-prettier-root test test-go test-frontend test-e2e
+.PHONY: help dev dev-fixtures prod lint lint-go lint-frontend lint-prettier-root format format-go format-frontend format-prettier-root test test-go test-frontend test-e2e clean-test-tmp
 
 FRONTEND_DIR := frontend
 # Force pure-Go builds for all `go` invocations below (matches the `-tags
@@ -28,7 +28,14 @@ help:
 
 # ---- Test scenario --------------------------------------------------------
 # Hermetic: ephemeral DBs, throwaway ports, never touches dev/prod state.
-test: test-go test-frontend test-e2e
+# `clean-test-tmp` runs whether the sub-targets pass or fail so .tmp/ never
+# accumulates the built `wa` binary, the playwright port-allocation cache, or
+# stray SQLite DBs from a killed run-dev.sh.
+test:
+	@rc=0; \
+	$(MAKE) --no-print-directory test-go test-frontend test-e2e || rc=$$?; \
+	$(MAKE) --no-print-directory clean-test-tmp; \
+	exit $$rc
 
 test-go:
 	$(WA_ENV_TEST) go test -tags netgo --count 1 ./...
@@ -38,6 +45,12 @@ test-frontend:
 
 test-e2e:
 	$(WA_ENV_TEST) bash -c 'cd $(FRONTEND_DIR) && pnpm exec playwright test'
+
+# Remove only the artefacts `make test` itself produces under .tmp/. Leaves
+# unrelated entries (e.g. agent scratch in .tmp/agent/) untouched.
+clean-test-tmp:
+	@rm -f .tmp/wa .tmp/playwright-ports.json
+	@rm -f .tmp/results-dev.*.sqlite
 
 # ---- Dev scenario ---------------------------------------------------------
 dev:
