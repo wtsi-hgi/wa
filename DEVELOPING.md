@@ -2,13 +2,13 @@
 
 ## Prerequisites
 
-| Dependency | Version | Purpose |
-|------------|---------|---------|
-| **Go** | 1.25+ | Backend, CLI, all server components |
-| **Node.js** | 22+ | Frontend dev server and build |
-| **pnpm** | 10+ | Frontend package management |
-| **SQLite** | (bundled) | Dev/test database via `modernc.org/sqlite` (pure Go, no CGo) |
-| **MySQL** | 8+ | Production database (optional for dev) |
+| Dependency  | Version   | Purpose                                                      |
+| ----------- | --------- | ------------------------------------------------------------ |
+| **Go**      | 1.25+     | Backend, CLI, all server components                          |
+| **Node.js** | 22+       | Frontend dev server and build                                |
+| **pnpm**    | 10+       | Frontend package management                                  |
+| **SQLite**  | (bundled) | Dev/test database via `modernc.org/sqlite` (pure Go, no CGo) |
+| **MySQL**   | 8+        | Production database (optional for dev)                       |
 
 A SAGA API token (`SAGA_API_TOKEN`) is needed for saga/seqmeta features but is
 not required for results-only development.
@@ -35,9 +35,10 @@ wa/
 
 ## Quick Start
 
-The `run-dev.sh` script builds the Go binary, starts all backend servers with
-a temporary SQLite database, seeds test fixtures, waits for the required
-seqmeta validation path when enabled, and starts the Next.js dev server:
+The `run-dev.sh` script, called by `make run` builds the Go binary, starts all
+backend servers with a temporary SQLite database, seeds test fixtures, waits for
+the required seqmeta validation path when enabled, and starts the Next.js dev
+server:
 
 ```bash
 # Install frontend dependencies first
@@ -52,11 +53,11 @@ make run
 
 Default ports (configurable via flags):
 
-| Service | Port | Flag |
-|---------|------|------|
-| Frontend | 3000 | `-f` / `--frontend-port` |
-| Results API | 8090 | `-r` / `--results-port` |
-| Seqmeta API | 8091 | `-s` / `--seqmeta-port` |
+| Service     | Port | Flag                     |
+| ----------- | ---- | ------------------------ |
+| Frontend    | 3000 | `-f` / `--frontend-port` |
+| Results API | 8090 | `-r` / `--results-port`  |
+| Seqmeta API | 8091 | `-s` / `--seqmeta-port`  |
 
 The seqmeta server only starts if `SAGA_API_TOKEN` is set.
 
@@ -85,12 +86,12 @@ make test
 
 Available targets:
 
-| Target | Description |
-|--------|-------------|
-| `make run` | Calls `./run-dev.sh` to build and start the dev environment |
-| `make lint` | Runs `golangci-lint run ./...` and `pnpm lint` |
-| `make format` | Runs `gofmt`, `cleanorder`, and `prettier --write` |
-| `make test` | Runs Go tests, frontend Vitest tests, and frontend Playwright e2e tests |
+| Target        | Description                                                             |
+| ------------- | ----------------------------------------------------------------------- |
+| `make run`    | Calls `./run-dev.sh` to build and start the dev environment             |
+| `make lint`   | Runs `golangci-lint run ./...` and `pnpm lint`                          |
+| `make format` | Runs `gofmt`, `cleanorder`, and `prettier --write`                      |
+| `make test`   | Runs Go tests, frontend Vitest tests, and frontend Playwright e2e tests |
 
 `run-dev.sh` is intentionally limited to bring-up only. Linting, formatting,
 and testing now live behind `make` targets instead of blocking startup.
@@ -105,12 +106,12 @@ or `wa seqmeta ...` when you need a non-default SAGA host. There is no
 
 Root Makefile environment variables:
 
-| Variable | Default | Used by |
-|----------|---------|---------|
-| `WA_TEST_FRONTEND_PORT` | `3000` | `make run` frontend port and `make test` Playwright frontend port override |
-| `WA_TEST_RESULTS_PORT` | `8090` | `make run` results API port and `make test` Playwright results API port override |
-| `WA_TEST_SEQMETA_PORT` | `8091` | `make run` seqmeta API port and `make test` Playwright seqmeta API port override |
-| `WA_DEV_ALLOWED_ORIGINS` | *(empty)* | Extra comma-separated hostnames to allow cross-origin access to Next.js dev resources (`/_next/*`, HMR). See below. |
+| Variable                 | Default   | Used by                                                                                                             |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------- |
+| `WA_TEST_FRONTEND_PORT`  | `3000`    | `make run` frontend port and `make test` Playwright frontend port override                                          |
+| `WA_TEST_RESULTS_PORT`   | `8090`    | `make run` results API port and `make test` Playwright results API port override                                    |
+| `WA_TEST_SEQMETA_PORT`   | `8091`    | `make run` seqmeta API port and `make test` Playwright seqmeta API port override                                    |
+| `WA_DEV_ALLOWED_ORIGINS` | _(empty)_ | Extra comma-separated hostnames to allow cross-origin access to Next.js dev resources (`/_next/*`, HMR). See below. |
 
 ### Accessing `make run` from a remote host
 
@@ -164,12 +165,12 @@ in the repo root `.env` instead.
 
 Frontend environment variables (set in `.env.local` or environment):
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WA_RESULTS_BACKEND_URL` | `http://localhost:8090` | Results API base URL |
-| `WA_SEQMETA_BACKEND_URL` | *(empty)* | Seqmeta API base URL (omit to disable) |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | `300` | Study list cache lifetime |
-| `WA_DEV_ALLOWED_ORIGINS` | *(empty)* | Dev-only; extra hostnames merged into Next.js `allowedDevOrigins` (see "Accessing `make run` from a remote host" above). Ignored in production builds. |
+| Variable                       | Default                 | Description                                                                                                                                            |
+| ------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WA_RESULTS_BACKEND_URL`       | `http://localhost:8090` | Results API base URL                                                                                                                                   |
+| `WA_SEQMETA_BACKEND_URL`       | _(empty)_               | Seqmeta API base URL (omit to disable)                                                                                                                 |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | `300`                   | Study list cache lifetime                                                                                                                              |
+| `WA_DEV_ALLOWED_ORIGINS`       | _(empty)_               | Dev-only; extra hostnames merged into Next.js `allowedDevOrigins` (see "Accessing `make run` from a remote host" above). Ignored in production builds. |
 
 ## Testing
 
@@ -322,10 +323,10 @@ WA_SEQMETA_BACKEND_URL=http://localhost:8091 \
 
 ### Environment variables for production
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SAGA_API_TOKEN` | For seqmeta | SAGA API authentication token |
-| `WA_RESULTS_BACKEND_URL` | For frontend | Results API URL (server-side only) |
-| `WA_SEQMETA_BACKEND_URL` | For frontend | Seqmeta API URL (server-side only) |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | No | Study list cache TTL (default: 300) |
-| `PORT` | No | Frontend listen port (default: 3000) |
+| Variable                       | Required     | Description                          |
+| ------------------------------ | ------------ | ------------------------------------ |
+| `SAGA_API_TOKEN`               | For seqmeta  | SAGA API authentication token        |
+| `WA_RESULTS_BACKEND_URL`       | For frontend | Results API URL (server-side only)   |
+| `WA_SEQMETA_BACKEND_URL`       | For frontend | Seqmeta API URL (server-side only)   |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | No           | Study list cache TTL (default: 300)  |
+| `PORT`                         | No           | Frontend listen port (default: 3000) |

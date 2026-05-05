@@ -6,12 +6,12 @@ REST APIs and CLIs, and a Next.js web UI for browsing results.
 
 ## Current Sub-Products
 
-| Sub-product | What it does |
-|-------------|--------------|
-| **results** | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats. |
-| **saga** | Go client library for the [SAGA API](https://saga.cellgeni.sanger.ac.uk/api). Typed access to MLWH studies, samples, libraries, runs, and iRODS file paths with caching and retries. |
-| **seqmeta** | Sequence metadata cache built on saga. Hash-based change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs. |
-| **results-web** | Next.js web UI for the results API — searchable table, file browser with inline preview, dashboard stats, and study-based search via seqmeta. |
+| Sub-product     | What it does                                                                                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                                                    |
+| **saga**        | Go client library for the [SAGA API](https://saga.cellgeni.sanger.ac.uk/api). Typed access to MLWH studies, samples, libraries, runs, and iRODS file paths with caching and retries. |
+| **seqmeta**     | Sequence metadata cache built on saga. Hash-based change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                                        |
+| **results-web** | Next.js web UI for the results API — searchable table, file browser with inline preview, dashboard stats, and study-based search via seqmeta.                                        |
 
 Planned sub-products (notify, jobrun, watchtower, samplepicker) are described
 in [.docs/proposal.md](.docs/proposal.md).
@@ -108,7 +108,7 @@ Quick start:
 
 ```bash
 # Start all services (Go backend + Next.js frontend) for local dev
-./run-dev.sh
+make run
 ```
 
 ## Licence
