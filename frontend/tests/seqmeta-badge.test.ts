@@ -2684,6 +2684,101 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
+    it("marks only the clicked sample row copy button as Copied", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
+            globalThis,
+            "navigator",
+        );
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
+
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: {
+                clipboard: {
+                    writeText: writeTextMock,
+                },
+            },
+        });
+
+        try {
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: "seqmeta_library",
+                    rawValue: "RNA",
+                    enrichment: buildEnrichment({
+                        identifier: "RNA",
+                        type: "library_type",
+                        graph: {
+                            studies: [buildEnrichment().graph.study],
+                            samples: [
+                                {
+                                    id_study_lims: "6568",
+                                    id_sample_lims: "SMP001",
+                                    sanger_id: "S1",
+                                    sample_name: "Sample 1",
+                                    taxon_id: 9606,
+                                    common_name: "Human",
+                                    library_type: "RNA",
+                                    id_run: 100,
+                                    lane: 1,
+                                    tag_index: 10,
+                                    irods_path: "/seq/100",
+                                    study_accession_number: "ERP123456",
+                                    accession_number: "ERS001",
+                                },
+                                {
+                                    id_study_lims: "6568",
+                                    id_sample_lims: "SMP002",
+                                    sanger_id: "S2",
+                                    sample_name: "Sample 2",
+                                    taxon_id: 9606,
+                                    common_name: "Human",
+                                    library_type: "RNA",
+                                    id_run: 100,
+                                    lane: 2,
+                                    tag_index: 11,
+                                    irods_path: "/seq/100",
+                                    study_accession_number: "ERP123456",
+                                    accession_number: "ERS002",
+                                },
+                            ],
+                        },
+                    }),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+
+            const copyButtons = screen.getAllByLabelText(
+                /Copy seqmeta_sampleid/i,
+            );
+            expect(copyButtons).toHaveLength(2);
+
+            fireEvent.click(copyButtons[0]!);
+
+            await waitFor(() => {
+                expect(writeTextMock).toHaveBeenCalledWith("S1");
+                expect(copyButtons[0]!.textContent).toContain("Copied");
+            });
+            expect(copyButtons[1]!.textContent).toContain("Copy");
+        } finally {
+            if (originalNavigatorDescriptor) {
+                Object.defineProperty(
+                    globalThis,
+                    "navigator",
+                    originalNavigatorDescriptor,
+                );
+            }
+        }
+    });
+
     it("copies study visible name while keeping study filter links", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
         const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(

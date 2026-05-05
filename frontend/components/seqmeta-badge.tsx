@@ -163,6 +163,18 @@ function librarySampleKey(sample: EnrichmentSample, index: number): string {
     return `${keyParts.join("|")}|${index}`;
 }
 
+function sampleCopyStateKey(sample: EnrichmentSample, index?: number): string {
+    const identity =
+        index === undefined
+            ? [
+                  asString(sample.sanger_id) ?? "",
+                  asString(sample.id_sample_lims) ?? "",
+              ].join("|")
+            : librarySampleKey(sample, index);
+
+    return copiedStateKey("seqmeta_sampleid", identity);
+}
+
 function humanizeMissingHop(missing: MissingHop): string {
     if (missing.hop === "samples" && missing.reason === "samples_truncated") {
         return "Showing first 1000 samples";
@@ -1302,6 +1314,11 @@ export function SeqmetaBadge({
                                                                                                                 .join(
                                                                                                                     " / ",
                                                                                                                 );
+                                                                                                        const sampleCopyKey =
+                                                                                                            sampleCopyStateKey(
+                                                                                                                sample,
+                                                                                                                index,
+                                                                                                            );
 
                                                                                                         return (
                                                                                                             <article
@@ -1338,7 +1355,7 @@ export function SeqmetaBadge({
                                                                                                                                                     copied
                                                                                                                                                 ) {
                                                                                                                                                     setCopiedKey(
-                                                                                                                                                        "seqmeta_sampleid",
+                                                                                                                                                        sampleCopyKey,
                                                                                                                                                     );
                                                                                                                                                 }
                                                                                                                                             },
@@ -1350,7 +1367,7 @@ export function SeqmetaBadge({
                                                                                                                                         aria-hidden="true"
                                                                                                                                     />
                                                                                                                                     {copiedKey ===
-                                                                                                                                    "seqmeta_sampleid"
+                                                                                                                                    sampleCopyKey
                                                                                                                                         ? "Copied"
                                                                                                                                         : "Copy"}
                                                                                                                                 </button>
@@ -1527,6 +1544,10 @@ export function SeqmetaBadge({
                                                                                         .join(
                                                                                             " / ",
                                                                                         );
+                                                                                const sampleCopyKey =
+                                                                                    sampleCopyStateKey(
+                                                                                        sample,
+                                                                                    );
 
                                                                                 return (
                                                                                     <article
@@ -1560,7 +1581,7 @@ export function SeqmetaBadge({
                                                                                                                             copied
                                                                                                                         ) {
                                                                                                                             setCopiedKey(
-                                                                                                                                "seqmeta_sampleid",
+                                                                                                                                sampleCopyKey,
                                                                                                                             );
                                                                                                                         }
                                                                                                                     },
@@ -1572,7 +1593,7 @@ export function SeqmetaBadge({
                                                                                                                 aria-hidden="true"
                                                                                                             />
                                                                                                             {copiedKey ===
-                                                                                                            "seqmeta_sampleid"
+                                                                                                            sampleCopyKey
                                                                                                                 ? "Copied"
                                                                                                                 : "Copy"}
                                                                                                         </button>
