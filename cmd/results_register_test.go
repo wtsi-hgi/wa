@@ -397,11 +397,12 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(result.ID, convey.ShouldEqual, "updated-result")
 	})
 
-	convey.Convey("Bug 4: Given dedicated seqmeta flags, when register is run, then they are sent as equivalent seqmeta metadata entries", t, func() {
+	convey.Convey("Bug 1: Given Saga-backed register shorthands, when register is run, then flexible run/study/sample/library identifiers resolve to canonical seqmeta metadata entries", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
 		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+		t.Setenv("SAGA_API_TOKEN", "test-token")
 
 		registrationCh := make(chan results.Registration, 1)
 		handlerErrCh := make(chan error, 1)
@@ -426,16 +427,41 @@ func TestResultsRegisterCommand(t *testing.T) {
 		}))
 		defer server.Close()
 
+		sagaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/integrations/mlwh/samples":
+				filters := r.URL.Query().Get("filters")
+				switch filters {
+				case `{"run_id":"34134"}`:
+					_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"6568","id_sample_lims":"S1-LIMS","sanger_id":"S1","sample_name":"Sample 1","library_type":"RNA PolyA","id_run":34134}],"total":1,"offset":0,"limit":100}`))
+				case `{"library_type":["RNA PolyA"]}`:
+					_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"6568","id_sample_lims":"S1-LIMS","sanger_id":"S1","sample_name":"Sample 1","library_type":"RNA PolyA","id_run":34134}],"total":1,"offset":0,"limit":100}`))
+				default:
+					http.NotFound(w, r)
+				}
+			case "/integrations/irods/samples/Sample%201":
+				http.NotFound(w, r)
+			case "/integrations/irods/samples":
+				_, _ = w.Write([]byte(`{"items":[{"id":1,"name":"Sample 1","source":"IRODS","source_id":"123","data":{},"curated":{"sanger_id":["S1"]},"parent":null}],"total":1,"offset":0,"limit":100}`))
+			case "/integrations/mlwh/studies":
+				_, _ = w.Write([]byte(`{"items":[{"id_study_tmp":1,"id_lims":"SQSCP","id_study_lims":"6568","name":"Study 6568","accession_number":"ERP123"}],"total":1,"offset":0,"limit":100}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer sagaServer.Close()
+		t.Setenv("SAGA_API_BASE_URL", sagaServer.URL)
+
 		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
 			"results", "register",
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
 			"--nextflow-workflow", workflowPath,
-			"--seqmeta-runid", "RUN-42",
-			"--seqmeta-studyid", "6568",
-			"--seqmeta-sampleid", "SANG123",
-			"--seqmeta-librarytype", "RNA PolyA",
+			"--run", "34134",
+			"--study", "ERP123",
+			"--sample", "Sample 1",
+			"--library", "RNA PolyA",
 			outputDir,
 		}, nil)
 
@@ -445,18 +471,20 @@ func TestResultsRegisterCommand(t *testing.T) {
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
-			"seqmeta_runid":       "RUN-42",
+			"seqmeta_runid":       "34134",
 			"seqmeta_studyid":     "6568",
-			"seqmeta_sampleid":    "SANG123",
+			"seqmeta_sampleid":    "S1",
 			"seqmeta_librarytype": "RNA PolyA",
 		})
 	})
 
-	convey.Convey("Bug 4: Given a seqmeta key supplied via both a dedicated flag and --meta, when register is run, then it returns a clear duplicate-key error before sending a request", t, func() {
+	convey.Convey("Bug 1: Given Saga-backed register shorthands without Saga credentials, when register is run, then it fails before sending the registration request", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
 		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+		t.Setenv("SAGA_API_TOKEN", "")
+		t.Setenv("SAGA_TEST_API_TOKEN", "")
 
 		requestCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -472,14 +500,13 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--user", "alice",
 			"--runid", "48522",
 			"--nextflow-workflow", workflowPath,
-			"--seqmeta-runid", "RUN-42",
-			"--meta", "seqmeta_runid=RUN-42",
+			"--run", "34134",
 			outputDir,
 		}, nil)
 
 		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "seqmeta_runid")
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "supplied via both")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "saga")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "API key")
 		convey.So(requestCount, convey.ShouldEqual, 0)
 	})
 

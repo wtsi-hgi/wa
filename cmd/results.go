@@ -38,12 +38,14 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/wa/results"
+	"github.com/wtsi-hgi/wa/saga"
 
 	_ "modernc.org/sqlite"
 )
@@ -51,10 +53,148 @@ import (
 var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 var resultsRegisterSeqmetaFlagMetaKeys = map[string]string{
-	"seqmeta-runid":       "seqmeta_runid",
-	"seqmeta-studyid":     "seqmeta_studyid",
-	"seqmeta-sampleid":    "seqmeta_sampleid",
-	"seqmeta-librarytype": "seqmeta_librarytype",
+	"run":     "seqmeta_runid",
+	"study":   "seqmeta_studyid",
+	"sample":  "seqmeta_sampleid",
+	"library": "seqmeta_librarytype",
+}
+
+type resultsRegisterLookupValues struct {
+	run     string
+	study   string
+	sample  string
+	library string
+}
+
+func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsRegisterLookupValues) (map[string]string, error) {
+	if strings.TrimSpace(values.run) == "" && strings.TrimSpace(values.study) == "" && strings.TrimSpace(values.sample) == "" && strings.TrimSpace(values.library) == "" {
+		return nil, nil
+	}
+
+	client, err := newResultsRegisterSagaClient()
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	metadata := make(map[string]string, 4)
+
+	if trimmedRun := strings.TrimSpace(values.run); trimmedRun != "" {
+		resolvedRunID, err := resolveResultsRegisterRunID(ctx, client, trimmedRun)
+		if err != nil {
+			return nil, err
+		}
+
+		metadata["seqmeta_runid"] = resolvedRunID
+	}
+
+	if trimmedStudy := strings.TrimSpace(values.study); trimmedStudy != "" {
+		resolvedStudyID, err := resolveResultsRegisterStudyID(ctx, client, trimmedStudy)
+		if err != nil {
+			return nil, err
+		}
+
+		metadata["seqmeta_studyid"] = resolvedStudyID
+	}
+
+	if trimmedSample := strings.TrimSpace(values.sample); trimmedSample != "" {
+		resolvedSampleID, err := resolveResultsRegisterSampleID(ctx, client, trimmedSample)
+		if err != nil {
+			return nil, err
+		}
+
+		metadata["seqmeta_sampleid"] = resolvedSampleID
+	}
+
+	if trimmedLibrary := strings.TrimSpace(values.library); trimmedLibrary != "" {
+		resolvedLibraryType, err := resolveResultsRegisterLibraryType(ctx, client, trimmedLibrary)
+		if err != nil {
+			return nil, err
+		}
+
+		metadata["seqmeta_librarytype"] = resolvedLibraryType
+	}
+
+	return metadata, nil
+}
+
+func newResultsRegisterSagaClient() (*saga.Client, error) {
+	apiKey := firstEnv("SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN")
+	options := make([]saga.Option, 0, 1)
+
+	if baseURL := firstEnv("SAGA_API_BASE_URL"); baseURL != "" {
+		options = append(options, saga.WithBaseURL(baseURL))
+	}
+
+	client, err := saga.NewClient(apiKey, options...)
+	if err != nil {
+		return nil, fmt.Errorf("saga is required to resolve --run/--study/--sample/--library: %w", err)
+	}
+
+	return client, nil
+}
+
+func resolveResultsRegisterRunID(ctx context.Context, client *saga.Client, value string) (string, error) {
+	runID, err := strconv.Atoi(value)
+	if err != nil {
+		return "", fmt.Errorf("resolve --run %q via Saga: expected a numeric run ID", value)
+	}
+
+	samples, err := client.MLWH().FindSamplesByRunID(ctx, runID)
+	if err != nil {
+		return "", fmt.Errorf("resolve --run %q via Saga: %w", value, err)
+	}
+
+	for _, sample := range samples {
+		if sample.IDRun == runID {
+			return strconv.Itoa(sample.IDRun), nil
+		}
+	}
+
+	return "", fmt.Errorf("resolve --run %q via Saga: no matching run found", value)
+}
+
+func resolveResultsRegisterStudyID(ctx context.Context, client *saga.Client, value string) (string, error) {
+	resolver := &inspector{client: client}
+	studies, err := resolver.resolveStudies(ctx, value)
+	if err != nil {
+		return "", fmt.Errorf("resolve --study %q via Saga: %w", value, err)
+	}
+
+	if len(studies) == 0 || strings.TrimSpace(studies[0].Study.IDStudyLims) == "" {
+		return "", fmt.Errorf("resolve --study %q via Saga: no matching study found", value)
+	}
+
+	return studies[0].Study.IDStudyLims, nil
+}
+
+func resolveResultsRegisterSampleID(ctx context.Context, client *saga.Client, value string) (string, error) {
+	resolver := &inspector{client: client}
+	samples, err := resolver.resolveSamples(ctx, value)
+	if err != nil {
+		return "", fmt.Errorf("resolve --sample %q via Saga: %w", value, err)
+	}
+
+	if len(samples) == 0 || strings.TrimSpace(samples[0].SangerID) == "" {
+		return "", fmt.Errorf("resolve --sample %q via Saga: no matching sample found", value)
+	}
+
+	return samples[0].SangerID, nil
+}
+
+func resolveResultsRegisterLibraryType(ctx context.Context, client *saga.Client, value string) (string, error) {
+	samples, err := client.MLWH().FindSamplesByLibraryType(ctx, value)
+	if err != nil {
+		return "", fmt.Errorf("resolve --library %q via Saga: %w", value, err)
+	}
+
+	for _, sample := range samples {
+		if strings.TrimSpace(sample.LibraryType) != "" {
+			return sample.LibraryType, nil
+		}
+	}
+
+	return "", fmt.Errorf("resolve --library %q via Saga: no matching library type found", value)
 }
 
 type resultSetWithFiles struct {
@@ -262,16 +402,20 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var additionalUnique string
 	var inputFiles []string
 	var metaValues []string
-	var seqmetaRunID string
-	var seqmetaStudyID string
-	var seqmetaSampleID string
-	var seqmetaLibraryType string
+	var lookupValues resultsRegisterLookupValues
 	var includeHidden bool
 	var useJSON bool
 
 	command := &cobra.Command{
 		Use:   "register [output-dir]",
 		Short: "Register a result set",
+		Long: strings.Join([]string{
+			"Register a result set.",
+			"",
+			"The --run, --study, --sample and --library shorthands resolve through Saga and store canonical seqmeta metadata keys.",
+			"For example, --study accepts a study ID or accession and stores seqmeta_studyid, while --sample accepts a Sanger ID or sample name and stores seqmeta_sampleid.",
+			"Saga credentials come from SAGA_API_TOKEN or SAGA_TEST_API_TOKEN, and the base URL may be overridden with SAGA_API_BASE_URL.",
+		}, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -279,6 +423,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 			}
 
 			registration, err := buildResultsRegistrationForCommand(
+				ctx,
 				cmd,
 				args,
 				requester,
@@ -289,12 +434,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 				additionalUnique,
 				inputFiles,
 				metaValues,
-				map[string]string{
-					"seqmeta_runid":       seqmetaRunID,
-					"seqmeta_studyid":     seqmetaStudyID,
-					"seqmeta_sampleid":    seqmetaSampleID,
-					"seqmeta_librarytype": seqmetaLibraryType,
-				},
+				lookupValues,
 				includeHidden,
 				useJSON,
 			)
@@ -319,10 +459,10 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Additional value used to disambiguate the run key")
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
-	command.Flags().StringVar(&seqmetaRunID, "seqmeta-runid", "", "Convenience for --meta seqmeta_runid=value")
-	command.Flags().StringVar(&seqmetaStudyID, "seqmeta-studyid", "", "Convenience for --meta seqmeta_studyid=value")
-	command.Flags().StringVar(&seqmetaSampleID, "seqmeta-sampleid", "", "Convenience for --meta seqmeta_sampleid=value")
-	command.Flags().StringVar(&seqmetaLibraryType, "seqmeta-librarytype", "", "Convenience for --meta seqmeta_librarytype=value")
+	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a run identifier through Saga and store it as seqmeta_runid")
+	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study identifier or accession through Saga and store it as seqmeta_studyid")
+	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample Sanger ID or name through Saga and store it as seqmeta_sampleid")
+	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve a library type through Saga and store it as seqmeta_librarytype")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 
@@ -330,6 +470,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 }
 
 func buildResultsRegistrationForCommand(
+	ctx context.Context,
 	cmd *cobra.Command,
 	args []string,
 	requester string,
@@ -340,7 +481,7 @@ func buildResultsRegistrationForCommand(
 	additionalUnique string,
 	inputFiles []string,
 	metaValues []string,
-	seqmetaMetadata map[string]string,
+	lookupValues resultsRegisterLookupValues,
 	includeHidden bool,
 	useJSON bool,
 ) (*results.Registration, error) {
@@ -376,6 +517,11 @@ func buildResultsRegistrationForCommand(
 	runKey := results.BuildRunKey(strings.TrimSpace(runID), strings.TrimSpace(additionalUnique))
 	if runKey == "" {
 		return nil, errors.New("--runid or --additional-unique is required")
+	}
+
+	seqmetaMetadata, err := resolveResultsRegisterLookupMetadata(ctx, lookupValues)
+	if err != nil {
+		return nil, err
 	}
 
 	metadata, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
