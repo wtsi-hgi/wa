@@ -60,6 +60,16 @@ export class SeqmetaCache implements SeqmetaCacheStore {
         return Object.fromEntries(this.cache.entries());
     }
 
+    hydrateMissing(snapshot: SeqmetaCacheSnapshot): void {
+        for (const [value, result] of Object.entries(snapshot)) {
+            if (this.cache.has(value)) {
+                continue;
+            }
+
+            this.cache.set(value, result);
+        }
+    }
+
     private scheduleFlush(): void {
         if (!this.onChange || this.pendingFlush) {
             return;

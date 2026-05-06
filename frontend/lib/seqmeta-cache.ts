@@ -1,6 +1,12 @@
 "use client";
 
-import { createContext, createElement, useState, type ReactNode } from "react";
+import {
+    createContext,
+    createElement,
+    useMemo,
+    useSyncExternalStore,
+    type ReactNode,
+} from "react";
 
 import {
     buildSeqmetaCacheCookie,
@@ -14,14 +20,16 @@ export const SeqmetaCacheContext = createContext<SeqmetaCache>(
     new SeqmetaCache(),
 );
 
-function readInitialSeqmetaCache():
-    | Record<string, never>
-    | ReturnType<SeqmetaCache["snapshot"]> {
+function readSeqmetaCookieHeader(): string {
     if (typeof document === "undefined") {
-        return {};
+        return "";
     }
 
-    return readSeqmetaCacheSnapshotFromCookieHeader(document.cookie);
+    return document.cookie;
+}
+
+function subscribeToSeqmetaCookie(): () => void {
+    return () => {};
 }
 
 function persistSeqmetaCache(
@@ -46,9 +54,19 @@ function persistSeqmetaCache(
 }
 
 export function SeqmetaCacheProvider({ children }: { children: ReactNode }) {
-    const [cache] = useState(
-        () => new SeqmetaCache(readInitialSeqmetaCache(), persistSeqmetaCache),
+    const cache = useMemo(() => new SeqmetaCache({}, persistSeqmetaCache), []);
+
+    const cookieHeader = useSyncExternalStore(
+        subscribeToSeqmetaCookie,
+        readSeqmetaCookieHeader,
+        () => "",
     );
+    const initialSnapshot = useMemo(
+        () => readSeqmetaCacheSnapshotFromCookieHeader(cookieHeader),
+        [cookieHeader],
+    );
+
+    cache.hydrateMissing(initialSnapshot);
 
     return createElement(
         SeqmetaCacheContext.Provider,

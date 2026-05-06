@@ -2,8 +2,9 @@
  * @vitest-environment jsdom
  */
 
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { act, createElement } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToStaticMarkup, renderToString } from "react-dom/server";
 import {
     cleanup,
     fireEvent,
@@ -863,6 +864,64 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
         expect(markup).not.toContain("enrichment backend impaired");
         expect(markup).toContain("SANG001");
+    });
+
+    it("hydrates without mismatches when the client cookie has a stale unavailable marker", async () => {
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+        enrichIdentifierMock.mockReset();
+        enrichIdentifierMock.mockResolvedValue(null);
+        const serverTree = createElement(
+            SeqmetaCacheContext.Provider,
+            { value: new SeqmetaCache() },
+            createElement(ResultMetadataEnrichment, {
+                metadata: {
+                    seqmeta_sampleid: "SANG001",
+                },
+            }),
+        );
+        const clientTree = createElement(
+            SeqmetaCacheProvider,
+            null,
+            createElement(ResultMetadataEnrichment, {
+                metadata: {
+                    seqmeta_sampleid: "SANG001",
+                },
+            }),
+        );
+        const container = document.createElement("div");
+        const recoverableErrors: unknown[] = [];
+
+        document.cookie = buildSeqmetaCacheCookie({ SANG001: null });
+        container.innerHTML = renderToString(serverTree);
+        document.body.appendChild(container);
+
+        let root: ReturnType<typeof hydrateRoot> | null = null;
+
+        try {
+            await act(async () => {
+                root = hydrateRoot(container, clientTree, {
+                    onRecoverableError: (error) => {
+                        recoverableErrors.push(error);
+                    },
+                });
+            });
+
+            await waitFor(() => {
+                expect(
+                    container.querySelector(
+                        '[aria-label="enrichment unavailable"]',
+                    ),
+                ).not.toBeNull();
+            });
+
+            expect(recoverableErrors).toHaveLength(0);
+        } finally {
+            await act(async () => {
+                root?.unmount();
+            });
+            container.remove();
+        }
     });
 
     it("shows dialog title matching raw value with key and type in subtitle", async () => {
