@@ -432,6 +432,19 @@ function CsvPreview({
         };
     }, [expandedTableReady]);
 
+    const maxRowsForHeight = useMemo(() => {
+        if (!truncated || !maxHeight || isExpanded) {
+            return undefined;
+        }
+
+        const estimatedRowHeight = 52;
+        const estimatedOverhead = 100;
+        const availableHeight = Math.max(0, maxHeight - estimatedOverhead);
+        const maxRows = Math.floor(availableHeight / estimatedRowHeight);
+
+        return Math.max(3, maxRows);
+    }, [isExpanded, maxHeight, truncated]);
+
     const totalExpandedPages = isExpanded
         ? Math.max(1, Math.ceil(sortedRows.length / EXPANDED_TABLE_PAGE_SIZE))
         : 1;
@@ -446,7 +459,12 @@ function CsvPreview({
                   expandedPageStartIndex + EXPANDED_TABLE_PAGE_SIZE,
               )
             : sortedRows
-        : sortedRows;
+        : sortedRows.slice(
+              0,
+              maxRowsForHeight !== undefined
+                  ? maxRowsForHeight
+                  : sortedRows.length,
+          );
 
     const expandedPageEndIndex = expandedPageStartIndex + visibleRows.length;
 
@@ -1049,7 +1067,20 @@ export function FilePreview({
                         >
                             <div>
                                 <div className="relative">
-                                    <div>
+                                    <div
+                                        className={
+                                            content.truncated
+                                                ? "overflow-hidden"
+                                                : undefined
+                                        }
+                                        style={
+                                            content.truncated && maxHeight
+                                                ? {
+                                                      maxHeight: `${maxHeight}px`,
+                                                  }
+                                                : undefined
+                                        }
+                                    >
                                         <CsvPreview
                                             key={buildPreviewInstanceKey(
                                                 file.path,

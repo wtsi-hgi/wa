@@ -1055,6 +1055,49 @@ describe("O1 file preview", () => {
         ).toBeTruthy();
     });
 
+    it("caps inline rows for truncated large delimited previews while keeping enlarged pagination at 1000 rows", () => {
+        vi.useFakeTimers();
+
+        try {
+            renderPreview({
+                file: buildFile({ path: "/tmp/results/data.tsv" }),
+                content: {
+                    content: buildCsv(2505),
+                    contentType: "text/tab-separated-values",
+                    truncated: true,
+                },
+                maxHeight: 220,
+                proxyUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fdata.tsv",
+            });
+
+            expect(screen.getByText("Showing 3 preview rows")).toBeTruthy();
+            expect(screen.getAllByRole("row")).toHaveLength(4);
+
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: /enlarge data.tsv preview/i,
+                }),
+            );
+
+            act(() => {
+                vi.runAllTimers();
+            });
+
+            const dialog = screen.getByRole("dialog", {
+                name: /enlarged data.tsv preview/i,
+            });
+
+            expect(
+                screen.getByText("Showing rows 1-1000 of 2505"),
+            ).toBeTruthy();
+            expect(screen.getByText("Page 1 of 3")).toBeTruthy();
+            expect(dialog.querySelectorAll("tbody tr")).toHaveLength(1000);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("shows all 20 inline csv rows when the backend response is not truncated", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/reports/report.csv" }),
