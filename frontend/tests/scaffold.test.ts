@@ -59,12 +59,12 @@ describe("G1 scaffold", () => {
 
     it("documents the per-scenario root env files", () => {
         const testEnv = readFileSync(path.join(repoRoot, ".env.test"), "utf8");
-        const devExample = readFileSync(
-            path.join(repoRoot, ".env.dev.example"),
+        const developmentEnv = readFileSync(
+            path.join(repoRoot, ".env.development"),
             "utf8",
         );
-        const prodExample = readFileSync(
-            path.join(repoRoot, ".env.prod.example"),
+        const productionEnv = readFileSync(
+            path.join(repoRoot, ".env.production"),
             "utf8",
         );
 
@@ -74,18 +74,18 @@ describe("G1 scaffold", () => {
         expect(testEnv).toContain("WA_TEST_SEQMETA_PORT=");
         expect(testEnv).not.toMatch(/^WA_RESULTS_DB_PATH=/m);
 
-        expect(devExample).toContain("WA_ENV=development");
-        expect(devExample).toContain("WA_DEV_FRONTEND_PORT=");
-        expect(devExample).toContain("WA_DEV_RESULTS_PORT=");
-        expect(devExample).toContain("WA_DEV_SEQMETA_PORT=");
-        expect(devExample).toContain("WA_RESULTS_DB_PATH=");
-        expect(devExample).toContain("SAGA_API_TOKEN=");
+        expect(developmentEnv).toContain("WA_ENV=development");
+        expect(developmentEnv).toContain("WA_DEV_FRONTEND_PORT=");
+        expect(developmentEnv).toContain("WA_DEV_RESULTS_PORT=");
+        expect(developmentEnv).toContain("WA_DEV_SEQMETA_PORT=");
+        expect(developmentEnv).toContain("WA_RESULTS_DB_PATH=");
+        expect(developmentEnv).toContain("SAGA_API_TOKEN=");
 
-        expect(prodExample).toContain("WA_ENV=production");
-        expect(prodExample).toContain("WA_PROD_FRONTEND_PORT=");
-        expect(prodExample).toContain("WA_PROD_RESULTS_PORT=");
-        expect(prodExample).toContain("WA_PROD_SEQMETA_PORT=");
-        expect(prodExample).toContain("WA_RESULTS_DB_PATH=");
+        expect(productionEnv).toContain("WA_ENV=production");
+        expect(productionEnv).toContain("WA_PROD_FRONTEND_PORT=");
+        expect(productionEnv).toContain("WA_PROD_RESULTS_PORT=");
+        expect(productionEnv).toContain("WA_PROD_SEQMETA_PORT=");
+        expect(productionEnv).toContain("WA_RESULTS_DB_PATH=");
     });
 
     it("commits .env.test so make test works on a fresh clone", () => {
@@ -133,7 +133,7 @@ describe("G1 scaffold", () => {
             frontendRoot + path.sep,
         );
         expect(existsSync(path.join(repoRoot, ".env.test"))).toBe(true);
-        expect(existsSync(path.join(repoRoot, ".env.dev.example"))).toBe(true);
-        expect(existsSync(path.join(repoRoot, ".env.prod.example"))).toBe(true);
+        expect(existsSync(path.join(repoRoot, ".env.development"))).toBe(true);
+        expect(existsSync(path.join(repoRoot, ".env.production"))).toBe(true);
     });
 });

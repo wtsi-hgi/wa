@@ -24,8 +24,6 @@ wa/
 ├── seqmeta/             # Sequence metadata cache
 ├── frontend/            # Next.js web UI
 ├── run-dev.sh           # Bring-up script used by `make dev`, `make prod`, and Playwright
-├── scripts/
-│   └── wa-env.sh        # Loads exactly one of .env.test/.env.dev/.env.prod
 ├── .docs/               # Specs and proposal
 │   ├── proposal.md
 │   ├── results-rest/spec.md
@@ -33,25 +31,24 @@ wa/
 │   ├── saga/spec.md
 │   └── seqmeta/spec.md
 ├── .env.test            # Committed defaults for `make test`
-├── .env.dev.example     # Template for `.env.dev` (gitignored, holds SAGA token)
-└── .env.prod.example    # Template for `.env.prod` (gitignored, production values)
+├── .env.development     # Committed development defaults
+└── .env.production      # Committed production defaults
 ```
 
 ## Quick Start
 
-The repository ships three isolated scenarios — **test**, **dev**, **prod** —
-each driven by exactly one env file. The `scripts/wa-env.sh` wrapper loads the
-right file per `make` target and refuses cross-scenario contamination, so you
-cannot accidentally run tests against your dev database or bring up the dev
-stack with production credentials.
+The repository ships three isolated scenarios — **test**, **development**,
+**production** — using dotenv-style files. `make` targets source the matching
+scenario files directly, and `wa --env <name> ...` loads the same file set in
+the binary before Cobra builds command defaults.
 
 ```bash
 # Install frontend dependencies first
 cd frontend && pnpm install && cd ..
 
-# Copy the dev env template (committed) to the gitignored .env.dev and edit it
-cp .env.dev.example .env.dev
-# Open .env.dev and set SAGA_API_TOKEN, ports, and WA_RESULTS_DB_PATH
+# Create a machine-local development override and add any secrets there
+cp .env.development .env.development.local
+# Open .env.development.local and set SAGA_API_TOKEN or any per-machine overrides
 
 # Run the dev stack — persistent DB, real SAGA, NO fixtures
 make dev
@@ -66,61 +63,60 @@ against the persistent SQLite database at `WA_RESULTS_DB_PATH` (creating the
 file and parent directory if missing — never deleting it on shutdown), and
 starts the Next.js dev server. Logs go to `logs/`.
 
-The seqmeta server only starts if `SAGA_API_TOKEN` is set in `.env.dev`.
+The seqmeta server only starts if `SAGA_API_TOKEN` is set in `.env.development.local`.
 
 ## Make targets
 
-| Target                | Env file loaded | Purpose                                                                                                                                                                                |
-| --------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `make dev`            | `.env.dev`      | Bring up the dev stack with a persistent DB and no fixtures.                                                                                                                           |
-| `make dev FIXTURES=1` | `.env.dev`      | Same as `make dev`, plus seed demo fixtures into the dev DB.                                                                                                                           |
-| `make dev-fixtures`   | `.env.dev`      | Alias for `make dev FIXTURES=1`.                                                                                                                                                       |
-| `make prod`           | `.env.prod`     | Bring up the production stack. Refuses to start without `.env.prod` or with any test/dev port set.                                                                                     |
-| `make test`           | `.env.test`     | Run Go + Vitest + Playwright. Always uses ephemeral DBs, refuses an inherited `WA_RESULTS_DB_PATH`, and optionally reuses `SAGA_API_TOKEN` from `.env.dev` for live integration tests. |
-| `make test-go`        | `.env.test`     | Just the Go suite.                                                                                                                                                                     |
-| `make test-frontend`  | `.env.test`     | Just Vitest.                                                                                                                                                                           |
-| `make test-e2e`       | `.env.test`     | Just Playwright. Internally drives `run-dev.sh --mode test`.                                                                                                                           |
-| `make lint`           | _(none)_        | `golangci-lint` and `pnpm lint`.                                                                                                                                                       |
-| `make format`         | _(none)_        | `gofmt`, `cleanorder`, and `prettier`.                                                                                                                                                 |
+| Target                | Env files loaded                                                   | Purpose                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make dev`            | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Bring up the development stack with a persistent DB and no fixtures.                                                                                                                               |
+| `make dev FIXTURES=1` | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Same as `make dev`, plus seed demo fixtures into the development DB.                                                                                                                               |
+| `make dev-fixtures`   | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Alias for `make dev FIXTURES=1`.                                                                                                                                                                   |
+| `make prod`           | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Bring up the production stack. Refuses inherited test/development ports and still requires `WA_ENV=production` plus a real `WA_RESULTS_DB_PATH` after loading.                                     |
+| `make test`           | `.env`, `.env.test`, `.env.test.local`                             | Run Go + Vitest + Playwright. Always uses ephemeral DBs, refuses an inherited `WA_RESULTS_DB_PATH`, and may import only `SAGA_API_TOKEN` from `.env.development.local` for live integration tests. |
+| `make test-go`        | `.env`, `.env.test`, `.env.test.local`                             | Just the Go suite.                                                                                                                                                                                 |
+| `make test-frontend`  | `.env`, `.env.test`, `.env.test.local`                             | Just Vitest.                                                                                                                                                                                       |
+| `make test-e2e`       | `.env`, `.env.test`, `.env.test.local`                             | Just Playwright. Internally drives `run-dev.sh --mode test`.                                                                                                                                       |
+| `make lint`           | _(none)_                                                           | `golangci-lint` and `pnpm lint`.                                                                                                                                                                   |
+| `make format`         | _(none)_                                                           | `gofmt`, `cleanorder`, and `prettier`.                                                                                                                                                             |
 
 Defaults applied when an env file does not pin a port:
 
-| Service     | Test | Dev (`.env.dev`)       | Prod (`.env.prod`)      |
-| ----------- | ---- | ---------------------- | ----------------------- |
-| Frontend    | 3000 | `WA_DEV_FRONTEND_PORT` | `WA_PROD_FRONTEND_PORT` |
-| Results API | 8090 | `WA_DEV_RESULTS_PORT`  | `WA_PROD_RESULTS_PORT`  |
-| Seqmeta API | 8091 | `WA_DEV_SEQMETA_PORT`  | `WA_PROD_SEQMETA_PORT`  |
+| Service     | Test | Development (`.env.development`) | Production (`.env.production`) |
+| ----------- | ---- | -------------------------------- | ------------------------------ |
+| Frontend    | 3000 | `WA_DEV_FRONTEND_PORT`           | `WA_PROD_FRONTEND_PORT`        |
+| Results API | 8090 | `WA_DEV_RESULTS_PORT`            | `WA_PROD_RESULTS_PORT`         |
+| Seqmeta API | 8091 | `WA_DEV_SEQMETA_PORT`            | `WA_PROD_SEQMETA_PORT`         |
 
 ## Environment files
 
-Only one env file is loaded per scenario. Each file pins `WA_ENV` to the
-canonical value for its scenario, and `scripts/wa-env.sh` validates that
-`WA_ENV` matches the requested target before running anything. `WA_TEST_*`
-ports are exported only in test mode; `WA_DEV_*` only in dev mode; and
-`WA_PROD_*` only in prod mode. `wa results ...` derives its default `--server`
-URL from the active scenario's results port, while `run-dev.sh` derives the
-frontend backend URLs from those same ports.
+Each scenario keeps `WA_ENV` pinned to the canonical value for that runtime.
+`WA_TEST_*` ports are exported only in test mode; `WA_DEV_*` only in
+development mode; and `WA_PROD_*` only in production mode. `wa results ...`
+derives its default `--server` URL from the active scenario's results port,
+while `run-dev.sh` derives the frontend backend URLs from those same ports.
 
-| File                | Tracked? | Loaded by    | Holds                                                                                                                     |
-| ------------------- | -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `.env.test`         | yes      | `make test`  | Test ports + `WA_ENV=test`. No DB path. No committed SAGA token; live tests may optionally reuse the one from `.env.dev`. |
-| `.env.dev.example`  | yes      | _(template)_ | Dev ports, dev DB path, `SAGA_API_TOKEN=` placeholder, `WA_ENV=development`.                                              |
-| `.env.dev`          | no       | `make dev`   | Your local copy of the above with real values, including a real SAGA token.                                               |
-| `.env.prod.example` | yes      | _(template)_ | Prod ports, prod DB DSN/path placeholder, `WA_ENV=production`.                                                            |
-| `.env.prod`         | no       | `make prod`  | Your production values. Required for `make prod`; absent ⇒ clear error.                                                   |
+| File                     | Tracked? | Loaded by                               | Holds                                                                                       |
+| ------------------------ | -------- | --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `.env.test`              | yes      | `make test` / `wa --env test ...`       | Test ports + `WA_ENV=test`. No DB path. No committed SAGA token.                            |
+| `.env.test.local`        | no       | optional test override                  | Personal test-only overrides.                                                               |
+| `.env.development`       | yes      | `make dev` / `wa --env development ...` | Development ports, dev DB path, blank `SAGA_API_TOKEN`, `WA_ENV=development`.               |
+| `.env.development.local` | no       | local development override              | Your local development secrets and machine-specific overrides, including a real SAGA token. |
+| `.env.production`        | yes      | `make prod` / `wa --env production ...` | Production ports, blank DB settings, `WA_ENV=production`.                                   |
+| `.env.production.local`  | no       | local production override               | Deployment-specific production secrets and DB settings.                                     |
 
 ### Safety guarantees
 
-The wrapper and `run-dev.sh` enforce the following:
+The `make` recipes, `wa` startup path, and `run-dev.sh` enforce the following:
 
 - `make test` and `make dev` refuse to start if `WA_ENV=production` is
   inherited from the shell.
 - `make test` refuses to start if `WA_RESULTS_DB_PATH` is set in the
   environment, so a stray export cannot point tests at a configured dev or
   prod database.
-- `make prod` refuses to start when `.env.prod` is missing, when the loaded
-  file does not set `WA_ENV=production`, when any `WA_TEST_*` or `WA_DEV_*`
-  port var is inherited, or when `--fixtures` is requested.
+- `make prod` refuses inherited `WA_TEST_*` or `WA_DEV_*` ports, and
+  `run-dev.sh --mode prod` still requires `WA_ENV=production` plus a real
+  `WA_RESULTS_DB_PATH` after loading.
 - `run-dev.sh --mode test` always uses an ephemeral `mktemp` SQLite DB
   beneath `.tmp/` and removes it on shutdown.
 - `run-dev.sh --mode dev` and `--mode prod` use the persistent
@@ -157,7 +153,7 @@ file-preview clicks and similar controls silently do nothing. Only plain
 - the current machine's `hostname -f` and `hostname -s`
 - anything you already set in `WA_DEV_ALLOWED_ORIGINS`
 
-Set `WA_DEV_ALLOWED_ORIGINS` in `.env.dev` (comma separated) if you need to
+Set `WA_DEV_ALLOWED_ORIGINS` in `.env.development.local` (comma separated) if you need to
 add hostnames that are not covered by the defaults. Wildcards follow the
 Next.js 16 `allowedDevOrigins` syntax (`*` matches one DNS segment). The
 setting is ignored when `WA_ENV=production`.
@@ -175,8 +171,8 @@ go build -o wa .
 # Start results server (SQLite for dev)
 ./wa results serve --port 8090 --db dev.db
 
-# Run the results CLI against the dev stack described by .env.dev
-scripts/wa-env.sh dev -- ./wa results search --pipeline nf-pipe
+# Run the results CLI against the development stack described by .env.development
+./wa --env development results search --pipeline nf-pipe
 
 # Start results server (MySQL without exposing the password on argv)
 export WA_RESULTS_DB_PATH='user@tcp(db-host:3306)/wa_results'
@@ -196,7 +192,7 @@ WA_RESULTS_BACKEND_URL=http://localhost:8090 pnpm dev   # Starts on http://local
 ```
 
 Normally you do not need to run the frontend by hand — `make dev` / `make prod`
-start it for you and source the right env file. Use the manual command only
+start it for you with the matching env files already loaded. Use the manual command only
 when you are debugging the frontend in isolation against an already-running Go
 backend.
 

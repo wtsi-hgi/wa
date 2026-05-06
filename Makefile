@@ -1,15 +1,49 @@
 .PHONY: help dev dev-fixtures prod lint lint-go lint-frontend lint-prettier-root format format-go format-frontend format-prettier-root test test-go test-frontend test-e2e clean-test-tmp
 
+SHELL := bash
 FRONTEND_DIR := frontend
 # Force pure-Go builds for all `go` invocations below (matches the `-tags
 # netgo` builds used in test/dev/prod recipes).
 export CGO_ENABLED := 0
 
-# Each scenario sources exactly one env file via scripts/wa-env.sh and is
-# isolated from the others. See DEVELOPING.md for details.
-WA_ENV_TEST  := scripts/wa-env.sh test --
-WA_ENV_DEV   := scripts/wa-env.sh dev --
-WA_ENV_PROD  := scripts/wa-env.sh prod --
+# Scenario loaders source the dotenv-style files directly so `make` targets and
+# `wa --env ...` share the same environment naming.
+LOAD_TEST_ENV = \
+	if [ "$${WA_ENV:-}" = "production" ]; then \
+		printf '%s\n' 'make test refuses WA_ENV=production inherited from the shell.' >&2; \
+		exit 1; \
+	fi; \
+	if [ -n "$${WA_RESULTS_DB_PATH:-}" ]; then \
+		printf 'make test refuses WA_RESULTS_DB_PATH=%s inherited from the shell.\n' "$${WA_RESULTS_DB_PATH}" >&2; \
+		exit 1; \
+	fi; \
+	if [ -f ./.env ]; then set -a; . ./.env; set +a; fi; \
+	[ -f ./.env.test ] || { printf '%s\n' '.env.test is required for make test.' >&2; exit 1; }; \
+	set -a; . ./.env.test; [ -f ./.env.test.local ] && . ./.env.test.local; set +a; \
+	if [ -z "$${SAGA_API_TOKEN:-}" ] && [ -f ./.env.development.local ]; then \
+		SAGA_API_TOKEN="$$(set -a; . ./.env.development.local; set +a; printf '%s' "$${SAGA_API_TOKEN:-}")"; \
+		[ -n "$${SAGA_API_TOKEN}" ] && export SAGA_API_TOKEN; \
+	fi
+
+LOAD_DEVELOPMENT_ENV = \
+	if [ "$${WA_ENV:-}" = "production" ]; then \
+		printf '%s\n' 'make dev refuses WA_ENV=production inherited from the shell.' >&2; \
+		exit 1; \
+	fi; \
+	if [ -f ./.env ]; then set -a; . ./.env; set +a; fi; \
+	[ -f ./.env.development ] || { printf '%s\n' '.env.development is required for make dev.' >&2; exit 1; }; \
+	set -a; . ./.env.development; [ -f ./.env.local ] && . ./.env.local; [ -f ./.env.development.local ] && . ./.env.development.local; set +a
+
+LOAD_PRODUCTION_ENV = \
+	for var in WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT WA_DEV_FRONTEND_PORT WA_DEV_RESULTS_PORT WA_DEV_SEQMETA_PORT; do \
+		if [ -n "$${!var:-}" ]; then \
+			printf 'make prod refuses %s=%s inherited from the shell.\n' "$$var" "$${!var}" >&2; \
+			exit 1; \
+		fi; \
+	done; \
+	if [ -f ./.env ]; then set -a; . ./.env; set +a; fi; \
+	[ -f ./.env.production ] || { printf '%s\n' '.env.production is required for make prod.' >&2; exit 1; }; \
+	set -a; . ./.env.production; [ -f ./.env.local ] && . ./.env.local; [ -f ./.env.production.local ] && . ./.env.production.local; set +a
 
 # Convenience flag for `make dev FIXTURES=1`.
 DEV_FIXTURES_FLAG := $(if $(filter 1 yes true,$(FIXTURES)),--fixtures,)
@@ -17,10 +51,10 @@ DEV_FIXTURES_FLAG := $(if $(filter 1 yes true,$(FIXTURES)),--fixtures,)
 help:
 	@printf 'Usage: make <target>\n\n'
 	@printf 'Bring-up:\n'
-	@printf '  dev               Run the dev stack (no fixtures). Persistent DB from .env.dev.\n'
+	@printf '  dev               Run the dev stack (no fixtures). Persistent DB from .env.development + .env.development.local.\n'
 	@printf '  dev FIXTURES=1    Same as above but seed demo fixtures.\n'
 	@printf '  dev-fixtures      Alias for `make dev FIXTURES=1`.\n'
-	@printf '  prod              Run the production stack. Requires .env.prod with WA_ENV=production.\n\n'
+	@printf '  prod              Run the production stack with .env.production + .env.production.local.\n\n'
 	@printf 'Quality:\n'
 	@printf '  lint              Run Go and frontend linters.\n'
 	@printf '  format            Apply Go and frontend formatters.\n'
@@ -38,13 +72,13 @@ test:
 	exit $$rc
 
 test-go:
-	$(WA_ENV_TEST) go test -tags netgo --count 1 ./...
+	@$(LOAD_TEST_ENV); go test -tags netgo --count 1 ./...
 
 test-frontend:
-	$(WA_ENV_TEST) bash -c 'cd $(FRONTEND_DIR) && pnpm test'
+	@$(LOAD_TEST_ENV); cd $(FRONTEND_DIR) && pnpm test
 
 test-e2e:
-	$(WA_ENV_TEST) bash -c 'cd $(FRONTEND_DIR) && pnpm exec playwright test'
+	@$(LOAD_TEST_ENV); cd $(FRONTEND_DIR) && pnpm exec playwright test
 
 # Remove only the artefacts `make test` itself produces under .tmp/. Leaves
 # unrelated entries (e.g. agent scratch in .tmp/agent/) untouched.
@@ -54,14 +88,14 @@ clean-test-tmp:
 
 # ---- Dev scenario ---------------------------------------------------------
 dev:
-	$(WA_ENV_DEV) ./run-dev.sh --mode dev $(DEV_FIXTURES_FLAG)
+	@$(LOAD_DEVELOPMENT_ENV); ./run-dev.sh --mode dev $(DEV_FIXTURES_FLAG)
 
 dev-fixtures:
 	$(MAKE) dev FIXTURES=1
 
 # ---- Production scenario --------------------------------------------------
 prod:
-	$(WA_ENV_PROD) ./run-dev.sh --mode prod
+	@$(LOAD_PRODUCTION_ENV); ./run-dev.sh --mode prod
 
 # ---- Lint and format (no scenario binding) -------------------------------
 lint: lint-go lint-frontend lint-prettier-root

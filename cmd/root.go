@@ -37,6 +37,8 @@ func NewRootCommand() *cobra.Command {
 		},
 	}
 
+	command.PersistentFlags().String("env", "", "Environment name used to load .env.<name> files before running the command")
+
 	command.AddCommand(newSagaCommand())
 	command.AddCommand(newSeqmetaCommand())
 	command.AddCommand(newResultsCommand())

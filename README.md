@@ -71,14 +71,14 @@ wa results search --pipeline my-pipeline --user jdoe
 wa results get --files <id>
 ```
 
-When you run the CLI against a stack started via the scenario env files, use the
-matching wrapper command. `wa results ...` then defaults `--server` to
-`http://127.0.0.1:<active results port>` from that scenario's
-`WA_*_RESULTS_PORT`.
+When you run the CLI against a stack started via the scenario env files, select
+the matching environment with `--env` or `WA_ENV`. `wa results ...` then
+defaults `--server` to `http://127.0.0.1:<active results port>` from that
+scenario's `WA_*_RESULTS_PORT`.
 
 ```bash
-scripts/wa-env.sh dev -- wa results search --pipeline my-pipeline
-scripts/wa-env.sh prod -- wa results register /path/to/output --user jdoe
+wa --env development results search --pipeline my-pipeline
+wa --env production results register /path/to/output --user jdoe
 ```
 
 ### Start the results API server
@@ -137,7 +137,7 @@ make dev-fixtures
 # Run all tests (Go + Vitest + Playwright). Hermetic — never touches dev/prod.
 make test
 
-# Run the production stack (requires .env.prod)
+# Run the production stack (uses .env.production + .env.production.local)
 make prod
 ```
 

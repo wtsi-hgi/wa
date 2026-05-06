@@ -24,11 +24,9 @@ profile.cov
 go.work
 go.work.sum
 
-# env files: keep .example siblings and the committed .env.test, ignore the
-# private dev/prod copies (which carry SAGA tokens, DB paths, etc.).
+# env files: keep the tracked scenario defaults, ignore local overrides and
+# any shared private dotenv files.
 .env
-.env.dev
-.env.prod
 .env.local
 .env.*.local
 # The `*.test` rule above (for Go test binaries) would otherwise match
