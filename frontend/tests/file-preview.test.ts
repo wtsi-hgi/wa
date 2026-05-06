@@ -339,7 +339,7 @@ describe("O1 file preview", () => {
         ).toContain("download=true");
     });
 
-    it("shows the first 100 rows for csv previews with a row count summary", () => {
+    it("shows all available rows for inline csv previews with a row count summary", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/report.csv" }),
             content: {
@@ -350,8 +350,8 @@ describe("O1 file preview", () => {
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
         });
 
-        expect(screen.getByText("Showing 100 of 200 rows")).toBeTruthy();
-        expect(screen.getAllByRole("row")).toHaveLength(101);
+        expect(screen.getByText("Showing 200 of 200 rows")).toBeTruthy();
+        expect(screen.getAllByRole("row")).toHaveLength(201);
     });
 
     it("enlarges csv previews on click and shows all rows in the enlarged dialog", () => {
@@ -365,7 +365,7 @@ describe("O1 file preview", () => {
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
         });
 
-        expect(screen.getByText("Showing 100 of 120 rows")).toBeTruthy();
+        expect(screen.getByText("Showing 120 of 120 rows")).toBeTruthy();
         expect(screen.queryByRole("dialog")).toBeNull();
 
         fireEvent.click(
@@ -377,7 +377,7 @@ describe("O1 file preview", () => {
         });
 
         expect(dialog).toBeTruthy();
-        expect(screen.getByText("Showing 120 of 120 rows")).toBeTruthy();
+        expect(screen.getAllByText("Showing 120 of 120 rows")).toHaveLength(2);
         expect(dialog.querySelectorAll("tr")).toHaveLength(121);
     });
 
@@ -616,7 +616,7 @@ describe("O1 file preview", () => {
             screen.queryByRole("button", { name: /show all rows/i }),
         ).toBeNull();
         expect(screen.queryByLabelText(/filter rows/i)).toBeNull();
-        expect(screen.getByText("Showing 100 of 200 rows")).toBeTruthy();
+        expect(screen.getByText("Showing 200 of 200 rows")).toBeTruthy();
     });
 
     it("sorts enlarged csv rows ascending then descending when a column header is clicked", () => {
@@ -915,7 +915,7 @@ describe("O1 file preview", () => {
         expect(largeImage.getAttribute("style")).toContain("max-height: 360px");
     });
 
-    it("applies maxHeight to csv previews to limit visible rows based on height", () => {
+    it("shows all inline csv rows for small files even when maxHeight is set", () => {
         const csvContent = buildCsv(50);
 
         renderPreview({
@@ -930,15 +930,12 @@ describe("O1 file preview", () => {
         });
 
         const rows = screen.getAllByRole("row");
-        // With a 220px maxHeight, the component estimates ~2 data rows plus 1 header row (3-4 total).
-        // The old behavior would show all 50 data rows (51 total with header).
-        // We verify that it's constrained to well below 20 rows.
-        expect(rows.length).toBeLessThan(20);
-        expect(rows.length).toBeGreaterThanOrEqual(3);
+        expect(rows.length).toBe(51);
+        expect(screen.getByText("Showing 50 of 50 rows")).toBeTruthy();
     });
 
-    it("shows more csv rows when maxHeight increases", () => {
-        const csvContent = buildCsv(50);
+    it("shows the same inline csv rows regardless of maxHeight until backend truncation occurs", () => {
+        const csvContent = buildCsv(20);
 
         const small = renderPreview({
             file: buildFile({ path: "/tmp/results/report.csv" }),
@@ -952,6 +949,7 @@ describe("O1 file preview", () => {
         });
 
         const smallRowCount = screen.getAllByRole("row").length;
+        expect(screen.getByText("Showing 20 of 20 rows")).toBeTruthy();
         small.unmount();
 
         renderPreview({
@@ -967,7 +965,9 @@ describe("O1 file preview", () => {
 
         const largeRowCount = screen.getAllByRole("row").length;
 
-        expect(largeRowCount).toBeGreaterThan(smallRowCount);
+        expect(smallRowCount).toBe(21);
+        expect(largeRowCount).toBe(21);
+        expect(screen.getByText("Showing 20 of 20 rows")).toBeTruthy();
     });
 
     it("constrained markdown preview uses overflow-hidden and shows truncation indicator", () => {
@@ -1016,7 +1016,7 @@ describe("O1 file preview", () => {
         expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
     });
 
-    it("constrained csv preview container uses overflow-hidden and shows truncation indicator", () => {
+    it("inline csv preview does not show a truncation indicator when the backend response is complete", () => {
         const { container } = renderPreview({
             file: buildFile({ path: "/tmp/results/data.csv" }),
             content: {
@@ -1032,10 +1032,10 @@ describe("O1 file preview", () => {
             container.querySelector(".overflow-hidden");
         expect(overflowHiddenContainer).not.toBeNull();
 
-        // Verify truncation indicator exists
-        const truncationIndicator = screen.getByLabelText(/content truncated/i);
-        expect(truncationIndicator).toBeTruthy();
-        expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
+        expect(screen.queryByLabelText(/content truncated/i)).toBeNull();
+        expect(
+            screen.queryByText(/preview truncated after the first lines/i),
+        ).toBeNull();
     });
 
     it("shows a visible truncation note when inline preview content was line-limited", () => {
@@ -1055,9 +1055,7 @@ describe("O1 file preview", () => {
         ).toBeTruthy();
     });
 
-    it("truncates 20-row csv preview when maxHeight=220 to respect preview height setting", () => {
-        // Regression test for: "report.csv preview shows all 20 rows instead of respecting preview height"
-        // This simulates the nf-core/rnaseq fixture report.csv with 20 data rows in constrained preview mode
+    it("shows all 20 inline csv rows when the backend response is not truncated", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/reports/report.csv" }),
             content: {
@@ -1070,12 +1068,8 @@ describe("O1 file preview", () => {
         });
 
         const rows = screen.getAllByRole("row");
-        // With 220px height, should show ~2-3 data rows + 1 header row (3-4 total)
-        // NOT all 20 data rows + 1 header (21 total)
-        expect(rows.length).toBeLessThan(10);
-        expect(rows.length).toBeGreaterThanOrEqual(3);
-        // Verify it's definitely truncated
-        expect(rows.length).toBeLessThan(21);
+        expect(rows.length).toBe(21);
+        expect(screen.getByText("Showing 20 of 20 rows")).toBeTruthy();
     });
 
     it("shows all rows for small csv when maxHeight is undefined (fallback behavior)", () => {

@@ -43,6 +43,7 @@ import (
 )
 
 const DefaultMaxPreviewBytes int64 = 10 * 1024 * 1024
+
 const previewTruncatedHeader = "X-Preview-Truncated"
 
 // ServerOption configures Server behaviour.
@@ -136,15 +137,6 @@ func hasRegisteredFile(files []FileEntry, requestedPath string) bool {
 	return false
 }
 
-func parsePositiveInt(raw string) int {
-	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || parsed <= 0 {
-		return 0
-	}
-
-	return parsed
-}
-
 func isLineReadableContentType(contentType string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
 
@@ -159,16 +151,29 @@ func previewContentTypeForPath(path string, download bool) string {
 	return detectPreviewContentType(path)
 }
 
-func readPreviewLines(reader io.Reader, lineLimit int) ([]byte, bool, error) {
+func readPreviewLinesWithinByteLimit(reader io.Reader, byteLimit int64) ([]byte, bool, error) {
 	bufferedReader := bufio.NewReader(reader)
 	var preview bytes.Buffer
+	remaining := byteLimit
 
-	for linesRead := 0; linesRead < lineLimit; linesRead++ {
+	for {
 		line, err := bufferedReader.ReadBytes('\n')
 		if len(line) > 0 {
+			if int64(len(line)) > remaining {
+				if preview.Len() == 0 && remaining > 0 {
+					if _, writeErr := preview.Write(line[:int(remaining)]); writeErr != nil {
+						return nil, false, writeErr
+					}
+				}
+
+				return preview.Bytes(), true, nil
+			}
+
 			if _, writeErr := preview.Write(line); writeErr != nil {
 				return nil, false, writeErr
 			}
+
+			remaining -= int64(len(line))
 		}
 
 		if err != nil {
@@ -178,17 +183,19 @@ func readPreviewLines(reader io.Reader, lineLimit int) ([]byte, bool, error) {
 
 			return nil, false, err
 		}
-	}
 
-	if _, err := bufferedReader.ReadByte(); err != nil {
-		if errors.Is(err, io.EOF) {
-			return preview.Bytes(), false, nil
+		if remaining == 0 {
+			if _, err := bufferedReader.Peek(1); err != nil {
+				if errors.Is(err, io.EOF) {
+					return preview.Bytes(), false, nil
+				}
+
+				return nil, false, err
+			}
+
+			return preview.Bytes(), true, nil
 		}
-
-		return nil, false, err
 	}
-
-	return preview.Bytes(), true, nil
 }
 
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
@@ -226,9 +233,8 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	download := r.URL.Query().Get("download") == "true"
-	lineLimit := parsePositiveInt(r.URL.Query().Get("line_limit"))
 	previewContentType := previewContentTypeForPath(requestedPath, download)
-	allowLineLimitedPreview := !download && lineLimit > 0 && isLineReadableContentType(previewContentType)
+	allowReadablePreview := !download && isLineReadableContentType(previewContentType)
 	fileInfo, err := os.Stat(requestedPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -242,7 +248,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !download && !allowLineLimitedPreview && fileInfo.Size() > s.maxPreviewBytes {
+	if !download && !allowReadablePreview && fileInfo.Size() > s.maxPreviewBytes {
 		w.Header().Set("X-File-Size", strconv.FormatInt(fileInfo.Size(), 10))
 		writeDomainError(w, ErrFileTooLarge)
 
@@ -263,8 +269,8 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	if download {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(requestedPath)))
 	}
-	if allowLineLimitedPreview {
-		preview, truncated, err := readPreviewLines(reader, lineLimit)
+	if allowReadablePreview {
+		preview, truncated, err := readPreviewLinesWithinByteLimit(reader, s.maxPreviewBytes)
 		if err != nil {
 			writeServerError(w, http.StatusInternalServerError, fmt.Sprintf("read preview lines: %v", err))
 

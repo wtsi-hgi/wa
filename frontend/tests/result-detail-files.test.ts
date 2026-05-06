@@ -455,7 +455,7 @@ describe("O1 result detail file integration", () => {
         });
     });
 
-    it("requests line-limited inline previews for line-readable text files", async () => {
+    it("requests byte-limited inline previews for line-readable text files without forcing a line limit", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
 
@@ -478,12 +478,12 @@ describe("O1 result detail file integration", () => {
 
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
-                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv&line_limit=4",
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv",
             );
         });
     });
 
-    it("requests line-limited inline previews for gzip-compressed tsv files", async () => {
+    it("requests byte-limited inline previews for gzip-compressed tsv files without forcing a line limit", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
 
@@ -506,7 +506,7 @@ describe("O1 result detail file integration", () => {
 
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
-                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv.gz&line_limit=4",
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv.gz",
             );
         });
     });

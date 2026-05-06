@@ -123,6 +123,31 @@ test("constrained code preview shows truncation indicator instead of scrollbar",
     }
 });
 
+test("small csv preview shows all available rows inline without a truncation indicator", async ({
+    page,
+}) => {
+    await openResultFileBrowser(page);
+
+    const csvFile = page.locator('[data-file-path$="report.csv"]').first();
+
+    if ((await csvFile.count()) > 0) {
+        await csvFile.click();
+
+        const preview = page.locator('[data-file-browser-preview="single"]');
+        await expect(preview).toBeVisible();
+        await expect(preview.getByText("Showing 20 of 20 rows")).toBeVisible();
+
+        const tableRows = preview.locator("tbody tr");
+        await expect(tableRows).toHaveCount(20);
+        await expect(
+            preview.locator('[aria-label="Content truncated"]'),
+        ).toHaveCount(0);
+        await expect(
+            preview.getByText(/preview truncated after the first lines/i),
+        ).toHaveCount(0);
+    }
+});
+
 test("enlarged code preview allows scrolling for long content", async ({
     page,
 }) => {

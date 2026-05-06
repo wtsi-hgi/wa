@@ -30,15 +30,12 @@ type PreviewState = {
 type FileUrlOptions = {
     download?: boolean;
     height?: number;
-    lineLimit?: number;
     thumbnail?: boolean;
     width?: number;
 };
 
 const thumbnailsPerPage = 100;
 const defaultPreviewHeight = 220;
-const defaultDelimitedPreviewLineLimit = 4;
-const defaultTextPreviewLineLimit = 8;
 const thumbnailRenderHeight = 420;
 const compressedExtensions = new Set(["gz"]);
 const imageExtensions = new Set([
@@ -70,24 +67,6 @@ const proxyOnlyExtensions = new Set([
     "tiff",
     "webp",
 ]);
-const delimitedExtensions = new Set(["csv", "tsv"]);
-const lineReadableExtensions = new Set([
-    "csv",
-    "json",
-    "jsonl",
-    "log",
-    "markdown",
-    "md",
-    "py",
-    "sh",
-    "text",
-    "tsv",
-    "txt",
-    "xml",
-    "yaml",
-    "yml",
-]);
-
 function effectiveExtensionFromPath(path: string): string {
     const name = path.split("/").pop() ?? path;
     const extensions = name
@@ -155,10 +134,6 @@ function buildFileUrl(
         query.set("download", "true");
     }
 
-    if (options.lineLimit) {
-        query.set("line_limit", String(options.lineLimit));
-    }
-
     if (options.thumbnail) {
         query.set("thumb", "true");
         query.set(
@@ -183,20 +158,6 @@ function isImageFile(path: string): boolean {
     return imageExtensions.has(extension);
 }
 
-function previewLineLimitForPath(path: string): number {
-    const extension = effectiveExtensionFromPath(path);
-
-    if (!lineReadableExtensions.has(extension)) {
-        return 0;
-    }
-
-    if (delimitedExtensions.has(extension)) {
-        return defaultDelimitedPreviewLineLimit;
-    }
-
-    return defaultTextPreviewLineLimit;
-}
-
 function buildPreviewState(file: FileEntry | null): PreviewState {
     return {
         content: undefined,
@@ -210,11 +171,7 @@ async function fetchPreviewContent(
     resultId: string,
     path: string,
 ): Promise<{ content: string; contentType: string; truncated?: boolean }> {
-    const response = await fetch(
-        buildFileUrl(resultId, path, {
-            lineLimit: previewLineLimitForPath(path),
-        }),
-    );
+    const response = await fetch(buildFileUrl(resultId, path));
 
     if (!response.ok) {
         const contentType = response.headers.get("content-type") ?? "";

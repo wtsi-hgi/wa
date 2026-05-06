@@ -162,10 +162,10 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, compressed)
 	})
 
-	convey.Convey("A1.10: Given a preview size limit smaller than the registered file, when previewed, then status is 413 with X-File-Size", t, func() {
+	convey.Convey("A1.10: Given a preview size limit smaller than a non-readable registered file, when previewed, then status is 413 with X-File-Size", t, func() {
 		server, resultID, path := newFileServerScenarioForTestWithOptions(t, []ServerOption{WithMaxPreviewBytes(100)}, func(root string) []FileEntry {
 			payload := bytes.Repeat([]byte("x"), 200)
-			path := writeTestFileForServer(t, filepath.Join(root, "large.txt"), payload)
+			path := writeTestFileForServer(t, filepath.Join(root, "large.bin"), payload)
 
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 8, 0, 0, time.UTC), Size: 200, Kind: "output"}}
 		})
@@ -176,10 +176,10 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Header().Get("X-File-Size"), convey.ShouldEqual, "200")
 	})
 
-	convey.Convey("A1.11: Given the same oversized file with download=true, then status is 200 and the full file is streamed", t, func() {
+	convey.Convey("A1.11: Given the same oversized non-readable file with download=true, then status is 200 and the full file is streamed", t, func() {
 		payload := bytes.Repeat([]byte("x"), 200)
 		server, resultID, path := newFileServerScenarioForTestWithOptions(t, []ServerOption{WithMaxPreviewBytes(100)}, func(root string) []FileEntry {
-			path := writeTestFileForServer(t, filepath.Join(root, "large.txt"), payload)
+			path := writeTestFileForServer(t, filepath.Join(root, "large.bin"), payload)
 
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 9, 0, 0, time.UTC), Size: 200, Kind: "output"}}
 		})
@@ -219,18 +219,18 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, largeContent[:50])
 	})
 
-	convey.Convey("A1.14: Given an oversized registered TSV file, when previewed with line_limit, then status is 200 with only the requested lines and truncation metadata", t, func() {
-		payload := []byte("sample\tstatus\nalpha\tready\nbeta\tpending\ngamma\tfailed\n")
-		server, resultID, path := newFileServerScenarioForTestWithOptions(t, []ServerOption{WithMaxPreviewBytes(16)}, func(root string) []FileEntry {
+	convey.Convey("A1.14: Given an oversized registered TSV file, when previewed, then status is 200 with as many full lines as fit under the preview-size limit and truncation metadata", t, func() {
+		payload := []byte("h\n1111\n2222\n3333\n4444\n")
+		server, resultID, path := newFileServerScenarioForTestWithOptions(t, []ServerOption{WithMaxPreviewBytes(12)}, func(root string) []FileEntry {
 			path := writeTestFileForServer(t, filepath.Join(root, "report.tsv"), payload)
 
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 12, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&line_limit=2", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(response.Body.String(), convey.ShouldEqual, "sample\tstatus\nalpha\tready\n")
+		convey.So(response.Body.String(), convey.ShouldEqual, "h\n1111\n2222\n")
 		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "true")
 	})
 }

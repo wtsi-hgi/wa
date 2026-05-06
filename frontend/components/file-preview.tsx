@@ -432,24 +432,6 @@ function CsvPreview({
         };
     }, [expandedTableReady]);
 
-    const maxRowsForHeight = useMemo(() => {
-        if (!maxHeight || isExpanded) {
-            return undefined;
-        }
-
-        // Estimate rows that fit in the given height:
-        // - Each table row is roughly 48-56px (typical shadcn/ui table styling)
-        // - Account for header text, table padding, borders, row count summary (~100px overhead)
-        // Use 52px per row as a reasonable middle estimate
-        const estimatedRowHeight = 52;
-        const estimatedOverhead = 100;
-        const availableHeight = Math.max(0, maxHeight - estimatedOverhead);
-        const maxRows = Math.floor(availableHeight / estimatedRowHeight);
-
-        // Always show at least a few rows even with small heights
-        return Math.max(3, maxRows);
-    }, [maxHeight, isExpanded]);
-
     const totalExpandedPages = isExpanded
         ? Math.max(1, Math.ceil(sortedRows.length / EXPANDED_TABLE_PAGE_SIZE))
         : 1;
@@ -464,12 +446,7 @@ function CsvPreview({
                   expandedPageStartIndex + EXPANDED_TABLE_PAGE_SIZE,
               )
             : sortedRows
-        : sortedRows.slice(
-              0,
-              maxRowsForHeight !== undefined
-                  ? maxRowsForHeight
-                  : Math.min(100, sortedRows.length),
-          );
+        : sortedRows;
 
     const expandedPageEndIndex = expandedPageStartIndex + visibleRows.length;
 
@@ -1072,16 +1049,7 @@ export function FilePreview({
                         >
                             <div>
                                 <div className="relative">
-                                    <div
-                                        className="overflow-hidden"
-                                        style={
-                                            maxHeight
-                                                ? {
-                                                      maxHeight: `${maxHeight}px`,
-                                                  }
-                                                : undefined
-                                        }
-                                    >
+                                    <div>
                                         <CsvPreview
                                             key={buildPreviewInstanceKey(
                                                 file.path,
@@ -1095,11 +1063,13 @@ export function FilePreview({
                                             truncated={content.truncated}
                                         />
                                     </div>
-                                    <div
-                                        aria-label="Content truncated"
-                                        className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background/95 via-background/60 to-transparent"
-                                        data-truncated="true"
-                                    />
+                                    {content.truncated ? (
+                                        <div
+                                            aria-label="Content truncated"
+                                            className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background/95 via-background/60 to-transparent"
+                                            data-truncated="true"
+                                        />
+                                    ) : null}
                                 </div>
                                 {content.truncated ? <TruncationNote /> : null}
                             </div>
