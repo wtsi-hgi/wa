@@ -1070,9 +1070,10 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("renders the subfolder preview gallery controls and horizontal previews when more than one subdirectory has graphical files", async () => {
+    it("uses the folder-row control slot for subfolder previews instead of generic file preview controls", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
+            buildFile("/demo/readme.md", "output"),
             buildFile("/demo/sample-a/img-1.png", "output"),
             buildFile("/demo/sample-a/img-2.png", "output"),
             buildFile("/demo/sample-a/data.csv", "output"),
@@ -1085,8 +1086,15 @@ describe("N1 file browser", () => {
             root.render(
                 createElement(FileBrowser, {
                     files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
                     onSelectDirectory: vi.fn(),
                     onSelectFile: vi.fn(),
+                    previewHeight: 180,
+                    previewMode: "grid",
+                    previewPage: 1,
+                    previewPageCount: 2,
                     renderGridPreview: (file: FileEntry): ReactNode =>
                         createElement(
                             "div",
@@ -1097,7 +1105,7 @@ describe("N1 file browser", () => {
                             file.path,
                         ),
                     selectedDirectory: "/demo",
-                    visibleFiles: [],
+                    visibleFiles: [buildFile("/demo/readme.md", "output")],
                 }),
             );
         });
@@ -1105,10 +1113,29 @@ describe("N1 file browser", () => {
         const controls = container.querySelector(
             '[data-subdir-preview-controls="/demo"]',
         );
+        const folderControls = container.querySelector(
+            '[data-file-browser-folder-controls="/demo"]',
+        );
 
         expect(controls).toBeTruthy();
+        expect(folderControls).toBeTruthy();
+        expect(
+            controls?.closest('[data-file-browser-folder-controls="/demo"]'),
+        ).toBe(folderControls);
         expect(controls?.textContent).toContain("Subfolder previews");
-        expect(controls?.textContent).toContain("Preview file types");
+        expect(controls?.textContent).not.toContain("1 preview per row");
+        expect(controls?.textContent).not.toContain("Preview file types");
+        expect(
+            container.querySelector('input[aria-label="1 preview per row"]'),
+        ).toBeNull();
+        expect(
+            container.querySelector('input[aria-label="Preview height"]'),
+        ).toBeNull();
+        expect(
+            controls?.querySelector(
+                '[data-subdir-preview-kind-disclosure="/demo"]',
+            ),
+        ).toBeTruthy();
 
         // Default state: toggle disabled; no gallery rows rendered.
         expect(

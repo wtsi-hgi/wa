@@ -211,6 +211,7 @@ test.describe("File Browser single preview layout", () => {
         "fixtures",
         "files",
     );
+    const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqGalleryPath = path.join(
         fixturesRoot,
         "rnaseq",
@@ -469,5 +470,50 @@ test.describe("File Browser single preview layout", () => {
 
         // Controls should be arranged horizontally within the folder controls container
         expect(controlsBBox.height).toBeLessThan(120);
+    });
+
+    test("renders subfolder preview controls in the folder-row control slot without the generic preview toggle", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const directoryRow = page.locator(
+            `[data-directory-row="${rnaseqRootPath}"]`,
+        );
+        const folderControls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqRootPath}"]`,
+        );
+        const subdirControls = page.locator(
+            `[data-subdir-preview-controls="${rnaseqRootPath}"]`,
+        );
+
+        await expect(directoryRow).toBeVisible();
+
+        if ((await folderControls.count()) === 0) {
+            const directoryButton = page.locator(
+                `[data-directory-path="${rnaseqRootPath}"]`,
+            );
+
+            await directoryButton.evaluate((element) => {
+                (element as HTMLButtonElement).click();
+            });
+        }
+
+        await expect(folderControls).toBeVisible();
+        await expect(subdirControls).toBeVisible();
+        await expect(
+            directoryRow.locator(
+                `[data-subdir-preview-controls="${rnaseqRootPath}"]`,
+            ),
+        ).toBeVisible();
+        await expect(
+            directoryRow.locator('input[aria-label="1 preview per row"]'),
+        ).toHaveCount(0);
+        await expect(
+            folderControls.locator(
+                `[data-subdir-preview-kind-disclosure="${rnaseqRootPath}"]`,
+            ),
+        ).toBeVisible();
+        await expect(subdirControls).not.toContainText("Preview file types");
     });
 });

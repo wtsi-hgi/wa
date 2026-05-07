@@ -213,6 +213,24 @@ function previewableFilesForKinds(
     });
 }
 
+function summarizeSubdirPreviewKinds(
+    kinds: ReadonlySet<SubdirPreviewKind>,
+): string {
+    const selectedGroups = subdirPreviewKindGroups.filter((group) =>
+        kinds.has(group.id),
+    );
+
+    if (selectedGroups.length === 0) {
+        return "No file types";
+    }
+
+    if (selectedGroups.length === 1) {
+        return selectedGroups[0]?.label ?? "1 file type";
+    }
+
+    return `${selectedGroups.length} file types`;
+}
+
 type FileBrowserProps = {
     files: FileEntry[];
     onPreviewHeightChange?: (value: number) => void;
@@ -827,7 +845,8 @@ export function FileBrowser({
 
     const renderSubdirPreviewControls = (directoryPath: string) => (
         <div
-            className="flex flex-wrap items-center gap-2 text-sm"
+            className="flex flex-wrap items-center justify-end gap-2 text-sm"
+            data-file-browser-folder-controls={directoryPath}
             data-subdir-preview-controls={directoryPath}
         >
             <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
@@ -849,42 +868,60 @@ export function FileBrowser({
                     Subfolder previews
                 </span>
             </label>
-            <fieldset
-                className="inline-flex flex-wrap items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-1.5 text-foreground"
-                data-subdir-preview-kinds={directoryPath}
+            <details
+                className="relative"
+                data-subdir-preview-kind-disclosure={directoryPath}
             >
-                <legend className="px-1 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    Preview file types
-                </legend>
-                {subdirPreviewKindGroups.map((group) => (
-                    <label
-                        key={group.id}
-                        className="inline-flex items-center gap-1 text-sm"
-                    >
-                        <input
-                            checked={subdirPreviewKinds.has(group.id)}
-                            className="size-3.5 accent-primary"
-                            data-subdir-preview-kind={group.id}
-                            onChange={(event) => {
-                                setSubdirPreviewKinds((current) => {
-                                    const next = new Set(current);
+                <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden">
+                    <ListFilter
+                        className="size-4 text-primary"
+                        aria-hidden="true"
+                    />
+                    <span className="font-medium">File types</span>
+                    <span className="text-xs text-muted-foreground">
+                        {summarizeSubdirPreviewKinds(subdirPreviewKinds)}
+                    </span>
+                    <ChevronDown className="size-4 text-muted-foreground" />
+                </summary>
+                <div
+                    className="absolute right-0 z-20 mt-2 min-w-52 rounded-[1.25rem] border border-border/70 bg-background/95 p-3 shadow-lg"
+                    data-subdir-preview-kinds={directoryPath}
+                >
+                    <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                        File types
+                    </div>
+                    <div className="space-y-2">
+                        {subdirPreviewKindGroups.map((group) => (
+                            <label
+                                key={group.id}
+                                className="flex items-center justify-between gap-3 text-sm"
+                            >
+                                <span>{group.label}</span>
+                                <input
+                                    checked={subdirPreviewKinds.has(group.id)}
+                                    className="size-3.5 accent-primary"
+                                    data-subdir-preview-kind={group.id}
+                                    onChange={(event) => {
+                                        setSubdirPreviewKinds((current) => {
+                                            const next = new Set(current);
 
-                                    if (event.target.checked) {
-                                        next.add(group.id);
-                                    } else {
-                                        next.delete(group.id);
-                                    }
+                                            if (event.target.checked) {
+                                                next.add(group.id);
+                                            } else {
+                                                next.delete(group.id);
+                                            }
 
-                                    return next;
-                                });
-                                setSubdirPreviewPage(1);
-                            }}
-                            type="checkbox"
-                        />
-                        <span>{group.label}</span>
-                    </label>
-                ))}
-            </fieldset>
+                                            return next;
+                                        });
+                                        setSubdirPreviewPage(1);
+                                    }}
+                                    type="checkbox"
+                                />
+                            </label>
+                        ))}
+                    </div>
+                </div>
+            </details>
             <PreviewHeightControl
                 ariaLabel="Subfolder preview height"
                 onCommit={setSubdirPreviewHeight}
@@ -979,8 +1016,12 @@ export function FileBrowser({
                 Boolean(renderGridPreview);
             const showSubdirGallery =
                 hasSubdirPreviewControls && subdirPreviewEnabled;
-            const hasPreviewControls =
-                hasFilePreviewControls || hasSubdirPreviewControls;
+            const folderControls = hasSubdirPreviewControls
+                ? renderSubdirPreviewControls(node.path)
+                : hasFilePreviewControls
+                  ? renderPreviewControls(node.path, "folder")
+                  : null;
+            const hasPreviewControls = Boolean(folderControls);
             const rows: ReactNode[] = [
                 <div
                     key={`dir-${node.path}`}
@@ -1093,22 +1134,9 @@ export function FileBrowser({
                                 : "Folder"}
                         </span>
                     </button>
-                    {hasPreviewControls
-                        ? renderPreviewControls(node.path, "folder")
-                        : null}
+                    {folderControls}
                 </div>,
             ];
-
-            if (hasSubdirPreviewControls) {
-                rows.push(
-                    <div
-                        key={`subdir-controls-${node.path}`}
-                        className="flex flex-wrap items-center gap-2 pl-3"
-                    >
-                        {renderSubdirPreviewControls(node.path)}
-                    </div>,
-                );
-            }
 
             if (showSubdirGallery) {
                 rows.push(
@@ -1180,7 +1208,9 @@ export function FileBrowser({
                                       </div>
                                   </div>
                               ))}
-                        {renderPreviewControls(node.path, "bottom")}
+                        {!hasSubdirPreviewControls
+                            ? renderPreviewControls(node.path, "bottom")
+                            : null}
                     </div>,
                 );
             }
