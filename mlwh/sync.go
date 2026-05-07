@@ -111,7 +111,7 @@ type SyncReport struct {
 func syncSampleTable(ctx context.Context, tx *sql.Tx, source Querier, dialect string, highWater time.Time) (SyncReport, bool, error) {
 	rows, err := source.QueryContext(
 		ctx,
-		`SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, id_study_lims, last_updated FROM sample WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_sample_tmp`,
+		`SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, `+sampleStudyLimsSubquery+`, last_updated FROM sample WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_sample_tmp`,
 		formatSyncTime(highWater),
 	)
 	if err != nil {

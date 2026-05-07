@@ -39,13 +39,12 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-const (
-	sampleUUIDQuery      = `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description FROM sample WHERE uuid_sample_lims = ? LIMIT 1`
-	sampleLimsIDQuery    = `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description FROM sample WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleNameQuery      = `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description FROM sample WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleSangerIDQuery  = `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description FROM sample WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleSupplierQuery  = `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description FROM sample WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleAccessionQuery = `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description FROM sample WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`
+var (
+	sampleUUIDQuery     = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE uuid_sample_lims = ? LIMIT 1`
+	sampleLimsIDQuery   = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
+	sampleNameQuery     = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`
+	sampleSangerIDQuery = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`
+	sampleSupplierQuery = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`
 )
 
 func TestResolveSampleUUIDMatch(t *testing.T) {
