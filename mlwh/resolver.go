@@ -37,7 +37,16 @@ import (
 
 const sampleNegativeCacheTTLSeconds = 15 * 60
 
-var sampleSelectColumns = `id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description`
+// sampleStudyLimsSubquery resolves a sample's study_lims_id via iseq_flowcell
+// because the upstream MLWH `sample` table has no `id_study_lims` column. The
+// link from sample to study lives on `iseq_flowcell` (and other product
+// tables); selecting one matching study via a correlated scalar subquery keeps
+// the upstream `FROM sample WHERE ...` shape unchanged while ensuring the
+// query is valid against real MLWH. COALESCE squashes a NULL (sample with no
+// flowcell entry, e.g. PacBio-only) to an empty string for safe Scan.
+const sampleStudyLimsSubquery = `COALESCE((SELECT iseq_flowcell.id_study_lims FROM iseq_flowcell WHERE iseq_flowcell.id_sample_tmp = sample.id_sample_tmp LIMIT 1), '') AS id_study_lims`
+
+var sampleSelectColumns = `id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, ` + sampleStudyLimsSubquery + `, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description`
 
 var sampleMirrorSelectColumns = `sample_mirror.id_sample_tmp, sample_mirror.id_lims, sample_mirror.id_sample_lims, sample_mirror.uuid_sample_lims, sample_mirror.id_study_lims, sample_mirror.name, sample_mirror.sanger_id, sample_mirror.sanger_sample_id, sample_mirror.supplier_name, sample_mirror.accession_number, sample_mirror.donor_id, sample_mirror.library_type, sample_mirror.taxon_id, sample_mirror.common_name, sample_mirror.description`
 
