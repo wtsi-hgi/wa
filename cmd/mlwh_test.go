@@ -28,10 +28,12 @@ package cmd
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
@@ -50,6 +52,44 @@ func TestMLWHSyncCommandRequiresDSN(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_DSN")
+	})
+}
+
+func TestMLWHCommandsHaveDescriptiveLongHelp(t *testing.T) {
+	convey.Convey("Every wa mlwh command and subcommand has a substantive Long help that documents required configuration", t, func() {
+		root := newMLWHCommand()
+
+		var visit func(*cobra.Command)
+		visit = func(c *cobra.Command) {
+			convey.Convey("command "+c.CommandPath(), func() {
+				convey.So(strings.TrimSpace(c.Long), convey.ShouldNotBeBlank)
+				convey.So(len(c.Long), convey.ShouldBeGreaterThan, 200)
+				convey.So(c.Long, convey.ShouldContainSubstring, "WA_MLWH_DSN")
+				convey.So(c.Long, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+				convey.So(c.Long, convey.ShouldContainSubstring, "--env")
+				convey.So(c.Long, convey.ShouldContainSubstring, "Example")
+			})
+
+			for _, child := range c.Commands() {
+				visit(child)
+			}
+		}
+
+		visit(root)
+	})
+}
+
+func TestMLWHSyncHelpRendersConfigurationDetails(t *testing.T) {
+	convey.Convey("wa mlwh sync --help renders documentation about env vars and an example", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "sync", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_DSN")
+		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_PASSWORD")
+		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PASSWORD")
+		convey.So(output, convey.ShouldContainSubstring, "--env")
+		convey.So(output, convey.ShouldContainSubstring, "wa mlwh sync")
 	})
 }
 
