@@ -296,13 +296,9 @@ func (c *Client) ResolveSample(ctx context.Context, raw string) (Match, error) {
 		return Match{}, ErrNotFound
 	}
 
-	sampleCacheWarm := false
-	if c != nil && c.cache != nil {
-		warm, warmErr := c.hasResolverSyncState(ctx, syncTableSample)
-		if warmErr != nil {
-			return Match{}, warmErr
-		}
-		sampleCacheWarm = warm
+	sampleCacheWarm, err := c.sampleResolverCacheWarm(ctx)
+	if err != nil {
+		return Match{}, err
 	}
 
 	if sampleCacheWarm {
@@ -484,11 +480,45 @@ func (c *Client) resolveStudyByNameWithWarmup(ctx context.Context, raw string, c
 }
 
 func (c *Client) resolveSampleByUUID(ctx context.Context, raw string) (*Sample, error) {
+	warm, err := c.sampleResolverCacheWarm(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if warm {
+		match, resolveErr := c.resolveSampleDirectFromCache(ctx, raw)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+
+		return match.Sample, nil
+	}
+
 	return c.resolveSampleFromUpstream(ctx, `SELECT `+sampleSelectColumns+` FROM sample WHERE uuid_sample_lims = ? LIMIT 1`, raw)
 }
 
 func (c *Client) resolveSampleByLimsID(ctx context.Context, raw string) (*Sample, error) {
+	warm, err := c.sampleResolverCacheWarm(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if warm {
+		match, resolveErr := c.resolveSampleDirectFromCache(ctx, raw)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+
+		return match.Sample, nil
+	}
+
 	return c.resolveSampleFromUpstream(ctx, `SELECT `+sampleSelectColumns+` FROM sample WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, raw)
+}
+
+func (c *Client) sampleResolverCacheWarm(ctx context.Context) (bool, error) {
+	if c == nil || c.cache == nil {
+		return false, nil
+	}
+
+	return c.hasResolverSyncState(ctx, syncTableSample)
 }
 
 func (c *Client) resolveSampleFromUpstream(ctx context.Context, query, raw string) (*Sample, error) {
