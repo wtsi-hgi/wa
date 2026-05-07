@@ -147,6 +147,7 @@ func TestResolveSampleWarmCacheUsesDonorCacheOnly(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(match.Kind, convey.ShouldEqual, KindDonorID)
 		convey.So(match.Canonical, convey.ShouldEqual, "canonical-sample-31")
+		sourceMock.ExpectClose()
 		convey.So(sourceDB.Close(), convey.ShouldBeNil)
 		convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
@@ -174,6 +175,7 @@ func TestResolveSampleWarmCacheUsesSampleMirrorForNameMatch(t *testing.T) {
 		convey.So(match.Canonical, convey.ShouldEqual, "7607STDY14643771")
 		convey.So(match.Sample, convey.ShouldNotBeNil)
 		convey.So(match.Sample.Name, convey.ShouldEqual, "7607STDY14643771")
+		sourceMock.ExpectClose()
 		convey.So(sourceDB.Close(), convey.ShouldBeNil)
 		convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
@@ -227,6 +229,23 @@ func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTLForMySQLCache(t
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT fetched_at, ttl_seconds FROM negative_cache WHERE raw = ? LIMIT 1`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows([]string{"fetched_at", "ttl_seconds"}))
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
+			WithArgs(syncTableSample).
+			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
+		// Warm-cache direct lookup: text input, so the resolver issues the
+		// four sample_mirror text-step queries before falling through to
+		// the donor_samples join below.
+		for _, query := range []string{
+			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`,
+			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`,
+			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`,
+			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`,
+		} {
+			roMock.ExpectQuery(regexp.QuoteMeta(query)).
+				WithArgs(raw).
+				WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+		}
+		// ensureResolverTableSynced re-checks sync_state before the donor join.
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
 			WithArgs(syncTableSample).
 			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
