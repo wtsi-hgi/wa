@@ -1001,4 +1001,251 @@ describe("N1 file browser", () => {
             ),
         ).toBe(true);
     });
+
+    it("hides the subfolder preview gallery controls when only one subdirectory contains graphical files", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-b/notes.txt", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-testid": `subdir-preview-${file.path}`,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeNull();
+    });
+
+    it("renders the subfolder preview gallery controls and horizontal previews when more than one subdirectory has graphical files", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-a/data.csv", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+            buildFile("/demo/sample-b/pic-2.png", "output"),
+            buildFile("/demo/sample-b/pic-3.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-testid": `subdir-preview-${file.path}`,
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const controls = container.querySelector(
+            '[data-subdir-preview-controls="/demo"]',
+        );
+
+        expect(controls).toBeTruthy();
+        expect(controls?.textContent).toContain("Subfolder previews");
+        expect(controls?.textContent).toContain("Preview file types");
+
+        // Default state: toggle disabled; no gallery rows rendered.
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-a"]',
+            ),
+        ).toBeNull();
+
+        const toggle = controls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        ) as HTMLInputElement | null;
+
+        expect(toggle).toBeTruthy();
+        expect(toggle?.checked).toBe(false);
+
+        // Default file-type selection is graphical only.
+        const imageCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="image"]',
+        ) as HTMLInputElement | null;
+        const tableCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="table"]',
+        ) as HTMLInputElement | null;
+
+        expect(imageCheckbox?.checked).toBe(true);
+        expect(tableCheckbox?.checked).toBe(false);
+
+        await click(toggle);
+
+        const rowA = container.querySelector(
+            '[data-subdir-preview-row="/demo/sample-a"]',
+        );
+        const rowB = container.querySelector(
+            '[data-subdir-preview-row="/demo/sample-b"]',
+        );
+
+        expect(rowA).toBeTruthy();
+        expect(rowB).toBeTruthy();
+
+        // Each row shows previews for graphical files only by default.
+        expect(
+            rowA?.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/img-1.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            rowA?.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/img-2.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            rowA?.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/data.csv"]',
+            ),
+        ).toBeNull();
+        expect(
+            rowB?.querySelector(
+                '[data-subdir-preview-file="/demo/sample-b/pic-1.png"]',
+            ),
+        ).toBeTruthy();
+
+        // Previews are laid out horizontally on each row.
+        const galleryStripA = rowA?.querySelector(
+            '[data-subdir-preview-strip="/demo/sample-a"]',
+        );
+
+        expect(galleryStripA).toBeTruthy();
+        expect(galleryStripA?.className).toMatch(/(?:^|\s)flex/);
+
+        // Opting into tables surfaces csv previews on the row.
+        await click(tableCheckbox);
+
+        expect(
+            rowA?.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/data.csv"]',
+            ),
+        ).toBeTruthy();
+    });
+
+    it("paginates and resizes subfolder preview gallery rows", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const subdirs = [
+            "sample-a",
+            "sample-b",
+            "sample-c",
+            "sample-d",
+            "sample-e",
+        ];
+        const files = subdirs.flatMap((name, index) =>
+            [1, 2].map((n) =>
+                buildFile(`/demo/${name}/img-${index}-${n}.png`, "output"),
+            ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const toggle = container.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        );
+
+        await click(toggle);
+
+        const visibleRows = () =>
+            Array.from(
+                container.querySelectorAll("[data-subdir-preview-row]"),
+            ).map((row) => row.getAttribute("data-subdir-preview-row"));
+
+        // 5 subdirs, default page size of 4 → page 1 shows 4, page 2 shows 1.
+        expect(visibleRows()).toHaveLength(4);
+        expect(visibleRows()).toContain("/demo/sample-a");
+        expect(visibleRows()).not.toContain("/demo/sample-e");
+
+        const pageSelect = container.querySelector(
+            'select[aria-label="Subfolder preview page"]',
+        ) as HTMLSelectElement | null;
+
+        expect(pageSelect).toBeTruthy();
+
+        await act(async () => {
+            if (!pageSelect) {
+                throw new Error("missing page select");
+            }
+            pageSelect.value = "2";
+            pageSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+
+        expect(visibleRows()).toEqual(["/demo/sample-e"]);
+
+        const heightSlider = container.querySelector(
+            'input[aria-label="Subfolder preview height"]',
+        ) as HTMLInputElement | null;
+
+        expect(heightSlider).toBeTruthy();
+
+        await act(async () => {
+            if (!heightSlider) {
+                throw new Error("missing height slider");
+            }
+            heightSlider.value = "260";
+            heightSlider.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+
+        await act(async () => {
+            heightSlider?.dispatchEvent(
+                new MouseEvent("mouseup", { bubbles: true }),
+            );
+        });
+
+        const strip = container.querySelector(
+            '[data-subdir-preview-strip="/demo/sample-e"]',
+        ) as HTMLElement | null;
+
+        expect(strip).toBeTruthy();
+        expect(strip?.style.getPropertyValue("--subdir-preview-height")).toBe(
+            "260px",
+        );
+    });
 });

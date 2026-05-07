@@ -139,4 +139,78 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 		convey.So(hasSampleOnlyFixture, convey.ShouldBeTrue)
 		convey.So(hasLibraryOnlyFixture, convey.ShouldBeTrue)
 	})
+
+	convey.Convey("seed.json includes a galleries-demo fixture with multiple sibling subdirectories of graphical files on disk", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		seedPath := filepath.Join(repoRoot, ".docs", "results-web", "fixtures", "seed.json")
+
+		raw, err := os.ReadFile(seedPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		var fixtures []map[string]any
+
+		convey.So(json.Unmarshal(raw, &fixtures), convey.ShouldBeNil)
+
+		var demo map[string]any
+
+		for _, fixture := range fixtures {
+			outputDirectory, _ := fixture["output_directory"].(string)
+			if strings.HasSuffix(outputDirectory, "galleries-demo") {
+				demo = fixture
+				break
+			}
+		}
+
+		convey.So(demo, convey.ShouldNotBeNil)
+
+		outputDirectory := demo["output_directory"].(string)
+		files := demo["files"].([]any)
+		convey.So(len(files), convey.ShouldBeGreaterThanOrEqualTo, 6)
+
+		subdirs := make(map[string]int)
+		graphicalSubdirs := make(map[string]int)
+
+		for _, rawFile := range files {
+			file := rawFile.(map[string]any)
+			relativePath, _ := file["path"].(string)
+			absolutePath := filepath.Join(repoRoot, outputDirectory, relativePath)
+
+			info, statErr := os.Stat(absolutePath)
+			convey.So(statErr, convey.ShouldBeNil)
+			convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
+
+			parts := strings.SplitN(relativePath, "/", 2)
+			convey.So(len(parts), convey.ShouldEqual, 2)
+
+			subdir := parts[0]
+			subdirs[subdir]++
+
+			lower := strings.ToLower(relativePath)
+			if strings.HasSuffix(lower, ".svg") || strings.HasSuffix(lower, ".png") ||
+				strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||
+				strings.HasSuffix(lower, ".gif") || strings.HasSuffix(lower, ".webp") {
+				graphicalSubdirs[subdir]++
+			}
+		}
+
+		convey.So(len(subdirs), convey.ShouldBeGreaterThanOrEqualTo, 3)
+
+		subdirsWithGraphics := 0
+
+		for _, count := range graphicalSubdirs {
+			if count > 0 {
+				subdirsWithGraphics++
+			}
+		}
+
+		convey.So(subdirsWithGraphics, convey.ShouldBeGreaterThanOrEqualTo, 2)
+
+		// Each graphical subdirectory has multiple distinct files so the
+		// horizontal subfolder preview gallery has visible variety on every row.
+		for _, count := range graphicalSubdirs {
+			if count > 0 {
+				convey.So(count, convey.ShouldBeGreaterThanOrEqualTo, 2)
+			}
+		}
+	})
 }

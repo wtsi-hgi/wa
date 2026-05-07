@@ -2,6 +2,7 @@
 
 import {
     cloneElement,
+    type CSSProperties,
     memo,
     type ReactNode,
     useEffect,
@@ -50,6 +51,152 @@ const fileKindOrder: Record<FileEntry["kind"], number> = {
     pipeline: 2,
 };
 
+export type SubdirPreviewKind = "image" | "table" | "markdown" | "code";
+
+const subdirPreviewKindGroups: ReadonlyArray<{
+    extensions: ReadonlyArray<string>;
+    id: SubdirPreviewKind;
+    label: string;
+}> = [
+    {
+        extensions: [
+            "avif",
+            "bmp",
+            "gif",
+            "jpeg",
+            "jpg",
+            "png",
+            "svg",
+            "tif",
+            "tiff",
+            "webp",
+        ],
+        id: "image",
+        label: "Images",
+    },
+    {
+        extensions: ["csv", "tsv"],
+        id: "table",
+        label: "Tables",
+    },
+    {
+        extensions: ["markdown", "md"],
+        id: "markdown",
+        label: "Markdown",
+    },
+    {
+        extensions: ["htm", "html", "json", "log", "py", "txt", "yaml", "yml"],
+        id: "code",
+        label: "Text & code",
+    },
+];
+
+const SUBDIR_PREVIEW_PAGE_SIZE = 4;
+const SUBDIR_PREVIEW_DEFAULT_HEIGHT = 200;
+const compressedExtensions = new Set(["gz"]);
+
+function effectiveExtension(path: string): string {
+    const name = path.split("/").pop() ?? path;
+    const parts = name
+        .split(".")
+        .slice(1)
+        .map((part) => part.toLowerCase())
+        .filter((part) => part.length > 0);
+
+    if (parts.length === 0) {
+        return "";
+    }
+
+    const last = parts.at(-1) ?? "";
+
+    if (compressedExtensions.has(last) && parts.length > 1) {
+        return parts.at(-2) ?? last;
+    }
+
+    return last;
+}
+
+function previewKindForPath(path: string): SubdirPreviewKind | null {
+    const extension = effectiveExtension(path);
+
+    for (const group of subdirPreviewKindGroups) {
+        if (group.extensions.includes(extension)) {
+            return group.id;
+        }
+    }
+
+    return null;
+}
+
+function collectSubtreeFiles(node: DirectoryTreeNode): FileEntry[] {
+    return [
+        ...node.files,
+        ...node.children.flatMap((child) => collectSubtreeFiles(child)),
+    ];
+}
+
+function findTreeNodeByPath(
+    nodes: DirectoryTreeNode[],
+    path: string,
+): DirectoryTreeNode | undefined {
+    for (const node of nodes) {
+        if (node.path === path) {
+            return node;
+        }
+
+        const ancestorMatch = pathMatchesNodeChain(node, path);
+
+        if (ancestorMatch) {
+            return ancestorMatch;
+        }
+    }
+
+    return undefined;
+}
+
+function pathMatchesNodeChain(
+    node: DirectoryTreeNode,
+    path: string,
+): DirectoryTreeNode | undefined {
+    if (path === node.path) {
+        return node;
+    }
+
+    if (!path.startsWith(`${node.path}/`) && node.path !== "/") {
+        return undefined;
+    }
+
+    return findTreeNodeByPath(node.children, path);
+}
+
+function qualifyingSubdirsFor(
+    node: DirectoryTreeNode | undefined,
+    kinds: ReadonlySet<SubdirPreviewKind>,
+): DirectoryTreeNode[] {
+    if (!node || kinds.size === 0) {
+        return [];
+    }
+
+    return node.children.filter((child) =>
+        collectSubtreeFiles(child).some((file) => {
+            const kind = previewKindForPath(file.path);
+
+            return kind !== null && kinds.has(kind);
+        }),
+    );
+}
+
+function previewableFilesForKinds(
+    node: DirectoryTreeNode,
+    kinds: ReadonlySet<SubdirPreviewKind>,
+): FileEntry[] {
+    return collectSubtreeFiles(node).filter((file) => {
+        const kind = previewKindForPath(file.path);
+
+        return kind !== null && kinds.has(kind);
+    });
+}
+
 type FileBrowserProps = {
     files: FileEntry[];
     onPreviewHeightChange?: (value: number) => void;
@@ -88,9 +235,13 @@ const previewHeightCommitKeys = new Set([
 ]);
 
 const PreviewHeightControl = memo(function PreviewHeightControl({
+    ariaLabel = "Preview height",
+    label = "Preview height",
     onCommit,
     value,
 }: {
+    ariaLabel?: string;
+    label?: string;
     onCommit?: (value: number) => void;
     value: number;
 }) {
@@ -110,10 +261,10 @@ const PreviewHeightControl = memo(function PreviewHeightControl({
         <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
             <span className="inline-flex items-center gap-2 text-sm font-medium">
                 <Eye className="size-4 text-primary" aria-hidden="true" />
-                <span className="whitespace-nowrap">Preview height</span>
+                <span className="whitespace-nowrap">{label}</span>
             </span>
             <input
-                aria-label="Preview height"
+                aria-label={ariaLabel}
                 className="h-1 w-24 accent-primary"
                 max={420}
                 min={120}
@@ -432,6 +583,41 @@ export function FileBrowser({
         activeFiles[0];
     const effectiveSelectedPath = activeFile?.path;
     const displayedFiles = visibleFiles ?? activeFiles;
+    const [subdirPreviewEnabled, setSubdirPreviewEnabled] = useState(false);
+    const [subdirPreviewKinds, setSubdirPreviewKinds] = useState<
+        Set<SubdirPreviewKind>
+    >(() => new Set<SubdirPreviewKind>(["image"]));
+    const [subdirPreviewHeight, setSubdirPreviewHeight] = useState(
+        SUBDIR_PREVIEW_DEFAULT_HEIGHT,
+    );
+    const [subdirPreviewPage, setSubdirPreviewPage] = useState(1);
+    const activeTreeNode = useMemo(
+        () =>
+            effectiveSelectedDirectory
+                ? findTreeNodeByPath(directoryTree, effectiveSelectedDirectory)
+                : undefined,
+        [directoryTree, effectiveSelectedDirectory],
+    );
+    const qualifyingSubdirs = useMemo(
+        () => qualifyingSubdirsFor(activeTreeNode, subdirPreviewKinds),
+        [activeTreeNode, subdirPreviewKinds],
+    );
+    const subdirPreviewAvailable = qualifyingSubdirs.length > 1;
+    const subdirPreviewPageCount = Math.max(
+        1,
+        Math.ceil(qualifyingSubdirs.length / SUBDIR_PREVIEW_PAGE_SIZE),
+    );
+    const safeSubdirPreviewPage = Math.min(
+        subdirPreviewPage,
+        subdirPreviewPageCount,
+    );
+    const visibleSubdirs = subdirPreviewAvailable
+        ? qualifyingSubdirs.slice(
+              (safeSubdirPreviewPage - 1) * SUBDIR_PREVIEW_PAGE_SIZE,
+              safeSubdirPreviewPage * SUBDIR_PREVIEW_PAGE_SIZE,
+          )
+        : [];
+
     const visibleExpandedDirectories = useMemo(() => {
         const next = new Set(expandedDirectories);
 
@@ -616,6 +802,139 @@ export function FileBrowser({
         </div>
     );
 
+    const renderSubdirPreviewControls = (directoryPath: string) => (
+        <div
+            className="flex flex-wrap items-center gap-2 text-sm"
+            data-subdir-preview-controls={directoryPath}
+        >
+            <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
+                <input
+                    aria-label="Subfolder previews"
+                    checked={subdirPreviewEnabled}
+                    className="size-4 accent-primary"
+                    onChange={(event) => {
+                        setSubdirPreviewEnabled(event.target.checked);
+                        setSubdirPreviewPage(1);
+                    }}
+                    type="checkbox"
+                />
+                <span className="inline-flex items-center gap-2">
+                    <FolderTree
+                        className="size-4 text-primary"
+                        aria-hidden="true"
+                    />
+                    Subfolder previews
+                </span>
+            </label>
+            <fieldset
+                className="inline-flex flex-wrap items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-1.5 text-foreground"
+                data-subdir-preview-kinds={directoryPath}
+            >
+                <legend className="px-1 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                    Preview file types
+                </legend>
+                {subdirPreviewKindGroups.map((group) => (
+                    <label
+                        key={group.id}
+                        className="inline-flex items-center gap-1 text-sm"
+                    >
+                        <input
+                            checked={subdirPreviewKinds.has(group.id)}
+                            className="size-3.5 accent-primary"
+                            data-subdir-preview-kind={group.id}
+                            onChange={(event) => {
+                                setSubdirPreviewKinds((current) => {
+                                    const next = new Set(current);
+
+                                    if (event.target.checked) {
+                                        next.add(group.id);
+                                    } else {
+                                        next.delete(group.id);
+                                    }
+
+                                    return next;
+                                });
+                                setSubdirPreviewPage(1);
+                            }}
+                            type="checkbox"
+                        />
+                        <span>{group.label}</span>
+                    </label>
+                ))}
+            </fieldset>
+            <PreviewHeightControl
+                ariaLabel="Subfolder preview height"
+                onCommit={setSubdirPreviewHeight}
+                value={subdirPreviewHeight}
+            />
+            <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                <ListFilter
+                    className="size-4 text-primary"
+                    aria-hidden="true"
+                />
+                <span>
+                    Page {safeSubdirPreviewPage} of {subdirPreviewPageCount}
+                </span>
+            </div>
+            {subdirPreviewPageCount > 1 ? (
+                <PreviewPagination
+                    nextLabel="Next subfolder page"
+                    onPageChange={(page) => setSubdirPreviewPage(page)}
+                    page={safeSubdirPreviewPage}
+                    pageCount={subdirPreviewPageCount}
+                    previousLabel="Previous subfolder page"
+                    selectLabel="Subfolder preview page"
+                />
+            ) : null}
+        </div>
+    );
+
+    const renderSubdirGalleryRow = (subdir: DirectoryTreeNode): ReactNode => {
+        const previewableFiles = previewableFilesForKinds(
+            subdir,
+            subdirPreviewKinds,
+        );
+
+        return (
+            <div
+                key={`subdir-gallery-${subdir.path}`}
+                className="grid w-full items-start gap-3 rounded-[1.25rem] border border-border/60 bg-background/60 p-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(0,3fr)]"
+                data-subdir-preview-row={subdir.path}
+            >
+                <div className="min-w-0">
+                    <p className="truncate text-base font-medium text-foreground">
+                        {subdir.label || directoryLabel(subdir.path)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        {previewableFiles.length} preview
+                        {previewableFiles.length === 1 ? "" : "s"}
+                    </p>
+                </div>
+                <div
+                    className="flex min-w-0 gap-3 overflow-x-auto"
+                    data-subdir-preview-strip={subdir.path}
+                    style={
+                        {
+                            "--subdir-preview-height": `${subdirPreviewHeight}px`,
+                        } as CSSProperties
+                    }
+                >
+                    {previewableFiles.map((file) => (
+                        <div
+                            key={file.path}
+                            className="shrink-0"
+                            style={{
+                                height: `var(--subdir-preview-height)`,
+                            }}
+                        >
+                            {renderGridPreview?.(file) ?? null}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    };
+
     function renderDirectoryRows(
         nodes: DirectoryTreeNode[],
         depth = 0,
@@ -625,11 +944,20 @@ export function FileBrowser({
             const isSelected = node.path === effectiveSelectedDirectory;
             const hasChildren = node.children.length > 0;
             const hasFiles = node.descendantFileCount > 0;
-            const hasPreviewControls =
+            const hasFilePreviewControls =
                 isExpanded &&
                 isSelected &&
                 displayedFiles.length > 0 &&
                 Boolean(renderGridPreview || renderSinglePreview);
+            const hasSubdirPreviewControls =
+                isExpanded &&
+                isSelected &&
+                subdirPreviewAvailable &&
+                Boolean(renderGridPreview);
+            const showSubdirGallery =
+                hasSubdirPreviewControls && subdirPreviewEnabled;
+            const hasPreviewControls =
+                hasFilePreviewControls || hasSubdirPreviewControls;
             const rows: ReactNode[] = [
                 <div
                     key={`dir-${node.path}`}
@@ -748,6 +1076,31 @@ export function FileBrowser({
                 </div>,
             ];
 
+            if (hasSubdirPreviewControls) {
+                rows.push(
+                    <div
+                        key={`subdir-controls-${node.path}`}
+                        className="flex flex-wrap items-center gap-2 pl-3"
+                    >
+                        {renderSubdirPreviewControls(node.path)}
+                    </div>,
+                );
+            }
+
+            if (showSubdirGallery) {
+                rows.push(
+                    <div
+                        key={`subdir-gallery-${node.path}`}
+                        className="space-y-3"
+                        data-subdir-preview-gallery={node.path}
+                    >
+                        {visibleSubdirs.map((subdir) =>
+                            renderSubdirGalleryRow(subdir),
+                        )}
+                    </div>,
+                );
+            }
+
             if (
                 isExpanded &&
                 node.path === effectiveSelectedDirectory &&
@@ -809,7 +1162,7 @@ export function FileBrowser({
                 );
             }
 
-            if (isExpanded && hasChildren) {
+            if (isExpanded && hasChildren && !showSubdirGallery) {
                 rows.push(...renderDirectoryRows(node.children, depth + 1));
             }
 

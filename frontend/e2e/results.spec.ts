@@ -31,7 +31,7 @@ async function openResultDetail(
 ): Promise<void> {
     await page.goto("/");
     await expect(page.getByText("Recent registrations")).toBeVisible();
-    await expect(recentRows(page)).toHaveCount(3);
+    await expect(recentRows(page)).toHaveCount(4);
 
     const resultLink = page.getByRole("link", { name: pipelineName }).first();
     const href = await resultLink.getAttribute("href");
@@ -246,7 +246,7 @@ test.describe("Q1 critical results flows", () => {
         await expect(page.locator('[data-stat-card="total"]')).toHaveCount(0);
 
         const rows = recentRows(page);
-        await expect(rows).toHaveCount(3);
+        await expect(rows).toHaveCount(4);
     });
 
     test("filters results by requester through the search builder", async ({
@@ -271,7 +271,7 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await page.goto("/");
         await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(3);
+        await expect(recentRows(page)).toHaveCount(4);
 
         const recentResultLink = page
             .getByRole("link", { name: rnaseqPipelineName })
@@ -294,7 +294,7 @@ test.describe("Q1 critical results flows", () => {
 
         await expect(page).toHaveURL(/\/$/);
         await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(3);
+        await expect(recentRows(page)).toHaveCount(4);
 
         await addRequesterFilter(page, "alice");
         await expect(page).toHaveURL(/\?user=alice/);
@@ -730,7 +730,7 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await page.goto("/");
         await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(3);
+        await expect(recentRows(page)).toHaveCount(4);
 
         const ampliconLink = page
             .getByRole("link", { name: ampliconPipelineName })

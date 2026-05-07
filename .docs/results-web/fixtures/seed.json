@@ -1015,5 +1015,81 @@
             "panel": "haem",
             "request_group": "validation"
         }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/nf-galleries-demo",
+        "run_key": "runid=88204&unique=galleries_demo",
+        "requester": "grace",
+        "operator": "heidi",
+        "command": "nextflow run nf-galleries-demo --input inputs/samples.csv",
+        "pipeline_name": "wtsi/galleries-demo",
+        "pipeline_version": "0.4.2",
+        "output_directory": ".docs/results-web/fixtures/files/galleries-demo",
+        "files": [
+            {
+                "path": "sample-a/blue-plot.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/red-plot.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/green-plot.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/summary.csv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-b/orange-heatmap.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-b/purple-heatmap.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-b/teal-heatmap.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-c/yellow-bars.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-c/pink-bars.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-c/cyan-bars.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "seqmeta_studyid": "6568",
+            "panel": "subdir-preview-demo"
+        }
     }
 ]

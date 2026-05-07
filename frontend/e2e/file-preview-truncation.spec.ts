@@ -14,7 +14,7 @@ async function openResultFileBrowser(page: test.Page) {
     await page.goto("/");
     await expect(page.getByText("Recent registrations")).toBeVisible();
     await expect(page.locator('tbody tr[data-result-row="true"]')).toHaveCount(
-        3,
+        4,
     );
 
     const resultLink = page

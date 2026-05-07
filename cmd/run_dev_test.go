@@ -56,7 +56,7 @@ type runDevEnvSnapshot struct {
 }
 
 func TestRunDevScript(t *testing.T) {
-	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds three fixtures, skips seqmeta without a token, and cleans up on SIGINT", t, func() {
+	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds four fixtures, skips seqmeta without a token, and cleans up on SIGINT", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -82,7 +82,7 @@ func TestRunDevScript(t *testing.T) {
 		fixtureSummary := summarizeRunDevFixturesForTest(t, repoRoot, resultsPort, resultsList)
 
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
-		convey.So(resultsList, convey.ShouldHaveLength, 3)
+		convey.So(resultsList, convey.ShouldHaveLength, 4)
 		convey.So(fixtureSummary.nestedDirectoryCount, convey.ShouldBeGreaterThanOrEqualTo, 3)
 		convey.So(fixtureSummary.hasSiblingDirectories, convey.ShouldBeTrue)
 		convey.So(fixtureSummary.hasRepeatedFileTypes, convey.ShouldBeTrue)
@@ -1115,7 +1115,7 @@ func waitForSeededResultsForTest(t *testing.T, resultsPort int) []results.Result
 				}
 			}()
 
-			if len(stored) == 3 {
+			if len(stored) == 4 {
 				resultsCopy := make([]results.ResultSet, len(stored))
 				copy(resultsCopy, stored)
 

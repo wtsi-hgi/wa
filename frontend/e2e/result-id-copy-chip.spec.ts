@@ -8,7 +8,7 @@ test.describe("bug 2 result ID copy chip", () => {
         await expect(page.getByText("Recent registrations")).toBeVisible();
         await expect(
             page.locator('tbody tr[data-result-row="true"]'),
-        ).toHaveCount(3);
+        ).toHaveCount(4);
 
         const resultLink = page
             .getByRole("link", { name: "nf-core/rnaseq" })
