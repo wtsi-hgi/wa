@@ -94,6 +94,7 @@ const subdirPreviewKindGroups: ReadonlyArray<{
 const SUBDIR_PREVIEW_PAGE_SIZE = 4;
 const SUBDIR_PREVIEW_DEFAULT_HEIGHT = 200;
 const compressedExtensions = new Set(["gz"]);
+const defaultSubdirPreviewKinds = new Set<SubdirPreviewKind>(["image"]);
 
 function effectiveExtension(path: string): string {
     const name = path.split("/").pop() ?? path;
@@ -126,6 +127,21 @@ function previewKindForPath(path: string): SubdirPreviewKind | null {
     }
 
     return null;
+}
+
+export function findInitialSubdirPreviewDirectory(
+    files: FileEntry[],
+): string | undefined {
+    const firstTreeNode = buildDirectoryTree(files)[0];
+
+    if (!firstTreeNode) {
+        return undefined;
+    }
+
+    return qualifyingSubdirsFor(firstTreeNode, defaultSubdirPreviewKinds)
+        .length > 1
+        ? firstTreeNode.path
+        : undefined;
 }
 
 function collectSubtreeFiles(node: DirectoryTreeNode): FileEntry[] {
@@ -570,8 +586,15 @@ export function FileBrowser({
     );
     const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
     const directoryTree = useMemo(() => buildDirectoryTree(files), [files]);
+    const initialSubdirPreviewDirectory = useMemo(
+        () => findInitialSubdirPreviewDirectory(files),
+        [files],
+    );
     const preferredDirectory =
-        selectedDirectory ?? uncontrolledDirectory ?? directoryGroups[0]?.path;
+        selectedDirectory ??
+        uncontrolledDirectory ??
+        initialSubdirPreviewDirectory ??
+        directoryGroups[0]?.path;
     const activeDirectory = directoryGroups.find(
         (group) => group.path === preferredDirectory,
     );

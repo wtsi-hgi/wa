@@ -1035,6 +1035,41 @@ describe("N1 file browser", () => {
         ).toBeNull();
     });
 
+    it("shows subfolder preview controls on initial load when the first tree row is the eligible parent folder", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const onSelectDirectory = vi.fn();
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+            buildFile("/demo/sample-b/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory,
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        expect(onSelectDirectory).toHaveBeenCalledWith("/demo");
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+    });
+
     it("renders the subfolder preview gallery controls and horizontal previews when more than one subdirectory has graphical files", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [

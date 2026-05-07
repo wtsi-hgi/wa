@@ -16,6 +16,18 @@ const fetchMock = vi.fn<typeof fetch>();
 const { filePreviewRenderCounts } = vi.hoisted(() => ({
     filePreviewRenderCounts: new Map<string, number>(),
 }));
+const imageExtensions = new Set([
+    "avif",
+    "bmp",
+    "gif",
+    "jpeg",
+    "jpg",
+    "png",
+    "svg",
+    "tif",
+    "tiff",
+    "webp",
+]);
 
 vi.stubGlobal("fetch", fetchMock);
 
@@ -42,6 +54,38 @@ vi.mock("@/components/file-browser", () => ({
             ),
             typeCounts: {},
         }));
+    },
+    findInitialSubdirPreviewDirectory: (files: FileEntry[]) => {
+        const firstPath = files[0]?.path;
+
+        if (!firstPath) {
+            return undefined;
+        }
+
+        const firstDirectory =
+            firstPath.split("/").slice(0, -1).join("/") || "/";
+        const parentDirectory =
+            firstDirectory.split("/").slice(0, -1).join("/") || "/";
+        const siblingDirectories = new Set(
+            files
+                .filter((file) => {
+                    const extension =
+                        file.path.split(".").pop()?.toLowerCase() ?? "";
+
+                    return imageExtensions.has(extension);
+                })
+                .map(
+                    (file) =>
+                        file.path.split("/").slice(0, -1).join("/") || "/",
+                )
+                .filter(
+                    (directoryPath) =>
+                        directoryPath.startsWith(`${parentDirectory}/`) ||
+                        directoryPath === firstDirectory,
+                ),
+        );
+
+        return siblingDirectories.size > 1 ? parentDirectory : undefined;
     },
     FileBrowser: ({
         files,
@@ -250,6 +294,28 @@ afterEach(() => {
 });
 
 describe("O1 result detail file integration", () => {
+    it("initializes the controlled file browser selection to the eligible parent directory", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [
+                    buildFile("/tmp/results/sample-a/first.png"),
+                    buildFile("/tmp/results/sample-b/second.png"),
+                ],
+                resultId: "result-1",
+            }),
+        );
+
+        expect(screen.getByText("File Browser")).toBeTruthy();
+        expect(
+            screen
+                .getByText("File Browser")
+                .parentElement?.getAttribute("data-selected-directory"),
+        ).toBe("/tmp/results");
+    });
+
     it("removes the old file focus aside and defaults to the first file in the selected directory", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
@@ -259,7 +325,7 @@ describe("O1 result detail file integration", () => {
                 files: [
                     buildFile("/tmp/results/a/first.png"),
                     buildFile("/tmp/results/a/second.txt"),
-                    buildFile("/tmp/results/b/third.png"),
+                    buildFile("/tmp/results/b/third.txt"),
                 ],
                 resultId: "result-1",
             }),

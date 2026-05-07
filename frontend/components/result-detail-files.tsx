@@ -5,6 +5,7 @@ import { memo, useEffect, useMemo, useState } from "react";
 import {
     buildDirectoryGroups,
     FileBrowser,
+    findInitialSubdirPreviewDirectory,
     type PreviewMode,
 } from "@/components/file-browser";
 import {
@@ -326,17 +327,30 @@ function areGalleryPreviewRowPropsEqual(
 
 export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
     const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
+    const initialSelectedDirectory = useMemo(
+        () =>
+            findInitialSubdirPreviewDirectory(files) ??
+            directoryGroups[0]?.path,
+        [directoryGroups, files],
+    );
+    const initialSelectedFile = useMemo(
+        () =>
+            directoryGroups.find(
+                (group) => group.path === initialSelectedDirectory,
+            )?.files[0] ?? null,
+        [directoryGroups, initialSelectedDirectory],
+    );
     const [previewMode, setPreviewMode] = useState<PreviewMode>("single");
     const [previewHeight, setPreviewHeight] = useState(defaultPreviewHeight);
     const [selectedDirectory, setSelectedDirectory] = useState<
         string | undefined
-    >(directoryGroups[0]?.path);
+    >(initialSelectedDirectory);
     const [selectedFile, setSelectedFile] = useState<FileEntry | null>(
-        directoryGroups[0]?.files[0] ?? null,
+        initialSelectedFile,
     );
     const [previewPage, setPreviewPage] = useState(1);
     const [previewState, setPreviewState] = useState<PreviewState>(() =>
-        buildPreviewState(directoryGroups[0]?.files[0] ?? null),
+        buildPreviewState(initialSelectedFile),
     );
     const [enlargedState, setEnlargedState] = useState<EnlargedPreviewState>({
         content: undefined,
@@ -345,7 +359,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         path: null,
     });
     const effectiveSelectedDirectory =
-        selectedDirectory ?? directoryGroups[0]?.path;
+        selectedDirectory ?? initialSelectedDirectory;
 
     const selectedGroup = useMemo(
         () =>
