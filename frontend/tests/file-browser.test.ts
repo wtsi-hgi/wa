@@ -1002,12 +1002,12 @@ describe("N1 file browser", () => {
         ).toBe(true);
     });
 
-    it("hides the subfolder preview gallery controls when only one subdirectory contains graphical files", async () => {
+    it("hides the subfolder preview gallery controls when only one subdirectory contains previewable files", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/demo/sample-a/img-1.png", "output"),
             buildFile("/demo/sample-a/img-2.png", "output"),
-            buildFile("/demo/sample-b/notes.txt", "output"),
+            buildFile("/demo/sample-b/archive.bin", "output"),
         ];
 
         await act(async () => {
@@ -1315,7 +1315,6 @@ describe("N1 file browser", () => {
                 container.querySelectorAll("[data-subdir-preview-row]"),
             ).map((row) => row.getAttribute("data-subdir-preview-row"));
 
-        // 5 subdirs, default page size of 4 → page 1 shows 4, page 2 shows 1.
         expect(visibleRows()).toHaveLength(4);
         expect(visibleRows()).toContain("/demo/sample-a");
         expect(visibleRows()).not.toContain("/demo/sample-e");
@@ -1364,5 +1363,101 @@ describe("N1 file browser", () => {
         expect(strip?.style.getPropertyValue("--subdir-preview-height")).toBe(
             "260px",
         );
+    });
+
+    it("keeps subfolder preview controls visible when selected file types narrow the gallery to one subdirectory", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/data.csv", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const controls = container.querySelector(
+            '[data-subdir-preview-controls="/demo"]',
+        );
+        const toggle = controls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        ) as HTMLInputElement | null;
+        const imageCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="image"]',
+        ) as HTMLInputElement | null;
+        const tableCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="table"]',
+        ) as HTMLInputElement | null;
+
+        expect(controls).toBeTruthy();
+        expect(toggle).toBeTruthy();
+        expect(imageCheckbox?.checked).toBe(true);
+        expect(tableCheckbox?.checked).toBe(false);
+
+        await click(toggle);
+        await click(tableCheckbox);
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-a"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-b"]',
+            ),
+        ).toBeTruthy();
+
+        await click(imageCheckbox);
+
+        const remainingControls = container.querySelector(
+            '[data-subdir-preview-controls="/demo"]',
+        );
+        const remainingToggle = remainingControls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        ) as HTMLInputElement | null;
+
+        expect(remainingControls).toBeTruthy();
+        expect(remainingToggle?.checked).toBe(true);
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-a"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-b"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/data.csv"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/img-1.png"]',
+            ),
+        ).toBeNull();
     });
 });

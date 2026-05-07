@@ -94,6 +94,9 @@ const subdirPreviewKindGroups: ReadonlyArray<{
 const SUBDIR_PREVIEW_PAGE_SIZE = 4;
 const SUBDIR_PREVIEW_DEFAULT_HEIGHT = 200;
 const compressedExtensions = new Set(["gz"]);
+const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(
+    subdirPreviewKindGroups.map((group) => group.id),
+);
 const defaultSubdirPreviewKinds = new Set<SubdirPreviewKind>(["image"]);
 
 function effectiveExtension(path: string): string {
@@ -639,11 +642,15 @@ export function FileBrowser({
                 : undefined,
         [directoryTree, effectiveSelectedDirectory],
     );
+    const eligibleSubdirs = useMemo(
+        () => qualifyingSubdirsFor(activeTreeNode, allSubdirPreviewKinds),
+        [activeTreeNode],
+    );
     const qualifyingSubdirs = useMemo(
         () => qualifyingSubdirsFor(activeTreeNode, subdirPreviewKinds),
         [activeTreeNode, subdirPreviewKinds],
     );
-    const subdirPreviewAvailable = qualifyingSubdirs.length > 1;
+    const subdirPreviewAvailable = eligibleSubdirs.length > 1;
     const subdirPreviewPageCount = Math.max(
         1,
         Math.ceil(qualifyingSubdirs.length / SUBDIR_PREVIEW_PAGE_SIZE),
