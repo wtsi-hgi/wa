@@ -66,18 +66,18 @@ launcher refuses `make dev` without MLWH configured.
 
 ## Make targets
 
-| Target                | Env files loaded                                                   | Purpose                                                                                                                                                                                            |
-| --------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `make dev`            | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Bring up the development stack with a persistent DB and no fixtures.                                                                                                                               |
-| `make dev FIXTURES=1` | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Same as `make dev`, plus seed demo fixtures into the development DB.                                                                                                                               |
-| `make dev-fixtures`   | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Alias for `make dev FIXTURES=1`.                                                                                                                                                                   |
-| `make prod`           | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Bring up the production stack. Refuses inherited test/development ports and still requires `WA_ENV=production` plus a real `WA_RESULTS_DB_PATH` after loading.                                     |
-| `make test`           | `.env`, `.env.test`, `.env.test.local`                             | Run Go + Vitest + Playwright. Always uses ephemeral DBs and refuses an inherited `WA_RESULTS_DB_PATH`. |
-| `make test-go`        | `.env`, `.env.test`, `.env.test.local`                             | Just the Go suite.                                                                                                                                                                                 |
-| `make test-frontend`  | `.env`, `.env.test`, `.env.test.local`                             | Just Vitest.                                                                                                                                                                                       |
-| `make test-e2e`       | `.env`, `.env.test`, `.env.test.local`                             | Just Playwright. Internally drives `run-dev.sh --mode test`.                                                                                                                                       |
-| `make lint`           | _(none)_                                                           | `golangci-lint` and `pnpm lint`.                                                                                                                                                                   |
-| `make format`         | _(none)_                                                           | `gofmt`, `cleanorder`, and `prettier`.                                                                                                                                                             |
+| Target                | Env files loaded                                                   | Purpose                                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make dev`            | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Bring up the development stack with a persistent DB and no fixtures.                                                                                           |
+| `make dev FIXTURES=1` | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Same as `make dev`, plus seed demo fixtures into the development DB.                                                                                           |
+| `make dev-fixtures`   | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Alias for `make dev FIXTURES=1`.                                                                                                                               |
+| `make prod`           | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Bring up the production stack. Refuses inherited test/development ports and still requires `WA_ENV=production` plus a real `WA_RESULTS_DB_PATH` after loading. |
+| `make test`           | `.env`, `.env.test`, `.env.test.local`                             | Run Go + Vitest + Playwright. Always uses ephemeral DBs and refuses an inherited `WA_RESULTS_DB_PATH`.                                                         |
+| `make test-go`        | `.env`, `.env.test`, `.env.test.local`                             | Just the Go suite.                                                                                                                                             |
+| `make test-frontend`  | `.env`, `.env.test`, `.env.test.local`                             | Just Vitest.                                                                                                                                                   |
+| `make test-e2e`       | `.env`, `.env.test`, `.env.test.local`                             | Just Playwright. Internally drives `run-dev.sh --mode test`.                                                                                                   |
+| `make lint`           | _(none)_                                                           | `golangci-lint` and `pnpm lint`.                                                                                                                               |
+| `make format`         | _(none)_                                                           | `gofmt`, `cleanorder`, and `prettier`.                                                                                                                         |
 
 Defaults applied when an env file does not pin a port:
 
@@ -95,14 +95,14 @@ development mode; and `WA_PROD_*` only in production mode. `wa results ...`
 derives its default `--server` URL from the active scenario's results port,
 while `run-dev.sh` derives the frontend backend URLs from those same ports.
 
-| File                     | Tracked? | Loaded by                               | Holds                                                                                       |
-| ------------------------ | -------- | --------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `.env.test`              | yes      | `make test` / `wa --env test ...`       | Test ports + `WA_ENV=test`. No DB path. No committed MLWH credentials.                      |
-| `.env.test.local`        | no       | optional test override                  | Personal test-only overrides.                                                               |
-| `.env.development`       | yes      | `make dev` / `wa --env development ...` | Development ports, dev DB path, blank MLWH settings, `WA_ENV=development`.                  |
+| File                     | Tracked? | Loaded by                               | Holds                                                                                        |
+| ------------------------ | -------- | --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `.env.test`              | yes      | `make test` / `wa --env test ...`       | Test ports + `WA_ENV=test`. No DB path. No committed MLWH credentials.                       |
+| `.env.test.local`        | no       | optional test override                  | Personal test-only overrides.                                                                |
+| `.env.development`       | yes      | `make dev` / `wa --env development ...` | Development ports, dev DB path, blank MLWH settings, `WA_ENV=development`.                   |
 | `.env.development.local` | no       | local development override              | Your local development secrets and machine-specific overrides, including real MLWH settings. |
-| `.env.production`        | yes      | `make prod` / `wa --env production ...` | Production ports, blank DB settings, `WA_ENV=production`.                                   |
-| `.env.production.local`  | no       | local production override               | Deployment-specific production secrets and DB settings.                                     |
+| `.env.production`        | yes      | `make prod` / `wa --env production ...` | Production ports, blank DB settings, `WA_ENV=production`.                                    |
+| `.env.production.local`  | no       | local production override               | Deployment-specific production secrets and DB settings.                                      |
 
 ### Safety guarantees
 
