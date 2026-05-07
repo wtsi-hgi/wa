@@ -5,9 +5,7 @@ import type { EnrichmentResult, EnrichmentStudy } from "@/lib/contracts";
 import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
 import { enrichSeqmetaMetadata } from "@/lib/seqmeta-enrichment";
 
-function buildStudy(
-    overrides: Partial<EnrichmentStudy> = {},
-): EnrichmentStudy {
+function buildStudy(overrides: Partial<EnrichmentStudy> = {}): EnrichmentStudy {
     return {
         id_study_tmp: 42,
         id_lims: "SQSCP",

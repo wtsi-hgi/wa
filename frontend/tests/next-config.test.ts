@@ -35,8 +35,7 @@ describe("resolveAllowedDevOrigins", () => {
     it("appends comma-separated WA_DEV_ALLOWED_ORIGINS entries with whitespace trimmed", () => {
         const origins = resolveAllowedDevOrigins(
             buildEnv({
-                WA_DEV_ALLOWED_ORIGINS:
-                    "dev-host.example.com, my-laptop.local",
+                WA_DEV_ALLOWED_ORIGINS: "dev-host.example.com, my-laptop.local",
             }),
         );
 

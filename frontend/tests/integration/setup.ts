@@ -33,9 +33,7 @@ const seedPath = path.join(
     "seed.json",
 );
 
-export function buildResultsServerEnv(
-    env: EnvLike,
-): EnvLike {
+export function buildResultsServerEnv(env: EnvLike): EnvLike {
     const serverEnv = { ...env };
 
     delete serverEnv.WA_SEQMETA_BACKEND_URL;

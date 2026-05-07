@@ -4,9 +4,7 @@ const BASE_DEV_ORIGINS = ["localhost", "127.0.0.1"];
 
 type EnvLike = Record<string, string | undefined>;
 
-export function resolveAllowedDevOrigins(
-    env: EnvLike = process.env,
-): string[] {
+export function resolveAllowedDevOrigins(env: EnvLike = process.env): string[] {
     const raw = env.WA_DEV_ALLOWED_ORIGINS ?? "";
     const extra = raw
         .split(",")

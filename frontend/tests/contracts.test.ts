@@ -535,7 +535,9 @@ describe("contract schemas", () => {
 
         expect(result.success).toBe(true);
         if (result.success) {
-            expect(result.data.graph.sample_detail?.irods_paths).toHaveLength(2);
+            expect(result.data.graph.sample_detail?.irods_paths).toHaveLength(
+                2,
+            );
         }
     });
 
