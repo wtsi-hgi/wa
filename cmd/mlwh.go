@@ -89,6 +89,7 @@ func newMLWHCommand() *cobra.Command {
 	}
 
 	command.AddCommand(newMLWHSyncCommand())
+	command.AddCommand(newMLWHInfoCommand())
 
 	return command
 }
