@@ -1238,9 +1238,25 @@ describe("N1 file browser", () => {
         const galleryStripA = rowA?.querySelector(
             '[data-subdir-preview-strip="/demo/sample-a"]',
         );
+        const rowAHeading = rowA?.querySelector(
+            '[data-subdir-preview-heading="/demo/sample-a"]',
+        );
+        const cardA = rowA?.querySelector(
+            '[data-subdir-preview-card="/demo/sample-a/img-1.png"]',
+        ) as HTMLElement | null;
+        const cardAFilename = rowA?.querySelector(
+            '[data-subdir-preview-filename="/demo/sample-a/img-1.png"]',
+        );
 
         expect(galleryStripA).toBeTruthy();
+        expect(rowAHeading).toBeTruthy();
+        expect(cardA).toBeTruthy();
+        expect(cardAFilename?.textContent).toBe("img-1.png");
+        expect(rowA?.className).not.toMatch(/lg:grid-cols-\[/);
         expect(galleryStripA?.className).toMatch(/(?:^|\s)flex/);
+        expect(galleryStripA?.className).toMatch(/(?:^|\s)w-full/);
+        expect(cardA?.className).toMatch(/(?:^|\s)w-fit/);
+        expect(cardA?.className).toMatch(/(?:^|\s)shrink-0/);
 
         // Opting into tables surfaces csv previews on the row.
         await click(tableCheckbox);

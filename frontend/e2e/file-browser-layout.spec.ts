@@ -548,4 +548,56 @@ test.describe("File Browser single preview layout", () => {
         ).toBeVisible();
         await expect(subdirControls).not.toContainText("Preview file types");
     });
+
+    test("stacks subfolder preview cards beneath the heading and keeps them compact", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const directoryButton = page.locator(
+            `[data-directory-path="${rnaseqRootPath}"]`,
+        );
+        const subdirControls = page.locator(
+            `[data-subdir-preview-controls="${rnaseqRootPath}"]`,
+        );
+
+        if ((await subdirControls.count()) === 0) {
+            await directoryButton.click();
+        }
+
+        await expect(subdirControls).toBeVisible();
+        await subdirControls
+            .locator('input[aria-label="Subfolder previews"]')
+            .check();
+
+        const row = page.locator("[data-subdir-preview-row]").first();
+        const heading = row.locator("[data-subdir-preview-heading]").first();
+        const strip = row.locator("[data-subdir-preview-strip]").first();
+        const card = row.locator("[data-subdir-preview-card]").first();
+        const filename = row.locator("[data-subdir-preview-filename]").first();
+
+        await expect(row).toBeVisible();
+        await expect(heading).toBeVisible();
+        await expect(strip).toBeVisible();
+        await expect(card).toBeVisible();
+        await expect(filename).toBeVisible();
+
+        const rowBBox = await row.boundingBox();
+        const headingBBox = await heading.boundingBox();
+        const stripBBox = await strip.boundingBox();
+        const cardBBox = await card.boundingBox();
+
+        if (!rowBBox || !headingBBox || !stripBBox || !cardBBox) {
+            throw new Error(
+                "Missing subfolder preview bounding boxes for layout verification",
+            );
+        }
+
+        expect(stripBBox.y).toBeGreaterThan(
+            headingBBox.y + headingBBox.height - 4,
+        );
+        expect(Math.abs(stripBBox.x - headingBBox.x)).toBeLessThan(24);
+        expect(cardBBox.width).toBeLessThan(rowBBox.width * 0.6);
+        await expect(filename).toContainText(".");
+    });
 });

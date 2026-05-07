@@ -981,10 +981,13 @@ export function FileBrowser({
         return (
             <div
                 key={`subdir-gallery-${subdir.path}`}
-                className="grid w-full items-start gap-3 rounded-[1.25rem] border border-border/60 bg-background/60 p-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(0,3fr)]"
+                className="flex w-full flex-col items-start gap-3 rounded-[1.25rem] border border-border/60 bg-background/60 p-3"
                 data-subdir-preview-row={subdir.path}
             >
-                <div className="min-w-0">
+                <div
+                    className="min-w-0"
+                    data-subdir-preview-heading={subdir.path}
+                >
                     <p className="truncate text-base font-medium text-foreground">
                         {subdir.label || directoryLabel(subdir.path)}
                     </p>
@@ -994,7 +997,7 @@ export function FileBrowser({
                     </p>
                 </div>
                 <div
-                    className="flex min-w-0 gap-3 overflow-x-auto"
+                    className="flex w-full min-w-0 items-start gap-4 overflow-x-auto pb-1"
                     data-subdir-preview-strip={subdir.path}
                     style={
                         {
@@ -1005,12 +1008,27 @@ export function FileBrowser({
                     {previewableFiles.map((file) => (
                         <div
                             key={file.path}
-                            className="shrink-0"
+                            className="inline-flex w-fit max-w-full shrink-0 flex-col gap-2"
+                            data-subdir-preview-card={file.path}
                             style={{
-                                height: `var(--subdir-preview-height)`,
+                                maxWidth: `calc(var(--subdir-preview-height) * 1.8)`,
                             }}
                         >
-                            {renderGridPreview?.(file) ?? null}
+                            <p
+                                className="truncate text-xs font-medium text-muted-foreground"
+                                data-subdir-preview-filename={file.path}
+                                title={fileName(file.path)}
+                            >
+                                {fileName(file.path)}
+                            </p>
+                            <div
+                                className="inline-flex w-fit max-w-full items-start overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/70 shadow-sm [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto"
+                                style={{
+                                    height: `var(--subdir-preview-height)`,
+                                }}
+                            >
+                                {renderGridPreview?.(file) ?? null}
+                            </div>
                         </div>
                     ))}
                 </div>
