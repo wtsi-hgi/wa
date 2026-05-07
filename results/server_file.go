@@ -151,12 +151,25 @@ func previewContentTypeForPath(path string, download bool) string {
 	return detectPreviewContentType(path)
 }
 
-func readPreviewLinesWithinByteLimit(reader io.Reader, byteLimit int64) ([]byte, bool, error) {
+func readPreviewLinesWithinLimits(reader io.Reader, byteLimit int64, lineLimit int) ([]byte, bool, error) {
 	bufferedReader := bufio.NewReader(reader)
 	var preview bytes.Buffer
 	remaining := byteLimit
+	linesRead := 0
 
 	for {
+		if lineLimit > 0 && linesRead >= lineLimit {
+			if _, err := bufferedReader.Peek(1); err != nil {
+				if errors.Is(err, io.EOF) {
+					return preview.Bytes(), false, nil
+				}
+
+				return nil, false, err
+			}
+
+			return preview.Bytes(), true, nil
+		}
+
 		line, err := bufferedReader.ReadBytes('\n')
 		if len(line) > 0 {
 			if int64(len(line)) > remaining {
@@ -174,6 +187,7 @@ func readPreviewLinesWithinByteLimit(reader io.Reader, byteLimit int64) ([]byte,
 			}
 
 			remaining -= int64(len(line))
+			linesRead++
 		}
 
 		if err != nil {
@@ -210,6 +224,18 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, http.StatusBadRequest, "path query parameter is required")
 
 		return
+	}
+
+	lineLimit := 0
+	if lineLimitQuery := strings.TrimSpace(r.URL.Query().Get("line_limit")); lineLimitQuery != "" {
+		parsedLineLimit, err := strconv.Atoi(lineLimitQuery)
+		if err != nil || parsedLineLimit < 1 {
+			writeServerError(w, http.StatusBadRequest, "line_limit query parameter must be a positive integer")
+
+			return
+		}
+
+		lineLimit = parsedLineLimit
 	}
 
 	resultID := chi.URLParam(r, "id")
@@ -270,7 +296,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(requestedPath)))
 	}
 	if allowReadablePreview {
-		preview, truncated, err := readPreviewLinesWithinByteLimit(reader, s.maxPreviewBytes)
+		preview, truncated, err := readPreviewLinesWithinLimits(reader, s.maxPreviewBytes, lineLimit)
 		if err != nil {
 			writeServerError(w, http.StatusInternalServerError, fmt.Sprintf("read preview lines: %v", err))
 

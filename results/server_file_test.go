@@ -233,6 +233,21 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Body.String(), convey.ShouldEqual, "h\n1111\n2222\n")
 		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "true")
 	})
+
+	convey.Convey("A1.15: Given a readable TSV preview with line_limit, when short rows stay under the byte cap, then the response still respects the requested line limit and truncation metadata", t, func() {
+		payload := []byte("sample\tstatus\nalpha\tready\nbeta\tready\ngamma\tready\n")
+		server, resultID, path := newFileServerScenarioForTest(t, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "report.tsv"), payload)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 13, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&line_limit=2", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Body.String(), convey.ShouldEqual, "sample\tstatus\nalpha\tready\n")
+		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "true")
+	})
 }
 
 func newFileServerScenarioForTest(t *testing.T, files func(root string) []FileEntry) (*Server, string, string) {
