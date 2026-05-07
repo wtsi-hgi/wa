@@ -135,16 +135,32 @@ function previewKindForPath(path: string): SubdirPreviewKind | null {
 export function findInitialSubdirPreviewDirectory(
     files: FileEntry[],
 ): string | undefined {
-    const firstTreeNode = buildDirectoryTree(files)[0];
+    return findInitialSubdirPreviewDirectoryInTree(
+        buildDirectoryTree(files),
+        defaultSubdirPreviewKinds,
+    );
+}
 
-    if (!firstTreeNode) {
-        return undefined;
+function findInitialSubdirPreviewDirectoryInTree(
+    nodes: ReadonlyArray<DirectoryTreeNode>,
+    kinds: ReadonlySet<SubdirPreviewKind>,
+): string | undefined {
+    for (const node of nodes) {
+        if (qualifyingSubdirsFor(node, kinds).length > 1) {
+            return node.path;
+        }
+
+        const nestedMatch = findInitialSubdirPreviewDirectoryInTree(
+            node.children,
+            kinds,
+        );
+
+        if (nestedMatch) {
+            return nestedMatch;
+        }
     }
 
-    return qualifyingSubdirsFor(firstTreeNode, defaultSubdirPreviewKinds)
-        .length > 1
-        ? firstTreeNode.path
-        : undefined;
+    return undefined;
 }
 
 function collectSubtreeFiles(node: DirectoryTreeNode): FileEntry[] {

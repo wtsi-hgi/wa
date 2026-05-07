@@ -1070,6 +1070,44 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
+    it("shows subfolder preview controls on initial load when the eligible parent folder is nested under a later top-level branch", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const onSelectDirectory = vi.fn();
+        const files = [
+            buildFile("/alpha/readme.txt", "output"),
+            buildFile("/results/demo/sample-a/img-1.png", "output"),
+            buildFile("/results/demo/sample-a/img-2.png", "output"),
+            buildFile("/results/demo/sample-b/pic-1.png", "output"),
+            buildFile("/results/demo/sample-b/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory,
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        expect(onSelectDirectory).toHaveBeenCalledWith("/results/demo");
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-controls="/results/demo"]',
+            ),
+        ).toBeTruthy();
+    });
+
     it("uses the folder-row control slot for subfolder previews instead of generic file preview controls", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
