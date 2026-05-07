@@ -153,9 +153,7 @@ function buildFileEntry(overrides: Partial<FileEntry> = {}): FileEntry {
     };
 }
 
-function buildStudy(
-    overrides: Partial<EnrichmentStudy> = {},
-): EnrichmentStudy {
+function buildStudy(overrides: Partial<EnrichmentStudy> = {}): EnrichmentStudy {
     return {
         id_study_tmp: 42,
         id_lims: "SQSCP",
@@ -207,9 +205,7 @@ function buildSample(
     };
 }
 
-function buildLaneDetail(
-    overrides: Partial<LaneDetail> = {},
-): LaneDetail {
+function buildLaneDetail(overrides: Partial<LaneDetail> = {}): LaneDetail {
     return {
         id_run: "1234",
         lane: "1",
@@ -218,9 +214,7 @@ function buildLaneDetail(
     };
 }
 
-function buildIRODSPath(
-    overrides: Partial<IRODSPath> = {},
-): IRODSPath {
+function buildIRODSPath(overrides: Partial<IRODSPath> = {}): IRODSPath {
     return {
         id_product: "1234_1#7",
         collection: "/seq",

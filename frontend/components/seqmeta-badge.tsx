@@ -1141,7 +1141,9 @@ export function SeqmetaBadge({
                                                                                         className="space-y-2"
                                                                                     >
                                                                                         <article
-																data-seqmeta-detail-key={libraryDetailKey}
+                                                                                            data-seqmeta-detail-key={
+                                                                                                libraryDetailKey
+                                                                                            }
                                                                                             className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
                                                                                         >
                                                                                             <div className="flex flex-wrap items-start justify-between gap-3">
