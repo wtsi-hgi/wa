@@ -395,7 +395,7 @@ test.describe("File Browser single preview layout", () => {
         expect(surface.height).toBeGreaterThanOrEqual(metrics.root.height - 2);
     });
 
-    test("places the compact preview height selector next to the 1 preview per row toggle in folder controls", async ({
+    test("places folder controls beneath the directory heading while keeping compact widgets on the same row surface", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
@@ -429,6 +429,15 @@ test.describe("File Browser single preview layout", () => {
         const folderControls = page
             .locator("[data-file-browser-folder-controls]")
             .first();
+        const directoryRow = page.locator("[data-directory-row]").filter({
+            has: folderControls,
+        });
+        const directoryButton = directoryRow
+            .locator("button[data-directory-path]")
+            .first();
+
+        await expect(directoryRow).toBeVisible();
+        await expect(directoryButton).toBeVisible();
         await expect(folderControls).toBeVisible();
 
         // Verify "1 preview per row" toggle is present
@@ -447,10 +456,33 @@ test.describe("File Browser single preview layout", () => {
         const toggleBBox = await previewModeToggle.boundingBox();
         const sliderBBox = await previewHeightSlider.boundingBox();
         const controlsBBox = await folderControls.boundingBox();
+        const buttonBBox = await directoryButton.boundingBox();
+        const rowBBox = await directoryRow.boundingBox();
 
-        if (!toggleBBox || !sliderBBox || !controlsBBox) {
+        if (
+            !toggleBBox ||
+            !sliderBBox ||
+            !controlsBBox ||
+            !buttonBBox ||
+            !rowBBox
+        ) {
             throw new Error("Missing bounding boxes for controls verification");
         }
+
+        // Controls must sit below the folder heading/button, not in a reserved
+        // right-hand column that steals name width.
+        expect(controlsBBox.y).toBeGreaterThan(
+            buttonBBox.y + buttonBBox.height - 8,
+        );
+
+        // The controls remain inside the same directory row surface.
+        expect(controlsBBox.y + controlsBBox.height).toBeLessThanOrEqual(
+            rowBBox.y + rowBBox.height + 1,
+        );
+        expect(controlsBBox.x).toBeGreaterThanOrEqual(rowBBox.x);
+        expect(controlsBBox.x + controlsBBox.width).toBeLessThanOrEqual(
+            rowBBox.x + rowBBox.width + 1,
+        );
 
         // Both controls should be in the same container row (similar vertical position)
         expect(Math.abs(toggleBBox.y - sliderBBox.y)).toBeLessThan(30);

@@ -782,7 +782,7 @@ export function FileBrowser({
                 "flex flex-wrap items-center gap-2 text-sm",
                 placement === "bottom"
                     ? "col-span-full justify-end pt-1"
-                    : "justify-end",
+                    : "w-full justify-start px-3 pb-3",
             )}
             data-file-browser-bottom-controls={
                 placement === "bottom" ? directoryPath : undefined
@@ -845,7 +845,7 @@ export function FileBrowser({
 
     const renderSubdirPreviewControls = (directoryPath: string) => (
         <div
-            className="flex flex-wrap items-center justify-end gap-2 text-sm"
+            className="flex w-full flex-wrap items-center justify-start gap-2 px-3 pb-3 text-sm"
             data-file-browser-folder-controls={directoryPath}
             data-subdir-preview-controls={directoryPath}
         >
@@ -1026,10 +1026,8 @@ export function FileBrowser({
                 <div
                     key={`dir-${node.path}`}
                     className={cn(
-                        "grid w-full items-center gap-3 rounded-[1.25rem] border transition",
-                        hasPreviewControls
-                            ? "grid-cols-1 p-2 lg:grid-cols-[minmax(0,1fr)_auto]"
-                            : "grid-cols-1 p-0",
+                        "grid w-full grid-cols-1 gap-3 rounded-[1.25rem] border transition",
+                        hasPreviewControls ? "p-2" : "grid-cols-1 p-0",
                         isSelected
                             ? "border-primary/45 bg-primary/10"
                             : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",

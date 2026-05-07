@@ -1214,6 +1214,61 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
+    it("stacks folder-row widgets beneath the directory button inside the same row surface", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = Array.from({ length: 120 }, (_, index) =>
+            buildFile(
+                `/results/very-long-folder-name-${String(index + 1).padStart(3, "0")}.png`,
+                "output",
+            ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewHeight: 180,
+                    previewMode: "single",
+                    previewPage: 2,
+                    previewPageCount: 3,
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files.slice(40, 80),
+                }),
+            );
+        });
+
+        const directoryRow = container.querySelector(
+            '[data-directory-row="/results"]',
+        ) as HTMLElement | null;
+        const directoryButton = directoryRow?.querySelector(
+            'button[data-directory-path="/results"]',
+        ) as HTMLElement | null;
+        const folderControls = directoryRow?.querySelector(
+            '[data-file-browser-folder-controls="/results"]',
+        ) as HTMLElement | null;
+
+        expect(directoryRow).toBeTruthy();
+        expect(directoryButton).toBeTruthy();
+        expect(folderControls).toBeTruthy();
+        expect(Array.from(directoryRow?.children ?? [])).toEqual([
+            directoryButton,
+            folderControls,
+        ]);
+        expect(directoryRow?.className).not.toMatch(/lg:grid-cols-\[/);
+        expect(folderControls?.className).toContain("justify-start");
+        expect(folderControls?.className).not.toContain("justify-end");
+    });
+
     it("paginates and resizes subfolder preview gallery rows", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const subdirs = [
