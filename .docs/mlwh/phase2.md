@@ -19,8 +19,8 @@ respectively on a cold cache, blocking until the sync transaction
 commits. Warm cache must skip `Sync`. Covers all 3 acceptance tests
 from A4. Depends on Phase 1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after item 2.1 is reviewed)
 
@@ -35,8 +35,8 @@ cascade: UUID, `id_sample_lims`, `name`, `sanger_sample_id`,
 cache on miss; `ErrUpstreamImpaired` on non-client errors. Covers all
 8 acceptance tests from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.3: B2 - ResolveStudy cascade [parallel with 2.2, 2.4]
 
@@ -48,8 +48,8 @@ Implement `(*Client).ResolveStudy` with `ResolveStudyOption` and
 text matches return `ErrAmbiguous` naming both LIMS IDs. Covers all 7
 acceptance tests from B2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.4: B3 - ResolveRun and ResolveLibrary [parallel with 2.2, 2.3]
 
@@ -61,8 +61,8 @@ match on `pipeline_id_lims`, with cold-cache lazy sync). Doc comment
 on `ResolveLibrary` must mention "first call" and "wa mlwh sync".
 Covers all 7 acceptance tests from B3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all
@@ -78,5 +78,5 @@ before-library priority within each shape, short-circuiting on the
 LIMS-provider rejection set, and propagating `ErrUpstreamImpaired`.
 Depends on items 2.2, 2.3, 2.4. Covers all 6 acceptance tests from B4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

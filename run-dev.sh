@@ -84,6 +84,26 @@ case "$scenario" in
     ;;
 esac
 
+KNOWN_DEVELOPMENT_MLWH_DSN='mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse'
+KNOWN_DEVELOPMENT_MLWH_PASSWORD='mlwh_humgen_is_secure'
+
+mlwh_cache_path_resolves_under_repo_tmp() {
+  local value="${1:-}"
+  [[ "$value" == "$REPO_ROOT/.tmp/"* || "$value" == .tmp/* || "$value" == */.tmp/* ]]
+}
+
+mlwh_cache_path_looks_test() {
+  local value="${1:-}"
+  [[ "$value" == "/tmp" || "$value" == /tmp/* || "$value" == *"wa-test-mlwh"* ]]
+}
+
+mlwh_dsn_looks_nonprod() {
+  local value="${1:-}"
+  local lower_value="${value,,}"
+
+  [[ -n "$value" && ( "$value" == "$KNOWN_DEVELOPMENT_MLWH_DSN" || "$lower_value" == *"localhost"* || "$lower_value" == *"127.0.0.1"* || "$lower_value" == *"_test"* ) ]]
+}
+
 # Scenario-specific guards. These run before any port allocation so a wrong
 # environment can never spawn servers.
 if [[ "$scenario" == "dev" && "${WA_ENV:-}" == "production" ]]; then
@@ -129,6 +149,56 @@ fi
 if [[ "$scenario" != "test" && -z "${WA_RESULTS_DB_PATH:-}" ]]; then
   printf 'run-dev.sh: --mode %s requires WA_RESULTS_DB_PATH to be set.\n' "$scenario" >&2
   exit 1
+fi
+
+if [[ "$scenario" == "dev" && -z "${WA_MLWH_DSN:-}" ]]; then
+  printf 'run-dev.sh: --mode dev requires WA_MLWH_DSN to be set.\n' >&2
+  exit 1
+fi
+
+if [[ "$scenario" == "test" ]]; then
+  if [[ -n "${WA_MLWH_DSN:-}" ]]; then
+    printf 'run-dev.sh: refusing to run --mode test with WA_MLWH_DSN set.\n' >&2
+    exit 1
+  fi
+
+  if [[ -n "${WA_MLWH_PASSWORD:-}" ]]; then
+    printf 'run-dev.sh: refusing to run --mode test with WA_MLWH_PASSWORD set.\n' >&2
+    exit 1
+  fi
+
+  if [[ -n "${WA_MLWH_CACHE_PASSWORD:-}" ]]; then
+    printf 'run-dev.sh: refusing to run --mode test with WA_MLWH_CACHE_PASSWORD set.\n' >&2
+    exit 1
+  fi
+
+  if [[ -n "${WA_MLWH_CACHE_PATH:-}" ]] && ! mlwh_cache_path_resolves_under_repo_tmp "${WA_MLWH_CACHE_PATH}"; then
+    printf 'run-dev.sh: refusing to run --mode test with WA_MLWH_CACHE_PATH set.\n' >&2
+    printf 'Test mode always uses an ephemeral MLWH cache under .tmp/.\n' >&2
+    exit 1
+  fi
+fi
+
+if [[ "$scenario" == "prod" ]]; then
+  if [[ -n "${WA_MLWH_CACHE_PATH:-}" ]] && mlwh_cache_path_looks_test "${WA_MLWH_CACHE_PATH}"; then
+    printf 'run-dev.sh: refusing to run --mode prod with test-shaped WA_MLWH_CACHE_PATH.\n' >&2
+    exit 1
+  fi
+
+  if mlwh_dsn_looks_nonprod "${WA_MLWH_DSN:-}"; then
+    printf 'run-dev.sh: refusing to run --mode prod with development or test-shaped WA_MLWH_DSN.\n' >&2
+    exit 1
+  fi
+
+  if [[ "${WA_MLWH_PASSWORD:-}" == "$KNOWN_DEVELOPMENT_MLWH_PASSWORD" ]]; then
+    printf 'run-dev.sh: refusing to run --mode prod with development or test-shaped WA_MLWH_PASSWORD.\n' >&2
+    exit 1
+  fi
+
+  if [[ "${WA_MLWH_CACHE_PASSWORD:-}" == "$KNOWN_DEVELOPMENT_MLWH_PASSWORD" ]]; then
+    printf 'run-dev.sh: refusing to run --mode prod with development or test-shaped WA_MLWH_CACHE_PASSWORD.\n' >&2
+    exit 1
+  fi
 fi
 
 # Default ports per scenario, only used when no explicit flag was passed.
@@ -284,6 +354,8 @@ mkdir -p "$TMP_DIR" "$LOG_DIR"
 PIDS=()
 DB_PATH=""
 DB_EPHEMERAL=0
+MLWH_CACHE_PATH=""
+MLWH_CACHE_EPHEMERAL=0
 CLEANED_UP=0
 
 cleanup() {
@@ -310,6 +382,10 @@ cleanup() {
 
   if (( DB_EPHEMERAL )) && [[ -n "$DB_PATH" ]]; then
     rm -f "$DB_PATH"
+  fi
+
+  if (( MLWH_CACHE_EPHEMERAL )) && [[ -n "$MLWH_CACHE_PATH" ]]; then
+    rm -f "$MLWH_CACHE_PATH"
   fi
 
   return "$exit_code"
@@ -428,6 +504,32 @@ else
   fi
 fi
 export WA_RESULTS_DB_PATH="$DB_PATH"
+
+if [[ "$scenario" == "test" ]]; then
+  MLWH_CACHE_PATH="$(mktemp "$TMP_DIR/mlwh-test.XXXXXX.sqlite")"
+  MLWH_CACHE_EPHEMERAL=1
+else
+  MLWH_CACHE_PATH="${WA_MLWH_CACHE_PATH:-}"
+  MLWH_CACHE_EPHEMERAL=0
+
+  if [[ -n "$MLWH_CACHE_PATH" && "$MLWH_CACHE_PATH" != *"@tcp("* && "$MLWH_CACHE_PATH" != *"@unix("* ]]; then
+    mlwh_cache_dir="$(dirname "$MLWH_CACHE_PATH")"
+    if [[ -n "$mlwh_cache_dir" && "$mlwh_cache_dir" != "." ]]; then
+      mkdir -p "$mlwh_cache_dir"
+    fi
+  fi
+fi
+
+if [[ -n "$MLWH_CACHE_PATH" ]]; then
+  if [[ "$scenario" != "test" ]]; then
+    export WA_MLWH_CACHE_PATH="$MLWH_CACHE_PATH"
+  else
+    unset WA_MLWH_CACHE_PATH
+  fi
+else
+  unset WA_MLWH_CACHE_PATH
+fi
+
 export WA_RESULTS_BACKEND_URL="http://127.0.0.1:$results_port"
 unset WA_SEQMETA_BACKEND_URL
 
@@ -463,7 +565,7 @@ if [[ -n "$SEQMETA_CMD" ]]; then
     >>"$SEQMETA_LOG" 2>&1 &
   PIDS+=("$!")
   wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
-elif [[ -n "${SAGA_API_TOKEN:-}" ]]; then
+elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
   export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
@@ -471,11 +573,14 @@ elif [[ -n "${SAGA_API_TOKEN:-}" ]]; then
   PIDS+=("$!")
   wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
 else
-  printf 'seqmeta server skipped because SAGA_API_TOKEN is unset\n' >"$SEQMETA_LOG"
+	printf 'seqmeta server skipped because no explicit command or MLWH DSN is set\n' >"$SEQMETA_LOG"
 fi
 
 printf '\n[dev]\n' >>"$FRONTEND_LOG"
 printf 'Starting frontend dev server on http://127.0.0.1:%s\n' "$frontend_port"
+if [[ -n "$MLWH_CACHE_PATH" ]]; then
+  export WA_MLWH_CACHE_PATH="$MLWH_CACHE_PATH"
+fi
 WA_RUN_DEV_FRONTEND_DEV_CMD="$FRONTEND_DEV_CMD" \
   bash -lc 'cd "$1" && eval "exec $WA_RUN_DEV_FRONTEND_DEV_CMD"' -- "$FRONTEND_DIR" \
   >>"$FRONTEND_LOG" 2>&1 &

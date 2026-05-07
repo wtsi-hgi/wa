@@ -34,13 +34,6 @@ import (
 )
 
 func TestNewRootCommand(t *testing.T) {
-	convey.Convey("F1.1: Given saga inspect help, then help output describes the identifier argument", t, func() {
-		output, err := executeRootCommandForTest(t, []string{"saga", "inspect", "--help"})
-
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "identifier")
-	})
-
 	convey.Convey("F1.2: Given seqmeta help, then help output lists diff, validate, and serve", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"seqmeta", "--help"})
 
@@ -73,13 +66,13 @@ func TestNewRootCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "--seqmeta-timeout")
 	})
 
-	convey.Convey("F1.5: Given wa with no subcommand, then help lists the top-level subcommand trees", t, func() {
+	convey.Convey("E4.4: Given wa with no subcommand, then help lists the surviving top-level subcommand trees", t, func() {
 		output, err := executeRootCommandForTest(t, nil)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "saga")
 		convey.So(output, convey.ShouldContainSubstring, "seqmeta")
 		convey.So(output, convey.ShouldContainSubstring, "results")
+		convey.So(output, convey.ShouldContainSubstring, "mlwh")
 	})
 }
 

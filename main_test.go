@@ -9,17 +9,17 @@ import (
 )
 
 func TestRewriteLegacyInspectArgs(t *testing.T) {
-	convey.Convey("single bare identifiers are rewritten to saga inspect", t, func() {
-		convey.So(rewriteLegacyInspectArgs([]string{"6568"}), convey.ShouldResemble, []string{"saga", "inspect", "6568"})
-		convey.So(rewriteLegacyInspectArgs([]string{"AM762808"}), convey.ShouldResemble, []string{"saga", "inspect", "AM762808"})
-		convey.So(rewriteLegacyInspectArgs([]string{"--token", "test", "6568"}), convey.ShouldResemble, []string{"saga", "inspect", "--token", "test", "6568"})
-		convey.So(rewriteLegacyInspectArgs([]string{"6568", "--token", "test"}), convey.ShouldResemble, []string{"saga", "inspect", "6568", "--token", "test"})
+	convey.Convey("bare identifiers are no longer rewritten after the saga command removal", t, func() {
+		convey.So(rewriteLegacyInspectArgs([]string{"6568"}), convey.ShouldResemble, []string{"6568"})
+		convey.So(rewriteLegacyInspectArgs([]string{"AM762808"}), convey.ShouldResemble, []string{"AM762808"})
+		convey.So(rewriteLegacyInspectArgs([]string{"--token", "test", "6568"}), convey.ShouldResemble, []string{"--token", "test", "6568"})
+		convey.So(rewriteLegacyInspectArgs([]string{"6568", "--token", "test"}), convey.ShouldResemble, []string{"6568", "--token", "test"})
 	})
 
 	convey.Convey("explicit subcommands and flags are left unchanged", t, func() {
 		convey.So(rewriteLegacyInspectArgs([]string{"results", "search"}), convey.ShouldResemble, []string{"results", "search"})
 		convey.So(rewriteLegacyInspectArgs([]string{"--help"}), convey.ShouldResemble, []string{"--help"})
-		convey.So(rewriteLegacyInspectArgs([]string{"saga"}), convey.ShouldResemble, []string{"saga"})
+		convey.So(rewriteLegacyInspectArgs([]string{"seqmeta"}), convey.ShouldResemble, []string{"seqmeta"})
 		convey.So(rewriteLegacyInspectArgs([]string{"delete"}), convey.ShouldResemble, []string{"delete"})
 	})
 }
@@ -66,10 +66,10 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		convey.So(os.Getenv("WA_TEST_SENTINEL"), convey.ShouldEqual, "from-test")
 	})
 
-	convey.Convey("run in test mode can import only SAGA_API_TOKEN from .env.development.local", t, func() {
+	convey.Convey("run in test mode does not import development-local MLWH vars", t, func() {
 		repoRoot := t.TempDir()
 		writeEnvFileForTest(t, filepath.Join(repoRoot, ".env.test"), "WA_ENV=test\n")
-		writeEnvFileForTest(t, filepath.Join(repoRoot, ".env.development.local"), "WA_ENV=development\nWA_DEV_RESULTS_PORT=3672\nSAGA_API_TOKEN=integration-token\n")
+		writeEnvFileForTest(t, filepath.Join(repoRoot, ".env.development.local"), "WA_ENV=development\nWA_DEV_RESULTS_PORT=3672\nWA_MLWH_DSN=mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse\n")
 
 		cwd, err := os.Getwd()
 		convey.So(err, convey.ShouldBeNil)
@@ -79,13 +79,13 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		}()
 
 		t.Setenv("WA_ENV", "test")
-		unsetEnvForTest(t, "SAGA_API_TOKEN")
+		unsetEnvForTest(t, "WA_MLWH_DSN")
 		unsetEnvForTest(t, "WA_DEV_RESULTS_PORT")
 
 		err = run([]string{"--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(os.Getenv("SAGA_API_TOKEN"), convey.ShouldEqual, "integration-token")
+		convey.So(os.Getenv("WA_MLWH_DSN"), convey.ShouldEqual, "")
 		convey.So(os.Getenv("WA_DEV_RESULTS_PORT"), convey.ShouldEqual, "")
 	})
 
@@ -94,6 +94,26 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "flag needs an argument: --env")
+	})
+
+	convey.Convey("run rejects inherited WA_MLWH_DSN in test mode", t, func() {
+		t.Setenv("WA_ENV", "test")
+		t.Setenv("WA_MLWH_DSN", "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse")
+
+		err := run(nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_DSN")
+	})
+
+	convey.Convey("run rejects development or test-shaped WA_MLWH_PASSWORD in production mode", t, func() {
+		t.Setenv("WA_ENV", "production")
+		t.Setenv("WA_MLWH_PASSWORD", "mlwh_humgen_is_secure")
+
+		err := run(nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_PASSWORD")
 	})
 }
 

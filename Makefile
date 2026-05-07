@@ -19,11 +19,7 @@ LOAD_TEST_ENV = \
 	fi; \
 	if [ -f ./.env ]; then set -a; . ./.env; set +a; fi; \
 	[ -f ./.env.test ] || { printf '%s\n' '.env.test is required for make test.' >&2; exit 1; }; \
-	set -a; . ./.env.test; [ -f ./.env.test.local ] && . ./.env.test.local; set +a; \
-	if [ -z "$${SAGA_API_TOKEN:-}" ] && [ -f ./.env.development.local ]; then \
-		SAGA_API_TOKEN="$$(set -a; . ./.env.development.local; set +a; printf '%s' "$${SAGA_API_TOKEN:-}")"; \
-		[ -n "$${SAGA_API_TOKEN}" ] && export SAGA_API_TOKEN; \
-	fi
+	set -a; . ./.env.test; [ -f ./.env.test.local ] && . ./.env.test.local; set +a
 
 LOAD_DEVELOPMENT_ENV = \
 	if [ "$${WA_ENV:-}" = "production" ]; then \

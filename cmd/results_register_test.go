@@ -27,8 +27,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +40,7 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/wa/mlwh"
 	"github.com/wtsi-hgi/wa/results"
 )
 
@@ -397,12 +400,26 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(result.ID, convey.ShouldEqual, "updated-result")
 	})
 
-	convey.Convey("Bug 1: Given Saga-backed register shorthands, when register is run, then flexible run/study/sample/library identifiers resolve to canonical seqmeta metadata entries", t, func() {
+	convey.Convey("E1.4: Given --study/--run/--library/--sample together, when all mlwh resolvers succeed, then register stores canonical seqmeta metadata entries", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
 		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
-		t.Setenv("SAGA_API_TOKEN", "test-token")
+
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			runFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{Canonical: raw, Run: &mlwh.Run{IDRun: 12345}}, nil
+			},
+			studyFn: func(_ context.Context, _ string, _ ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+				return mlwh.Match{Canonical: "6568", Study: &mlwh.Study{IDStudyLims: "6568"}}, nil
+			},
+			sampleFn: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{Canonical: "7607STDY14643771", Sample: &mlwh.Sample{Name: "7607STDY14643771"}}, nil
+			},
+			libraryFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{Canonical: raw, Library: &mlwh.Library{PipelineIDLims: raw}}, nil
+			},
+		})
 
 		registrationCh := make(chan results.Registration, 1)
 		handlerErrCh := make(chan error, 1)
@@ -427,41 +444,16 @@ func TestResultsRegisterCommand(t *testing.T) {
 		}))
 		defer server.Close()
 
-		sagaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/integrations/mlwh/samples":
-				filters := r.URL.Query().Get("filters")
-				switch filters {
-				case `{"run_id":"34134"}`:
-					_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"6568","id_sample_lims":"S1-LIMS","sanger_id":"S1","sample_name":"Sample 1","library_type":"RNA PolyA","id_run":34134}],"total":1,"offset":0,"limit":100}`))
-				case `{"library_type":["RNA PolyA"]}`:
-					_, _ = w.Write([]byte(`{"items":[{"id_study_lims":"6568","id_sample_lims":"S1-LIMS","sanger_id":"S1","sample_name":"Sample 1","library_type":"RNA PolyA","id_run":34134}],"total":1,"offset":0,"limit":100}`))
-				default:
-					http.NotFound(w, r)
-				}
-			case "/integrations/irods/samples/Sample%201":
-				http.NotFound(w, r)
-			case "/integrations/irods/samples":
-				_, _ = w.Write([]byte(`{"items":[{"id":1,"name":"Sample 1","source":"IRODS","source_id":"123","data":{},"curated":{"sanger_id":["S1"]},"parent":null}],"total":1,"offset":0,"limit":100}`))
-			case "/integrations/mlwh/studies":
-				_, _ = w.Write([]byte(`{"items":[{"id_study_tmp":1,"id_lims":"SQSCP","id_study_lims":"6568","name":"Study 6568","accession_number":"ERP123"}],"total":1,"offset":0,"limit":100}`))
-			default:
-				http.NotFound(w, r)
-			}
-		}))
-		defer sagaServer.Close()
-		t.Setenv("SAGA_API_BASE_URL", sagaServer.URL)
-
 		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
 			"results", "register",
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
 			"--nextflow-workflow", workflowPath,
-			"--run", "34134",
-			"--study", "ERP123",
-			"--sample", "Sample 1",
-			"--library", "RNA PolyA",
+			"--run", "12345",
+			"--study", "EGAS00001005445",
+			"--sample", "7607STDY14643771",
+			"--library", "Standard",
 			outputDir,
 		}, nil)
 
@@ -471,20 +463,74 @@ func TestResultsRegisterCommand(t *testing.T) {
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
-			"seqmeta_runid":       "34134",
+			"seqmeta_runid":       "12345",
 			"seqmeta_studyid":     "6568",
-			"seqmeta_sampleid":    "S1",
-			"seqmeta_librarytype": "RNA PolyA",
+			"seqmeta_sampleid":    "7607STDY14643771",
+			"seqmeta_librarytype": "Standard",
 		})
 	})
 
-	convey.Convey("Bug 1: Given Saga-backed register shorthands without Saga credentials, when register is run, then it fails before sending the registration request", t, func() {
+	convey.Convey("E1.1: Given --sample 7607STDY14643771, when ResolveSample returns a canonical match, then register stores seqmeta_sampleid", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
 		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
-		t.Setenv("SAGA_API_TOKEN", "")
-		t.Setenv("SAGA_TEST_API_TOKEN", "")
+
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{Canonical: raw, Sample: &mlwh.Sample{Name: raw}}, nil
+			},
+		})
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "sample-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--nextflow-workflow", workflowPath,
+			"--sample", "7607STDY14643771",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So((<-registrationCh).Metadata["seqmeta_sampleid"], convey.ShouldEqual, "7607STDY14643771")
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+	})
+
+	convey.Convey("E1.2: Given --sample SQSCP, when ResolveSample rejects a LIMS provider constant, then the command fails before registering", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{}, fmt.Errorf("%w: %q looks like a LIMS provider constant", mlwh.ErrUnsupportedIdentifier, raw)
+			},
+		})
 
 		requestCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -500,14 +546,76 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--user", "alice",
 			"--runid", "48522",
 			"--nextflow-workflow", workflowPath,
-			"--run", "34134",
+			"--sample", "SQSCP",
 			outputDir,
 		}, nil)
 
 		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "saga")
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "API key")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "--sample")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "SQSCP")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "LIMS provider constant")
 		convey.So(requestCount, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("E1.3: Given --sample missing-id, when ResolveSample returns ErrNotFound, then stderr names the flag, value, and not found", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleFn: func(context.Context, string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+		})
+
+		requestCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--nextflow-workflow", workflowPath,
+			"--sample", "missing-id",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, `--sample "missing-id"`)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "not found")
+		convey.So(requestCount, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("E1.5: Given register help, when printed, then it lists the mlwh input forms", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"results", "register", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Sanger name")
+		convey.So(output, convey.ShouldContainSubstring, "supplier name")
+		convey.So(output, convey.ShouldContainSubstring, "id_sample_lims")
+		convey.So(output, convey.ShouldContainSubstring, "sample UUID")
+		convey.So(output, convey.ShouldContainSubstring, "donor ID")
+		convey.So(output, convey.ShouldContainSubstring, "LIMS ID")
+		convey.So(output, convey.ShouldContainSubstring, "accession")
+		convey.So(output, convey.ShouldContainSubstring, "UUID")
+		convey.So(output, convey.ShouldContainSubstring, "name")
+		convey.So(output, convey.ShouldContainSubstring, "numeric")
+		convey.So(output, convey.ShouldContainSubstring, "exact")
+	})
+
+	convey.Convey("E1.6: Given register help, when printed, then --library warns about first call latency and wa mlwh sync", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"results", "register", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "first call")
+		convey.So(output, convey.ShouldContainSubstring, "wa mlwh sync")
 	})
 
 	convey.Convey("G1.4: Given missing --user, then the command returns an error and stderr contains the error", t, func() {
@@ -613,4 +721,65 @@ func mustRegisterCommandJSONBody(t *testing.T, value any) []byte {
 	}
 
 	return body
+}
+
+type fakeResultsRegisterResolver struct {
+	sampleFn  func(context.Context, string) (mlwh.Match, error)
+	studyFn   func(context.Context, string, ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	runFn     func(context.Context, string) (mlwh.Match, error)
+	libraryFn func(context.Context, string) (mlwh.Match, error)
+	closeFn   func() error
+}
+
+func (f *fakeResultsRegisterResolver) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
+	if f.sampleFn == nil {
+		return mlwh.Match{}, errors.New("unexpected ResolveSample call")
+	}
+
+	return f.sampleFn(ctx, raw)
+}
+
+func (f *fakeResultsRegisterResolver) ResolveStudy(ctx context.Context, raw string, opts ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+	if f.studyFn == nil {
+		return mlwh.Match{}, errors.New("unexpected ResolveStudy call")
+	}
+
+	return f.studyFn(ctx, raw, opts...)
+}
+
+func (f *fakeResultsRegisterResolver) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
+	if f.runFn == nil {
+		return mlwh.Match{}, errors.New("unexpected ResolveRun call")
+	}
+
+	return f.runFn(ctx, raw)
+}
+
+func (f *fakeResultsRegisterResolver) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
+	if f.libraryFn == nil {
+		return mlwh.Match{}, errors.New("unexpected ResolveLibrary call")
+	}
+
+	return f.libraryFn(ctx, raw)
+}
+
+func (f *fakeResultsRegisterResolver) Close() error {
+	if f.closeFn != nil {
+		return f.closeFn()
+	}
+
+	return nil
+}
+
+func stubResultsRegisterResolverOpener(t *testing.T, resolver *fakeResultsRegisterResolver) {
+	t.Helper()
+
+	original := resultsRegisterResolverOpener
+	resultsRegisterResolverOpener = func(context.Context) (resultsRegisterResolver, error) {
+		return resolver, nil
+	}
+
+	t.Cleanup(func() {
+		resultsRegisterResolverOpener = original
+	})
 }

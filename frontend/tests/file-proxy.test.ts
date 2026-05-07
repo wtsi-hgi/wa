@@ -108,7 +108,7 @@ describe("P1 file content streaming API route", () => {
             .toBuffer();
 
         resultsRawMock.mockResolvedValue(
-            new Response(largePng, {
+            new Response(new Uint8Array(largePng), {
                 status: 200,
                 headers: { "content-type": "image/png" },
             }),

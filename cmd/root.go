@@ -25,7 +25,18 @@
 
 package cmd
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+)
+
+const (
+	knownDevelopmentMLWHDSN      = "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse"
+	knownDevelopmentMLWHPassword = "mlwh_humgen_is_secure"
+)
 
 // NewRootCommand builds the root wa command tree.
 func NewRootCommand() *cobra.Command {
@@ -39,9 +50,91 @@ func NewRootCommand() *cobra.Command {
 
 	command.PersistentFlags().String("env", "", "Environment name used to load .env.<name> files before running the command")
 
-	command.AddCommand(newSagaCommand())
 	command.AddCommand(newSeqmetaCommand())
 	command.AddCommand(newResultsCommand())
+	command.AddCommand(newMLWHCommand())
 
 	return command
+}
+
+func ValidateScenarioEnvironment(envName string) error {
+	switch strings.TrimSpace(envName) {
+	case "development":
+		return validateDevelopmentScenarioEnvironment()
+	case "test":
+		return validateTestScenarioEnvironment()
+	case "production":
+		return validateProductionScenarioEnvironment()
+	default:
+		return nil
+	}
+}
+
+func validateDevelopmentScenarioEnvironment() error {
+	return nil
+}
+
+func validateTestScenarioEnvironment() error {
+	if strings.TrimSpace(firstEnv("WA_MLWH_DSN")) != "" {
+		return fmt.Errorf("WA_MLWH_DSN is not permitted when WA_ENV=test")
+	}
+
+	if strings.TrimSpace(firstEnv("WA_MLWH_PASSWORD")) != "" {
+		return fmt.Errorf("WA_MLWH_PASSWORD is not permitted when WA_ENV=test")
+	}
+
+	if strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PASSWORD")) != "" {
+		return fmt.Errorf("WA_MLWH_CACHE_PASSWORD is not permitted when WA_ENV=test")
+	}
+
+	cachePath := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH"))
+	if cachePath != "" && !mlwhCachePathResolvesUnderRepoTmp(cachePath) {
+		return fmt.Errorf("WA_MLWH_CACHE_PATH must resolve under .tmp/ when WA_ENV=test")
+	}
+
+	return nil
+}
+
+func validateProductionScenarioEnvironment() error {
+	if mlwhPasswordLooksNonProduction(strings.TrimSpace(firstEnv("WA_MLWH_PASSWORD"))) {
+		return fmt.Errorf("WA_MLWH_PASSWORD matches a development or test literal and is not permitted when WA_ENV=production")
+	}
+
+	if mlwhPasswordLooksNonProduction(strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PASSWORD"))) {
+		return fmt.Errorf("WA_MLWH_CACHE_PASSWORD matches a development or test literal and is not permitted when WA_ENV=production")
+	}
+
+	if mlwhDSNLooksNonProduction(strings.TrimSpace(firstEnv("WA_MLWH_DSN"))) {
+		return fmt.Errorf("WA_MLWH_DSN looks like a development or test value and is not permitted when WA_ENV=production")
+	}
+
+	if mlwhCachePathLooksTest(strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH"))) {
+		return fmt.Errorf("WA_MLWH_CACHE_PATH looks like a test value and is not permitted when WA_ENV=production")
+	}
+
+	return nil
+}
+
+func mlwhDSNLooksNonProduction(value string) bool {
+	if value == "" {
+		return false
+	}
+
+	lowerValue := strings.ToLower(value)
+
+	return value == knownDevelopmentMLWHDSN || strings.Contains(lowerValue, "localhost") || strings.Contains(lowerValue, "127.0.0.1") || strings.Contains(lowerValue, "_test")
+}
+
+func mlwhPasswordLooksNonProduction(value string) bool {
+	return value == knownDevelopmentMLWHPassword
+}
+
+func mlwhCachePathLooksTest(value string) bool {
+	normalized := filepath.ToSlash(value)
+	return normalized == "/tmp" || strings.HasPrefix(normalized, "/tmp/") || strings.Contains(normalized, "wa-test-mlwh")
+}
+
+func mlwhCachePathResolvesUnderRepoTmp(value string) bool {
+	normalized := filepath.ToSlash(value)
+	return strings.HasPrefix(normalized, ".tmp/") || strings.Contains(normalized, "/.tmp/")
 }

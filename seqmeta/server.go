@@ -39,7 +39,7 @@ import (
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 const (
@@ -49,7 +49,7 @@ const (
 
 // Server serves the seqmeta REST API.
 type Server struct {
-	provider    SAGAProvider
+	provider    Provider
 	store       *Store
 	handler     http.Handler
 	successTTL  time.Duration
@@ -57,7 +57,7 @@ type Server struct {
 }
 
 // NewServer creates a seqmeta HTTP server.
-func NewServer(provider SAGAProvider, store *Store, opts ...ServerOption) *Server {
+func NewServer(provider Provider, store *Store, opts ...ServerOption) *Server {
 	server := &Server{
 		provider:    provider,
 		store:       store,
@@ -102,7 +102,7 @@ func (s *Server) loadFreshEnrichCache(identifier string, now time.Time) (*enrich
 }
 
 func (s *Server) handleListStudies(w http.ResponseWriter, r *http.Request) {
-	studies, err := s.provider.AllStudies(r.Context())
+	studies, err := listAllStudies(r.Context(), s.provider)
 	if err != nil {
 		_ = writeError(w, http.StatusBadGateway, err.Error())
 
@@ -117,7 +117,7 @@ func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
 	samples, err := s.provider.AllSamplesForStudy(r.Context(), studyID)
 	if err != nil {
 		status := http.StatusBadGateway
-		if errors.Is(err, saga.ErrNotFound) {
+		if errors.Is(err, mlwh.ErrNotFound) {
 			status = http.StatusNotFound
 		}
 
@@ -138,7 +138,7 @@ func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
 	// Filter by library_type if query parameter is present
 	libraryType := r.URL.Query().Get("library_type")
 	if libraryType != "" {
-		filtered := make([]saga.MLWHSample, 0, len(samples))
+		filtered := make([]mlwh.Sample, 0, len(samples))
 		for _, sample := range samples {
 			if sample.LibraryType == libraryType {
 				filtered = append(filtered, sample)
@@ -164,7 +164,47 @@ func looksLikeStudyAccession(s string) bool {
 
 func (s *Server) handleStudyDiff(w http.ResponseWriter, r *http.Request) {
 	queryID := chi.URLParam(r, "id")
-	samples, err := s.provider.AllSamplesForStudy(r.Context(), queryID)
+	if queryID == "all" {
+		err := s.store.WithLock(func() error {
+			prepared, err := PrepareDiffStudies(r.Context(), s.provider, s.store)
+			if err != nil {
+				return err
+			}
+
+			body, err := marshalJSON(prepared.Result)
+			if err != nil {
+				return err
+			}
+
+			if err := prepared.Commit(); err != nil {
+				return err
+			}
+
+			if err := writeJSONBytes(w, http.StatusOK, body); err != nil {
+				log.Printf("seqmeta: write failed for study diff %q: %v", queryID, err)
+				if rollbackErr := prepared.Rollback(); rollbackErr != nil {
+					log.Printf("seqmeta: rollback failed for study diff %q: %v", queryID, rollbackErr)
+
+					return errors.Join(err, rollbackErr)
+				}
+
+				return err
+			}
+
+			return nil
+		})
+		if err != nil {
+			if w.Header().Get("Content-Type") != "" {
+				return
+			}
+
+			s.writeDiffError(w, err)
+		}
+
+		return
+	}
+
+	samples, err := listStudySamples(r.Context(), s.provider, queryID)
 	if err != nil {
 		s.writeDiffError(w, err)
 
@@ -214,8 +254,14 @@ func (s *Server) handleStudyDiff(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSampleDiff(w http.ResponseWriter, r *http.Request) {
 	queryID := chi.URLParam(r, "id")
-	files, err := s.provider.GetSampleFiles(r.Context(), queryID)
+	files, err := listSampleFiles(r.Context(), s.provider, queryID)
 	if err != nil {
+		if errors.Is(err, mlwh.ErrNotFound) {
+			_ = writeError(w, http.StatusNotFound, "identifier \""+queryID+"\": "+err.Error())
+
+			return
+		}
+
 		s.writeDiffError(w, err)
 
 		return
@@ -406,7 +452,7 @@ func (s *Server) handleDeleteEnrich(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeDiffError(w http.ResponseWriter, err error) {
 	status := http.StatusBadGateway
-	if errors.Is(err, saga.ErrNotFound) {
+	if errors.Is(err, mlwh.ErrNotFound) {
 		status = http.StatusNotFound
 	} else if errors.Is(err, errStoreOperation) {
 		status = http.StatusInternalServerError
@@ -449,8 +495,8 @@ func writeError(w http.ResponseWriter, status int, message string) error {
 
 // resolveByAccession looks up studies to find one whose AccessionNumber matches
 // the given accession, then returns all samples for that study's numeric ID.
-func (s *Server) resolveByAccession(ctx context.Context, accession string) ([]saga.MLWHSample, error) {
-	studies, err := s.provider.AllStudies(ctx)
+func (s *Server) resolveByAccession(ctx context.Context, accession string) ([]mlwh.Sample, error) {
+	studies, err := listAllStudies(ctx, s.provider)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +507,7 @@ func (s *Server) resolveByAccession(ctx context.Context, accession string) ([]sa
 		}
 	}
 
-	return []saga.MLWHSample{}, nil
+	return []mlwh.Sample{}, nil
 }
 
 // ServerOption configures a Server.

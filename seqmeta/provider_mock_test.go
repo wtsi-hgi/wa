@@ -27,147 +27,238 @@ package seqmeta
 
 import (
 	"context"
+	"database/sql"
 
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-var _ SAGAProvider = (*MockProvider)(nil)
+var _ Provider = (*MockProvider)(nil)
 
-// MockProvider is a configurable SAGAProvider test helper.
+// MockProvider is a configurable Provider test helper.
 type MockProvider struct {
-	GetStudyFunc                   func(ctx context.Context, studyID string) (*saga.Study, error)
-	AllStudiesFunc                 func(ctx context.Context) ([]saga.Study, error)
-	AllSamplesFunc                 func(ctx context.Context) ([]saga.MLWHSample, error)
-	AllSamplesForStudyFunc         func(ctx context.Context, studyID string) ([]saga.MLWHSample, error)
-	FindSamplesBySangerIDFn        func(ctx context.Context, sangerID string) ([]saga.MLWHSample, error)
-	FindSamplesByIDSampleLimsFn    func(ctx context.Context, idSampleLims string) ([]saga.MLWHSample, error)
-	FindSamplesByRunIDFn           func(ctx context.Context, idRun int) ([]saga.MLWHSample, error)
-	FindSamplesByLibraryTypeFn     func(ctx context.Context, libraryType string) ([]saga.MLWHSample, error)
-	FindSamplesByAccessionNumberFn func(ctx context.Context, accessionNumber string) ([]saga.MLWHSample, error)
-	StudyForSampleFn               func(ctx context.Context, sample saga.MLWHSample) (*saga.Study, error)
-	GetSampleFilesFunc             func(ctx context.Context, sangerID string) ([]saga.IRODSFile, error)
-	ListProjectsFunc               func(ctx context.Context) ([]saga.Project, error)
-	ListProjectStudiesFn           func(ctx context.Context, projectID int) ([]saga.ProjectStudy, error)
-	ListProjectSamplesFn           func(ctx context.Context, projectID int) ([]saga.ProjectSample, error)
-	ListProjectUsersFn             func(ctx context.Context, projectID int) ([]saga.ProjectUser, error)
+	QueryContextFunc        func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ClassifyIdentifierFunc  func(ctx context.Context, raw string) (mlwh.Match, error)
+	ResolveSampleFunc       func(ctx context.Context, raw string) (mlwh.Match, error)
+	ResolveStudyFunc        func(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveRunFunc          func(ctx context.Context, raw string) (mlwh.Match, error)
+	ResolveLibraryFunc      func(ctx context.Context, raw string) (mlwh.Match, error)
+	StudyDetailFunc         func(ctx context.Context, studyLimsID string) (*mlwh.StudyDetail, error)
+	SampleDetailFunc        func(ctx context.Context, sampleName string) (*mlwh.SampleDetail, error)
+	RunDetailFunc           func(ctx context.Context, runID string) (*mlwh.RunDetail, error)
+	AllStudiesFunc          func(ctx context.Context, limit, offset int) ([]mlwh.Study, error)
+	GetStudyFunc            func(ctx context.Context, identifier string) (*mlwh.Study, error)
+	SamplesForStudyFunc     func(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
+	AllSamplesForStudyFunc  func(ctx context.Context, studyLimsID string) ([]mlwh.Sample, error)
+	FindSamplesBySangerIDFn func(ctx context.Context, sangerID string) ([]mlwh.Sample, error)
+	FindSamplesByIDSampleLimsFn func(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error)
+	FindSamplesByRunIDFn        func(ctx context.Context, idRun int) ([]mlwh.Sample, error)
+	FindSamplesByLibraryTypeFn  func(ctx context.Context, libraryType string) ([]mlwh.Sample, error)
+	FindSamplesByAccessionNumberFn func(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error)
+	SamplesForRunFunc       func(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error)
+	SamplesForLibraryFunc   func(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
+	LibrariesForStudyFunc   func(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
+	StudyForSampleFunc      func(ctx context.Context, sangerName string) (*mlwh.Study, error)
+	LanesForSampleFunc      func(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
+	IRODSPathsForSampleFunc func(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error)
+	GetSampleFilesFunc      func(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error)
 }
 
-func (m *MockProvider) GetStudy(ctx context.Context, studyID string) (*saga.Study, error) {
-	if m != nil && m.GetStudyFunc != nil {
-		return m.GetStudyFunc(ctx, studyID)
+func (m *MockProvider) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if m != nil && m.QueryContextFunc != nil {
+		return m.QueryContextFunc(ctx, query, args...)
 	}
 
 	return nil, nil
 }
 
-func (m *MockProvider) AllStudies(ctx context.Context) ([]saga.Study, error) {
+func (m *MockProvider) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m != nil && m.ClassifyIdentifierFunc != nil {
+		return m.ClassifyIdentifierFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, nil
+}
+
+func (m *MockProvider) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m != nil && m.ResolveSampleFunc != nil {
+		return m.ResolveSampleFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, nil
+}
+
+func (m *MockProvider) ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+	if m != nil && m.ResolveStudyFunc != nil {
+		return m.ResolveStudyFunc(ctx, raw, options...)
+	}
+
+	return mlwh.Match{}, nil
+}
+
+func (m *MockProvider) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m != nil && m.ResolveRunFunc != nil {
+		return m.ResolveRunFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, nil
+}
+
+func (m *MockProvider) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m != nil && m.ResolveLibraryFunc != nil {
+		return m.ResolveLibraryFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, nil
+}
+
+func (m *MockProvider) StudyDetail(ctx context.Context, studyLimsID string) (*mlwh.StudyDetail, error) {
+	if m != nil && m.StudyDetailFunc != nil {
+		return m.StudyDetailFunc(ctx, studyLimsID)
+	}
+
+	return nil, nil
+}
+
+func (m *MockProvider) SampleDetail(ctx context.Context, sampleName string) (*mlwh.SampleDetail, error) {
+	if m != nil && m.SampleDetailFunc != nil {
+		return m.SampleDetailFunc(ctx, sampleName)
+	}
+
+	return nil, nil
+}
+
+func (m *MockProvider) RunDetail(ctx context.Context, runID string) (*mlwh.RunDetail, error) {
+	if m != nil && m.RunDetailFunc != nil {
+		return m.RunDetailFunc(ctx, runID)
+	}
+
+	return nil, nil
+}
+
+func (m *MockProvider) AllStudies(ctx context.Context, limit, offset int) ([]mlwh.Study, error) {
 	if m != nil && m.AllStudiesFunc != nil {
-		return m.AllStudiesFunc(ctx)
+		return m.AllStudiesFunc(ctx, limit, offset)
 	}
 
 	return nil, nil
 }
 
-func (m *MockProvider) AllSamples(ctx context.Context) ([]saga.MLWHSample, error) {
-	if m != nil && m.AllSamplesFunc != nil {
-		return m.AllSamplesFunc(ctx)
+func (m *MockProvider) GetStudy(ctx context.Context, identifier string) (*mlwh.Study, error) {
+	if m != nil && m.GetStudyFunc != nil {
+		return m.GetStudyFunc(ctx, identifier)
 	}
 
 	return nil, nil
 }
 
-func (m *MockProvider) AllSamplesForStudy(ctx context.Context, studyID string) ([]saga.MLWHSample, error) {
+func (m *MockProvider) SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
+	if m != nil && m.SamplesForStudyFunc != nil {
+		return m.SamplesForStudyFunc(ctx, studyLimsID, limit, offset)
+	}
+
+	return []mlwh.Sample{}, nil
+}
+
+func (m *MockProvider) AllSamplesForStudy(ctx context.Context, studyLimsID string) ([]mlwh.Sample, error) {
 	if m != nil && m.AllSamplesForStudyFunc != nil {
-		return m.AllSamplesForStudyFunc(ctx, studyID)
+		return m.AllSamplesForStudyFunc(ctx, studyLimsID)
 	}
 
-	return nil, nil
+	return []mlwh.Sample{}, nil
 }
 
-func (m *MockProvider) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]saga.MLWHSample, error) {
+func (m *MockProvider) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
 	if m != nil && m.FindSamplesBySangerIDFn != nil {
 		return m.FindSamplesBySangerIDFn(ctx, sangerID)
 	}
 
-	return []saga.MLWHSample{}, nil
+	return []mlwh.Sample{}, nil
 }
 
-func (m *MockProvider) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]saga.MLWHSample, error) {
+func (m *MockProvider) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
 	if m != nil && m.FindSamplesByIDSampleLimsFn != nil {
 		return m.FindSamplesByIDSampleLimsFn(ctx, idSampleLims)
 	}
 
-	return []saga.MLWHSample{}, nil
+	return []mlwh.Sample{}, nil
 }
 
-func (m *MockProvider) FindSamplesByRunID(ctx context.Context, idRun int) ([]saga.MLWHSample, error) {
+func (m *MockProvider) FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error) {
 	if m != nil && m.FindSamplesByRunIDFn != nil {
 		return m.FindSamplesByRunIDFn(ctx, idRun)
 	}
 
-	return []saga.MLWHSample{}, nil
+	return []mlwh.Sample{}, nil
 }
 
-func (m *MockProvider) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]saga.MLWHSample, error) {
+func (m *MockProvider) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error) {
 	if m != nil && m.FindSamplesByLibraryTypeFn != nil {
 		return m.FindSamplesByLibraryTypeFn(ctx, libraryType)
 	}
 
-	return []saga.MLWHSample{}, nil
+	return []mlwh.Sample{}, nil
 }
 
-func (m *MockProvider) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]saga.MLWHSample, error) {
+func (m *MockProvider) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
 	if m != nil && m.FindSamplesByAccessionNumberFn != nil {
 		return m.FindSamplesByAccessionNumberFn(ctx, accessionNumber)
 	}
 
-	return []saga.MLWHSample{}, nil
+	return []mlwh.Sample{}, nil
 }
 
-func (m *MockProvider) StudyForSample(ctx context.Context, sample saga.MLWHSample) (*saga.Study, error) {
-	if m != nil && m.StudyForSampleFn != nil {
-		return m.StudyForSampleFn(ctx, sample)
+func (m *MockProvider) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error) {
+	if m != nil && m.SamplesForRunFunc != nil {
+		return m.SamplesForRunFunc(ctx, idRun, limit, offset)
+	}
+
+	return []mlwh.Sample{}, nil
+}
+
+func (m *MockProvider) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
+	if m != nil && m.SamplesForLibraryFunc != nil {
+		return m.SamplesForLibraryFunc(ctx, pipelineIDLims, studyLimsID, limit, offset)
+	}
+
+	return []mlwh.Sample{}, nil
+}
+
+func (m *MockProvider) LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error) {
+	if m != nil && m.LibrariesForStudyFunc != nil {
+		return m.LibrariesForStudyFunc(ctx, studyLimsID, limit, offset)
 	}
 
 	return nil, nil
 }
 
-func (m *MockProvider) GetSampleFiles(ctx context.Context, sangerID string) ([]saga.IRODSFile, error) {
+func (m *MockProvider) StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error) {
+	if m != nil && m.StudyForSampleFunc != nil {
+		return m.StudyForSampleFunc(ctx, sangerName)
+	}
+
+	return nil, nil
+}
+
+func (m *MockProvider) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
+	if m != nil && m.LanesForSampleFunc != nil {
+		return m.LanesForSampleFunc(ctx, sangerName, limit, offset)
+	}
+
+	return []mlwh.Lane{}, nil
+}
+
+func (m *MockProvider) IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
+	if m != nil && m.IRODSPathsForSampleFunc != nil {
+		return m.IRODSPathsForSampleFunc(ctx, sangerName, limit, offset)
+	}
+
+	return []mlwh.IRODSPath{}, nil
+}
+
+func (m *MockProvider) GetSampleFiles(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error) {
 	if m != nil && m.GetSampleFilesFunc != nil {
-		return m.GetSampleFilesFunc(ctx, sangerID)
+		return m.GetSampleFilesFunc(ctx, sangerName)
 	}
 
-	return nil, nil
-}
-
-func (m *MockProvider) ListProjects(ctx context.Context) ([]saga.Project, error) {
-	if m != nil && m.ListProjectsFunc != nil {
-		return m.ListProjectsFunc(ctx)
-	}
-
-	return nil, nil
-}
-
-func (m *MockProvider) ListProjectStudies(ctx context.Context, projectID int) ([]saga.ProjectStudy, error) {
-	if m != nil && m.ListProjectStudiesFn != nil {
-		return m.ListProjectStudiesFn(ctx, projectID)
-	}
-
-	return []saga.ProjectStudy{}, nil
-}
-
-func (m *MockProvider) ListProjectSamples(ctx context.Context, projectID int) ([]saga.ProjectSample, error) {
-	if m != nil && m.ListProjectSamplesFn != nil {
-		return m.ListProjectSamplesFn(ctx, projectID)
-	}
-
-	return []saga.ProjectSample{}, nil
-}
-
-func (m *MockProvider) ListProjectUsers(ctx context.Context, projectID int) ([]saga.ProjectUser, error) {
-	if m != nil && m.ListProjectUsersFn != nil {
-		return m.ListProjectUsersFn(ctx, projectID)
-	}
-
-	return []saga.ProjectUser{}, nil
+	return []mlwh.IRODSPath{}, nil
 }

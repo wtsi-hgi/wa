@@ -10,8 +10,8 @@
 | **SQLite**  | (bundled) | Dev/test database via `modernc.org/sqlite` (pure Go, no CGo) |
 | **MySQL**   | 8+        | Production database (optional for dev)                       |
 
-A SAGA API token (`SAGA_API_TOKEN`) is needed for saga/seqmeta features but is
-not required for results-only development.
+MLWH settings (`WA_MLWH_DSN`, `WA_MLWH_PASSWORD`, and cache settings) are only
+required when you want to run seqmeta locally.
 
 ## Repository Layout
 
@@ -20,7 +20,6 @@ wa/
 ├── main.go              # Entrypoint — unified `wa` binary
 ├── cmd/                 # Cobra command definitions
 ├── results/             # Results REST API + store
-├── saga/                # SAGA API client library
 ├── seqmeta/             # Sequence metadata cache
 ├── frontend/            # Next.js web UI
 ├── run-dev.sh           # Bring-up script used by `make dev`, `make prod`, and Playwright
@@ -28,7 +27,6 @@ wa/
 │   ├── proposal.md
 │   ├── results-rest/spec.md
 │   ├── results-web/spec.md
-│   ├── saga/spec.md
 │   └── seqmeta/spec.md
 ├── .env.test            # Committed defaults for `make test`
 ├── .env.development     # Committed development defaults
@@ -48,9 +46,9 @@ cd frontend && pnpm install && cd ..
 
 # Create a machine-local development override and add any secrets there
 cp .env.development .env.development.local
-# Open .env.development.local and set SAGA_API_TOKEN or any per-machine overrides
+# Open .env.development.local and set WA_MLWH_DSN or any per-machine overrides
 
-# Run the dev stack — persistent DB, real SAGA, NO fixtures
+# Run the dev stack — persistent DB, MLWH-backed seqmeta, NO fixtures
 make dev
 
 # Same but also seed demo fixtures (.docs/results-web/fixtures/seed.json)
@@ -63,7 +61,8 @@ against the persistent SQLite database at `WA_RESULTS_DB_PATH` (creating the
 file and parent directory if missing — never deleting it on shutdown), and
 starts the Next.js dev server. Logs go to `logs/`.
 
-The seqmeta server only starts if `SAGA_API_TOKEN` is set in `.env.development.local`.
+Development mode requires `WA_MLWH_DSN` in `.env.development.local`; the
+launcher refuses `make dev` without MLWH configured.
 
 ## Make targets
 
@@ -73,7 +72,7 @@ The seqmeta server only starts if `SAGA_API_TOKEN` is set in `.env.development.l
 | `make dev FIXTURES=1` | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Same as `make dev`, plus seed demo fixtures into the development DB.                                                                                                                               |
 | `make dev-fixtures`   | `.env`, `.env.development`, `.env.local`, `.env.development.local` | Alias for `make dev FIXTURES=1`.                                                                                                                                                                   |
 | `make prod`           | `.env`, `.env.production`, `.env.local`, `.env.production.local`   | Bring up the production stack. Refuses inherited test/development ports and still requires `WA_ENV=production` plus a real `WA_RESULTS_DB_PATH` after loading.                                     |
-| `make test`           | `.env`, `.env.test`, `.env.test.local`                             | Run Go + Vitest + Playwright. Always uses ephemeral DBs, refuses an inherited `WA_RESULTS_DB_PATH`, and may import only `SAGA_API_TOKEN` from `.env.development.local` for live integration tests. |
+| `make test`           | `.env`, `.env.test`, `.env.test.local`                             | Run Go + Vitest + Playwright. Always uses ephemeral DBs and refuses an inherited `WA_RESULTS_DB_PATH`. |
 | `make test-go`        | `.env`, `.env.test`, `.env.test.local`                             | Just the Go suite.                                                                                                                                                                                 |
 | `make test-frontend`  | `.env`, `.env.test`, `.env.test.local`                             | Just Vitest.                                                                                                                                                                                       |
 | `make test-e2e`       | `.env`, `.env.test`, `.env.test.local`                             | Just Playwright. Internally drives `run-dev.sh --mode test`.                                                                                                                                       |
@@ -98,10 +97,10 @@ while `run-dev.sh` derives the frontend backend URLs from those same ports.
 
 | File                     | Tracked? | Loaded by                               | Holds                                                                                       |
 | ------------------------ | -------- | --------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `.env.test`              | yes      | `make test` / `wa --env test ...`       | Test ports + `WA_ENV=test`. No DB path. No committed SAGA token.                            |
+| `.env.test`              | yes      | `make test` / `wa --env test ...`       | Test ports + `WA_ENV=test`. No DB path. No committed MLWH credentials.                      |
 | `.env.test.local`        | no       | optional test override                  | Personal test-only overrides.                                                               |
-| `.env.development`       | yes      | `make dev` / `wa --env development ...` | Development ports, dev DB path, blank `SAGA_API_TOKEN`, `WA_ENV=development`.               |
-| `.env.development.local` | no       | local development override              | Your local development secrets and machine-specific overrides, including a real SAGA token. |
+| `.env.development`       | yes      | `make dev` / `wa --env development ...` | Development ports, dev DB path, blank MLWH settings, `WA_ENV=development`.                  |
+| `.env.development.local` | no       | local development override              | Your local development secrets and machine-specific overrides, including real MLWH settings. |
 | `.env.production`        | yes      | `make prod` / `wa --env production ...` | Production ports, blank DB settings, `WA_ENV=production`.                                   |
 | `.env.production.local`  | no       | local production override               | Deployment-specific production secrets and DB settings.                                     |
 
@@ -130,8 +129,9 @@ The `make` recipes, `wa` startup path, and `run-dev.sh` enforce the following:
 ### Runtime variables
 
 The scenario `.env*` files supply `WA_RESULTS_DB_PATH`,
-`WA_RESULTS_DB_PASSWORD`, `SAGA_API_TOKEN`,
-`WA_STUDIES_CACHE_TTL_SECONDS`, `WA_DEV_ALLOWED_ORIGINS`, and the relevant
+`WA_RESULTS_DB_PASSWORD`, `WA_MLWH_DSN`, `WA_MLWH_PASSWORD`,
+`WA_MLWH_CACHE_PATH`, `WA_MLWH_CACHE_PASSWORD`, `WA_STUDIES_CACHE_TTL_SECONDS`,
+`WA_DEV_ALLOWED_ORIGINS`, and the relevant
 `WA_*_RESULTS_PORT` / `WA_*_SEQMETA_PORT` / `WA_*_FRONTEND_PORT` variables.
 `wa results ...` uses `WA_ENV` plus the active `WA_*_RESULTS_PORT` to choose
 its default `--server` URL. `run-dev.sh` uses those same ports to export
@@ -179,8 +179,10 @@ export WA_RESULTS_DB_PATH='user@tcp(db-host:3306)/wa_results'
 export WA_RESULTS_DB_PASSWORD='super-secret'
 ./wa results serve --port 8090
 
-# Start seqmeta server (requires SAGA token)
-./wa seqmeta serve --port 8091 --db seqmeta.db --token "$SAGA_API_TOKEN"
+# Start seqmeta server (requires MLWH settings)
+export WA_MLWH_DSN='mlwh_user@tcp(db-host:3306)/mlwarehouse'
+export WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite
+./wa seqmeta serve --port 8091
 ```
 
 ### Frontend
@@ -215,7 +217,6 @@ go test -tags netgo --count 1 ./...
 
 # Specific package
 go test -tags netgo --count 1 ./results/...
-go test -tags netgo --count 1 ./saga/...
 go test -tags netgo --count 1 ./seqmeta/...
 go test -tags netgo --count 1 ./cmd/...
 
@@ -224,7 +225,7 @@ go test -tags netgo --count 1 -v ./results/...
 ```
 
 Tests use in-memory SQLite — no external database needed. External API calls
-(SAGA) are mocked via interfaces.
+(MLWH and related services) are mocked via interfaces.
 
 ### Frontend tests
 
@@ -293,7 +294,8 @@ Password-bearing DSNs are rejected on the command line.
 The DSN is detected by the presence of `@tcp(` or `@unix(` in the string.
 Tables are auto-created on startup, same as SQLite.
 
-Seqmeta uses SQLite only (local watermark state).
+Seqmeta persists local watermark state in SQLite and reads sequencing data via
+the MLWH-backed cache layer.
 
 ## Architecture
 
@@ -302,16 +304,16 @@ them through Server Actions (server-to-server calls), so the Go API can live
 on a private network — backend URLs are never exposed to the browser.
 
 ```
-Browser  →  Next.js (Server Actions)  →  Go REST API  →  SQLite / MySQL
+Browser  →  Next.js (Server Actions)  →  Go REST API  →  SQLite / MySQL caches
                                               ↓
-                                         SAGA API (via saga library)
+                                         MLWH replica
 ```
 
 ### Key patterns
 
 - **Deterministic IDs**: Result set IDs are SHA256 of
   `pipeline_identifier + run_key`. Re-posting the same key upserts.
-- **Interface mocking**: All external dependencies (SAGA, database) are behind
+- **Interface mocking**: All external dependencies (MLWH, database) are behind
   Go interfaces for testable, isolated unit tests.
 - **Zod contracts**: The frontend validates API responses with Zod schemas,
   catching backend regressions at the boundary.
@@ -350,10 +352,12 @@ wa results serve \
   --seqmeta-url http://localhost:8091
 
 # Seqmeta API
+export WA_MLWH_DSN='user@tcp(mlwh-host:3306)/warehouse'
+export WA_MLWH_PASSWORD='super-secret'
+export WA_MLWH_CACHE_PATH=/var/lib/wa/mlwh-cache.sqlite
 wa seqmeta serve \
   --port 8091 \
-  --db /var/lib/wa/seqmeta.db \
-  --token "$SAGA_API_TOKEN"
+  --db /var/lib/wa/seqmeta.db
 
 # Frontend
 cd frontend
@@ -368,7 +372,10 @@ WA_SEQMETA_BACKEND_URL=http://localhost:8091 \
 | ------------------------------ | ------------ | ------------------------------------------------ |
 | `WA_RESULTS_DB_PATH`           | For results  | SQLite path, full DSN, or passwordless MySQL DSN |
 | `WA_RESULTS_DB_PASSWORD`       | Optional     | MySQL password paired with a passwordless DSN    |
-| `SAGA_API_TOKEN`               | For seqmeta  | SAGA API authentication token                    |
+| `WA_MLWH_DSN`                  | For seqmeta  | Passwordless MLWH DSN                            |
+| `WA_MLWH_PASSWORD`             | Optional     | MLWH password paired with a passwordless DSN     |
+| `WA_MLWH_CACHE_PATH`           | For seqmeta  | SQLite path or passwordless MySQL cache DSN      |
+| `WA_MLWH_CACHE_PASSWORD`       | Optional     | MLWH cache MySQL password                        |
 | `WA_RESULTS_BACKEND_URL`       | For frontend | Results API URL (server-side only)               |
 | `WA_SEQMETA_BACKEND_URL`       | For frontend | Seqmeta API URL (server-side only)               |
 | `WA_STUDIES_CACHE_TTL_SECONDS` | No           | Study list cache TTL (default: 300)              |

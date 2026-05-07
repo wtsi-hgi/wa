@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 var (
@@ -46,8 +46,6 @@ const (
 	HopStudy     = "study"
 	HopSamples   = "samples"
 	HopLibraries = "libraries"
-	HopProject   = "project"
-	HopUsers     = "users"
 	HopStudies   = "studies"
 )
 
@@ -57,17 +55,24 @@ const (
 	ReasonSamplesTruncated = "samples_truncated"
 )
 
-const MaxLibrarySamples = 1000
+const MaxLibrarySamples = mlwh.MaxSamplesPerHop
 
 const (
-	IdentifierStudyID         IdentifierType = "study_id"
-	IdentifierStudyAccession  IdentifierType = "study_accession"
-	IdentifierSangerSampleID  IdentifierType = "sanger_sample_id"
-	IdentifierSampleLimsID    IdentifierType = "sample_lims_id"
-	IdentifierSampleAccession IdentifierType = "sample_accession"
-	IdentifierRunID           IdentifierType = "run_id"
-	IdentifierLibraryType     IdentifierType = "library_type"
-	IdentifierProjectName     IdentifierType = "project_name"
+	IdentifierStudyID IdentifierType = IdentifierStudyLimsID
+
+	IdentifierStudyLimsID      IdentifierType = "study_lims_id"
+	IdentifierStudyAccession   IdentifierType = "study_accession"
+	IdentifierStudyUUID        IdentifierType = "study_uuid"
+	IdentifierStudyName        IdentifierType = "study_name"
+	IdentifierSangerSampleName IdentifierType = "sanger_sample_name"
+	IdentifierSangerSampleID   IdentifierType = "sanger_sample_id"
+	IdentifierSampleLimsID     IdentifierType = "sample_lims_id"
+	IdentifierSampleUUID       IdentifierType = "sample_uuid"
+	IdentifierSampleAccession  IdentifierType = "sample_accession"
+	IdentifierSupplierName     IdentifierType = "supplier_name"
+	IdentifierDonorID          IdentifierType = "donor_id"
+	IdentifierRunID            IdentifierType = "run_id"
+	IdentifierLibraryType      IdentifierType = "library_type"
 )
 
 // Store persists seqmeta watermark state in SQLite.
@@ -101,7 +106,7 @@ type DiffResult[T any] struct {
 }
 
 // IdentifierType classifies a sequencing identifier.
-type IdentifierType string
+type IdentifierType = mlwh.IdentifierKind
 
 // IdentifierResult is returned by Validate.
 type IdentifierResult struct {
@@ -116,49 +121,19 @@ type Library struct {
 	IDStudyLims string `json:"id_study_lims"`
 }
 
-// LaneDetail represents a lane on which a sample was sequenced.
-type LaneDetail struct {
-	IDRun    string `json:"id_run"`
-	Lane     string `json:"lane"`
-	TagIndex int    `json:"tag_index"`
-}
-
-// SampleDetail groups a sample with its sequencing lanes.
-type SampleDetail struct {
-	SangerID   string          `json:"sanger_id"`
-	SampleName string          `json:"sample_name"`
-	Sample     saga.MLWHSample `json:"sample"`
-	Lanes      []LaneDetail    `json:"lanes"`
-}
-
-// LibraryDetail groups a library with its samples.
-type LibraryDetail struct {
-	LibraryType string            `json:"library_type"`
-	IDStudyLims string            `json:"id_study_lims"`
-	Samples     []saga.MLWHSample `json:"samples"`
-}
-
-// StudyDetail groups a study with its libraries and their samples.
-type StudyDetail struct {
-	Study          saga.Study      `json:"study"`
-	LibraryDetails []LibraryDetail `json:"library_details"`
-}
-
 // EnrichmentGraph is the flat graph envelope returned under "graph".
 type EnrichmentGraph struct {
-	Study     *saga.Study        `json:"study,omitempty"`
-	Studies   []saga.Study       `json:"studies,omitempty"`
-	Sample    *saga.MLWHSample   `json:"sample,omitempty"`
-	Samples   []saga.MLWHSample  `json:"samples,omitempty"`
-	Library   *Library           `json:"library,omitempty"`
-	Libraries []Library          `json:"libraries,omitempty"`
-	Project   *saga.Project      `json:"project,omitempty"`
-	Users     []saga.ProjectUser `json:"users,omitempty"`
+	Study     *mlwh.Study   `json:"study,omitempty"`
+	Studies   []mlwh.Study  `json:"studies,omitempty"`
+	Sample    *mlwh.Sample  `json:"sample,omitempty"`
+	Samples   []mlwh.Sample `json:"samples,omitempty"`
+	Library   *Library      `json:"library,omitempty"`
+	Libraries []Library     `json:"libraries,omitempty"`
 
 	// Hierarchical structures
-	StudyDetail  *StudyDetail  `json:"study_detail,omitempty"`
-	StudyDetails []StudyDetail `json:"study_details,omitempty"`
-	SampleDetail *SampleDetail `json:"sample_detail,omitempty"`
+	StudyDetail  *mlwh.StudyDetail  `json:"study_detail,omitempty"`
+	StudyDetails []mlwh.StudyDetail `json:"study_details,omitempty"`
+	SampleDetail *mlwh.SampleDetail `json:"sample_detail,omitempty"`
 }
 
 // MissingHop records a hop that failed or was truncated.

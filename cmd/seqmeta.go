@@ -28,24 +28,294 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 	"github.com/wtsi-hgi/wa/seqmeta"
 )
 
 var listenFunc = net.Listen
 
+const seqmetaProviderFetchLimit = 1_000_000
+
+var openSeqmetaMLWHClient = mlwh.Open
+
+var openSeqmetaClientFunc = func(ctx context.Context, cfg seqmetaMLWHConfig) (seqmetaCommandClient, error) {
+	client, err := openSeqmetaMLWHClient(ctx, mlwh.Config{
+		DSN:      cfg.DSN,
+		Password: cfg.Password,
+		Cache: mlwh.CacheConfig{
+			Path:     cfg.CachePath,
+			Password: cfg.CachePassword,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &seqmetaMLWHClientAdapter{client: client}, nil
+}
+
+var newSeqmetaSyncTicker = func(interval time.Duration) seqmetaTicker {
+	return &seqmetaRealTicker{ticker: time.NewTicker(interval)}
+}
+
+var seqmetaSyncTables = []string{"sample", "study", "iseq_flowcell"}
+
+type seqmetaMLWHConfig struct {
+	DSN           string
+	Password      string
+	CachePath     string
+	CachePassword string
+}
+
+func resolveSeqmetaMLWHConfig(options *seqmetaOptions, cacheFlagChanged bool) (seqmetaMLWHConfig, error) {
+	dsn := strings.TrimSpace(firstEnv("WA_MLWH_DSN"))
+	if dsn == "" {
+		return seqmetaMLWHConfig{}, errors.New("WA_MLWH_DSN must be set")
+	}
+
+	validatedDSN, err := resolveSeqmetaMLWHDSN(dsn)
+	if err != nil {
+		return seqmetaMLWHConfig{}, fmt.Errorf("WA_MLWH_DSN: %w", err)
+	}
+
+	cachePath, err := resolveSeqmetaMLWHCachePath(options.mlwhCachePath, cacheFlagChanged)
+	if err != nil {
+		return seqmetaMLWHConfig{}, err
+	}
+
+	return seqmetaMLWHConfig{
+		DSN:           validatedDSN,
+		Password:      firstEnv("WA_MLWH_PASSWORD"),
+		CachePath:     cachePath,
+		CachePassword: firstEnv("WA_MLWH_CACHE_PASSWORD"),
+	}, nil
+}
+
+type seqmetaCommandClient interface {
+	seqmeta.Provider
+	Sync(context.Context, ...string) ([]mlwh.SyncReport, error)
+	Close() error
+}
+
+func openSeqmetaClient(ctx context.Context, options *seqmetaOptions, cacheFlagChanged bool) (seqmetaCommandClient, error) {
+	cfg, err := resolveSeqmetaMLWHConfig(options, cacheFlagChanged)
+	if err != nil {
+		return nil, err
+	}
+
+	return openSeqmetaClientFunc(ctx, cfg)
+}
+
+func commandContext(cmd *cobra.Command) context.Context {
+	if cmd == nil || cmd.Context() == nil {
+		return context.Background()
+	}
+
+	return cmd.Context()
+}
+
+func seqmetaFlagChanged(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+
+	flag := cmd.Flags().Lookup(name)
+
+	return flag != nil && flag.Changed
+}
+
+func startSeqmetaSyncLoop(ctx context.Context, client seqmetaCommandClient, interval time.Duration) {
+	if interval <= 0 || client == nil {
+		return
+	}
+
+	ticker := newSeqmetaSyncTicker(interval)
+	go func() {
+		defer ticker.Stop()
+
+		_, _ = client.Sync(ctx, seqmetaSyncTables...)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C():
+				_, _ = client.Sync(ctx, seqmetaSyncTables...)
+			}
+		}
+	}()
+}
+
+type seqmetaTicker interface {
+	C() <-chan time.Time
+	Stop()
+}
+
+type seqmetaRealTicker struct {
+	ticker *time.Ticker
+}
+
+func (t *seqmetaRealTicker) C() <-chan time.Time {
+	return t.ticker.C
+}
+
+func (t *seqmetaRealTicker) Stop() {
+	t.ticker.Stop()
+}
+
+type seqmetaMLWHClientAdapter struct {
+	client *mlwh.Client
+}
+
+func (a *seqmetaMLWHClientAdapter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if a == nil || a.client == nil || a.client.ReadDB() == nil {
+		return nil, errors.New("seqmeta: mlwh client cache reader is not configured")
+	}
+
+	return a.client.ReadDB().QueryContext(ctx, query, args...)
+}
+
+func (a *seqmetaMLWHClientAdapter) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	return a.client.ClassifyIdentifier(ctx, raw)
+}
+
+func (a *seqmetaMLWHClientAdapter) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
+	return a.client.ResolveSample(ctx, raw)
+}
+
+func (a *seqmetaMLWHClientAdapter) ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+	return a.client.ResolveStudy(ctx, raw, options...)
+}
+
+func (a *seqmetaMLWHClientAdapter) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
+	return a.client.ResolveRun(ctx, raw)
+}
+
+func (a *seqmetaMLWHClientAdapter) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
+	return a.client.ResolveLibrary(ctx, raw)
+}
+
+func (a *seqmetaMLWHClientAdapter) AllStudies(ctx context.Context, limit, offset int) ([]mlwh.Study, error) {
+	return a.client.AllStudies(ctx, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) GetStudy(ctx context.Context, identifier string) (*mlwh.Study, error) {
+	match, err := a.client.ResolveStudy(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+
+	return match.Study, nil
+}
+
+func (a *seqmetaMLWHClientAdapter) SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
+	return a.client.SamplesForStudy(ctx, studyLimsID, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) AllSamplesForStudy(ctx context.Context, studyLimsID string) ([]mlwh.Sample, error) {
+	return a.client.SamplesForStudy(ctx, studyLimsID, seqmetaProviderFetchLimit, 0)
+}
+
+func (a *seqmetaMLWHClientAdapter) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
+	return a.findSingleSample(ctx, sangerID)
+}
+
+func (a *seqmetaMLWHClientAdapter) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
+	return a.findSingleSample(ctx, idSampleLims)
+}
+
+func (a *seqmetaMLWHClientAdapter) FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error) {
+	return a.client.SamplesForRun(ctx, strconv.Itoa(idRun), seqmetaProviderFetchLimit, 0)
+}
+
+func (a *seqmetaMLWHClientAdapter) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error) {
+	studies, err := a.client.AllStudies(ctx, seqmetaProviderFetchLimit, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	samples := make([]mlwh.Sample, 0)
+	for _, study := range studies {
+		studySamples, studyErr := a.client.SamplesForLibrary(ctx, libraryType, study.IDStudyLims, seqmetaProviderFetchLimit, 0)
+		if studyErr != nil {
+			return nil, studyErr
+		}
+
+		samples = append(samples, studySamples...)
+	}
+
+	return samples, nil
+}
+
+func (a *seqmetaMLWHClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
+	return a.findSingleSample(ctx, accessionNumber)
+}
+
+func (a *seqmetaMLWHClientAdapter) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error) {
+	return a.client.SamplesForRun(ctx, idRun, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
+	return a.client.SamplesForLibrary(ctx, pipelineIDLims, studyLimsID, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error) {
+	return a.client.LibrariesForStudy(ctx, studyLimsID, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error) {
+	return a.client.StudyForSample(ctx, sangerName)
+}
+
+func (a *seqmetaMLWHClientAdapter) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
+	return a.client.LanesForSample(ctx, sangerName, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
+	return a.client.IRODSPathsForSample(ctx, sangerName, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) GetSampleFiles(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error) {
+	return a.client.IRODSPathsForSample(ctx, sangerName, seqmetaProviderFetchLimit, 0)
+}
+
+func (a *seqmetaMLWHClientAdapter) Sync(ctx context.Context, tables ...string) ([]mlwh.SyncReport, error) {
+	return a.client.Sync(ctx, tables...)
+}
+
+func (a *seqmetaMLWHClientAdapter) Close() error {
+	return a.client.Close()
+}
+
+func (a *seqmetaMLWHClientAdapter) findSingleSample(ctx context.Context, raw string) ([]mlwh.Sample, error) {
+	match, err := a.client.ResolveSample(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	if match.Sample == nil {
+		return []mlwh.Sample{}, nil
+	}
+
+	return []mlwh.Sample{*match.Sample}, nil
+}
+
 type seqmetaOptions struct {
-	token   string
-	baseURL string
-	dbPath  string
+	dbPath           string
+	mlwhCachePath    string
+	mlwhSyncInterval time.Duration
 }
 
 func newSeqmetaCommand() *cobra.Command {
@@ -59,9 +329,9 @@ func newSeqmetaCommand() *cobra.Command {
 		},
 	}
 
-	command.PersistentFlags().StringVar(&options.token, "token", firstEnv("SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN"), "SAGA API token")
-	command.PersistentFlags().StringVar(&options.baseURL, "base-url", "", "SAGA base URL")
 	command.PersistentFlags().StringVar(&options.dbPath, "db", "seqmeta.db", "SQLite database path")
+	command.PersistentFlags().StringVar(&options.mlwhCachePath, "mlwh-cache", "", "MLWH cache SQLite path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
+	command.PersistentFlags().DurationVar(&options.mlwhSyncInterval, "mlwh-sync-interval", 0, "Periodic MLWH sync interval; zero disables background sync")
 
 	command.AddCommand(newSeqmetaDiffCommand(options))
 	command.AddCommand(newSeqmetaValidateCommand(options))
@@ -82,11 +352,11 @@ func newSeqmetaDiffCommand(options *seqmetaOptions) *cobra.Command {
 				return errors.New("usage: specify exactly one of --study or --sample")
 			}
 
-			provider, closeProvider, err := openProvider(options)
+			provider, err := openSeqmetaClient(commandContext(cmd), options, seqmetaFlagChanged(cmd, "mlwh-cache"))
 			if err != nil {
 				return err
 			}
-			defer closeProvider()
+			defer func() { _ = provider.Close() }()
 
 			store, err := seqmeta.OpenStore(options.dbPath)
 			if err != nil {
@@ -94,10 +364,7 @@ func newSeqmetaDiffCommand(options *seqmetaOptions) *cobra.Command {
 			}
 			defer func() { _ = store.Close() }()
 
-			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
+			ctx := commandContext(cmd)
 
 			if studyID != "" {
 				samples, err := provider.AllSamplesForStudy(ctx, studyID)
@@ -106,8 +373,8 @@ func newSeqmetaDiffCommand(options *seqmetaOptions) *cobra.Command {
 				}
 
 				return store.WithLock(func() error {
-					prepared, err := seqmeta.PrepareDiff(store, "study_samples:"+studyID, samples, func(sample saga.MLWHSample) string {
-						return sample.SangerID
+					prepared, err := seqmeta.PrepareDiff(store, "study_samples:"+studyID, samples, func(sample mlwh.Sample) string {
+						return sample.Name
 					})
 					if err != nil {
 						return err
@@ -130,13 +397,8 @@ func newSeqmetaDiffCommand(options *seqmetaOptions) *cobra.Command {
 				})
 			}
 
-			files, err := provider.GetSampleFiles(ctx, sampleID)
-			if err != nil {
-				return err
-			}
-
 			return store.WithLock(func() error {
-				prepared, err := seqmeta.PrepareDiffSampleFiles(ctx, &prefetchedProvider{files: files}, store, sampleID)
+				prepared, err := seqmeta.PrepareDiffSampleFiles(ctx, provider, store, sampleID)
 				if err != nil {
 					return err
 				}
@@ -197,18 +459,13 @@ func newSeqmetaValidateCommand(options *seqmetaOptions) *cobra.Command {
 				return errors.New("usage: validate <identifier>")
 			}
 
-			provider, closeProvider, err := openProvider(options)
+			provider, err := openSeqmetaClient(commandContext(cmd), options, seqmetaFlagChanged(cmd, "mlwh-cache"))
 			if err != nil {
 				return err
 			}
-			defer closeProvider()
+			defer func() { _ = provider.Close() }()
 
-			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
-
-			result, err := seqmeta.Validate(ctx, provider, args[0])
+			result, err := seqmeta.Validate(commandContext(cmd), provider, args[0])
 			if err != nil {
 				return err
 			}
@@ -225,11 +482,11 @@ func newSeqmetaServeCommand(options *seqmetaOptions) *cobra.Command {
 		Use:   "serve",
 		Short: "Serve the seqmeta HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			provider, closeProvider, err := openProvider(options)
+			provider, err := openSeqmetaClient(commandContext(cmd), options, seqmetaFlagChanged(cmd, "mlwh-cache"))
 			if err != nil {
 				return err
 			}
-			defer closeProvider()
+			defer func() { _ = provider.Close() }()
 
 			store, err := seqmeta.OpenStore(options.dbPath)
 			if err != nil {
@@ -244,10 +501,8 @@ func newSeqmetaServeCommand(options *seqmetaOptions) *cobra.Command {
 			defer func() { _ = listener.Close() }()
 
 			httpServer := &http.Server{Handler: seqmeta.NewServer(provider, store).Handler()}
-			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
+			ctx := commandContext(cmd)
+			startSeqmetaSyncLoop(ctx, provider, options.mlwhSyncInterval)
 
 			go func() {
 				<-ctx.Done()
@@ -268,80 +523,50 @@ func newSeqmetaServeCommand(options *seqmetaOptions) *cobra.Command {
 	return command
 }
 
-func openProvider(options *seqmetaOptions) (seqmeta.SAGAProvider, func(), error) {
-	clientOptions := []saga.Option{}
-	if options.baseURL != "" {
-		clientOptions = append(clientOptions, saga.WithBaseURL(options.baseURL))
+func resolveSeqmetaMLWHDSN(dsn string) (string, error) {
+	trimmedDSN := strings.TrimSpace(dsn)
+	if trimmedDSN == "" {
+		return "", errors.New("mlwh: dsn is required")
 	}
 
-	client, err := saga.NewClient(options.token, clientOptions...)
+	parsed, err := mysql.ParseDSN(trimmedDSN)
 	if err != nil {
-		return nil, func() {}, err
+		return "", fmt.Errorf("parse MLWH DSN: %w", err)
 	}
 
-	return seqmeta.NewClientAdapter(client), func() { client.Close() }, nil
+	if parsed.Passwd != "" {
+		return "", mlwh.ErrPasswordInDSN
+	}
+
+	return parsed.FormatDSN(), nil
 }
 
-type prefetchedProvider struct {
-	files []saga.IRODSFile
-}
+func resolveSeqmetaMLWHCachePath(flagValue string, flagChanged bool) (string, error) {
+	cachePath := strings.TrimSpace(flagValue)
+	sourceName := "--mlwh-cache"
+	if !flagChanged {
+		if envValue := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH")); envValue != "" {
+			cachePath = envValue
+			sourceName = "WA_MLWH_CACHE_PATH"
+		}
+	}
 
-func (p *prefetchedProvider) GetStudy(context.Context, string) (*saga.Study, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
+	if cachePath == "" {
+		return "", errors.New("WA_MLWH_CACHE_PATH must be set or --mlwh-cache provided")
+	}
 
-func (p *prefetchedProvider) AllStudies(context.Context) ([]saga.Study, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
+	if !mlwhSyncCachePathLooksMySQL(cachePath) {
+		return cachePath, nil
+	}
 
-func (p *prefetchedProvider) AllSamples(context.Context) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
+	parsed, err := mysql.ParseDSN(cachePath)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", sourceName, err)
+	}
 
-func (p *prefetchedProvider) AllSamplesForStudy(context.Context, string) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
+	if parsed.Passwd != "" {
+		return "", fmt.Errorf("%s: %w", sourceName, mlwh.ErrPasswordInDSN)
+	}
 
-func (p *prefetchedProvider) FindSamplesBySangerID(context.Context, string) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) FindSamplesByIDSampleLims(context.Context, string) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) FindSamplesByRunID(context.Context, int) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) FindSamplesByLibraryType(context.Context, string) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) FindSamplesByAccessionNumber(context.Context, string) ([]saga.MLWHSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) StudyForSample(context.Context, saga.MLWHSample) (*saga.Study, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) GetSampleFiles(context.Context, string) ([]saga.IRODSFile, error) {
-	return p.files, nil
-}
-
-func (p *prefetchedProvider) ListProjects(context.Context) ([]saga.Project, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) ListProjectStudies(context.Context, int) ([]saga.ProjectStudy, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) ListProjectSamples(context.Context, int) ([]saga.ProjectSample, error) {
-	return nil, errors.New("unused prefetched provider method")
-}
-
-func (p *prefetchedProvider) ListProjectUsers(context.Context, int) ([]saga.ProjectUser, error) {
-	return nil, errors.New("unused prefetched provider method")
+	return cachePath, nil
 }

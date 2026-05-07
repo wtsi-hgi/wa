@@ -78,7 +78,7 @@ function humanizeToken(token: string): string {
 function metadataLabel(metadataKey: string): string {
     const trimmedKey = metadataKey.replace(/^seqmeta_/, "");
 
-    if (trimmedKey === "library") {
+    if (trimmedKey === "library" || trimmedKey === "librarytype") {
         return "Library type";
     }
 
@@ -102,7 +102,16 @@ function metadataLabel(metadataKey: string): string {
 }
 
 function isLibraryMetadataKey(metadataKey: string): boolean {
-    return metadataKey === "seqmeta_library";
+    return (
+        metadataKey === "seqmeta_library" ||
+        metadataKey === "seqmeta_librarytype"
+    );
+}
+
+function directLibraryMetadataKey(metadataKey: string): string {
+    return metadataKey === "seqmeta_librarytype"
+        ? "seqmeta_librarytype"
+        : "seqmeta_library";
 }
 
 function copiedStateKey(fieldKey: string, fieldValue: string): string {
@@ -190,14 +199,6 @@ function humanizeMissingHop(missing: MissingHop): string {
 
     if (missing.hop === "libraries" && missing.reason === "upstream_error") {
         return "Library details unavailable";
-    }
-
-    if (missing.hop === "project" && missing.reason === "upstream_error") {
-        return "Project details unavailable";
-    }
-
-    if (missing.hop === "users" && missing.reason === "upstream_error") {
-        return "Project users unavailable";
     }
 
     return `${missing.hop.replace(/^./, (letter) => letter.toUpperCase())} details unavailable`;
@@ -382,7 +383,9 @@ function buildDetailFields(
             appendDetailField(
                 fields,
                 {
-                    key: "seqmeta_library",
+                    key: libraryMetadata
+                        ? directLibraryMetadataKey(metadataKey)
+                        : "seqmeta_library",
                     label: "Library type",
                     searchKey: "library",
                     value: libraryType,
@@ -393,36 +396,6 @@ function buildDetailFields(
             );
         }
     }
-
-    appendDetailField(
-        fields,
-        enrichment.graph.project?.name
-            ? {
-                  key: "project_name",
-                  label: "Project",
-                  value: enrichment.graph.project.name,
-                  group: "related",
-              }
-            : null,
-        rawValue,
-        metadataKey,
-    );
-    appendDetailField(
-        fields,
-        enrichment.graph.users && enrichment.graph.users.length > 0
-            ? {
-                  key: "project_users",
-                  label: "Project users",
-                  value: enrichment.graph.users
-                      .map((user) => asString(user.username))
-                      .filter((value): value is string => Boolean(value))
-                      .join(", "),
-                  group: "related",
-              }
-            : null,
-        rawValue,
-        metadataKey,
-    );
 
     return fields;
 }
@@ -1143,9 +1116,13 @@ export function SeqmetaBadge({
                                                                                     expandedLibraries.has(
                                                                                         library.libraryType,
                                                                                     );
+                                                                                const libraryDetailKey =
+                                                                                    directLibraryMetadataKey(
+                                                                                        metadataKey,
+                                                                                    );
                                                                                 const libraryCopyKey =
                                                                                     copiedStateKey(
-                                                                                        "seqmeta_library",
+                                                                                        libraryDetailKey,
                                                                                         library.libraryType,
                                                                                     );
                                                                                 const isLoading =
@@ -1164,7 +1141,7 @@ export function SeqmetaBadge({
                                                                                         className="space-y-2"
                                                                                     >
                                                                                         <article
-                                                                                            data-seqmeta-detail-key="seqmeta_library"
+																data-seqmeta-detail-key={libraryDetailKey}
                                                                                             className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
                                                                                         >
                                                                                             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1178,7 +1155,7 @@ export function SeqmetaBadge({
                                                                                                 <div className="flex flex-wrap gap-2">
                                                                                                     <button
                                                                                                         type="button"
-                                                                                                        aria-label="Copy seqmeta_library"
+                                                                                                        aria-label={`Copy ${libraryDetailKey}`}
                                                                                                         className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                                                                                         onClick={() => {
                                                                                                             void writeClipboard(
@@ -1662,7 +1639,7 @@ export function SeqmetaBadge({
                                                                                         <div className="flex flex-wrap gap-2">
                                                                                             <button
                                                                                                 type="button"
-                                                                                                aria-label="Copy seqmeta_library"
+                                                                                                aria-label={`Copy ${directLibraryMetadataKey(metadataKey)}`}
                                                                                                 className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                                                                                 onClick={() => {
                                                                                                     void writeClipboard(
@@ -1675,7 +1652,9 @@ export function SeqmetaBadge({
                                                                                                                 copied
                                                                                                             ) {
                                                                                                                 setCopiedKey(
-                                                                                                                    "seqmeta_library",
+                                                                                                                    directLibraryMetadataKey(
+                                                                                                                        metadataKey,
+                                                                                                                    ),
                                                                                                                 );
                                                                                                             }
                                                                                                         },
@@ -1687,7 +1666,9 @@ export function SeqmetaBadge({
                                                                                                     aria-hidden="true"
                                                                                                 />
                                                                                                 {copiedKey ===
-                                                                                                "seqmeta_library"
+                                                                                                directLibraryMetadataKey(
+                                                                                                    metadataKey,
+                                                                                                )
                                                                                                     ? "Copied"
                                                                                                     : "Copy"}
                                                                                             </button>

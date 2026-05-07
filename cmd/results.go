@@ -38,25 +38,218 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/wa/mlwh"
 	"github.com/wtsi-hgi/wa/results"
-	"github.com/wtsi-hgi/wa/saga"
 
 	_ "modernc.org/sqlite"
 )
 
 var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
+var resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
+
+var resultsRegisterResolverOpener = openResultsRegisterResolver
+
+var resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
+	return &resultsServeRealTicker{ticker: time.NewTicker(interval)}
+}
+
 var resultsRegisterSeqmetaFlagMetaKeys = map[string]string{
 	"run":     "seqmeta_runid",
 	"study":   "seqmeta_studyid",
 	"sample":  "seqmeta_sampleid",
 	"library": "seqmeta_librarytype",
+}
+
+type resultsServeMLWHConfig struct {
+	DSN       string
+	CachePath string
+}
+
+func resolveResultsServeMLWHConfig(flagValue string, flagChanged bool) (resultsServeMLWHConfig, bool, error) {
+	cachePath, hasCachePath, err := resolveResultsServeMLWHCachePath(flagValue, flagChanged)
+	if err != nil {
+		return resultsServeMLWHConfig{}, false, err
+	}
+
+	dsn := strings.TrimSpace(firstEnv("WA_MLWH_DSN"))
+	if dsn == "" && !hasCachePath {
+		return resultsServeMLWHConfig{}, false, nil
+	}
+
+	if dsn == "" {
+		return resultsServeMLWHConfig{}, false, errors.New("WA_MLWH_DSN must be set")
+	}
+
+	if !hasCachePath {
+		return resultsServeMLWHConfig{}, false, errors.New("WA_MLWH_CACHE_PATH or --mlwh-cache must be set")
+	}
+
+	resolvedDSN, err := mlwh.ResolveDSN(dsn, firstEnv("WA_MLWH_PASSWORD"))
+	if err != nil {
+		return resultsServeMLWHConfig{}, false, fmt.Errorf("WA_MLWH_DSN: %w", err)
+	}
+
+	return resultsServeMLWHConfig{
+		DSN:       resolvedDSN,
+		CachePath: cachePath,
+	}, true, nil
+}
+
+func startResultsServeMLWHSync(ctx context.Context, client resultsServeSyncClient, interval time.Duration) func() {
+	if interval <= 0 || client == nil {
+		return func() {}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		ticker := resultsServeNewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.Chan():
+				_, _ = client.Sync(ctx)
+			}
+		}
+	}()
+
+	return func() {
+		<-done
+	}
+}
+
+type resultsRegisterResolver interface {
+	ResolveSample(context.Context, string) (mlwh.Match, error)
+	ResolveStudy(context.Context, string, ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveRun(context.Context, string) (mlwh.Match, error)
+	ResolveLibrary(context.Context, string) (mlwh.Match, error)
+	Close() error
+}
+
+func openResultsRegisterResolver(ctx context.Context) (resultsRegisterResolver, error) {
+	dsn := strings.TrimSpace(firstEnv("WA_MLWH_DSN"))
+	if dsn == "" {
+		return nil, errors.New("WA_MLWH_DSN is required to resolve --run/--study/--sample/--library")
+	}
+
+	cachePath := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH"))
+	if cachePath == "" {
+		return nil, errors.New("WA_MLWH_CACHE_PATH is required to resolve --run/--study/--sample/--library")
+	}
+
+	client, err := mlwh.Open(ctx, mlwh.Config{
+		DSN:      dsn,
+		Password: firstEnv("WA_MLWH_PASSWORD"),
+		Cache: mlwh.CacheConfig{
+			Path:     cachePath,
+			Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open mlwh resolver client: %w", err)
+	}
+
+	return client, nil
+}
+
+func resultsRegisterResolvedCanonical(flagName, value, canonical string) (string, error) {
+	trimmed := strings.TrimSpace(canonical)
+	if trimmed == "" {
+		return "", fmt.Errorf("resolve %s %q: %w", flagName, value, mlwh.ErrNotFound)
+	}
+
+	return trimmed, nil
+}
+
+type resultsServeSyncClient interface {
+	Sync(context.Context, ...string) ([]mlwh.SyncReport, error)
+	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
+	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
+	Close() error
+}
+
+func openResultsServeMLWHClientWithConfig(ctx context.Context, cfg resultsServeMLWHConfig) (resultsServeSyncClient, error) {
+	sourceDB, err := sql.Open("mysql", cfg.DSN)
+	if err != nil {
+		return nil, fmt.Errorf("open mlwh source db: %w", err)
+	}
+
+	if err = sourceDB.PingContext(ctx); err != nil {
+		_ = sourceDB.Close()
+
+		return nil, fmt.Errorf("ping mlwh source db: %w", err)
+	}
+
+	client, err := mlwh.Open(ctx, mlwh.Config{
+		Cache: mlwh.CacheConfig{
+			Path:     cfg.CachePath,
+			Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
+		},
+		Source: sourceDB,
+	})
+	if err != nil {
+		_ = sourceDB.Close()
+
+		return nil, err
+	}
+
+	return &resultsServeMLWHRuntime{client: client, sourceDB: sourceDB}, nil
+}
+
+type resultsServeTicker interface {
+	Chan() <-chan time.Time
+	Stop()
+}
+
+type resultsServeRealTicker struct {
+	ticker *time.Ticker
+}
+
+func (t *resultsServeRealTicker) Chan() <-chan time.Time {
+	return t.ticker.C
+}
+
+func (t *resultsServeRealTicker) Stop() {
+	t.ticker.Stop()
+}
+
+type resultsServeMLWHRuntime struct {
+	client   *mlwh.Client
+	sourceDB *sql.DB
+}
+
+func (r *resultsServeMLWHRuntime) Sync(ctx context.Context, tables ...string) ([]mlwh.SyncReport, error) {
+	return r.client.Sync(ctx, tables...)
+}
+
+func (r *resultsServeMLWHRuntime) ExpandIdentifier(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+	return r.client.ExpandIdentifier(ctx, kind, canonical)
+}
+
+func (r *resultsServeMLWHRuntime) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
+	return r.client.LanesForSample(ctx, sangerName, limit, offset)
+}
+
+func (r *resultsServeMLWHRuntime) Close() error {
+	var closeErrs []error
+	if r.client != nil {
+		closeErrs = append(closeErrs, r.client.Close())
+	}
+	if r.sourceDB != nil {
+		closeErrs = append(closeErrs, r.sourceDB.Close())
+	}
+
+	return errors.Join(closeErrs...)
 }
 
 type resultsRegisterLookupValues struct {
@@ -71,11 +264,11 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 		return nil, nil
 	}
 
-	client, err := newResultsRegisterSagaClient()
+	client, err := resultsRegisterResolverOpener(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	metadata := make(map[string]string, 4)
 
@@ -118,83 +311,40 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 	return metadata, nil
 }
 
-func newResultsRegisterSagaClient() (*saga.Client, error) {
-	apiKey := firstEnv("SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN")
-	options := make([]saga.Option, 0, 1)
-
-	if baseURL := firstEnv("SAGA_API_BASE_URL"); baseURL != "" {
-		options = append(options, saga.WithBaseURL(baseURL))
-	}
-
-	client, err := saga.NewClient(apiKey, options...)
+func resolveResultsRegisterRunID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
+	match, err := client.ResolveRun(ctx, value)
 	if err != nil {
-		return nil, fmt.Errorf("saga is required to resolve --run/--study/--sample/--library: %w", err)
+		return "", fmt.Errorf("resolve --run %q: %w", value, err)
 	}
 
-	return client, nil
+	return resultsRegisterResolvedCanonical("--run", value, match.Canonical)
 }
 
-func resolveResultsRegisterRunID(ctx context.Context, client *saga.Client, value string) (string, error) {
-	runID, err := strconv.Atoi(value)
+func resolveResultsRegisterStudyID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
+	match, err := client.ResolveStudy(ctx, value)
 	if err != nil {
-		return "", fmt.Errorf("resolve --run %q via Saga: expected a numeric run ID", value)
+		return "", fmt.Errorf("resolve --study %q: %w", value, err)
 	}
 
-	samples, err := client.MLWH().FindSamplesByRunID(ctx, runID)
-	if err != nil {
-		return "", fmt.Errorf("resolve --run %q via Saga: %w", value, err)
-	}
-
-	for _, sample := range samples {
-		if sample.IDRun == runID {
-			return strconv.Itoa(sample.IDRun), nil
-		}
-	}
-
-	return "", fmt.Errorf("resolve --run %q via Saga: no matching run found", value)
+	return resultsRegisterResolvedCanonical("--study", value, match.Canonical)
 }
 
-func resolveResultsRegisterStudyID(ctx context.Context, client *saga.Client, value string) (string, error) {
-	resolver := &inspector{client: client}
-	studies, err := resolver.resolveStudies(ctx, value)
+func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
+	match, err := client.ResolveSample(ctx, value)
 	if err != nil {
-		return "", fmt.Errorf("resolve --study %q via Saga: %w", value, err)
+		return "", fmt.Errorf("resolve --sample %q: %w", value, err)
 	}
 
-	if len(studies) == 0 || strings.TrimSpace(studies[0].Study.IDStudyLims) == "" {
-		return "", fmt.Errorf("resolve --study %q via Saga: no matching study found", value)
-	}
-
-	return studies[0].Study.IDStudyLims, nil
+	return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
 }
 
-func resolveResultsRegisterSampleID(ctx context.Context, client *saga.Client, value string) (string, error) {
-	resolver := &inspector{client: client}
-	samples, err := resolver.resolveSamples(ctx, value)
+func resolveResultsRegisterLibraryType(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
+	match, err := client.ResolveLibrary(ctx, value)
 	if err != nil {
-		return "", fmt.Errorf("resolve --sample %q via Saga: %w", value, err)
+		return "", fmt.Errorf("resolve --library %q: %w", value, err)
 	}
 
-	if len(samples) == 0 || strings.TrimSpace(samples[0].SangerID) == "" {
-		return "", fmt.Errorf("resolve --sample %q via Saga: no matching sample found", value)
-	}
-
-	return samples[0].SangerID, nil
-}
-
-func resolveResultsRegisterLibraryType(ctx context.Context, client *saga.Client, value string) (string, error) {
-	samples, err := client.MLWH().FindSamplesByLibraryType(ctx, value)
-	if err != nil {
-		return "", fmt.Errorf("resolve --library %q via Saga: %w", value, err)
-	}
-
-	for _, sample := range samples {
-		if strings.TrimSpace(sample.LibraryType) != "" {
-			return sample.LibraryType, nil
-		}
-	}
-
-	return "", fmt.Errorf("resolve --library %q via Saga: no matching library type found", value)
+	return resultsRegisterResolvedCanonical("--library", value, match.Canonical)
 }
 
 type resultSetWithFiles struct {
@@ -412,9 +562,10 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 		Long: strings.Join([]string{
 			"Register a result set.",
 			"",
-			"The --run, --study, --sample and --library shorthands resolve through Saga and store canonical seqmeta metadata keys.",
-			"For example, --study accepts a study ID or accession and stores seqmeta_studyid, while --sample accepts a Sanger ID or sample name and stores seqmeta_sampleid.",
-			"Saga credentials come from SAGA_API_TOKEN or SAGA_TEST_API_TOKEN, and the base URL may be overridden with SAGA_API_BASE_URL.",
+			"The --run, --study, --sample and --library shorthands resolve through MLWH and store canonical seqmeta metadata keys.",
+			"--sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID.",
+			"--study accepts LIMS ID, accession, UUID, or name; --run accepts numeric run IDs.",
+			"--library accepts exact pipeline_id_lims values, and the first call may block on a cold-cache sync, so pre-warm with wa mlwh sync.",
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -459,10 +610,10 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Additional value used to disambiguate the run key")
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
-	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a run identifier through Saga and store it as seqmeta_runid")
-	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study identifier or accession through Saga and store it as seqmeta_studyid")
-	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample Sanger ID or name through Saga and store it as seqmeta_sampleid")
-	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve a library type through Saga and store it as seqmeta_librarytype")
+	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric run ID through MLWH and store it as seqmeta_runid")
+	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_studyid")
+	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_sampleid")
+	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims through MLWH and store it as seqmeta_librarytype; the first call may block on a cold-cache sync, so pre-warm with wa mlwh sync")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 
@@ -993,6 +1144,8 @@ func resultsEndpointURL(serverURL, resourcePath string) (*url.URL, error) {
 func newResultsServeCommand() *cobra.Command {
 	var port int
 	var dbPath string
+	var mlwhCache string
+	var mlwhSyncInterval time.Duration
 	var seqmetaURL string
 	var seqmetaTimeout time.Duration
 
@@ -1000,9 +1153,19 @@ func newResultsServeCommand() *cobra.Command {
 		Use:   "serve",
 		Short: "Serve the results HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := commandContext(cmd)
+
 			dsn, err := resolveResultsServeDBDSN(dbPath, cmd.Flags().Changed("db"))
 			if err != nil {
 				return err
+			}
+
+			mlwhConfig, enableMLWH, err := resolveResultsServeMLWHConfig(mlwhCache, cmd.Flags().Changed("mlwh-cache"))
+			if err != nil {
+				return err
+			}
+			if mlwhSyncInterval > 0 && !enableMLWH {
+				return errors.New("--mlwh-sync-interval requires MLWH configuration via WA_MLWH_DSN and WA_MLWH_CACHE_PATH or --mlwh-cache")
 			}
 
 			db, err := openResultsDB(dsn)
@@ -1018,11 +1181,22 @@ func newResultsServeCommand() *cobra.Command {
 			}
 			defer func() { _ = store.Close() }()
 
+			var mlwhClient resultsServeSyncClient
+			if enableMLWH {
+				mlwhClient, err = resultsServeOpenMLWHClient(ctx, mlwhConfig)
+				if err != nil {
+					return fmt.Errorf("open mlwh client: %w", err)
+				}
+				defer func() { _ = mlwhClient.Close() }()
+			}
+
 			var validator *results.SeqmetaValidator
-			var resolver *results.SeqmetaSampleResolver
+			var resolver results.SearchResolver
 			if strings.TrimSpace(seqmetaURL) != "" {
 				validator = results.NewSeqmetaValidator(seqmetaURL, seqmetaTimeout)
-				resolver = results.NewSeqmetaSampleResolver(seqmetaURL, seqmetaTimeout)
+			}
+			if mlwhClient != nil {
+				resolver = results.NewMLWHSearchResolver(mlwhClient)
 			}
 
 			listener, err := listenFunc("tcp", fmt.Sprintf(":%d", port))
@@ -1032,17 +1206,17 @@ func newResultsServeCommand() *cobra.Command {
 			defer func() { _ = listener.Close() }()
 
 			httpServer := &http.Server{Handler: results.NewServer(store, validator, resolver).Handler()}
-			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
+			serveCtx, cancelServe := context.WithCancel(ctx)
+			waitForSync := startResultsServeMLWHSync(serveCtx, mlwhClient, mlwhSyncInterval)
 
 			go func() {
-				<-ctx.Done()
+				<-serveCtx.Done()
 				_ = httpServer.Shutdown(context.Background())
 			}()
 
 			err = httpServer.Serve(listener)
+			cancelServe()
+			waitForSync()
 			if errors.Is(err, http.ErrServerClosed) {
 				return nil
 			}
@@ -1053,6 +1227,8 @@ func newResultsServeCommand() *cobra.Command {
 
 	command.Flags().IntVar(&port, "port", 8080, "Port to bind")
 	command.Flags().StringVar(&dbPath, "db", "results.db", "SQLite database path or MySQL DSN without a password; defaults to WA_RESULTS_DB_PATH when unset")
+	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
+	command.Flags().DurationVar(&mlwhSyncInterval, "mlwh-sync-interval", 0, "Opt-in background MLWH sync interval; zero disables the sync loop")
 	command.Flags().StringVar(&seqmetaURL, "seqmeta-url", firstEnv("WA_SEQMETA_BACKEND_URL"), "Base URL for seqmeta validation (defaults to WA_SEQMETA_BACKEND_URL)")
 	command.Flags().DurationVar(&seqmetaTimeout, "seqmeta-timeout", 30*time.Second, "Timeout for seqmeta validation requests")
 
@@ -1274,4 +1450,34 @@ func resultsRegisterPipelineFile(workflowPath string) (results.FileEntry, error)
 		Size:  info.Size(),
 		Kind:  "pipeline",
 	}, nil
+}
+
+func resolveResultsServeMLWHCachePath(flagValue string, flagChanged bool) (string, bool, error) {
+	cachePath := strings.TrimSpace(flagValue)
+	sourceName := "--mlwh-cache"
+	if !flagChanged {
+		if envValue := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH")); envValue != "" {
+			cachePath = envValue
+			sourceName = "WA_MLWH_CACHE_PATH"
+		}
+	}
+
+	if cachePath == "" {
+		return "", false, nil
+	}
+
+	if !mlwhSyncCachePathLooksMySQL(cachePath) {
+		return cachePath, true, nil
+	}
+
+	parsed, err := mysql.ParseDSN(cachePath)
+	if err != nil {
+		return "", false, fmt.Errorf("parse %s: %w", sourceName, err)
+	}
+
+	if parsed.Passwd != "" {
+		return "", false, fmt.Errorf("%s: %w", sourceName, mlwh.ErrPasswordInDSN)
+	}
+
+	return cachePath, true, nil
 }

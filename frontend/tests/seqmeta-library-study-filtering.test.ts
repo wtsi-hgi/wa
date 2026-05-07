@@ -24,7 +24,7 @@ describe("seqmeta-badge library type study filtering", () => {
     it("shows only the single study when all samples belong to one study, even when enrichment returns multiple studies globally", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
-        // Simulate what Saga returns: multiple studies globally for "Chromium single cell 3 prime v3"
+        // Simulate a global library-type lookup returning multiple studies for "Chromium single cell 3 prime v3"
         // but all samples in this enrichment belong to study 5631
         render(
             createElement(SeqmetaBadge, {
@@ -59,8 +59,8 @@ describe("seqmeta-badge library type study filtering", () => {
                                 contains_human_dna: true,
                                 contaminated_human_dna: false,
                                 study_visibility: "Hold",
-                                ega_dac_accession_number: null,
-                                ega_policy_accession_number: null,
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
                                 data_release_timing: "standard",
                             },
                             {
@@ -86,8 +86,8 @@ describe("seqmeta-badge library type study filtering", () => {
                                 contains_human_dna: true,
                                 contaminated_human_dna: false,
                                 study_visibility: "Hold",
-                                ega_dac_accession_number: null,
-                                ega_policy_accession_number: null,
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
                                 data_release_timing: "standard",
                             },
                             {
@@ -113,8 +113,8 @@ describe("seqmeta-badge library type study filtering", () => {
                                 contains_human_dna: true,
                                 contaminated_human_dna: false,
                                 study_visibility: "Hold",
-                                ega_dac_accession_number: null,
-                                ega_policy_accession_number: null,
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
                                 data_release_timing: "standard",
                             },
                             {
@@ -140,8 +140,8 @@ describe("seqmeta-badge library type study filtering", () => {
                                 contains_human_dna: true,
                                 contaminated_human_dna: false,
                                 study_visibility: "Hold",
-                                ega_dac_accession_number: null,
-                                ega_policy_accession_number: null,
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
                                 data_release_timing: "standard",
                             },
                         ],
@@ -247,8 +247,8 @@ describe("seqmeta-badge library type study filtering", () => {
                                 contains_human_dna: true,
                                 contaminated_human_dna: false,
                                 study_visibility: "Open",
-                                ega_dac_accession_number: null,
-                                ega_policy_accession_number: null,
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
                                 data_release_timing: "standard",
                             },
                             {
@@ -274,8 +274,8 @@ describe("seqmeta-badge library type study filtering", () => {
                                 contains_human_dna: true,
                                 contaminated_human_dna: false,
                                 study_visibility: "Open",
-                                ega_dac_accession_number: null,
-                                ega_policy_accession_number: null,
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
                                 data_release_timing: "standard",
                             },
                         ],

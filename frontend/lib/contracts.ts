@@ -113,7 +113,7 @@ export type EnrichmentStudy = z.infer<typeof enrichmentStudySchema>;
 export const enrichmentStudiesSchema = z.array(enrichmentStudySchema);
 export type EnrichmentStudies = z.infer<typeof enrichmentStudiesSchema>;
 
-export const enrichmentSampleSchema = z.object({
+const legacyEnrichmentSampleInputSchema = z.object({
     id_study_lims: z.string(),
     id_sample_lims: z.string(),
     sanger_id: z.string(),
@@ -128,7 +128,91 @@ export const enrichmentSampleSchema = z.object({
     study_accession_number: z.string(),
     accession_number: z.string(),
 });
+
+const mlwhEnrichmentSampleInputSchema = z
+    .object({
+        id_study_lims: z.string(),
+        id_sample_lims: z.string(),
+        sanger_id: z.string(),
+        name: z.string(),
+        taxon_id: z.number(),
+        common_name: z.string(),
+        library_type: z.string(),
+        accession_number: z.string(),
+    });
+
+type EnrichmentSampleInput =
+    | z.infer<typeof legacyEnrichmentSampleInputSchema>
+    | z.infer<typeof mlwhEnrichmentSampleInputSchema>;
+
+const normalizedEnrichmentSampleSchema = z.object({
+    id_study_lims: z.string(),
+    id_sample_lims: z.string(),
+    sanger_id: z.string(),
+    sample_name: z.string(),
+    taxon_id: z.number(),
+    common_name: z.string(),
+    library_type: z.string(),
+    accession_number: z.string(),
+    id_run: z.number().optional(),
+    lane: z.number().optional(),
+    tag_index: z.number().optional(),
+    irods_path: z.string().optional(),
+    study_accession_number: z.string().optional(),
+});
+
+type NormalizedEnrichmentSample = z.infer<
+    typeof normalizedEnrichmentSampleSchema
+>;
+
+function normalizeEnrichmentSample(
+    sample: EnrichmentSampleInput,
+): NormalizedEnrichmentSample {
+    if ("sample_name" in sample) {
+        return {
+            id_study_lims: sample.id_study_lims,
+            id_sample_lims: sample.id_sample_lims,
+            sanger_id: sample.sanger_id,
+            sample_name: sample.sample_name,
+            taxon_id: sample.taxon_id,
+            common_name: sample.common_name,
+            library_type: sample.library_type,
+            accession_number: sample.accession_number,
+            id_run: sample.id_run,
+            lane: sample.lane,
+            tag_index: sample.tag_index,
+            irods_path: sample.irods_path,
+            study_accession_number: sample.study_accession_number,
+        };
+    }
+
+    return {
+        id_study_lims: sample.id_study_lims,
+        id_sample_lims: sample.id_sample_lims,
+        sanger_id: sample.sanger_id,
+        sample_name: sample.name,
+        taxon_id: sample.taxon_id,
+        common_name: sample.common_name,
+        library_type: sample.library_type,
+        accession_number: sample.accession_number,
+        id_run: undefined,
+        lane: undefined,
+        tag_index: undefined,
+        irods_path: undefined,
+        study_accession_number: undefined,
+    };
+}
+
+export const enrichmentSampleSchema = z
+    .union([
+        legacyEnrichmentSampleInputSchema,
+        mlwhEnrichmentSampleInputSchema,
+    ])
+    .transform(normalizeEnrichmentSample)
+    .pipe(normalizedEnrichmentSampleSchema);
 export type EnrichmentSample = z.infer<typeof enrichmentSampleSchema>;
+
+const normalizedEnrichmentSamplesSchema = z.array(normalizedEnrichmentSampleSchema);
 
 export const enrichmentSamplesSchema = z.array(enrichmentSampleSchema);
 export type EnrichmentSamples = z.infer<typeof enrichmentSamplesSchema>;
@@ -139,44 +223,170 @@ export const libraryLinkSchema = z.object({
 });
 export type LibraryLink = z.infer<typeof libraryLinkSchema>;
 
-export const projectSchema = z.object({
-    id: z.number(),
-    name: z.string(),
+export const irodsPathSchema = z.object({
+    id_product: z.string(),
+    collection: z.string(),
+    data_object: z.string(),
+    irods_path: z.string(),
 });
-export type Project = z.infer<typeof projectSchema>;
+export type IRODSPath = z.infer<typeof irodsPathSchema>;
 
-export const projectUserSchema = z.object({
-    id: z.number(),
-    username: z.string(),
-});
-export type ProjectUser = z.infer<typeof projectUserSchema>;
-
-export const laneDetailSchema = z.object({
+const normalizedLaneDetailSchema = z.object({
     id_run: z.string(),
     lane: z.string(),
     tag_index: z.number(),
 });
+
+export const laneDetailSchema = z.object({
+    id_run: z.union([z.string(), z.number()]).transform(String),
+    lane: z.union([z.string(), z.number()]).transform(String),
+    tag_index: z.number(),
+}).pipe(normalizedLaneDetailSchema);
 export type LaneDetail = z.infer<typeof laneDetailSchema>;
 
-export const sampleDetailSchema = z.object({
+const mlwhLibraryLinkInputSchema = z
+    .object({
+        pipeline_id_lims: z.string(),
+    });
+
+const legacySampleDetailInputSchema = z
+    .object({
+        sanger_id: z.string(),
+        sample_name: z.string(),
+        sample: enrichmentSampleSchema,
+        lanes: z.array(laneDetailSchema),
+        irods_paths: z.array(irodsPathSchema).optional(),
+    });
+
+const mlwhSampleDetailInputSchema = z
+    .object({
+        sample: enrichmentSampleSchema,
+        study: enrichmentStudySchema.optional(),
+        lanes: z.array(laneDetailSchema),
+        libraries: z.array(mlwhLibraryLinkInputSchema).optional(),
+        irods_paths: z.array(irodsPathSchema).optional(),
+    });
+
+const normalizedSampleDetailSchema = z.object({
     sanger_id: z.string(),
     sample_name: z.string(),
-    sample: enrichmentSampleSchema,
-    lanes: z.array(laneDetailSchema),
+    sample: normalizedEnrichmentSampleSchema,
+    study: enrichmentStudySchema.optional(),
+    lanes: z.array(normalizedLaneDetailSchema),
+    libraries: z.array(libraryLinkSchema).optional(),
+    irods_paths: z.array(irodsPathSchema).optional(),
 });
+
+type NormalizedSampleDetail = z.infer<typeof normalizedSampleDetailSchema>;
+
+export const sampleDetailSchema = z
+    .union([legacySampleDetailInputSchema, mlwhSampleDetailInputSchema])
+    .transform((detail): NormalizedSampleDetail => {
+        if ("sanger_id" in detail && "sample_name" in detail) {
+            return {
+                sanger_id: detail.sanger_id,
+                sample_name: detail.sample_name,
+                sample: detail.sample,
+                lanes: detail.lanes,
+                irods_paths: detail.irods_paths,
+            };
+        }
+
+        return {
+            sanger_id: detail.sample.sanger_id,
+            sample_name: detail.sample.sample_name,
+            sample: detail.sample,
+            study: detail.study,
+            lanes: detail.lanes,
+            libraries: detail.libraries?.map((library) => ({
+                library_type: library.pipeline_id_lims,
+                id_study_lims: detail.sample.id_study_lims,
+            })),
+            irods_paths: detail.irods_paths,
+        };
+    })
+    .pipe(normalizedSampleDetailSchema);
 export type SampleDetail = z.infer<typeof sampleDetailSchema>;
 
-export const libraryDetailSchema = z.object({
+const legacyLibraryDetailInputSchema = z
+    .object({
+        library_type: z.string(),
+        id_study_lims: z.string(),
+        samples: enrichmentSamplesSchema,
+    });
+
+const mlwhLibraryDetailInputSchema = z
+    .object({
+        library: mlwhLibraryLinkInputSchema.optional(),
+        samples: enrichmentSamplesSchema,
+    });
+
+const normalizedLibraryDetailSchema = z.object({
     library_type: z.string(),
     id_study_lims: z.string(),
-    samples: enrichmentSamplesSchema,
+    samples: normalizedEnrichmentSamplesSchema,
 });
+
+function normalizeLibraryDetail(
+    detail:
+        | z.infer<typeof legacyLibraryDetailInputSchema>
+        | z.infer<typeof mlwhLibraryDetailInputSchema>,
+    fallbackStudyLims?: string,
+): {
+    library_type: string;
+    id_study_lims: string;
+    samples: EnrichmentSamples;
+} {
+    if ("library_type" in detail) {
+        return {
+            library_type: detail.library_type,
+            id_study_lims: detail.id_study_lims,
+            samples: detail.samples,
+        };
+    }
+
+    const firstSample = detail.samples[0];
+
+    return {
+        library_type:
+            detail.library?.pipeline_id_lims ?? firstSample?.library_type ?? "",
+        id_study_lims: fallbackStudyLims ?? firstSample?.id_study_lims ?? "",
+        samples: detail.samples,
+    };
+}
+
+export const libraryDetailSchema = z
+    .union([legacyLibraryDetailInputSchema, mlwhLibraryDetailInputSchema])
+    .transform((detail) => normalizeLibraryDetail(detail))
+    .pipe(normalizedLibraryDetailSchema);
 export type LibraryDetail = z.infer<typeof libraryDetailSchema>;
 
-export const studyDetailSchema = z.object({
+const legacyStudyDetailInputSchema = z
+    .object({
+        study: enrichmentStudySchema,
+        library_details: z.array(legacyLibraryDetailInputSchema),
+    });
+
+const mlwhStudyDetailInputSchema = z
+    .object({
+        study: enrichmentStudySchema,
+        library_details: z.array(mlwhLibraryDetailInputSchema),
+    });
+
+const normalizedStudyDetailSchema = z.object({
     study: enrichmentStudySchema,
-    library_details: z.array(libraryDetailSchema),
+    library_details: z.array(normalizedLibraryDetailSchema),
 });
+
+export const studyDetailSchema = z
+    .union([legacyStudyDetailInputSchema, mlwhStudyDetailInputSchema])
+    .transform((detail) => ({
+        study: detail.study,
+        library_details: detail.library_details.map((libraryDetail) =>
+            normalizeLibraryDetail(libraryDetail, detail.study.id_study_lims),
+        ),
+    }))
+    .pipe(normalizedStudyDetailSchema);
 export type StudyDetail = z.infer<typeof studyDetailSchema>;
 
 export const enrichmentGraphSchema = z.object({
@@ -186,8 +396,6 @@ export const enrichmentGraphSchema = z.object({
     samples: enrichmentSamplesSchema.optional(),
     library: libraryLinkSchema.optional(),
     libraries: z.array(libraryLinkSchema).optional(),
-    project: projectSchema.optional(),
-    users: z.array(projectUserSchema).optional(),
     // Hierarchical structures
     study_detail: studyDetailSchema.optional(),
     study_details: z.array(studyDetailSchema).optional(),

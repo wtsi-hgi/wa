@@ -3,6 +3,8 @@
  */
 
 import { createElement } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import {
     afterAll,
@@ -209,6 +211,42 @@ describe("K1 filter builder component", () => {
         fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?library=RNA");
+    });
+
+    it("shows library filter help warning about the first call and wa mlwh sync", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["library", "seqmeta_library"],
+                seqmetaAvailable: true,
+                studies: [],
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(screen.getByRole("option", { name: /^library$/i }));
+
+        const panel = screen.getByTestId("library-filter-help");
+
+        expect(panel.textContent).toContain("first call");
+        expect(panel.textContent).toContain("wa mlwh sync");
+        expect(panel.textContent).not.toContain("Sa" + "ga");
+        expect(panel.textContent).not.toContain("via " + "Sa" + "ga");
+    });
+
+    it("documents library search expansion with first-call and wa mlwh sync wording in the helper JSDoc", () => {
+        const source = readFileSync(
+            resolve(process.cwd(), "app/(results)/actions.ts"),
+            "utf8",
+        );
+
+        expect(source).toMatch(
+            /\/\*\*[\s\S]*first call[\s\S]*wa mlwh sync[\s\S]*\*\/\s*export async function searchResults/,
+        );
+        expect(source).not.toContain("Sa" + "ga");
+        expect(source).not.toContain("via " + "Sa" + "ga");
     });
 
     it("shows cached suggestions for non-study fields and applies a selected value", async () => {

@@ -28,127 +28,50 @@ package seqmeta
 import (
 	"context"
 	"errors"
-	"net/http"
-	"strconv"
 
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-// Validate classifies a sequencing identifier by querying SAGA in priority order.
-func Validate(ctx context.Context, provider SAGAProvider, identifier string) (*IdentifierResult, error) {
+// Validate classifies a sequencing identifier via the MLWH resolver surface.
+func Validate(ctx context.Context, provider Provider, identifier string) (*IdentifierResult, error) {
 	if identifier == "" {
 		return nil, ErrUnknownIdentifier
 	}
 
-	// GetStudy is speculative: most identifiers are not study IDs, and some
-	// SAGA deployments reject non-study-shaped IDs (e.g. "SANG205") with 4xx
-	// statuses rather than 404. 4xx client errors (including 404) are treated
-	// as "not a study" and we fall through to the broader cascade. 5xx,
-	// transport, or other errors indicate a genuine SAGA problem and are
-	// propagated immediately to avoid triggering the expensive AllStudies /
-	// AllSamples / ListProjects cascade against an impaired backend.
-	study, err := provider.GetStudy(ctx, identifier)
-	if err == nil && study != nil {
-		return &IdentifierResult{Identifier: identifier, Type: IdentifierStudyID, Object: study}, nil
-	}
-	if err != nil && !isClientError(err) {
-		return nil, err
-	}
-
-	studies, err := provider.AllStudies(ctx)
+	match, err := provider.ClassifyIdentifier(ctx, identifier)
 	if err != nil {
-		return nil, err
-	}
-	for _, candidate := range studies {
-		if candidate.AccessionNumber == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierStudyAccession, Object: candidate}, nil
-		}
-	}
-
-	if runID, convErr := strconv.Atoi(identifier); convErr == nil {
-		targetedSamples, err := provider.FindSamplesByRunID(ctx, runID)
-		if err != nil {
-			if !isClientError(err) {
-				return nil, err
-			}
-		} else if len(targetedSamples) > 0 {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierRunID, Object: targetedSamples[0]}, nil
-		}
-	}
-
-	targetedSamples, err := provider.FindSamplesBySangerID(ctx, identifier)
-	if err != nil {
-		if !isClientError(err) {
+		switch {
+		case errors.Is(err, mlwh.ErrNotFound):
+			return nil, fmtUnknownIdentifier(identifier)
+		case errors.Is(err, mlwh.ErrUnsupportedIdentifier):
+			return nil, err
+		default:
 			return nil, err
 		}
-	} else if len(targetedSamples) > 0 {
-		return &IdentifierResult{Identifier: identifier, Type: IdentifierSangerSampleID, Object: targetedSamples[0]}, nil
 	}
 
-	targetedSamples, err = provider.FindSamplesByIDSampleLims(ctx, identifier)
-	if err != nil {
-		if !isClientError(err) {
-			return nil, err
-		}
-	} else if len(targetedSamples) > 0 {
-		return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleLimsID, Object: targetedSamples[0]}, nil
-	}
-
-	targetedSamples, err = provider.FindSamplesByAccessionNumber(ctx, identifier)
-	if err != nil {
-		if !isClientError(err) {
-			return nil, err
-		}
-	} else if len(targetedSamples) > 0 {
-		return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleAccession, Object: targetedSamples[0]}, nil
-	}
-
-	if looksLikeLibraryType(identifier) {
-		targetedSamples, err = provider.FindSamplesByLibraryType(ctx, identifier)
-		if err != nil {
-			if !isClientError(err) {
-				return nil, err
-			}
-		} else if len(targetedSamples) > 0 {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierLibraryType, Object: targetedSamples[0]}, nil
-		}
-	}
-
-	projects, err := provider.ListProjects(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, candidate := range projects {
-		if candidate.Name == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierProjectName, Object: candidate}, nil
-		}
-	}
-
-	return nil, ErrUnknownIdentifier
+	return &IdentifierResult{
+		Identifier: match.Canonical,
+		Type:       IdentifierType(match.Kind),
+		Object:     matchObject(match),
+	}, nil
 }
 
-// isClientError reports whether err is a SAGA API error with a 4xx status
-// code (or the sentinel saga.ErrNotFound). Such errors indicate the
-// identifier simply isn't a study on this backend, so the validation
-// cascade may safely continue. All other errors (5xx, transport failures,
-// context deadline) indicate a real SAGA problem and should be propagated.
-func isClientError(err error) bool {
-	if errors.Is(err, saga.ErrNotFound) {
-		return true
-	}
-	if errors.Is(err, saga.ErrUnsupportedFilter) {
-		return true
-	}
+func fmtUnknownIdentifier(identifier string) error {
+	return errors.Join(ErrUnknownIdentifier, errors.New(identifier))
+}
 
-	var apiErr saga.APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode >= http.StatusBadRequest && apiErr.StatusCode < http.StatusInternalServerError
+func matchObject(match mlwh.Match) any {
+	switch {
+	case match.Sample != nil:
+		return match.Sample
+	case match.Study != nil:
+		return *match.Study
+	case match.Run != nil:
+		return match.Run
+	case match.Library != nil:
+		return match.Library
+	default:
+		return nil
 	}
-
-	apiErrPtr := &saga.APIError{}
-	if errors.As(err, &apiErrPtr) {
-		return apiErrPtr.StatusCode >= http.StatusBadRequest && apiErrPtr.StatusCode < http.StatusInternalServerError
-	}
-
-	return false
 }

@@ -44,7 +44,10 @@ function seqmetaLookupPriority(metadataKey: string): number {
         return 1;
     }
 
-    if (metadataKey === "seqmeta_library") {
+    if (
+        metadataKey === "seqmeta_library" ||
+        metadataKey === "seqmeta_librarytype"
+    ) {
         return 3;
     }
 
