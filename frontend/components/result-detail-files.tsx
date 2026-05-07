@@ -14,7 +14,6 @@ import {
     type FilePreviewError,
 } from "@/components/file-preview";
 import type { FileEntry } from "@/lib/contracts";
-import { formatBytes } from "@/lib/utils";
 
 type ResultDetailFilesProps = {
     files: FileEntry[];

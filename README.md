@@ -9,8 +9,8 @@ REST APIs and CLIs, and a Next.js web UI for browsing results.
 | Sub-product     | What it does                                                                                                                                                                         |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                                                    |
-| **saga**        | Go client library for the [SAGA API](https://saga.cellgeni.sanger.ac.uk/api). Typed access to MLWH studies, samples, libraries, runs, and iRODS file paths with caching and retries. |
-| **seqmeta**     | Sequence metadata cache built on saga. Hash-based change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                                        |
+| **mlwh**        | Go client library and cache sync CLI for MLWH-backed study, sample, library, run, and iRODS lookups.                                                                                |
+| **seqmeta**     | Sequence metadata API built on MLWH-backed caches. Hash-based change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                           |
 | **results-web** | Next.js web UI for the results API — searchable table, file browser with inline preview, dashboard stats, and study-based search via seqmeta.                                        |
 
 Planned sub-products (notify, jobrun, watchtower, samplepicker) are described
@@ -36,7 +36,7 @@ Requires **Go 1.25+**.
 
 ```
 wa results   — Pipeline results tracker
-wa saga      — SAGA API inspector
+wa mlwh      — MLWH cache sync and inspector
 wa seqmeta   — Sequence metadata cache
 ```
 
@@ -49,15 +49,13 @@ wa results register /path/to/output \
   --command "nextflow run pipeline" \
   --nextflow-workflow /path/to/main.nf \
   --runid my-run-001 \
-  --seqmeta-studyid 6568 \
-  --seqmeta-sampleid SANG123
+	--study 6568 \
+	--sample SANG123
 
 ```
 
-Dedicated `--seqmeta-runid`, `--seqmeta-studyid`, `--seqmeta-sampleid`, and
-`--seqmeta-librarytype` flags are convenience shorthands for the equivalent
-`--meta seqmeta_...=value` entries. Do not supply the same seqmeta key both
-ways in one command.
+The `--run`, `--study`, `--sample`, and `--library` flags resolve through MLWH
+and store canonical `seqmeta_*` metadata entries for search and validation.
 
 ### Search results
 
@@ -94,17 +92,12 @@ Password-bearing DSNs are rejected on the command line.
 Add `--seqmeta-url http://host:8091` to enable seqmeta validation of
 `seqmeta_*` metadata fields.
 
-### Inspect SAGA metadata
-
-```bash
-export SAGA_API_TOKEN=your-token
-wa saga inspect 12345          # study ID, sample ID, accession, etc.
-```
-
 ### Start the seqmeta server
 
 ```bash
-wa seqmeta serve --port 8091 --db seqmeta.db --token "$SAGA_API_TOKEN"
+export WA_MLWH_DSN='mlwh_user@tcp(host:3306)/mlwarehouse'
+export WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite
+wa seqmeta serve --port 8091
 ```
 
 ### Poll for metadata changes
@@ -128,7 +121,7 @@ instructions.
 Quick start:
 
 ```bash
-# Run the dev stack (real SAGA, persistent SQLite DB, no fixtures)
+# Run the dev stack (MLWH-backed seqmeta, persistent SQLite DB, no fixtures)
 make dev
 
 # Same, but seed demo fixtures into the dev DB for browsing

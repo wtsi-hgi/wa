@@ -1,9 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BackendRequestError } from "@/lib/backend-client";
-import type { EnrichmentResult } from "@/lib/contracts";
+import type { EnrichmentResult, EnrichmentStudy } from "@/lib/contracts";
 import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
 import { enrichSeqmetaMetadata } from "@/lib/seqmeta-enrichment";
+
+function buildStudy(
+    overrides: Partial<EnrichmentStudy> = {},
+): EnrichmentStudy {
+    return {
+        id_study_tmp: 42,
+        id_lims: "SQSCP",
+        id_study_lims: "3361",
+        name: "IHTP_ISC_IBDCA_Edinburgh",
+        faculty_sponsor: "",
+        state: "active",
+        abstract: "",
+        abbreviation: "",
+        accession_number: "",
+        description: "",
+        data_release_strategy: "",
+        study_title: "",
+        data_access_group: "",
+        hmdmc_number: "",
+        programme: "",
+        created: "2026-04-20T09:00:00Z",
+        reference_genome: "",
+        ethically_approved: false,
+        study_type: "",
+        contains_human_dna: false,
+        contaminated_human_dna: false,
+        study_visibility: "",
+        ega_dac_accession_number: "",
+        ega_policy_accession_number: "",
+        data_release_timing: "",
+        ...overrides,
+    };
+}
 
 describe("enrichSeqmetaMetadata does not impose an artificial timeout", () => {
     beforeEach(() => {
@@ -73,10 +106,10 @@ describe("enrichSeqmetaMetadata does not impose an artificial timeout", () => {
                 identifier: value,
                 type: "study_id",
                 graph: {
-                    study: {
+                    study: buildStudy({
                         id_study_lims: value,
                         name: "IHTP_ISC_IBDCA_Edinburgh",
-                    },
+                    }),
                 },
                 partial: false,
             } satisfies EnrichmentResult;

@@ -21,8 +21,8 @@ Edit `frontend/lib/contracts.ts` to drop `projectSchema`,
 `frontend/tests/contracts.test.ts`. `pnpm tsc --noEmit` must pass.
 Covers all 3 acceptance tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.2: F2 - Seqmeta badge no longer renders project rows [parallel with 6.1, 6.3, 6.4]
 
@@ -33,8 +33,8 @@ Edit `frontend/components/seqmeta-badge.tsx` to drop "Project" and
 `frontend/tests/seqmeta-badge.test.ts`. Covers all 2 acceptance tests
 from F2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.3: F3 - iRODS file contract tightened [parallel with 6.1, 6.2, 6.4]
 
@@ -46,8 +46,8 @@ In `frontend/lib/contracts.ts`, narrow the iRODS schema to
 `frontend/tests/result-detail-files.test.tsx` so no Checksum/Size/AVU
 DOM nodes remain. Covers all 3 acceptance tests from F3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.4: F4 - Hierarchical-search docs warn about first-call latency [parallel with 6.1, 6.2, 6.3]
 
@@ -61,8 +61,8 @@ search-expansion helper so each contains "first call" and
 `frontend/tests/filter-builder.test.tsx`. Covers all 3 acceptance
 tests from F4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

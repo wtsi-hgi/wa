@@ -222,7 +222,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         );
         const serverMarkup = renderToString(serverTree);
         const container = document.createElement("div");
-        const recoverableErrors: Error[] = [];
+        const recoverableErrors: unknown[] = [];
 
         document.body.appendChild(container);
         container.innerHTML = serverMarkup;
@@ -516,7 +516,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         );
         const serverMarkup = renderToString(serverTree);
         const container = document.createElement("div");
-        const recoverableErrors: Error[] = [];
+        const recoverableErrors: unknown[] = [];
 
         document.body.appendChild(container);
         container.innerHTML = serverMarkup;

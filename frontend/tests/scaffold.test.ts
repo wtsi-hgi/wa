@@ -79,7 +79,8 @@ describe("G1 scaffold", () => {
         expect(developmentEnv).toContain("WA_DEV_RESULTS_PORT=");
         expect(developmentEnv).toContain("WA_DEV_SEQMETA_PORT=");
         expect(developmentEnv).toContain("WA_RESULTS_DB_PATH=");
-        expect(developmentEnv).toContain("SAGA_API_TOKEN=");
+        expect(developmentEnv).toContain("WA_MLWH_DSN=");
+        expect(developmentEnv).toContain("WA_MLWH_CACHE_PATH=");
 
         expect(productionEnv).toContain("WA_ENV=production");
         expect(productionEnv).toContain("WA_PROD_FRONTEND_PORT=");

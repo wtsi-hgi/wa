@@ -376,6 +376,9 @@ describe("O1 result detail file integration", () => {
         expect(
             screen.getByText("preview:/tmp/results/a/first.png"),
         ).toBeTruthy();
+        expect(screen.queryByText("Checksum")).toBeNull();
+        expect(screen.queryByText("Size")).toBeNull();
+        expect(screen.queryByText("AVU")).toBeNull();
     });
 
     it("switches to the first file in a newly selected directory", async () => {

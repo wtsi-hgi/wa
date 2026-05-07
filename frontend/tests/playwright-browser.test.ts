@@ -7,6 +7,15 @@ import { resolveChromiumExecutablePath } from "@/lib/playwright-browser";
 
 const frontendRoot = process.cwd();
 
+function buildEnv(
+    overrides: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+    return {
+        ...process.env,
+        ...overrides,
+    };
+}
+
 describe("Playwright browser resolution", () => {
     it("prefers the configured Playwright browser cache over the default cache", () => {
         const configuredBrowsersPath = "/opt/playwright-browsers";
@@ -18,10 +27,10 @@ describe("Playwright browser resolution", () => {
         );
 
         const resolved = resolveChromiumExecutablePath({
-            env: {
+            env: buildEnv({
                 PATH: "/usr/bin",
                 PLAYWRIGHT_BROWSERS_PATH: configuredBrowsersPath,
-            },
+            }),
             platform: "linux",
             isExecutable: (candidate) => candidate === expectedExecutable,
             listDirectory: (directory) =>
@@ -43,10 +52,10 @@ describe("Playwright browser resolution", () => {
         );
 
         const resolved = resolveChromiumExecutablePath({
-            env: {
+            env: buildEnv({
                 PATH: "/usr/bin",
                 PLAYWRIGHT_BROWSERS_PATH: configuredBrowsersPath,
-            },
+            }),
             platform: "linux",
             isExecutable: (candidate) => candidate === expectedExecutable,
             listDirectory: (directory) =>
@@ -62,9 +71,9 @@ describe("Playwright browser resolution", () => {
         const expectedExecutable = "/usr/local/bin/chromium";
 
         const resolved = resolveChromiumExecutablePath({
-            env: {
+            env: buildEnv({
                 PATH: "/usr/local/bin:/usr/bin",
-            },
+            }),
             platform: "linux",
             isExecutable: (candidate) => candidate === expectedExecutable,
             listDirectory: () => [],

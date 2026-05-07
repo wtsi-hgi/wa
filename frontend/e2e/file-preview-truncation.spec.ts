@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /**
  * File preview truncation regression tests.
@@ -9,7 +9,7 @@ import { expect, test } from "@playwright/test";
  * truncation at the bottom/right of the preview.
  */
 
-async function openResultFileBrowser(page: test.Page) {
+async function openResultFileBrowser(page: Page) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
     await expect(page.getByText("Recent registrations")).toBeVisible();

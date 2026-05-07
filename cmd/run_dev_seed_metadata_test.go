@@ -36,12 +36,12 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-// TestRunDevSeedMetadataUsesRealSagaIdentifiers guards against regressing the
+// TestRunDevSeedMetadataUsesRealSeqmetaIdentifiers guards against regressing the
 // dev fixture metadata back to fake identifiers (e.g. SANG5993, SMP5994, RNA)
-// that Saga cannot resolve, which causes the seqmeta resolution dialog in
+// that seqmeta cannot resolve, which causes the seqmeta resolution dialog in
 // `make dev-fixtures` / `run-dev.sh` to stall and surface "service unavailable".
-func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
-	convey.Convey("seed.json fixtures use plausible real Saga identifiers in every seqmeta_* metadata key", t, func() {
+func TestRunDevSeedMetadataUsesRealSeqmetaIdentifiers(t *testing.T) {
+	convey.Convey("seed.json fixtures use plausible real seqmeta identifiers in every seqmeta_* metadata key", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		seedPath := filepath.Join(repoRoot, ".docs", "results-web", "fixtures", "seed.json")
 

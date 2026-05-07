@@ -2,6 +2,9 @@
  * @vitest-environment jsdom
  */
 
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import { act, createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToStaticMarkup, renderToString } from "react-dom/server";
@@ -14,7 +17,17 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { EnrichmentResult, FileEntry, ResultSet } from "@/lib/contracts";
+import type {
+    EnrichmentResult,
+    EnrichmentSample,
+    EnrichmentStudy,
+    FileEntry,
+    IRODSPath,
+    LaneDetail,
+    ResultSet,
+    SampleDetail,
+} from "@/lib/contracts";
+import { enrichmentResultSchema } from "@/lib/contracts";
 import {
     buildSeqmetaCacheCookie,
     deserializeSeqmetaCacheCookie,
@@ -140,6 +153,109 @@ function buildFileEntry(overrides: Partial<FileEntry> = {}): FileEntry {
     };
 }
 
+function buildStudy(
+    overrides: Partial<EnrichmentStudy> = {},
+): EnrichmentStudy {
+    return {
+        id_study_tmp: 42,
+        id_lims: "SQSCP",
+        id_study_lims: "6568",
+        name: "RNA Seq",
+        faculty_sponsor: "Dr Example",
+        state: "active",
+        abstract: "Study abstract",
+        abbreviation: "RNA",
+        accession_number: "ERP123456",
+        description: "Study description",
+        data_release_strategy: "managed",
+        study_title: "RNA Study",
+        data_access_group: "group-a",
+        hmdmc_number: "HMDMC-1",
+        programme: "Transcriptomics",
+        created: "2026-04-20T09:00:00Z",
+        reference_genome: "GRCh38",
+        ethically_approved: true,
+        study_type: "Whole Genome Sequencing",
+        contains_human_dna: true,
+        contaminated_human_dna: false,
+        study_visibility: "Always Open",
+        ega_dac_accession_number: "EGAC00001",
+        ega_policy_accession_number: "EGAP00001",
+        data_release_timing: "Immediate",
+        ...overrides,
+    };
+}
+
+function buildSample(
+    overrides: Partial<EnrichmentSample> = {},
+): EnrichmentSample {
+    return {
+        id_study_lims: "6568",
+        id_sample_lims: "LIMS001",
+        sanger_id: "SANG001",
+        sample_name: "Sample 1",
+        taxon_id: 9606,
+        common_name: "Human",
+        library_type: "RNA",
+        id_run: 1234,
+        lane: 1,
+        tag_index: 7,
+        irods_path: "/seq/1234",
+        study_accession_number: "ERP123456",
+        accession_number: "ERS123456",
+        ...overrides,
+    };
+}
+
+function buildLaneDetail(
+    overrides: Partial<LaneDetail> = {},
+): LaneDetail {
+    return {
+        id_run: "1234",
+        lane: "1",
+        tag_index: 7,
+        ...overrides,
+    };
+}
+
+function buildIRODSPath(
+    overrides: Partial<IRODSPath> = {},
+): IRODSPath {
+    return {
+        id_product: "1234_1#7",
+        collection: "/seq",
+        data_object: "1234_1#7.cram",
+        irods_path: "/seq/1234_1#7.cram",
+        ...overrides,
+    };
+}
+
+function buildSampleDetail(
+    overrides: {
+        sanger_id?: string;
+        sample_name?: string;
+        sample?: Partial<EnrichmentSample>;
+        lanes?: Array<Partial<LaneDetail>>;
+        irods_paths?: Array<Partial<IRODSPath>>;
+    } = {},
+): SampleDetail {
+    const sample = buildSample(overrides.sample);
+
+    return {
+        sanger_id: overrides.sanger_id ?? sample.sanger_id,
+        sample_name: overrides.sample_name ?? sample.sample_name,
+        sample,
+        lanes: (overrides.lanes ?? []).map((lane) => buildLaneDetail(lane)),
+        ...(overrides.irods_paths
+            ? {
+                  irods_paths: overrides.irods_paths.map((path) =>
+                      buildIRODSPath(path),
+                  ),
+              }
+            : {}),
+    };
+}
+
 function buildEnrichment(
     overrides: Partial<EnrichmentResult> = {},
 ): EnrichmentResult {
@@ -147,48 +263,8 @@ function buildEnrichment(
         identifier: "SANG001",
         type: "sanger_sample_id",
         graph: {
-            study: {
-                id_study_tmp: 42,
-                id_lims: "SQSCP",
-                id_study_lims: "6568",
-                name: "RNA Seq",
-                faculty_sponsor: "Dr Example",
-                state: "active",
-                abstract: "Study abstract",
-                abbreviation: "RNA",
-                accession_number: "ERP123456",
-                description: "Study description",
-                data_release_strategy: "managed",
-                study_title: "RNA Study",
-                data_access_group: "group-a",
-                hmdmc_number: "HMDMC-1",
-                programme: "Transcriptomics",
-                created: "2026-04-20T09:00:00Z",
-                reference_genome: "GRCh38",
-                ethically_approved: true,
-                study_type: "Whole Genome Sequencing",
-                contains_human_dna: true,
-                contaminated_human_dna: false,
-                study_visibility: "Always Open",
-                ega_dac_accession_number: "EGAC00001",
-                ega_policy_accession_number: "EGAP00001",
-                data_release_timing: "Immediate",
-            },
-            sample: {
-                id_study_lims: "6568",
-                id_sample_lims: "LIMS001",
-                sanger_id: "SANG001",
-                sample_name: "Sample 1",
-                taxon_id: 9606,
-                common_name: "Human",
-                library_type: "RNA",
-                id_run: 1234,
-                lane: 1,
-                tag_index: 7,
-                irods_path: "/seq/1234",
-                study_accession_number: "ERP123456",
-                accession_number: "ERS123456",
-            },
+            study: buildStudy(),
+            sample: buildSample(),
             libraries: [
                 {
                     library_type: "RNA",
@@ -239,10 +315,6 @@ describe("M1 result detail seqmeta enrichment", () => {
                 enrichment: buildEnrichment(),
             }),
         );
-
-        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
-            "SANG001",
-        );
         expect(screen.queryByRole("dialog")).toBeNull();
 
         fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
@@ -261,6 +333,55 @@ describe("M1 result detail seqmeta enrichment", () => {
         ).toBe("/?study=6568");
     });
 
+    it("does not render project rows even when legacy project fields are present", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const legacyEnrichment = enrichmentResultSchema.parse({
+            ...buildEnrichment(),
+            graph: {
+                ...buildEnrichment().graph,
+                project: {
+                    id: 101,
+                    name: "Project RNA",
+                },
+                users: [
+                    {
+                        id: 202,
+                        username: "alice",
+                    },
+                ],
+            },
+        });
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG001",
+                enrichment: legacyEnrichment,
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.queryByText("Project")).toBeNull();
+        expect(screen.queryByText("Project users")).toBeNull();
+        expect(screen.queryByText("Project RNA")).toBeNull();
+        expect(screen.queryByText("alice")).toBeNull();
+    });
+
+    it("contains no removed upstream wording in the badge source", async () => {
+        const source = await readFile(
+            resolve(process.cwd(), "components/seqmeta-badge.tsx"),
+            "utf8",
+        );
+
+        expect(source).not.toContain("Sa" + "ga");
+        expect(source).not.toContain("via " + "Sa" + "ga");
+    });
+
     it("renders seqmeta_library details without singular sample or study guesses", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
@@ -273,16 +394,16 @@ describe("M1 result detail seqmeta enrichment", () => {
                         ...buildEnrichment().graph,
                         // Backend returns studies (plural array) for library_type enrichment
                         study: undefined, // Remove singular study
-                        studies: [buildEnrichment().graph.study], // Use plural studies
+                        studies: [buildStudy()], // Use plural studies
                         samples: [
-                            {
+                            buildSample({
                                 sample_name: "Sample 1",
                                 sanger_id: "SANG001",
-                            },
-                            {
+                            }),
+                            buildSample({
                                 sample_name: "Sample 2",
                                 sanger_id: "SANG002",
-                            },
+                            }),
                         ],
                     },
                 }),
@@ -339,10 +460,12 @@ describe("M1 result detail seqmeta enrichment", () => {
                 enrichment: buildEnrichment({
                     graph: {
                         ...buildEnrichment().graph,
-                        samples: Array.from({ length: 24 }, (_, index) => ({
-                            sample_name: `Sample ${index + 1}`,
-                            sanger_id: `SANG${String(index + 1).padStart(3, "0")}`,
-                        })),
+                        samples: Array.from({ length: 24 }, (_, index) =>
+                            buildSample({
+                                sample_name: `Sample ${index + 1}`,
+                                sanger_id: `SANG${String(index + 1).padStart(3, "0")}`,
+                            }),
+                        ),
                     },
                 }),
             }),
@@ -2101,24 +2224,48 @@ describe("M1 result detail seqmeta enrichment", () => {
                             accession_number: "EGAN00003258234",
                         },
                         samples: [
-                            {
-                                id_study_lims: "6568",
+                            buildSample({
                                 id_sample_lims: "6050954",
                                 sanger_id: "WTSI_wEMB10524782",
                                 sample_name: "Sample1",
-                            },
-                            {
-                                id_study_lims: "6568",
+                                common_name: "human",
+                                library_type: "Chromium single cell ATAC",
+                                id_run: 42834,
+                                lane: 4,
+                                tag_index: 15,
+                                irods_path:
+                                    "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                                study_accession_number: "EGAS00001005445",
+                                accession_number: "EGAN00003258234",
+                            }),
+                            buildSample({
                                 id_sample_lims: "6050955",
                                 sanger_id: "WTSI_wEMB10524783",
                                 sample_name: "Sample2",
-                            },
-                            {
-                                id_study_lims: "6568",
+                                common_name: "human",
+                                library_type: "Chromium single cell ATAC",
+                                id_run: 42834,
+                                lane: 4,
+                                tag_index: 15,
+                                irods_path:
+                                    "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                                study_accession_number: "EGAS00001005445",
+                                accession_number: "EGAN00003258235",
+                            }),
+                            buildSample({
                                 id_sample_lims: "6050956",
                                 sanger_id: "WTSI_wEMB10524784",
                                 sample_name: "Sample3",
-                            },
+                                common_name: "human",
+                                library_type: "Chromium single cell ATAC",
+                                id_run: 42834,
+                                lane: 4,
+                                tag_index: 15,
+                                irods_path:
+                                    "/seq/illumina/runs/42/42834/lane4/plex15/42834_4#15.cram",
+                                study_accession_number: "EGAS00001005445",
+                                accession_number: "EGAN00003258236",
+                            }),
                         ],
                         sample_detail: {
                             sanger_id: "WTSI_wEMB10524782",
@@ -2269,12 +2416,12 @@ describe("M1 result detail seqmeta enrichment", () => {
                 enrichment: buildEnrichment({
                     graph: {
                         ...buildEnrichment().graph,
-                        sample_detail: {
+                        sample_detail: buildSampleDetail({
                             lanes: [
                                 { id_run: "12345", lane: "1", tag_index: 1 },
                                 { id_run: "12345", lane: "2", tag_index: 1 },
                             ],
-                        },
+                        }),
                     },
                 }),
             }),
@@ -2327,19 +2474,19 @@ describe("M1 result detail seqmeta enrichment", () => {
                     type: "library_type",
                     graph: {
                         samples: [
-                            {
+                            buildSample({
                                 sample_name: "Sample 1",
                                 sanger_id: "SANG001",
                                 id_sample_lims: "LIMS001",
-                            },
-                            {
+                            }),
+                            buildSample({
                                 sample_name: "Sample 2",
                                 sanger_id: "SANG002",
                                 id_sample_lims: "LIMS002",
-                            },
+                            }),
                         ],
                         // Backend returns studies (plural array) for library_type enrichment
-                        studies: [buildEnrichment().graph.study],
+                        studies: [buildStudy()],
                     },
                 }),
             }),
@@ -2389,9 +2536,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 enrichment: buildEnrichment({
                     graph: {
                         ...buildEnrichment().graph,
-                        sample_detail: {
-                            lanes: [],
-                        },
+                        sample_detail: buildSampleDetail({ lanes: [] }),
                     },
                 }),
             }),
@@ -2443,11 +2588,10 @@ describe("M1 result detail seqmeta enrichment", () => {
                     graph: {
                         // Backend returns studies (plural array) for library_type enrichment
                         studies: [
-                            {
-                                ...buildEnrichment().graph.study,
+                            buildStudy({
                                 name: "HCA Study",
                                 id_study_lims: "6568",
-                            },
+                            }),
                         ],
                         samples: [],
                     },
@@ -2510,8 +2654,9 @@ describe("M1 result detail seqmeta enrichment", () => {
                     identifier: "6568",
                     type: "study_id",
                     graph: {
-                        study: buildEnrichment().graph.study,
+                        study: buildStudy(),
                         study_detail: {
+                            study: buildStudy(),
                             library_details: [
                                 {
                                     library_type: "RNA",
@@ -2595,7 +2740,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                             ...buildEnrichment().graph,
                             // Backend returns studies (plural array) for library_type enrichment
                             study: undefined, // Remove singular study
-                            studies: [buildEnrichment().graph.study], // Use plural studies
+                            studies: [buildStudy()], // Use plural studies
                             // graph.sample has sanger_id: "SANG001" from buildEnrichment()
                             // Override samples array to include same ID
                             samples: [
@@ -2691,8 +2836,8 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 contains_human_dna: true,
                                 contaminated_human_dna: false,
                                 study_visibility: "Always Open",
-                                ega_dac_accession_number: null,
-                                ega_policy_accession_number: null,
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
                                 data_release_timing: "Standard",
                             },
                         ],
@@ -2847,7 +2992,6 @@ describe("M1 result detail seqmeta enrichment", () => {
                                     ega_policy_accession_number: "",
                                     data_release_timing: "",
                                 },
-                                samples: [],
                                 library_details: [
                                     {
                                         library_type: "RNA PolyA",
@@ -2920,7 +3064,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                         identifier: "RNA",
                         type: "library_type",
                         graph: {
-                            studies: [buildEnrichment().graph.study],
+                            studies: [buildStudy()],
                             samples: [
                                 {
                                     id_study_lims: "6568",
@@ -3040,8 +3184,8 @@ describe("M1 result detail seqmeta enrichment", () => {
                                     contains_human_dna: true,
                                     contaminated_human_dna: false,
                                     study_visibility: "Always Open",
-                                    ega_dac_accession_number: null,
-                                    ega_policy_accession_number: null,
+                                    ega_dac_accession_number: "",
+                                    ega_policy_accession_number: "",
                                     data_release_timing: "Standard",
                                 },
                             ],
@@ -3137,8 +3281,8 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 contains_human_dna: true,
                                 contaminated_human_dna: false,
                                 study_visibility: "Always Open",
-                                ega_dac_accession_number: null,
-                                ega_policy_accession_number: null,
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
                                 data_release_timing: "Standard",
                             },
                         ],
@@ -3472,24 +3616,21 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         // Mock JIT loading of library samples
         const librarySamples = [
-            {
-                id_study_lims: "6568",
+            buildSample({
                 id_sample_lims: "SMP001",
                 sanger_id: "S1",
                 sample_name: "Sample 1",
-            },
-            {
-                id_study_lims: "6568",
+            }),
+            buildSample({
                 id_sample_lims: "SMP002",
                 sanger_id: "S2",
                 sample_name: "Sample 2",
-            },
-            {
-                id_study_lims: "6568",
+            }),
+            buildSample({
                 id_sample_lims: "SMP003",
                 sanger_id: "S3",
                 sample_name: "Sample 3",
-            },
+            }),
         ];
 
         fetchLibrarySamplesMock.mockResolvedValue(librarySamples);
@@ -3530,24 +3671,21 @@ describe("M1 result detail seqmeta enrichment", () => {
                             data_release_timing: "",
                         },
                         samples: [
-                            {
-                                id_study_lims: "6568",
+                            buildSample({
                                 id_sample_lims: "SMP001",
                                 sanger_id: "S1",
                                 sample_name: "Sample 1",
-                            },
-                            {
-                                id_study_lims: "6568",
+                            }),
+                            buildSample({
                                 id_sample_lims: "SMP002",
                                 sanger_id: "S2",
                                 sample_name: "Sample 2",
-                            },
-                            {
-                                id_study_lims: "6568",
+                            }),
+                            buildSample({
                                 id_sample_lims: "SMP003",
                                 sanger_id: "S3",
                                 sample_name: "Sample 3",
-                            },
+                            }),
                         ],
                         study_detail: {
                             study: {

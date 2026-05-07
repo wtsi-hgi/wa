@@ -52,11 +52,20 @@ type runDevEnvSnapshot struct {
 	ResultsBackendURL string `json:"WA_RESULTS_BACKEND_URL"`
 	SeqmetaBackendURL string `json:"WA_SEQMETA_BACKEND_URL"`
 	ResultsDBPath     string `json:"WA_RESULTS_DB_PATH"`
+	MLWHCachePath     string `json:"WA_MLWH_CACHE_PATH"`
 	AllowedDevOrigins string `json:"WA_DEV_ALLOWED_ORIGINS"`
 }
 
-func TestRunDevScript(t *testing.T) {
-	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds four fixtures, skips seqmeta without a token, and cleans up on SIGINT", t, func() {
+func runDevUnsetSeqmetaEnvForTest() []string {
+	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL"}
+}
+
+func runDevSeqmetaStubCommandForTest() string {
+	return `node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(Number(process.env.WA_TEST_SEQMETA_PORT), '127.0.0.1')"`
+}
+
+func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
+	convey.Convey("E6.7: run-dev.sh test mode exports an ephemeral WA_MLWH_CACHE_PATH under .tmp/", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -65,7 +74,39 @@ func TestRunDevScript(t *testing.T) {
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env: map[string]string{
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+
+		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
+		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+}
+
+func TestRunDevScript(t *testing.T) {
+	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds three fixtures, skips seqmeta when no command or MLWH config is present, and cleans up on SIGINT", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `printf '%s\n' 'app/results/page.tsx' 'package.json'`,
@@ -93,6 +134,8 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", resultsPort))
 		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
 		convey.So(snapshot.ResultsDBPath, convey.ShouldNotBeBlank)
+		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
+		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeTrue)
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "results.log")), convey.ShouldBeTrue)
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "frontend.log")), convey.ShouldBeTrue)
@@ -103,22 +146,18 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeFalse)
 	})
 
-	convey.Convey("R1.4: run-dev.sh starts seqmeta and exports WA_SEQMETA_BACKEND_URL when SAGA_API_TOKEN is set", t, func() {
+	convey.Convey("R1.4: run-dev.sh starts seqmeta and exports WA_SEQMETA_BACKEND_URL when an explicit seqmeta command is set", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
 		seqmetaPort := runDevFreePortForTest(t)
-		healthPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
-
-		startDelayedHTTPServerForTest(t, healthPort, 0)
 
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			seqmetaPort:  seqmetaPort,
 			env: map[string]string{
-				"SAGA_API_TOKEN":                        "test-token",
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
 				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
@@ -126,7 +165,8 @@ func TestRunDevScript(t *testing.T) {
 				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
 				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
 				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
-				"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/studies", healthPort),
+				"WA_RUN_DEV_SEQMETA_CMD":                runDevSeqmetaStubCommandForTest(),
+				"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/api/health", seqmetaPort),
 			},
 		})
 
@@ -154,7 +194,6 @@ func TestRunDevScript(t *testing.T) {
 			resultsPort:  resultsPort,
 			seqmetaPort:  seqmetaPort,
 			env: map[string]string{
-				"SAGA_API_TOKEN":                        "test-token",
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
 				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
@@ -162,7 +201,8 @@ func TestRunDevScript(t *testing.T) {
 				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
 				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
 				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
-				"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/studies", healthPort),
+				"WA_RUN_DEV_SEQMETA_CMD":                runDevSeqmetaStubCommandForTest(),
+				"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/api/health", seqmetaPort),
 			},
 		})
 
@@ -206,7 +246,7 @@ if [[ "$url" == %q ]]; then
 	count=$((count + 1))
 	printf '%%s' "$count" > %q
 
-		if (( count < 8 )); then
+		if (( count < 14 )); then
 		exit 22
 	fi
 
@@ -243,8 +283,8 @@ exec %q "$@"
 			seqmetaPort:  seqmetaPort,
 			env: map[string]string{
 				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-				"SAGA_API_TOKEN":                        "test-token",
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_SEQMETA_CMD":                runDevSeqmetaStubCommandForTest(),
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
 				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
 				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
@@ -267,18 +307,18 @@ exec %q "$@"
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
-	convey.Convey("run-dev.sh tests can explicitly disable an inherited SAGA token without changing product behavior", t, func() {
+	convey.Convey("run-dev.sh tests can explicitly disable an inherited seqmeta command without changing product behavior", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 
-		t.Setenv("SAGA_API_TOKEN", "inherited-token")
+		t.Setenv("WA_RUN_DEV_SEQMETA_CMD", runDevSeqmetaStubCommandForTest())
 
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
@@ -307,7 +347,7 @@ exec %q "$@"
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
@@ -339,7 +379,7 @@ exec %q "$@"
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":        snapshotPath,
 				"WA_RUN_DEV_FRONTEND_DEV_CMD":    fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
@@ -363,7 +403,7 @@ exec %q "$@"
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
 			startDir:     filepath.Join(repoRoot, "frontend"),
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
@@ -413,7 +453,7 @@ exit 0
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
@@ -484,7 +524,7 @@ exec %q "$@"
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"PATH":                                    binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 				"WA_RUN_DEV_ENV_SNAPSHOT":                 snapshotPath,
@@ -515,7 +555,7 @@ exec %q "$@"
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL", "WA_DEV_ALLOWED_ORIGINS"},
+			unsetEnv:     append(runDevUnsetSeqmetaEnvForTest(), "WA_DEV_ALLOWED_ORIGINS"),
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
@@ -558,7 +598,7 @@ exec %q "$@"
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"WA_DEV_ALLOWED_ORIGINS":                "extra-host.example.com, another.example.com",
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
@@ -585,6 +625,15 @@ exec %q "$@"
 }
 
 func runDevEnvForTest(unsetKeys []string) []string {
+	unsetKeys = append(unsetKeys, []string{
+		"WA_RUN_DEV_SEQMETA_CMD",
+		"WA_RUN_DEV_SEQMETA_HEALTH_URL",
+		"WA_MLWH_DSN",
+		"WA_MLWH_PASSWORD",
+		"WA_MLWH_CACHE_PATH",
+		"WA_MLWH_CACHE_PASSWORD",
+	}...)
+
 	blocked := make(map[string]struct{}, len(unsetKeys))
 	for _, key := range unsetKeys {
 		blocked[key] = struct{}{}
@@ -926,7 +975,7 @@ func TestStartRunDevForTestAutoCleanup(t *testing.T) {
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
 			resultsPort:  resultsPort,
-			unsetEnv:     []string{"SAGA_API_TOKEN", "SAGA_TEST_API_TOKEN", "WA_RUN_DEV_SEQMETA_HEALTH_URL"},
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,

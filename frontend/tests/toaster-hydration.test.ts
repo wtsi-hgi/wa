@@ -45,8 +45,8 @@ describe("toaster hydration", () => {
         const { Toaster } = await import("@/components/ui/toaster");
         const container = document.createElement("div");
         const ungatedContainer = document.createElement("div");
-        const gatedRecoverableErrors: Error[] = [];
-        const ungatedRecoverableErrors: Error[] = [];
+        const gatedRecoverableErrors: unknown[] = [];
+        const ungatedRecoverableErrors: unknown[] = [];
 
         document.body.appendChild(container);
         document.body.appendChild(ungatedContainer);

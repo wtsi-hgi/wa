@@ -23,5 +23,5 @@ search latency under 1 second against the in-memory fixture in
 Live-MLWH integration tests (`mlwh/integration_test.go`,
 `seqmeta/integration_test.go`) run only when `WA_MLWH_DSN` is set.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

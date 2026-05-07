@@ -37,7 +37,8 @@ import (
 
 // TestRunDevModeGuards locks in the cross-scenario isolation contract that
 // `make test`, `make dev`, and `make prod` rely on. These are the regression
-// tests for the bug where WA_TEST_*, WA_*_BACKEND_URL, and WA_RESULTS_DB_PATH
+// tests for the bug where WA_TEST_*, WA_*_BACKEND_URL, WA_RESULTS_DB_PATH,
+// and WA_MLWH_* values
 // were mixed across scenarios so a stray test invocation could touch a
 // configured dev/prod database.
 func TestRunDevModeGuards(t *testing.T) {
@@ -70,6 +71,16 @@ func TestRunDevModeGuards(t *testing.T) {
 		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_RESULTS_DB_PATH")
 	})
 
+	convey.Convey("run-dev.sh --mode dev refuses without WA_MLWH_DSN", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "dev", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+			"WA_RESULTS_DB_PATH": "/var/lib/wa/results.db",
+		}, []string{"WA_ENV", "WA_MLWH_DSN"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_DSN")
+	})
+
 	convey.Convey("run-dev.sh --mode test refuses with WA_RESULTS_DB_PATH set", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "test", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
@@ -78,6 +89,26 @@ func TestRunDevModeGuards(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_RESULTS_DB_PATH")
+	})
+
+	convey.Convey("run-dev.sh --mode test refuses with WA_MLWH_CACHE_PATH set", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "test", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+			"WA_MLWH_CACHE_PATH": "/var/lib/wa/mlwh.sqlite",
+		}, []string{"WA_ENV"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+	})
+
+	convey.Convey("run-dev.sh --mode test refuses with WA_MLWH_DSN set", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "test", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+			"WA_MLWH_DSN": "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse",
+		}, []string{"WA_ENV"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_DSN")
 	})
 
 	convey.Convey("run-dev.sh --mode test refuses with WA_ENV=production inherited", t, func() {
@@ -123,6 +154,44 @@ func TestRunDevModeGuards(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_DEV_RESULTS_PORT")
+	})
+
+	convey.Convey("run-dev.sh --mode prod rejects test-shaped WA_MLWH_CACHE_PATH", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+			"WA_ENV":             "production",
+			"WA_RESULTS_DB_PATH": "/var/lib/wa/results.db",
+			"WA_MLWH_DSN":        "mlwh_prod@tcp(mlwh-db-ro:3435)/mlwarehouse",
+			"WA_MLWH_CACHE_PATH": "/tmp/wa-test-mlwh.sqlite",
+		}, []string{"WA_TEST_FRONTEND_PORT", "WA_TEST_RESULTS_PORT", "WA_TEST_SEQMETA_PORT"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+	})
+
+	convey.Convey("run-dev.sh --mode prod rejects development or test-shaped WA_MLWH_DSN", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+			"WA_ENV":             "production",
+			"WA_RESULTS_DB_PATH": "/var/lib/wa/results.db",
+			"WA_MLWH_DSN":        "mlwh_test@tcp(localhost:3306)/mlwarehouse_test",
+		}, []string{"WA_TEST_FRONTEND_PORT", "WA_TEST_RESULTS_PORT", "WA_TEST_SEQMETA_PORT"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_DSN")
+	})
+
+	convey.Convey("run-dev.sh --mode prod rejects inherited WA_MLWH_PASSWORD from development or test env", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+			"WA_ENV":             "production",
+			"WA_RESULTS_DB_PATH": "/var/lib/wa/results.db",
+			"WA_MLWH_DSN":        "mlwh_prod@tcp(mlwh-db-ro:3435)/mlwarehouse",
+			"WA_MLWH_PASSWORD":   "mlwh_humgen_is_secure",
+		}, []string{"WA_TEST_FRONTEND_PORT", "WA_TEST_RESULTS_PORT", "WA_TEST_SEQMETA_PORT"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_PASSWORD")
 	})
 }
 

@@ -21,8 +21,8 @@ equivalents; rename `IdentifierType` constants to mirror
 `IdentifierProjectName`. Remove every `saga` import in `seqmeta/`.
 Covers all 3 acceptance tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after item 4.1 is reviewed)
 
@@ -36,8 +36,8 @@ preserve the existing 404 mapping for `ErrUnknownIdentifier` and the
 502 mapping for `ErrUpstreamImpaired`. Covers all 7 acceptance tests
 from D2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.3: D3 - Enrichment graph from mlwh details [parallel: 4.2, 4.4]
 
@@ -50,8 +50,8 @@ Rewrite `seqmeta/enrich.go` to build `EnrichmentGraph` directly from
 Drop `project`/`users` keys from JSON. Covers all 4 acceptance tests
 from D3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.4: D4 - Diff routes through cache [parallel: 4.2, 4.3]
 
@@ -65,8 +65,8 @@ Rewrite `seqmeta/diff.go` and `seqmeta/server.go` so
 existing watermark/hash logic in `seqmeta/store.go`. Covers all 7
 acceptance tests from D4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

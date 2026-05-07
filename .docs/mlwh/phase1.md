@@ -21,8 +21,8 @@ Author the per-dialect SQL files for `study_mirror`, `sample_mirror`,
 `enrich_cache`, `sync_state`, and `schema_version`. Covers all 4
 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: A2 - Cache Open and schema versioning
 
@@ -34,8 +34,8 @@ rejection for MySQL DSNs, separate read-only and read-write handles,
 and `GET_LOCK`/`sync.Mutex` sync serialisation. Depends on Item 1.1.
 Covers all 9 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.3: A3 - Sync engine with watermarks
 
@@ -48,5 +48,5 @@ filtered by `id_lims = 'SQSCP'`, plus `iseq_flowcell`, all filtered by
 roll back cleanly on partial failure. Depends on Item 1.2. Covers all
 6 acceptance tests from A3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

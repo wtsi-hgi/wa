@@ -48,7 +48,11 @@ const combinedSampleMetaKeys = new Set([
     "seqmeta_sample_lims",
 ]);
 
-const combinedLibraryMetaKeys = new Set(["library", "seqmeta_library"]);
+const combinedLibraryMetaKeys = new Set([
+    "library",
+    "seqmeta_library",
+    "seqmeta_librarytype",
+]);
 
 const coreFieldOptions: FieldOption[] = [
     { key: "user", label: "Requester", placeholder: "alice" },
@@ -401,6 +405,22 @@ export function FilterBuilder({
                                                             </datalist>
                                                         ) : null}
                                                     </div>
+                                                    {selectedField.key ===
+                                                    "library" ? (
+                                                        <p
+                                                            data-testid="library-filter-help"
+                                                            className="text-sm leading-6 text-muted-foreground"
+                                                        >
+                                                            The first call for a
+                                                            library= search can
+                                                            take longer while a
+                                                            cold MLWH cache
+                                                            warms. Run wa mlwh
+                                                            sync ahead of time
+                                                            if you want to avoid
+                                                            that delay.
+                                                        </p>
+                                                    ) : null}
                                                     <button
                                                         type="submit"
                                                         className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-95"

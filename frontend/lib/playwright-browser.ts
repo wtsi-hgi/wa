@@ -1,8 +1,10 @@
 import { accessSync, constants, readdirSync } from "node:fs";
 import path from "node:path";
 
+type EnvLike = Record<string, string | undefined>;
+
 type ResolveChromiumExecutableOptions = {
-    env?: NodeJS.ProcessEnv;
+    env?: EnvLike;
     platform?: NodeJS.Platform;
     isExecutable?: (candidate: string) => boolean;
     listDirectory?: (directory: string) => string[];

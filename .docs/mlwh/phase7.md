@@ -25,5 +25,5 @@ output). Adjust `cmd/results_register_test.go` accordingly. Covers
 all 8 acceptance tests from E4. Run only after every prior phase is
 reviewed and green.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

@@ -60,6 +60,12 @@ export async function fetchStats(
     );
 }
 
+/**
+ * Runs the hierarchical results search, including library= expansion via the
+ * backend. The first call for a cold library= lookup can take longer while the
+ * MLWH cache warms, so operators can run wa mlwh sync ahead of time to avoid
+ * that delay.
+ */
 export async function searchResults(
     params: Record<string, string[]>,
 ): Promise<ResultSet[] | SearchResult[]> {

@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import * as contracts from "@/lib/contracts";
 import {
+    enrichmentGraphSchema,
     enrichmentResultSchema,
     errorSchema,
     fileEntrySchema,
     healthSchema,
     identifierResultSchema,
+    irodsPathSchema,
     metaKeysSchema,
     pipelineCountSchema,
     resultSetSchema,
@@ -17,7 +20,14 @@ import {
     studySchema,
 } from "@/lib/contracts";
 
+type ContractsModule = typeof import("@/lib/contracts");
+
 describe("contract schemas", () => {
+    it("exports the public result and seqmeta contract helpers", () => {
+        expect("resultSetSchema" in contracts).toBe(true);
+        expect("enrichmentGraphSchema" in contracts).toBe(true);
+    });
+
     it("parses a valid ResultSet JSON object", () => {
         const parsed = resultSetSchema.parse({
             id: "result-1",
@@ -208,6 +218,51 @@ describe("contract schemas", () => {
         });
 
         expect(result.success).toBe(true);
+    });
+
+    it("strips legacy project fields from enrichment graphs", () => {
+        const parsed = enrichmentGraphSchema.parse({
+            study: {
+                id_study_tmp: 42,
+                id_lims: "SQSCP",
+                id_study_lims: "6568",
+                name: "Cancer Programme",
+                faculty_sponsor: "Dr Example",
+                state: "active",
+                abstract: "Study abstract",
+                abbreviation: "CP",
+                accession_number: "ERP123456",
+                description: "Study description",
+                data_release_strategy: "managed",
+                study_title: "Cancer Programme Cohort",
+                data_access_group: "group-a",
+                hmdmc_number: "HMDMC-1",
+                programme: "Cancer",
+                created: "2026-04-20T09:00:00Z",
+                reference_genome: "GRCh38",
+                ethically_approved: true,
+                study_type: "Whole Genome Sequencing",
+                contains_human_dna: true,
+                contaminated_human_dna: false,
+                study_visibility: "Always Open",
+                ega_dac_accession_number: "EGAC00001",
+                ega_policy_accession_number: "EGAP00001",
+                data_release_timing: "Immediate",
+            },
+            project: {
+                id: 7,
+                name: "Legacy project",
+            },
+            users: [
+                {
+                    id: 11,
+                    username: "legacy-user",
+                },
+            ],
+        });
+
+        expect(parsed).not.toHaveProperty("project");
+        expect(parsed).not.toHaveProperty("users");
     });
 
     it("preserves missing hop reasons for partial enrichment results", () => {
@@ -418,5 +473,91 @@ describe("contract schemas", () => {
         if (result.success) {
             expect(result.data.graph.sample_detail?.lanes).toHaveLength(2);
         }
+    });
+
+    it("parses sample-detail iRODS paths with the tightened four-field schema", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "S1",
+            type: "sanger_sample_id",
+            graph: {
+                sample: {
+                    id_study_lims: "6568",
+                    id_sample_lims: "SMP001",
+                    sanger_id: "S1",
+                    sample_name: "Sample 1",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "RNA PolyA",
+                    id_run: 100,
+                    lane: 1,
+                    tag_index: 10,
+                    irods_path: "/seq/100",
+                    study_accession_number: "ERP001",
+                    accession_number: "ERS001",
+                },
+                sample_detail: {
+                    sanger_id: "S1",
+                    sample_name: "Sample 1",
+                    sample: {
+                        id_study_lims: "6568",
+                        id_sample_lims: "SMP001",
+                        sanger_id: "S1",
+                        sample_name: "Sample 1",
+                        taxon_id: 9606,
+                        common_name: "Human",
+                        library_type: "RNA PolyA",
+                        id_run: 100,
+                        lane: 1,
+                        tag_index: 10,
+                        irods_path: "/seq/100",
+                        study_accession_number: "ERP001",
+                        accession_number: "ERS001",
+                    },
+                    lanes: [],
+                    irods_paths: [
+                        {
+                            id_product: "1234_1#1",
+                            collection: "/seq/1234",
+                            data_object: "1234_1#1.cram",
+                            irods_path: "/seq/1234/1234_1#1.cram",
+                        },
+                        {
+                            id_product: "1234_1#2",
+                            collection: "/seq/1234",
+                            data_object: "1234_1#2.cram",
+                            irods_path: "/seq/1234/1234_1#2.cram",
+                        },
+                    ],
+                },
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.graph.sample_detail?.irods_paths).toHaveLength(2);
+        }
+    });
+
+    it("strips legacy iRODS fields that are outside the tightened contract", () => {
+        const parsed = irodsPathSchema.parse({
+            id_product: "1234_1#1",
+            collection: "/seq/1234",
+            data_object: "1234_1#1.cram",
+            irods_path: "/seq/1234/1234_1#1.cram",
+            checksum: "deadbeef",
+            metadata: { study: "ERP001" },
+            size: 1024,
+        });
+
+        expect(parsed).toEqual({
+            id_product: "1234_1#1",
+            collection: "/seq/1234",
+            data_object: "1234_1#1.cram",
+            irods_path: "/seq/1234/1234_1#1.cram",
+        });
+        expect("checksum" in parsed).toBe(false);
+        expect("metadata" in parsed).toBe(false);
+        expect("size" in parsed).toBe(false);
     });
 });

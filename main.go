@@ -9,12 +9,6 @@ import (
 	"github.com/wtsi-hgi/wa/cmd"
 )
 
-var legacyInspectValueFlags = map[string]struct{}{
-	"--base-url": {},
-	"--timeout":  {},
-	"--token":    {},
-}
-
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		os.Exit(1)
@@ -25,6 +19,11 @@ func run(args []string) error {
 	selectedEnv, filteredArgs := extractSelectedEnv(args)
 
 	err := loadSelectedEnv(selectedEnv)
+	if err != nil {
+		return err
+	}
+
+	err = cmd.ValidateScenarioEnvironment(selectedEnv)
 	if err != nil {
 		return err
 	}
@@ -99,7 +98,7 @@ func loadSelectedEnv(selectedEnv string) error {
 	}
 
 	if len(existingFiles) == 0 {
-		return maybeLoadTestSagaToken(selectedEnv)
+		return nil
 	}
 
 	err := godotenv.Load(existingFiles...)
@@ -107,7 +106,7 @@ func loadSelectedEnv(selectedEnv string) error {
 		return err
 	}
 
-	return maybeLoadTestSagaToken(selectedEnv)
+	return nil
 }
 
 func envFilesFor(selectedEnv string) []string {
@@ -129,78 +128,6 @@ func envFilesFor(selectedEnv string) []string {
 	return files
 }
 
-func maybeLoadTestSagaToken(selectedEnv string) error {
-	if selectedEnv != "test" || os.Getenv("SAGA_API_TOKEN") != "" {
-		return nil
-	}
-
-	values, err := godotenv.Read(filepath.Clean(".env.development.local"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-
-		return err
-	}
-
-	if values["SAGA_API_TOKEN"] == "" {
-		return nil
-	}
-
-	return os.Setenv("SAGA_API_TOKEN", values["SAGA_API_TOKEN"])
-}
-
 func rewriteLegacyInspectArgs(args []string) []string {
-	if len(args) == 0 {
-		return args
-	}
-
-	positionals := make([]string, 0, len(args))
-	skipNext := false
-
-	for _, arg := range args {
-		if skipNext {
-			skipNext = false
-			continue
-		}
-
-		if strings.HasPrefix(arg, "--") {
-			flagName := arg
-			if equalsIndex := strings.Index(arg, "="); equalsIndex >= 0 {
-				flagName = arg[:equalsIndex]
-			}
-
-			if _, ok := legacyInspectValueFlags[flagName]; ok && !strings.Contains(arg, "=") {
-				skipNext = true
-			}
-
-			continue
-		}
-
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-
-		positionals = append(positionals, arg)
-	}
-
-	if len(positionals) != 1 {
-		return args
-	}
-
-	identifier := strings.TrimSpace(positionals[0])
-	if identifier == "" {
-		return args
-	}
-
-	if !strings.ContainsAny(identifier, "0123456789") {
-		return args
-	}
-
-	switch identifier {
-	case "saga", "seqmeta", "results", "help", "completion":
-		return args
-	default:
-		return append([]string{"saga", "inspect"}, args...)
-	}
+	return args
 }

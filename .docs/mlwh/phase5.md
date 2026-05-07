@@ -22,8 +22,8 @@ and warn on first-call latency for `--library` (mention "first call"
 and "wa mlwh sync"). Error messages name the dimension and offending
 value. Covers all 6 acceptance tests from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.2: E2 - wa seqmeta serve flag rewiring [parallel with 5.1, 5.3, 5.4, 5.5]
 
@@ -34,8 +34,8 @@ add `--mlwh-cache` and `--mlwh-sync-interval` (default zero, opt-in);
 remove `prefetchedProvider`. Reject DSNs with embedded passwords.
 Covers all 4 acceptance tests from E2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.3: E3 - New wa mlwh sync command [parallel with 5.1, 5.2, 5.4, 5.5]
 
@@ -46,8 +46,8 @@ Add `cmd/mlwh.go` registering `wa mlwh sync` with optional
 `iseq_flowcell`. Exit non-zero with `WA_MLWH_DSN` named when the env
 var is missing. Covers all 3 acceptance tests from E3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.4: E5 - wa results serve MLWH flag rewiring [parallel with 5.1, 5.2, 5.3, 5.5]
 
@@ -58,8 +58,8 @@ Edit `cmd/results.go` `serve` to add `--mlwh-cache` and
 opt-in sync goroutine semantics as E2. Cancel the sync goroutine when
 the server shuts down. Covers all 5 acceptance tests from E5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.5: E6 - Env scenario guards for WA*MLWH*\* [parallel with 5.1, 5.2, 5.3, 5.4]
 
@@ -73,8 +73,8 @@ existing `WA_RESULTS_DB_*` vars. Add tests in
 `runRunDevExpectingFailureForTest` pattern. Covers all 7 acceptance
 tests from E6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

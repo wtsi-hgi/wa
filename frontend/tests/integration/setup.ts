@@ -19,6 +19,8 @@ type SeedRegistration = {
     files: SeedFile[];
 } & Record<string, unknown>;
 
+type EnvLike = Record<string, string | undefined>;
+
 const setupDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(setupDir, "..", "..");
 const repoRoot = path.resolve(frontendRoot, "..");
@@ -32,8 +34,8 @@ const seedPath = path.join(
 );
 
 export function buildResultsServerEnv(
-    env: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
+    env: EnvLike,
+): EnvLike {
     const serverEnv = { ...env };
 
     delete serverEnv.WA_SEQMETA_BACKEND_URL;
@@ -293,7 +295,7 @@ export default async function setup(): Promise<() => Promise<void>> {
         {
             cwd: repoRoot,
             detached: true,
-            env: buildResultsServerEnv(process.env),
+            env: buildResultsServerEnv(process.env) as NodeJS.ProcessEnv,
             stdio: ["ignore", "pipe", "pipe"],
         },
     );

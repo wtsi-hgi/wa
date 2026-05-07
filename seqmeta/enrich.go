@@ -32,11 +32,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 type enrichClassifier struct {
-	classify func(context.Context, SAGAProvider, string) (*EnrichmentResult, bool, []MissingHop, error)
+	classify func(context.Context, Provider, string) (*EnrichmentResult, bool, []MissingHop, error)
 }
 
 var enrichClassifiers = []enrichClassifier{
@@ -47,14 +47,166 @@ var enrichClassifiers = []enrichClassifier{
 	{classify: classifySampleLimsID},
 	{classify: classifySampleAccession},
 	{classify: classifyLibraryType},
-	{classify: classifyProjectName},
 }
 
-type sampleClassifier func(context.Context, SAGAProvider, string) ([]saga.MLWHSample, error)
+type enrichDetailProvider interface {
+	StudyDetail(ctx context.Context, studyLimsID string) (*mlwh.StudyDetail, error)
+	SampleDetail(ctx context.Context, sampleName string) (*mlwh.SampleDetail, error)
+	RunDetail(ctx context.Context, runID string) (*mlwh.RunDetail, error)
+}
+
+func studyDetailFor(ctx context.Context, provider Provider, studyLimsID string) (*mlwh.StudyDetail, error) {
+	if detailProvider, ok := provider.(enrichDetailProvider); ok {
+		detail, err := detailProvider.StudyDetail(ctx, studyLimsID)
+		if detail != nil || err != nil {
+			return detail, err
+		}
+	}
+
+	return buildStudyDetailFromProvider(ctx, provider, studyLimsID)
+}
+
+func buildStudyDetailFromProvider(ctx context.Context, provider Provider, studyLimsID string) (*mlwh.StudyDetail, error) {
+	study, err := provider.GetStudy(ctx, studyLimsID)
+	if err != nil {
+		return nil, err
+	}
+	if study == nil {
+		return nil, mlwh.ErrNotFound
+	}
+
+	samples, err := provider.AllSamplesForStudy(ctx, studyLimsID)
+	if err != nil {
+		return nil, err
+	}
+
+	detail := buildStudyDetail(*study, samples)
+
+	return &detail, nil
+}
+
+func sampleDetailFor(ctx context.Context, provider Provider, sample mlwh.Sample) (*mlwh.SampleDetail, error) {
+	if detailProvider, ok := provider.(enrichDetailProvider); ok {
+		detail, err := detailProvider.SampleDetail(ctx, sampleLookupKey(sample))
+		if detail != nil || err != nil {
+			return detail, err
+		}
+	}
+
+	return buildSampleDetailFromProvider(ctx, provider, sample)
+}
+
+func sampleLookupKey(sample mlwh.Sample) string {
+	switch {
+	case sample.SangerID != "":
+		return sample.SangerID
+	case sample.Name != "":
+		return sample.Name
+	case sample.IDSampleLims != "":
+		return sample.IDSampleLims
+	default:
+		return sample.AccessionNumber
+	}
+}
+
+func buildSampleDetailFromProvider(ctx context.Context, provider Provider, sample mlwh.Sample) (*mlwh.SampleDetail, error) {
+	lanes, err := provider.LanesForSample(ctx, sample.Name, providerFetchLimit, 0)
+	if err != nil && !errors.Is(err, mlwh.ErrNotFound) {
+		return nil, err
+	}
+	if errors.Is(err, mlwh.ErrNotFound) {
+		lanes = nil
+	}
+
+	paths, err := provider.IRODSPathsForSample(ctx, sample.Name, providerFetchLimit, 0)
+	if err != nil && !errors.Is(err, mlwh.ErrNotFound) {
+		return nil, err
+	}
+	if errors.Is(err, mlwh.ErrNotFound) {
+		paths = nil
+	}
+
+	libraries := make([]mlwh.Library, 0, 1)
+	if sample.LibraryType != "" {
+		libraries = append(libraries, mlwh.Library{PipelineIDLims: sample.LibraryType, SampleCount: 1})
+	}
+
+	return &mlwh.SampleDetail{
+		Sample:     sample,
+		Lanes:      lanes,
+		Libraries:  libraries,
+		IRODSPaths: paths,
+	}, nil
+}
+
+func runDetailFor(ctx context.Context, provider Provider, runID string, samples []mlwh.Sample) (*mlwh.RunDetail, error) {
+	if detailProvider, ok := provider.(enrichDetailProvider); ok {
+		detail, err := detailProvider.RunDetail(ctx, runID)
+		if detail != nil || err != nil {
+			return detail, err
+		}
+	}
+
+	return buildRunDetailFromProvider(ctx, provider, runID, samples)
+}
+
+func buildRunDetailFromProvider(ctx context.Context, provider Provider, runID string, samples []mlwh.Sample) (*mlwh.RunDetail, error) {
+	studies, err := studiesForSamples(ctx, provider, samples)
+	if err != nil {
+		return nil, err
+	}
+
+	parsedRunID, parseErr := strconv.Atoi(runID)
+	if parseErr != nil {
+		parsedRunID = 0
+	}
+
+	return &mlwh.RunDetail{
+		Run:          mlwh.Run{IDRun: parsedRunID},
+		Samples:      samples,
+		Studies:      studies,
+		StudyDetails: buildStudyDetails(studies, samples),
+	}, nil
+}
+
+func studiesForSamples(ctx context.Context, provider Provider, samples []mlwh.Sample) ([]mlwh.Study, error) {
+	studyIDs := make([]string, 0, len(samples))
+	seen := make(map[string]struct{}, len(samples))
+
+	for _, sample := range samples {
+		if sample.IDStudyLims == "" {
+			continue
+		}
+
+		if _, exists := seen[sample.IDStudyLims]; exists {
+			continue
+		}
+
+		seen[sample.IDStudyLims] = struct{}{}
+		studyIDs = append(studyIDs, sample.IDStudyLims)
+	}
+
+	studies := make([]mlwh.Study, 0, len(studyIDs))
+	for _, studyID := range studyIDs {
+		study, err := provider.GetStudy(ctx, studyID)
+		if err != nil {
+			return nil, err
+		}
+		if study == nil {
+			continue
+		}
+
+		studies = append(studies, *study)
+	}
+
+	return studies, nil
+}
+
+type sampleClassifier func(context.Context, Provider, string) ([]mlwh.Sample, error)
 
 func classifySampleIdentifier(
 	ctx context.Context,
-	provider SAGAProvider,
+	provider Provider,
 	identifier string,
 	identifierType IdentifierType,
 	lookup sampleClassifier,
@@ -77,17 +229,29 @@ func classifySampleIdentifier(
 	}
 
 	sample := samples[0]
+	detail, err := sampleDetailFor(ctx, provider, sample)
+	if err != nil {
+		if isContextError(err) {
+			return nil, false, nil, err
+		}
+
+		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
+	}
+
 	result := &EnrichmentResult{
 		Identifier: identifier,
 		Type:       identifierType,
 		Graph: EnrichmentGraph{
-			Sample:       &sample,
+			Sample:       &detail.Sample,
 			Samples:      samples,
-			SampleDetail: buildSampleDetail(sample, samples),
+			SampleDetail: detail,
+			Library:      libraryLinkForSample(detail.Sample),
 		},
 	}
 
-	if err := enrichSampleStudy(ctx, provider, sample, result); err != nil {
+	if detail.Study != nil {
+		result.Graph.Study = detail.Study
+	} else if err = enrichSampleStudy(ctx, provider, detail.Sample, result); err != nil {
 		return nil, false, nil, err
 	}
 
@@ -98,6 +262,10 @@ func isContextError(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
+func isClientError(err error) bool {
+	return errors.Is(err, mlwh.ErrNotFound) || errors.Is(err, mlwh.ErrUnsupportedIdentifier)
+}
+
 func missingHop(hop string, err error) MissingHop {
 	status := http.StatusBadGateway
 	reason := ReasonUpstreamError
@@ -105,49 +273,25 @@ func missingHop(hop string, err error) MissingHop {
 	if isClientError(err) {
 		status = http.StatusNotFound
 		reason = ReasonNotFound
-
-		var apiErr saga.APIError
-		if errors.As(err, &apiErr) {
-			status = apiErr.StatusCode
-		}
-
-		apiErrPtr := &saga.APIError{}
-		if errors.As(err, &apiErrPtr) {
-			status = apiErrPtr.StatusCode
-		}
 	}
 
 	return MissingHop{Hop: hop, Reason: reason, Status: status}
 }
 
-// buildSampleDetail constructs a hierarchical SampleDetail grouping lanes for a sample.
-func buildSampleDetail(primarySample saga.MLWHSample, allSamples []saga.MLWHSample) *SampleDetail {
-	lanes := make([]LaneDetail, 0, len(allSamples))
-
-	for _, sample := range allSamples {
-		lanes = append(lanes, LaneDetail{
-			IDRun:    strconv.Itoa(sample.IDRun),
-			Lane:     strconv.Itoa(sample.Lane),
-			TagIndex: sample.TagIndex,
-		})
+func libraryLinkForSample(sample mlwh.Sample) *Library {
+	if sample.LibraryType == "" {
+		return nil
 	}
 
-	return &SampleDetail{
-		SangerID:   primarySample.SangerID,
-		SampleName: primarySample.SampleName,
-		Sample:     primarySample,
-		Lanes:      lanes,
-	}
+	return &Library{LibraryType: sample.LibraryType, IDStudyLims: sample.IDStudyLims}
 }
 
-func enrichSampleStudy(ctx context.Context, provider SAGAProvider, sample saga.MLWHSample, result *EnrichmentResult) error {
+func enrichSampleStudy(ctx context.Context, provider Provider, sample mlwh.Sample, result *EnrichmentResult) error {
 	if result == nil {
 		return nil
 	}
 
-	result.Graph.Library = &Library{LibraryType: sample.LibraryType, IDStudyLims: sample.IDStudyLims}
-
-	study, err := provider.StudyForSample(ctx, sample)
+	study, err := provider.StudyForSample(ctx, sample.Name)
 	if err != nil {
 		if isContextError(err) {
 			return err
@@ -160,12 +304,15 @@ func enrichSampleStudy(ctx context.Context, provider SAGAProvider, sample saga.M
 	}
 
 	result.Graph.Study = study
+	if result.Graph.SampleDetail != nil {
+		result.Graph.SampleDetail.Study = study
+	}
 
 	return nil
 }
 
 // Enrich resolves an identifier into its enrichment graph.
-func Enrich(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, error) {
+func Enrich(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, error) {
 	if identifier == "" {
 		return nil, ErrUnknownIdentifier
 	}
@@ -216,7 +363,7 @@ func allClassificationHopsFailed(identifier string, missing []MissingHop) bool {
 	return true
 }
 
-func classifyStudyID(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+func classifyStudyID(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	study, err := provider.GetStudy(ctx, identifier)
 	if err != nil {
 		if isContextError(err) {
@@ -234,23 +381,16 @@ func classifyStudyID(ctx context.Context, provider SAGAProvider, identifier stri
 		return nil, false, nil, nil
 	}
 
-	result := &EnrichmentResult{
-		Identifier: identifier,
-		Type:       IdentifierStudyID,
-		Graph: EnrichmentGraph{
-			Study: study,
-		},
-	}
-
-	if err := enrichStudy(ctx, provider, study, result); err != nil {
+	result := &EnrichmentResult{Identifier: identifier, Type: IdentifierStudyID}
+	if err = enrichStudy(ctx, provider, study, result); err != nil {
 		return nil, false, nil, err
 	}
 
 	return result, true, nil, nil
 }
 
-func classifyStudyAccession(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
-	studies, err := provider.AllStudies(ctx)
+func classifyStudyAccession(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+	studies, err := listAllStudies(ctx, provider)
 	if err != nil {
 		if isContextError(err) {
 			return nil, false, nil, err
@@ -269,15 +409,8 @@ func classifyStudyAccession(ctx context.Context, provider SAGAProvider, identifi
 		}
 
 		study := candidate
-		result := &EnrichmentResult{
-			Identifier: identifier,
-			Type:       IdentifierStudyAccession,
-			Graph: EnrichmentGraph{
-				Study: &study,
-			},
-		}
-
-		if err := enrichStudy(ctx, provider, &study, result); err != nil {
+		result := &EnrichmentResult{Identifier: identifier, Type: IdentifierStudyAccession}
+		if err = enrichStudy(ctx, provider, &study, result); err != nil {
 			return nil, false, nil, err
 		}
 
@@ -287,56 +420,35 @@ func classifyStudyAccession(ctx context.Context, provider SAGAProvider, identifi
 	return nil, false, nil, nil
 }
 
-func enrichStudy(ctx context.Context, provider SAGAProvider, study *saga.Study, result *EnrichmentResult) error {
+func enrichStudy(ctx context.Context, provider Provider, study *mlwh.Study, result *EnrichmentResult) error {
 	if study == nil || result == nil {
 		return nil
 	}
 
-	result.Graph.Studies = []saga.Study{*study}
-
-	samples, err := provider.AllSamplesForStudy(ctx, study.IDStudyLims)
+	detail, err := studyDetailFor(ctx, provider, study.IDStudyLims)
 	if err != nil {
 		if isContextError(err) {
 			return err
 		}
 
+		result.Graph.Study = study
+		result.Graph.Studies = []mlwh.Study{*study}
 		result.Partial = true
 		result.Missing = append(result.Missing, missingHop(HopSamples, err))
 
 		return nil
 	}
 
-	result.Graph.Samples = samples
-	result.Graph.Libraries = distinctLibraries(study.IDStudyLims, samples)
-
-	// Build hierarchical structure
-	result.Graph.StudyDetail = buildStudyDetail(*study, samples)
-
-	if len(result.Missing) > 0 {
-		result.Partial = true
-	}
+	result.Graph.Study = &detail.Study
+	result.Graph.Studies = []mlwh.Study{detail.Study}
+	result.Graph.Samples = flattenStudySamples(detail)
+	result.Graph.Libraries = flatLibrariesFromStudyDetail(detail)
+	result.Graph.StudyDetail = detail
 
 	return nil
 }
 
-func distinctLibraries(studyID string, samples []saga.MLWHSample) []Library {
-	seen := make(map[Library]struct{}, len(samples))
-	libraries := make([]Library, 0, len(samples))
-
-	for _, sample := range samples {
-		library := Library{LibraryType: sample.LibraryType, IDStudyLims: studyID}
-		if _, exists := seen[library]; exists {
-			continue
-		}
-
-		seen[library] = struct{}{}
-		libraries = append(libraries, library)
-	}
-
-	return libraries
-}
-
-func classifyRunID(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+func classifyRunID(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	runID, err := strconv.Atoi(identifier)
 	if err != nil {
 		return nil, false, nil, nil
@@ -359,6 +471,15 @@ func classifyRunID(ctx context.Context, provider SAGAProvider, identifier string
 		return nil, false, nil, nil
 	}
 
+	runDetail, detailErr := runDetailFor(ctx, provider, identifier, samples)
+	if detailErr != nil {
+		if isContextError(detailErr) {
+			return nil, false, nil, detailErr
+		}
+
+		runDetail = &mlwh.RunDetail{Run: mlwh.Run{IDRun: runID}, Samples: samples}
+	}
+
 	result := &EnrichmentResult{
 		Identifier: identifier,
 		Type:       IdentifierRunID,
@@ -367,14 +488,20 @@ func classifyRunID(ctx context.Context, provider SAGAProvider, identifier string
 		},
 	}
 
-	if err := enrichStudiesForSamples(ctx, provider, samples, result); err != nil {
-		return nil, false, nil, err
+	result.Graph.Samples = runDetail.Samples
+	result.Graph.Studies = runDetail.Studies
+	result.Graph.Libraries = distinctLibrariesForSamples(runDetail.Samples)
+	result.Graph.StudyDetails = runDetail.StudyDetails
+
+	if detailErr != nil {
+		result.Partial = true
+		result.Missing = append(result.Missing, missingHop(HopStudies, detailErr))
 	}
 
 	return result, true, nil, nil
 }
 
-func classifyLibraryType(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+func classifyLibraryType(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	if !looksLikeLibraryType(identifier) {
 		return nil, false, nil, nil
 	}
@@ -396,26 +523,32 @@ func classifyLibraryType(ctx context.Context, provider SAGAProvider, identifier 
 		return nil, false, nil, nil
 	}
 
+	studyDetails, missing, detailErr := libraryStudyDetails(ctx, provider, identifier, samples)
+	if detailErr != nil {
+		if isContextError(detailErr) {
+			return nil, false, nil, detailErr
+		}
+
+		return nil, false, []MissingHop{missingHop(HopLibraries, detailErr)}, nil
+	}
+
+	flattened := flattenStudyDetailSamples(studyDetails)
+	studies := make([]mlwh.Study, 0, len(studyDetails))
+	for _, detail := range studyDetails {
+		studies = append(studies, detail.Study)
+	}
+
 	result := &EnrichmentResult{
 		Identifier: identifier,
 		Type:       IdentifierLibraryType,
 		Graph: EnrichmentGraph{
-			Samples: samples,
+			Samples:      flattened,
+			Studies:      studies,
+			Libraries:    distinctLibrariesForSamples(flattened),
+			StudyDetails: studyDetails,
 		},
-	}
-
-	if len(samples) > MaxLibrarySamples {
-		result.Graph.Samples = samples[:MaxLibrarySamples]
-		result.Partial = true
-		result.Missing = append(result.Missing, MissingHop{
-			Hop:    HopSamples,
-			Reason: ReasonSamplesTruncated,
-			Status: http.StatusOK,
-		})
-	}
-
-	if err := enrichStudiesForSamples(ctx, provider, samples, result); err != nil {
-		return nil, false, nil, err
+		Missing: missing,
+		Partial: len(missing) > 0,
 	}
 
 	return result, true, nil, nil
@@ -425,185 +558,89 @@ func looksLikeLibraryType(identifier string) bool {
 	return strings.ContainsAny(identifier, " \t")
 }
 
-func enrichStudiesForSamples(ctx context.Context, provider SAGAProvider, samples []saga.MLWHSample, result *EnrichmentResult) error {
-	if result == nil {
-		return nil
-	}
-
-	result.Graph.Libraries = distinctLibrariesForSamples(samples)
-
-	studyIDs := make([]string, 0, len(samples))
-	seen := make(map[string]struct{}, len(samples))
-
-	for _, sample := range samples {
-		if _, exists := seen[sample.IDStudyLims]; exists {
-			continue
-		}
-
-		seen[sample.IDStudyLims] = struct{}{}
-		studyIDs = append(studyIDs, sample.IDStudyLims)
-	}
-
-	studies := make([]saga.Study, 0, len(studyIDs))
-
-	for _, studyID := range studyIDs {
-		study, err := provider.GetStudy(ctx, studyID)
-		if err != nil {
-			if isContextError(err) {
-				return err
-			}
-
-			result.Partial = true
-			result.Missing = append(result.Missing, missingHop(HopStudies, err))
-
-			continue
-		}
-
-		if study == nil {
-			continue
-		}
-
-		studies = append(studies, *study)
-	}
-
-	result.Graph.Studies = studies
-
-	// Build hierarchical structure
-	result.Graph.StudyDetails = buildStudyDetails(studies, samples)
-
-	return nil
-}
-
-func classifyProjectName(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
-	projects, err := provider.ListProjects(ctx)
+func libraryStudyDetails(ctx context.Context, provider Provider, libraryType string, samples []mlwh.Sample) ([]mlwh.StudyDetail, []MissingHop, error) {
+	studies, err := listAllStudies(ctx, provider)
 	if err != nil {
-		if isContextError(err) {
-			return nil, false, nil, err
+		return nil, nil, err
+	}
+	if len(studies) == 0 {
+		derivedStudies, studyErr := studiesForSamples(ctx, provider, samples)
+		if studyErr != nil {
+			return nil, nil, studyErr
 		}
 
-		if isClientError(err) {
-			return nil, false, nil, nil
-		}
-
-		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
+		return buildStudyDetails(derivedStudies, samples), nil, nil
 	}
 
-	for _, candidate := range projects {
-		if candidate.Name != identifier {
-			continue
-		}
+	studyDetails := make([]mlwh.StudyDetail, 0)
+	missing := make([]MissingHop, 0, 1)
+	truncated := false
 
-		project := candidate
-		result := &EnrichmentResult{
-			Identifier: identifier,
-			Type:       IdentifierProjectName,
-			Graph: EnrichmentGraph{
-				Project: &project,
-			},
-		}
-
-		if err := enrichProject(ctx, provider, &project, result); err != nil {
-			return nil, false, nil, err
-		}
-
-		return result, true, nil, nil
-	}
-
-	return nil, false, nil, nil
-}
-
-func enrichProject(ctx context.Context, provider SAGAProvider, project *saga.Project, result *EnrichmentResult) error {
-	if project == nil || result == nil {
-		return nil
-	}
-
-	projectStudies, err := provider.ListProjectStudies(ctx, project.ID)
-	if err != nil {
-		if isContextError(err) {
-			return err
-		}
-
-		result.Partial = true
-		result.Missing = append(result.Missing, missingHop(HopStudies, err))
-	} else {
-		studies := make([]saga.Study, 0, len(projectStudies))
-
-		for _, projectStudy := range projectStudies {
-			study, studyErr := provider.GetStudy(ctx, projectStudy.IDStudyLims)
-			if studyErr != nil {
-				if isContextError(studyErr) {
-					return studyErr
-				}
-
-				result.Partial = true
-				result.Missing = append(result.Missing, missingHop(HopStudies, studyErr))
-
+	for _, study := range studies {
+		studySamples, sampleErr := provider.SamplesForLibrary(ctx, libraryType, study.IDStudyLims, MaxLibrarySamples, 0)
+		if sampleErr != nil {
+			if isClientError(sampleErr) {
 				continue
 			}
 
-			if study == nil {
-				continue
-			}
-
-			studies = append(studies, *study)
+			return nil, nil, sampleErr
+		}
+		if len(studySamples) == 0 {
+			continue
 		}
 
-		result.Graph.Studies = studies
+		if len(studySamples) >= MaxLibrarySamples {
+			truncated = true
+			studySamples = studySamples[:MaxLibrarySamples]
+		}
+
+		studyDetails = append(studyDetails, mlwh.StudyDetail{
+			Study: study,
+			Libraries: []mlwh.LibraryDetail{{
+				Library: mlwh.Library{PipelineIDLims: libraryType, SampleCount: len(studySamples)},
+				Samples: studySamples,
+			}},
+		})
 	}
 
-	projectSamples, err := provider.ListProjectSamples(ctx, project.ID)
-	if err != nil {
-		if isContextError(err) {
-			return err
-		}
-
-		result.Partial = true
-		result.Missing = append(result.Missing, missingHop(HopSamples, err))
-	} else {
-		samples := make([]saga.MLWHSample, 0, len(projectSamples))
-
-		for _, projectSample := range projectSamples {
-			resolvedSamples, sampleErr := provider.FindSamplesBySangerID(ctx, projectSample.SangerID)
-			if sampleErr != nil {
-				if isContextError(sampleErr) {
-					return sampleErr
-				}
-
-				result.Partial = true
-				result.Missing = append(result.Missing, missingHop(HopSamples, sampleErr))
-
-				continue
-			}
-
-			samples = append(samples, resolvedSamples...)
-		}
-
-		result.Graph.Samples = samples
-		result.Graph.Libraries = distinctLibrariesForSamples(samples)
+	if truncated {
+		missing = append(missing, MissingHop{Hop: HopLibraries, Reason: ReasonSamplesTruncated, Status: http.StatusOK})
 	}
 
-	users, err := provider.ListProjectUsers(ctx, project.ID)
-	if err != nil {
-		if isContextError(err) {
-			return err
-		}
+	return studyDetails, missing, nil
+}
 
-		result.Partial = true
-		result.Missing = append(result.Missing, missingHop(HopUsers, err))
+func flattenStudyDetailSamples(studyDetails []mlwh.StudyDetail) []mlwh.Sample {
+	samples := make([]mlwh.Sample, 0)
+	for i := range studyDetails {
+		samples = append(samples, flattenStudySamples(&studyDetails[i])...)
+	}
 
+	return samples
+}
+
+func flattenStudySamples(detail *mlwh.StudyDetail) []mlwh.Sample {
+	if detail == nil {
 		return nil
 	}
 
-	result.Graph.Users = users
+	samples := make([]mlwh.Sample, 0)
+	for _, library := range detail.Libraries {
+		samples = append(samples, library.Samples...)
+	}
 
-	return nil
+	return samples
 }
 
-func distinctLibrariesForSamples(samples []saga.MLWHSample) []Library {
+func distinctLibrariesForSamples(samples []mlwh.Sample) []Library {
 	seen := make(map[Library]struct{}, len(samples))
 	libraries := make([]Library, 0, len(samples))
 
 	for _, sample := range samples {
+		if sample.LibraryType == "" {
+			continue
+		}
+
 		library := Library{LibraryType: sample.LibraryType, IDStudyLims: sample.IDStudyLims}
 		if _, exists := seen[library]; exists {
 			continue
@@ -616,74 +653,86 @@ func distinctLibrariesForSamples(samples []saga.MLWHSample) []Library {
 	return libraries
 }
 
-// buildStudyDetails constructs hierarchical StudyDetails from samples, grouping by study and library.
-func buildStudyDetails(studies []saga.Study, samples []saga.MLWHSample) []StudyDetail {
-	// Group samples by study
-	studyMap := make(map[string][]saga.MLWHSample)
-
+func buildStudyDetails(studies []mlwh.Study, samples []mlwh.Sample) []mlwh.StudyDetail {
+	studyMap := make(map[string][]mlwh.Sample)
 	for _, sample := range samples {
 		studyMap[sample.IDStudyLims] = append(studyMap[sample.IDStudyLims], sample)
 	}
 
-	// Build StudyDetails
-	studyDetails := make([]StudyDetail, 0, len(studies))
-
+	studyDetails := make([]mlwh.StudyDetail, 0, len(studies))
 	for _, study := range studies {
 		studySamples := studyMap[study.IDStudyLims]
 		if len(studySamples) == 0 {
 			continue
 		}
 
-		studyDetails = append(studyDetails, *buildStudyDetail(study, studySamples))
+		studyDetails = append(studyDetails, buildStudyDetail(study, studySamples))
 	}
 
 	return studyDetails
 }
 
-// buildStudyDetail constructs a hierarchical StudyDetail grouping libraries without samples.
-// Samples should be loaded just-in-time when a library is expanded.
-func buildStudyDetail(study saga.Study, samples []saga.MLWHSample) *StudyDetail {
-	// Group samples by library type to collect distinct libraries
-	libraryMap := make(map[string]struct{})
+func buildStudyDetail(study mlwh.Study, samples []mlwh.Sample) mlwh.StudyDetail {
+	grouped := make(map[string][]mlwh.Sample)
+	ordered := make([]string, 0)
 
 	for _, sample := range samples {
-		libraryMap[sample.LibraryType] = struct{}{}
+		if _, seen := grouped[sample.LibraryType]; !seen {
+			ordered = append(ordered, sample.LibraryType)
+		}
+
+		grouped[sample.LibraryType] = append(grouped[sample.LibraryType], sample)
 	}
 
-	// Build LibraryDetails without preloaded samples
-	libraryDetails := make([]LibraryDetail, 0, len(libraryMap))
-
-	for libraryType := range libraryMap {
-		libraryDetails = append(libraryDetails, LibraryDetail{
-			LibraryType: libraryType,
-			IDStudyLims: study.IDStudyLims,
-			Samples:     []saga.MLWHSample{}, // Empty - samples loaded JIT on expansion
+	libraries := make([]mlwh.LibraryDetail, 0, len(grouped))
+	for _, libraryType := range ordered {
+		librarySamples := grouped[libraryType]
+		libraries = append(libraries, mlwh.LibraryDetail{
+			Library: mlwh.Library{PipelineIDLims: libraryType, SampleCount: len(librarySamples)},
+			Samples: librarySamples,
 		})
 	}
 
-	return &StudyDetail{
-		Study:          study,
-		LibraryDetails: libraryDetails,
-	}
+	return mlwh.StudyDetail{Study: study, Libraries: libraries}
 }
 
-func classifySangerSampleID(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+func flatLibrariesFromStudyDetail(detail *mlwh.StudyDetail) []Library {
+	if detail == nil {
+		return nil
+	}
+
+	libraries := make([]Library, 0, len(detail.Libraries))
+	for _, library := range detail.Libraries {
+		if library.Library.PipelineIDLims == "" {
+			continue
+		}
+
+		libraries = append(libraries, Library{
+			LibraryType: library.Library.PipelineIDLims,
+			IDStudyLims: detail.Study.IDStudyLims,
+		})
+	}
+
+	return libraries
+}
+
+func classifySangerSampleID(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, provider, identifier, IdentifierSangerSampleID,
-		func(ctx context.Context, provider SAGAProvider, identifier string) ([]saga.MLWHSample, error) {
+		func(ctx context.Context, provider Provider, identifier string) ([]mlwh.Sample, error) {
 			return provider.FindSamplesBySangerID(ctx, identifier)
 		})
 }
 
-func classifySampleLimsID(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+func classifySampleLimsID(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, provider, identifier, IdentifierSampleLimsID,
-		func(ctx context.Context, provider SAGAProvider, identifier string) ([]saga.MLWHSample, error) {
+		func(ctx context.Context, provider Provider, identifier string) ([]mlwh.Sample, error) {
 			return provider.FindSamplesByIDSampleLims(ctx, identifier)
 		})
 }
 
-func classifySampleAccession(ctx context.Context, provider SAGAProvider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+func classifySampleAccession(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
 	return classifySampleIdentifier(ctx, provider, identifier, IdentifierSampleAccession,
-		func(ctx context.Context, provider SAGAProvider, identifier string) ([]saga.MLWHSample, error) {
+		func(ctx context.Context, provider Provider, identifier string) ([]mlwh.Sample, error) {
 			return provider.FindSamplesByAccessionNumber(ctx, identifier)
 		})
 }

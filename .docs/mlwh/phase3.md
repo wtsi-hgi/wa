@@ -21,8 +21,8 @@ read-through write-back; `ErrNotFound` on missing parent, empty slice
 on parent-with-no-children. Honour `limit`/`offset`. Covers all 8
 acceptance tests from C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.2: C2 - LibrariesForStudy, RunsForStudy, LanesForSample, IRODSPathsFor\* [parallel with 3.1, 3.3]
 
@@ -34,8 +34,8 @@ Implement `LibrariesForStudy` (with `SampleCount` distinct per
 `mlwh/hierarchy.go`. Same parent-existence contract as C1. Covers all
 6 acceptance tests from C2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.3: C4 - AllStudies cache-backed enumeration [parallel with 3.1, 3.2]
 
@@ -47,8 +47,8 @@ WHERE id_lims = 'SQSCP' ORDER BY id_study_lims LIMIT ? OFFSET ?` and
 upserting rows back into `study_mirror` without advancing the
 watermark. Covers all 6 acceptance tests from C4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all
@@ -64,5 +64,5 @@ hierarchy methods from items 3.1 and 3.2 plus the in-process
 `Sync` commit. Output is `[]TaggedID` in deterministic sorted order.
 Depends on items 3.1, 3.2, 3.3. Covers all 7 acceptance tests from C3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

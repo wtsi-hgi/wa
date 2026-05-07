@@ -37,12 +37,12 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 type seqmetaStudySamplesResponseForTest struct {
 	status  int
-	samples []saga.MLWHSample
+	samples []seqmetaSampleForSearch
 	body    string
 }
 
@@ -71,6 +71,29 @@ func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySample
 	mux.Handle("GET /study/{id}/samples", handler)
 
 	return httptest.NewServer(mux)
+}
+
+type mockSearchExpander struct {
+	expandCalls int
+	expandFunc  func(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
+	lanesFunc   func(context.Context, string, int, int) ([]mlwh.Lane, error)
+}
+
+func (m *mockSearchExpander) ExpandIdentifier(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+	m.expandCalls++
+	if m.expandFunc == nil {
+		return nil, nil
+	}
+
+	return m.expandFunc(ctx, kind, canonical)
+}
+
+func (m *mockSearchExpander) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
+	if m.lanesFunc == nil {
+		return nil, nil
+	}
+
+	return m.lanesFunc(ctx, sangerName, limit, offset)
 }
 
 func TestServerPostResults(t *testing.T) {
@@ -426,7 +449,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
 		})
 		defer seqmeta.Close()
 
@@ -456,7 +479,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}}},
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}}},
 		})
 		defer seqmeta.Close()
 
@@ -479,7 +502,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{}},
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{}},
 		})
 		defer seqmeta.Close()
 
@@ -523,7 +546,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
 		})
 		defer seqmeta.Close()
 
@@ -546,7 +569,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}, {SangerID: "SANG2"}, {SangerID: "SANG3"}}},
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}, {SangerID: "SANG3"}}},
 		})
 		defer seqmeta.Close()
 
@@ -594,7 +617,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"EGAS00001005445": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "ACC1"}, {SangerID: "ACC2"}}},
+			"EGAS00001005445": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "ACC1"}, {SangerID: "ACC2"}}},
 		})
 		defer seqmeta.Close()
 
@@ -625,7 +648,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
 		})
 		defer seqmeta.Close()
 
@@ -658,7 +681,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
 		})
 		defer seqmeta.Close()
 
@@ -691,7 +714,7 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []saga.MLWHSample{{SangerID: "SANG42"}}},
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG42"}}},
 		})
 		defer seqmeta.Close()
 
@@ -844,6 +867,161 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(first.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(second.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(studyHits, convey.ShouldEqual, 1)
+	})
+
+	convey.Convey("G1.1/G1.2: Given study search expansion via mlwh, then direct study, sample, and lane-tagged results are all returned through OR groups", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_studyid": "6568"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "7607STDY14643771"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-lane", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_lane": "12345_1#10"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-unrelated", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-4"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "OTHER-SAMPLE"}
+		}))
+
+		expander := &mockSearchExpander{
+			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
+				convey.So(canonical, convey.ShouldEqual, "6568")
+
+				return []mlwh.TaggedID{
+					{Kind: mlwh.KindStudyLimsID, Canonical: "6568"},
+					{Kind: mlwh.KindSangerSampleName, Canonical: "7607STDY14643771"},
+					{Kind: mlwh.KindRunID, Canonical: "12345"},
+				}, nil
+			},
+			lanesFunc: func(_ context.Context, sangerName string, _, _ int) ([]mlwh.Lane, error) {
+				convey.So(sangerName, convey.ShouldEqual, "7607STDY14643771")
+
+				return []mlwh.Lane{{IDRun: 12345, Position: 1, TagIndex: 10}}, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+
+		runKeys := make([]string, len(results))
+		for i, result := range results {
+			runKeys[i] = result.ResultSet.RunKey
+		}
+
+		convey.So(results, convey.ShouldHaveLength, 3)
+		convey.So(runKeys, convey.ShouldContain, "run-study-direct")
+		convey.So(runKeys, convey.ShouldContain, "run-study-sample")
+		convey.So(runKeys, convey.ShouldContain, "run-study-lane")
+	})
+
+	convey.Convey("G1.3: Given repeated study search within 5 minutes, then mlwh ExpandIdentifier is called at most once", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-cache", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG-CACHE"}
+		}))
+
+		expander := &mockSearchExpander{
+			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
+				convey.So(canonical, convey.ShouldEqual, "6568")
+
+				return []mlwh.TaggedID{
+					{Kind: mlwh.KindStudyLimsID, Canonical: "6568"},
+					{Kind: mlwh.KindSangerSampleName, Canonical: "SANG-CACHE"},
+				}, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		first := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
+		second := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
+
+		convey.So(first.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(second.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
+	})
+
+	convey.Convey("G1.4: Given library search via mlwh and an in-memory fixture, then matching results return within 1 second", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-sample", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "LIB-S1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-direct", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_librarytype": "Standard"}
+		}))
+
+		expander := &mockSearchExpander{
+			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
+				convey.So(canonical, convey.ShouldEqual, "Standard")
+
+				return []mlwh.TaggedID{
+					{Kind: mlwh.KindLibraryType, Canonical: "Standard"},
+					{Kind: mlwh.KindSangerSampleName, Canonical: "LIB-S1"},
+					{Kind: mlwh.KindRunID, Canonical: "100"},
+				}, nil
+			},
+			lanesFunc: func(_ context.Context, sangerName string, _, _ int) ([]mlwh.Lane, error) {
+				convey.So(sangerName, convey.ShouldEqual, "LIB-S1")
+
+				return []mlwh.Lane{{IDRun: 100, Position: 1, TagIndex: 1}}, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		started := time.Now()
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?library=Standard", nil)
+		elapsed := time.Since(started)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(elapsed < time.Second, convey.ShouldBeTrue)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+		convey.So(results, convey.ShouldHaveLength, 2)
+	})
+
+	convey.Convey("G1.5: Given run search via mlwh, then expanded sample matches are returned via OR logic", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-direct-run", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_runid": "100"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-expanded-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "RUN-S1"}
+		}))
+
+		expander := &mockSearchExpander{
+			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindRunID)
+				convey.So(canonical, convey.ShouldEqual, "100")
+
+				return []mlwh.TaggedID{
+					{Kind: mlwh.KindRunID, Canonical: "100"},
+					{Kind: mlwh.KindSangerSampleName, Canonical: "RUN-S1"},
+				}, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?run=100", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+		convey.So(results, convey.ShouldHaveLength, 2)
 	})
 }
 
