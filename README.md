@@ -6,12 +6,12 @@ REST APIs and CLIs, and a Next.js web UI for browsing results.
 
 ## Current Sub-Products
 
-| Sub-product     | What it does                                                                                                                                                                         |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                                                    |
-| **mlwh**        | Go client library and cache sync CLI for MLWH-backed study, sample, library, run, and iRODS lookups.                                                                                |
-| **seqmeta**     | Sequence metadata API built on MLWH-backed caches. Hash-based change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                           |
-| **results-web** | Next.js web UI for the results API — searchable table, file browser with inline preview, dashboard stats, and study-based search via seqmeta.                                        |
+| Sub-product     | What it does                                                                                                                                              |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                         |
+| **mlwh**        | Go client library and cache sync CLI for MLWH-backed study, sample, library, run, and iRODS lookups.                                                      |
+| **seqmeta**     | Sequence metadata API built on MLWH-backed caches. Hash-based change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs. |
+| **results-web** | Next.js web UI for the results API — searchable table, file browser with inline preview, dashboard stats, and study-based search via seqmeta.             |
 
 Planned sub-products (notify, jobrun, watchtower, samplepicker) are described
 in [.docs/proposal.md](.docs/proposal.md).
