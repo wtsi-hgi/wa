@@ -44,7 +44,46 @@ import (
 
 const DefaultMaxPreviewBytes int64 = 10 * 1024 * 1024
 
+// MaxInlinePreviewLines is the hard cap on lines returned for an inline file
+// browser preview. It is sized to comfortably fill the largest possible inline
+// preview height so the height slider never needs to refetch.
+const MaxInlinePreviewLines = 20
+
 const previewTruncatedHeader = "X-Preview-Truncated"
+
+// PreviewMode names the three distinct ways the file content endpoint can serve
+// a registered file.
+type PreviewMode int
+
+const (
+	// previewModeUnspecified preserves legacy behaviour: byte cap with optional
+	// caller-supplied line_limit.
+	previewModeUnspecified PreviewMode = iota
+	// previewModeInline is the file-browser inline preview. Hard-capped at
+	// MaxInlinePreviewLines AND the byte cap. Any caller-supplied line_limit is
+	// reduced to MaxInlinePreviewLines.
+	previewModeInline
+	// previewModeEnlarged is the click-to-enlarge preview. Byte cap only; no
+	// line cap (caller-supplied line_limit is ignored).
+	previewModeEnlarged
+	// previewModeDownload returns the entire file unchanged.
+	previewModeDownload
+)
+
+func parsePreviewMode(raw string) (PreviewMode, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return previewModeUnspecified, true
+	case "inline":
+		return previewModeInline, true
+	case "enlarged":
+		return previewModeEnlarged, true
+	case "download":
+		return previewModeDownload, true
+	default:
+		return previewModeUnspecified, false
+	}
+}
 
 // ServerOption configures Server behaviour.
 type ServerOption func(*Server)
@@ -238,6 +277,25 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		lineLimit = parsedLineLimit
 	}
 
+	mode, ok := parsePreviewMode(r.URL.Query().Get("mode"))
+	if !ok {
+		writeServerError(w, http.StatusBadRequest, "mode query parameter must be one of: inline, enlarged, download")
+
+		return
+	}
+
+	switch mode {
+	case previewModeInline:
+		if lineLimit <= 0 || lineLimit > MaxInlinePreviewLines {
+			lineLimit = MaxInlinePreviewLines
+		}
+	case previewModeEnlarged:
+		lineLimit = 0
+	case previewModeDownload, previewModeUnspecified:
+		// previewModeDownload is handled below alongside the legacy
+		// download=true flag. previewModeUnspecified preserves legacy behaviour.
+	}
+
 	resultID := chi.URLParam(r, "id")
 	if _, err := s.store.Get(r.Context(), resultID); err != nil {
 		writeDomainError(w, err)
@@ -258,7 +316,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	download := r.URL.Query().Get("download") == "true"
+	download := mode == previewModeDownload || r.URL.Query().Get("download") == "true"
 	previewContentType := previewContentTypeForPath(requestedPath, download)
 	allowReadablePreview := !download && isLineReadableContentType(previewContentType)
 	fileInfo, err := os.Stat(requestedPath)

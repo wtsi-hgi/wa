@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ArrowDownToLine, Expand, FileCode2, Search, X } from "lucide-react";
 import hljs from "highlight.js/lib/core";
@@ -68,9 +68,17 @@ export type FilePreviewError = {
 export type FilePreviewProps = {
     file: FileEntry;
     content?: { content: string; contentType: string; truncated?: boolean };
+    enlargedContent?: {
+        content: string;
+        contentType: string;
+        truncated?: boolean;
+    };
+    enlargedError?: FilePreviewError;
+    enlargedLoading?: boolean;
     error?: FilePreviewError;
     isLoading?: boolean;
     maxHeight?: number;
+    onEnlargeOpen?: () => void;
     proxyUrl: string;
 };
 
@@ -90,6 +98,7 @@ type ExpandablePreviewProps = {
     children: ReactNode;
     dialogContent: ReactNode;
     fileName: string;
+    onOpen?: () => void;
 };
 
 export type FileImageThumbnailProps = {
@@ -288,13 +297,21 @@ function ExpandablePreview({
     children,
     dialogContent,
     fileName,
+    onOpen,
 }: ExpandablePreviewProps) {
     const [previewOpen, setPreviewOpen] = useState(false);
+    const onOpenRef = useRef(onOpen);
+
+    useEffect(() => {
+        onOpenRef.current = onOpen;
+    }, [onOpen]);
 
     useEffect(() => {
         if (!previewOpen) {
             return undefined;
         }
+
+        onOpenRef.current?.();
 
         function handleKeyDown(event: KeyboardEvent) {
             if (event.key === "Escape") {
@@ -814,9 +831,13 @@ export function selectRenderer(contentType: string): PreviewRenderer {
 export function FilePreview({
     file,
     content,
+    enlargedContent,
+    enlargedError,
+    enlargedLoading = false,
     error,
     isLoading = false,
     maxHeight,
+    onEnlargeOpen,
     proxyUrl,
 }: FilePreviewProps) {
     const renderer = content
@@ -835,6 +856,35 @@ export function FilePreview({
             content?.contentType ?? "text/plain",
         );
     }, [content?.content, content?.contentType, renderer]);
+
+    const dialogContent = enlargedContent ?? content;
+    const dialogHighlightedContent = useMemo(() => {
+        if (renderer !== "code") {
+            return undefined;
+        }
+
+        if (dialogContent === content) {
+            return highlightedContent;
+        }
+
+        return highlightCode(
+            dialogContent?.content ?? "",
+            dialogContent?.contentType ?? "text/plain",
+        );
+    }, [content, dialogContent, highlightedContent, renderer]);
+    const enlargedLoadingNode = (
+        <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
+            Loading full preview...
+        </div>
+    );
+    const enlargedErrorMessage = enlargedError?.message?.trim();
+    const enlargedErrorNode = enlargedError ? (
+        <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
+            {enlargedErrorMessage && enlargedErrorMessage.length > 0
+                ? enlargedErrorMessage
+                : "Unable to load full preview"}
+        </div>
+    ) : null;
 
     if (error?.status === 413) {
         return (
@@ -999,17 +1049,24 @@ export function FilePreview({
                     {!isLoading && previewable && renderer === "markdown" ? (
                         <ExpandablePreview
                             fileName={fileName}
+                            onOpen={onEnlargeOpen}
                             dialogContent={
-                                <div>
-                                    <article className="max-w-none rounded-[1.5rem] border border-border/70 bg-background/75 p-6 text-foreground">
-                                        <ReactMarkdown>
-                                            {content?.content ?? ""}
-                                        </ReactMarkdown>
-                                    </article>
-                                    {content?.truncated ? (
-                                        <TruncationNote />
-                                    ) : null}
-                                </div>
+                                enlargedLoading && !enlargedContent ? (
+                                    enlargedLoadingNode
+                                ) : enlargedErrorNode ? (
+                                    enlargedErrorNode
+                                ) : (
+                                    <div>
+                                        <article className="max-w-none rounded-[1.5rem] border border-border/70 bg-background/75 p-6 text-foreground">
+                                            <ReactMarkdown>
+                                                {dialogContent?.content ?? ""}
+                                            </ReactMarkdown>
+                                        </article>
+                                        {dialogContent?.truncated ? (
+                                            <TruncationNote />
+                                        ) : null}
+                                    </div>
+                                )
                             }
                         >
                             <div>
@@ -1045,24 +1102,35 @@ export function FilePreview({
                     content ? (
                         <ExpandablePreview
                             fileName={fileName}
+                            onOpen={onEnlargeOpen}
                             dialogContent={
-                                <div>
-                                    <CsvPreview
-                                        key={buildPreviewInstanceKey(
-                                            file.path,
-                                            content.contentType,
-                                            content.content,
-                                            "expanded",
-                                        )}
-                                        content={content.content}
-                                        contentType={content.contentType}
-                                        isExpanded
-                                        truncated={content.truncated}
-                                    />
-                                    {content.truncated ? (
-                                        <TruncationNote />
-                                    ) : null}
-                                </div>
+                                enlargedLoading && !enlargedContent ? (
+                                    enlargedLoadingNode
+                                ) : enlargedErrorNode ? (
+                                    enlargedErrorNode
+                                ) : dialogContent ? (
+                                    <div>
+                                        <CsvPreview
+                                            key={buildPreviewInstanceKey(
+                                                file.path,
+                                                dialogContent.contentType,
+                                                dialogContent.content,
+                                                "expanded",
+                                            )}
+                                            content={dialogContent.content}
+                                            contentType={
+                                                dialogContent.contentType
+                                            }
+                                            isExpanded
+                                            truncated={dialogContent.truncated}
+                                        />
+                                        {dialogContent.truncated ? (
+                                            <TruncationNote />
+                                        ) : null}
+                                    </div>
+                                ) : (
+                                    enlargedLoadingNode
+                                )
                             }
                         >
                             <div>
@@ -1110,23 +1178,30 @@ export function FilePreview({
                     {!isLoading && previewable && renderer === "code" ? (
                         <ExpandablePreview
                             fileName={fileName}
+                            onOpen={onEnlargeOpen}
                             dialogContent={
-                                <div>
-                                    <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
-                                        <pre className="overflow-auto p-5 text-sm leading-7 text-slate-100">
-                                            <code
-                                                dangerouslySetInnerHTML={{
-                                                    __html:
-                                                        highlightedContent ??
-                                                        "",
-                                                }}
-                                            />
-                                        </pre>
+                                enlargedLoading && !enlargedContent ? (
+                                    enlargedLoadingNode
+                                ) : enlargedErrorNode ? (
+                                    enlargedErrorNode
+                                ) : (
+                                    <div>
+                                        <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
+                                            <pre className="overflow-auto p-5 text-sm leading-7 text-slate-100">
+                                                <code
+                                                    dangerouslySetInnerHTML={{
+                                                        __html:
+                                                            dialogHighlightedContent ??
+                                                            "",
+                                                    }}
+                                                />
+                                            </pre>
+                                        </div>
+                                        {dialogContent?.truncated ? (
+                                            <TruncationNote />
+                                        ) : null}
                                     </div>
-                                    {content?.truncated ? (
-                                        <TruncationNote />
-                                    ) : null}
-                                </div>
+                                )
                             }
                         >
                             <div>

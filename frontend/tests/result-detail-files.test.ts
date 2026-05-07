@@ -455,7 +455,7 @@ describe("O1 result detail file integration", () => {
         });
     });
 
-    it("requests line-limited inline previews for line-readable text files", async () => {
+    it("requests inline-mode previews for line-readable text files", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
 
@@ -478,12 +478,18 @@ describe("O1 result detail file integration", () => {
 
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
-                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv&line_limit=2000",
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv&mode=inline",
             );
         });
+
+        expect(
+            fetchMock.mock.calls.some(([url]) =>
+                String(url).includes("line_limit="),
+            ),
+        ).toBe(false);
     });
 
-    it("requests line-limited inline previews for gzip-compressed tsv files", async () => {
+    it("requests inline-mode previews for gzip-compressed tsv files", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
 
@@ -506,9 +512,50 @@ describe("O1 result detail file integration", () => {
 
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
-                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv.gz&line_limit=2000",
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv.gz&mode=inline",
             );
         });
+    });
+
+    it("does not refetch the inline preview when the height slider changes", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        fetchMock.mockResolvedValue(
+            new Response("sample\tstatus\nalpha\tready\n", {
+                headers: {
+                    "content-type": "text/tab-separated-values",
+                    "x-preview-truncated": "true",
+                },
+                status: 200,
+            }),
+        );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/a/report.tsv")],
+                resultId: "result-1",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fa%2Freport.tsv&mode=inline",
+            );
+        });
+
+        const fetchCallsAfterInitialLoad = fetchMock.mock.calls.length;
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "preview-height-320" }),
+        );
+
+        // Height-slider changes must not trigger a fresh data request because
+        // the backend already returned enough lines for the maximum possible
+        // preview height.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(fetchMock.mock.calls.length).toBe(fetchCallsAfterInitialLoad);
     });
 
     it("rerenders non-image grid previews once when preview height changes", async () => {
@@ -595,7 +642,7 @@ describe("O1 result detail file integration", () => {
 
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
-                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg",
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg&mode=inline",
             );
         });
 

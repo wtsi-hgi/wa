@@ -27,18 +27,23 @@ type PreviewState = {
     path: string | null;
 };
 
+type EnlargedPreviewState = {
+    content?: { content: string; contentType: string; truncated?: boolean };
+    error?: FilePreviewError;
+    isLoading: boolean;
+    path: string | null;
+};
+
 type FileUrlOptions = {
     download?: boolean;
     height?: number;
-    lineLimit?: number;
+    mode?: "inline" | "enlarged" | "download";
     thumbnail?: boolean;
     width?: number;
 };
 
 const thumbnailsPerPage = 100;
 const defaultPreviewHeight = 220;
-const defaultDelimitedPreviewLineLimit = 2000;
-const defaultTextPreviewLineLimit = 400;
 const thumbnailRenderHeight = 420;
 const compressedExtensions = new Set(["gz"]);
 const imageExtensions = new Set([
@@ -69,23 +74,6 @@ const proxyOnlyExtensions = new Set([
     "tif",
     "tiff",
     "webp",
-]);
-const delimitedExtensions = new Set(["csv", "tsv"]);
-const lineReadableExtensions = new Set([
-    "csv",
-    "json",
-    "jsonl",
-    "log",
-    "markdown",
-    "md",
-    "py",
-    "sh",
-    "text",
-    "tsv",
-    "txt",
-    "xml",
-    "yaml",
-    "yml",
 ]);
 
 function effectiveExtensionFromPath(path: string): string {
@@ -155,8 +143,8 @@ function buildFileUrl(
         query.set("download", "true");
     }
 
-    if (options.lineLimit) {
-        query.set("line_limit", String(options.lineLimit));
+    if (options.mode) {
+        query.set("mode", options.mode);
     }
 
     if (options.thumbnail) {
@@ -183,20 +171,6 @@ function isImageFile(path: string): boolean {
     return imageExtensions.has(extension);
 }
 
-function previewLineLimitForPath(path: string): number {
-    const extension = effectiveExtensionFromPath(path);
-
-    if (!lineReadableExtensions.has(extension)) {
-        return 0;
-    }
-
-    if (delimitedExtensions.has(extension)) {
-        return defaultDelimitedPreviewLineLimit;
-    }
-
-    return defaultTextPreviewLineLimit;
-}
-
 function buildPreviewState(file: FileEntry | null): PreviewState {
     return {
         content: undefined,
@@ -209,12 +183,9 @@ function buildPreviewState(file: FileEntry | null): PreviewState {
 async function fetchPreviewContent(
     resultId: string,
     path: string,
+    mode: "inline" | "enlarged",
 ): Promise<{ content: string; contentType: string; truncated?: boolean }> {
-    const response = await fetch(
-        buildFileUrl(resultId, path, {
-            lineLimit: previewLineLimitForPath(path),
-        }),
-    );
+    const response = await fetch(buildFileUrl(resultId, path, { mode }));
 
     if (!response.ok) {
         const contentType = response.headers.get("content-type") ?? "";
@@ -274,7 +245,7 @@ const GalleryPreviewRow = memo(function GalleryPreviewRow({
 
         let cancelled = false;
 
-        void fetchPreviewContent(resultId, file.path)
+        void fetchPreviewContent(resultId, file.path, "inline")
             .then((nextContent) => {
                 if (cancelled) {
                     return;
@@ -367,6 +338,12 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
     const [previewState, setPreviewState] = useState<PreviewState>(() =>
         buildPreviewState(directoryGroups[0]?.files[0] ?? null),
     );
+    const [enlargedState, setEnlargedState] = useState<EnlargedPreviewState>({
+        content: undefined,
+        error: undefined,
+        isLoading: false,
+        path: null,
+    });
     const effectiveSelectedDirectory =
         selectedDirectory ?? directoryGroups[0]?.path;
 
@@ -414,7 +391,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         let cancelled = false;
         const selectedPath = effectiveSelectedFile.path;
 
-        void fetchPreviewContent(resultId, selectedPath)
+        void fetchPreviewContent(resultId, selectedPath, "inline")
             .then((nextContent) => {
                 if (cancelled) {
                     return;
@@ -483,15 +460,102 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
             previewState.path === file.path ? previewState.error : undefined;
         const isLoading =
             previewState.path === file.path ? previewState.isLoading : false;
+        const enlargedForFile =
+            enlargedState.path === file.path ? enlargedState : undefined;
 
         return (
             <div>
                 <FilePreview
                     content={previewContent}
+                    enlargedContent={enlargedForFile?.content}
+                    enlargedError={enlargedForFile?.error}
+                    enlargedLoading={enlargedForFile?.isLoading ?? false}
                     error={previewError}
                     file={file}
                     isLoading={isLoading}
                     maxHeight={previewHeight}
+                    onEnlargeOpen={() => {
+                        if (
+                            !shouldFetchInlinePreview(file.path) ||
+                            (enlargedState.path === file.path &&
+                                (enlargedState.content !== undefined ||
+                                    enlargedState.isLoading))
+                        ) {
+                            return;
+                        }
+
+                        setEnlargedState({
+                            content: undefined,
+                            error: undefined,
+                            isLoading: true,
+                            path: file.path,
+                        });
+
+                        void fetchPreviewContent(
+                            resultId,
+                            file.path,
+                            "enlarged",
+                        )
+                            .then((nextContent) => {
+                                setEnlargedState((current) => {
+                                    if (current.path !== file.path) {
+                                        return current;
+                                    }
+
+                                    return {
+                                        content: nextContent,
+                                        error: undefined,
+                                        isLoading: false,
+                                        path: file.path,
+                                    };
+                                });
+                            })
+                            .catch((fetchError: unknown) => {
+                                setEnlargedState((current) => {
+                                    if (current.path !== file.path) {
+                                        return current;
+                                    }
+
+                                    if (
+                                        fetchError instanceof
+                                        PreviewRequestError
+                                    ) {
+                                        const payload = fetchError.body as {
+                                            body?: unknown;
+                                            fileSize?: number;
+                                        } | null;
+                                        const body =
+                                            fetchError.status === 413
+                                                ? payload?.body
+                                                : fetchError.body;
+
+                                        return {
+                                            content: undefined,
+                                            error: {
+                                                fileSize: payload?.fileSize,
+                                                message:
+                                                    extractPreviewErrorMessage(
+                                                        body,
+                                                    ),
+                                                status: fetchError.status,
+                                            },
+                                            isLoading: false,
+                                            path: file.path,
+                                        };
+                                    }
+
+                                    return {
+                                        content: undefined,
+                                        error: {
+                                            message: "Preview request failed",
+                                            status: 500,
+                                        },
+                                        isLoading: false,
+                                        path: file.path,
+                                    };
+                                });
+                            });
+                    }}
                     proxyUrl={buildFileUrl(resultId, file.path)}
                 />
             </div>
@@ -521,6 +585,12 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                 setSelectedFile(nextFile);
                 setPreviewPage(1);
                 setPreviewState(buildPreviewState(nextFile));
+                setEnlargedState({
+                    content: undefined,
+                    error: undefined,
+                    isLoading: false,
+                    path: null,
+                });
             }}
             onSelectFile={(file) => {
                 if (selectedFile?.path === file.path) {
@@ -529,6 +599,12 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
 
                 setSelectedFile(file);
                 setPreviewState(buildPreviewState(file));
+                setEnlargedState({
+                    content: undefined,
+                    error: undefined,
+                    isLoading: false,
+                    path: null,
+                });
             }}
             previewHeight={previewHeight}
             previewMode={previewMode}

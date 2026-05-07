@@ -500,7 +500,11 @@ test.describe("Q1 critical results flows", () => {
         const preview = page.locator('[data-file-browser-preview="single"]');
 
         await expect(preview).toBeVisible();
-        await expect(preview.getByText("Showing 20 of 20 rows")).toBeVisible();
+        // Inline preview is capped server-side so the file browser only renders
+        // a small subset of the rows; the full table only appears once enlarged.
+        await expect(
+            preview.getByText(/Showing \d+ preview rows/),
+        ).toBeVisible();
         await expect(
             preview.getByRole("button", { name: "Sort by sample_id" }),
         ).toHaveCount(0);
@@ -514,7 +518,8 @@ test.describe("Q1 critical results flows", () => {
         });
 
         await expect(dialog).toBeVisible();
-        // Enlarged view loads the full table and exposes table controls.
+        // Enlarged view fetches the full payload (mode=enlarged) and exposes
+        // table controls.
         await expect(dialog.getByText("Showing 20 of 20 rows")).toBeVisible();
         await expect(
             dialog.getByRole("button", { name: "Sort by sample_id" }),

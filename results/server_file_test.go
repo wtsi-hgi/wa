@@ -248,6 +248,92 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Body.String(), convey.ShouldEqual, "sample\tstatus\nalpha\tready\n")
 		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "true")
 	})
+
+	convey.Convey("A1.16: Given a large readable TSV file, when previewed in inline mode, then the response is capped at MaxInlinePreviewLines lines regardless of underlying file size", t, func() {
+		var payloadBuffer bytes.Buffer
+		payloadBuffer.WriteString("col_a\tcol_b\n")
+		for i := 0; i < 5_000; i++ {
+			payloadBuffer.WriteString("alpha\tready\n")
+		}
+		payload := payloadBuffer.Bytes()
+		server, resultID, path := newFileServerScenarioForTest(t, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "report.tsv"), payload)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 14, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=inline", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		lineCount := bytes.Count(response.Body.Bytes(), []byte("\n"))
+		convey.So(lineCount, convey.ShouldBeLessThanOrEqualTo, MaxInlinePreviewLines)
+		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "true")
+	})
+
+	convey.Convey("A1.17: Given a request in inline mode, when client supplies a larger line_limit query, then the backend still caps the response at MaxInlinePreviewLines", t, func() {
+		var payloadBuffer bytes.Buffer
+		for i := 0; i < 200; i++ {
+			payloadBuffer.WriteString("row\n")
+		}
+		payload := payloadBuffer.Bytes()
+		server, resultID, path := newFileServerScenarioForTest(t, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "report.tsv"), payload)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 15, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=inline&line_limit=9999", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		lineCount := bytes.Count(response.Body.Bytes(), []byte("\n"))
+		convey.So(lineCount, convey.ShouldEqual, MaxInlinePreviewLines)
+		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "true")
+	})
+
+	convey.Convey("A1.18: Given a large readable TSV file, when previewed in enlarged mode, then the response honours the byte cap with no per-line cap", t, func() {
+		var payloadBuffer bytes.Buffer
+		payloadBuffer.WriteString("col_a\tcol_b\n")
+		for i := 0; i < 5_000; i++ {
+			payloadBuffer.WriteString("alpha\tready\n")
+		}
+		payload := payloadBuffer.Bytes()
+		byteCap := int64(2048)
+		server, resultID, path := newFileServerScenarioForTestWithOptions(t, []ServerOption{WithMaxPreviewBytes(byteCap)}, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "report.tsv"), payload)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 16, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=enlarged", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(int64(response.Body.Len()), convey.ShouldBeLessThanOrEqualTo, byteCap)
+		lineCount := bytes.Count(response.Body.Bytes(), []byte("\n"))
+		convey.So(lineCount, convey.ShouldBeGreaterThan, MaxInlinePreviewLines)
+		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "true")
+	})
+
+	convey.Convey("A1.19: Given a large readable TSV file, when downloaded in download mode, then the entire file is delivered without preview caps", t, func() {
+		var payloadBuffer bytes.Buffer
+		payloadBuffer.WriteString("col_a\tcol_b\n")
+		for i := 0; i < 5_000; i++ {
+			payloadBuffer.WriteString("alpha\tready\n")
+		}
+		payload := payloadBuffer.Bytes()
+		server, resultID, path := newFileServerScenarioForTestWithOptions(t, []ServerOption{WithMaxPreviewBytes(2048)}, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "report.tsv"), payload)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 17, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=download", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Body.Len(), convey.ShouldEqual, len(payload))
+		convey.So(response.Body.Bytes(), convey.ShouldResemble, payload)
+		convey.So(response.Header().Get("Content-Disposition"), convey.ShouldContainSubstring, "attachment;")
+		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "")
+	})
 }
 
 func newFileServerScenarioForTest(t *testing.T, files func(root string) []FileEntry) (*Server, string, string) {

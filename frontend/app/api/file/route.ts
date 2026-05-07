@@ -115,6 +115,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const path = request.nextUrl.searchParams.get("path")?.trim();
     const download = request.nextUrl.searchParams.get("download");
     const lineLimit = request.nextUrl.searchParams.get("line_limit")?.trim();
+    const mode = request.nextUrl.searchParams.get("mode")?.trim();
     const thumbnail = request.nextUrl.searchParams.get("thumb");
     const thumbnailWidth = clampDimension(
         request.nextUrl.searchParams.get("w"),
@@ -138,6 +139,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     if (lineLimit) {
         query.set("line_limit", lineLimit);
+    }
+    if (mode) {
+        query.set("mode", mode);
     }
 
     let response: Response;
