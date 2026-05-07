@@ -20,6 +20,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import { PreviewPagination } from "@/components/preview-pagination";
 import type { FileEntry } from "@/lib/contracts";
 import { cn, formatBytes } from "@/lib/utils";
 
@@ -524,41 +525,17 @@ function CsvPreview({
                         </label>
                         {totalExpandedPages > 1 ? (
                             <div className="flex items-center gap-2 self-start sm:self-auto">
-                                <button
-                                    type="button"
-                                    aria-label="Previous page"
-                                    className="inline-flex items-center rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                                    disabled={safeCurrentPage === 1}
-                                    onClick={() =>
-                                        setCurrentPage((page) =>
-                                            Math.max(1, page - 1),
-                                        )
-                                    }
-                                >
-                                    Previous
-                                </button>
                                 <span className="text-sm text-muted-foreground">
                                     Page {safeCurrentPage} of{" "}
                                     {totalExpandedPages}
                                 </span>
-                                <button
-                                    type="button"
-                                    aria-label="Next page"
-                                    className="inline-flex items-center rounded-full border border-border/70 bg-background px-3 py-2 text-sm text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                                    disabled={
-                                        safeCurrentPage === totalExpandedPages
+                                <PreviewPagination
+                                    onPageChange={(page) =>
+                                        setCurrentPage(page)
                                     }
-                                    onClick={() =>
-                                        setCurrentPage((page) =>
-                                            Math.min(
-                                                totalExpandedPages,
-                                                page + 1,
-                                            ),
-                                        )
-                                    }
-                                >
-                                    Next
-                                </button>
+                                    page={safeCurrentPage}
+                                    pageCount={totalExpandedPages}
+                                />
                             </div>
                         ) : null}
                     </div>

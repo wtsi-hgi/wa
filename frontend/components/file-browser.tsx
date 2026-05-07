@@ -10,7 +10,6 @@ import {
     useState,
 } from "react";
 import {
-    ChevronLeft,
     ChevronDown,
     ChevronRight,
     Eye,
@@ -18,6 +17,7 @@ import {
     ListFilter,
 } from "lucide-react";
 
+import { PreviewPagination } from "@/components/preview-pagination";
 import { type FileEntry } from "@/lib/contracts";
 import { cn, formatBytes } from "@/lib/utils";
 
@@ -604,43 +604,14 @@ export function FileBrowser({
             </div>
 
             {previewPageCount > 1 ? (
-                <div className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/75 p-1">
-                    <button
-                        type="button"
-                        aria-label="Previous preview page"
-                        className="inline-flex size-8 items-center justify-center rounded-full text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
-                        disabled={previewPage <= 1}
-                        onClick={() => onPreviewPageChange?.(previewPage - 1)}
-                    >
-                        <ChevronLeft className="size-4" aria-hidden="true" />
-                    </button>
-                    <select
-                        aria-label="Preview page"
-                        className="h-8 rounded-full border border-border/70 bg-background px-2 text-sm text-foreground"
-                        onChange={(event) =>
-                            onPreviewPageChange?.(Number(event.target.value))
-                        }
-                        value={previewPage}
-                    >
-                        {Array.from(
-                            { length: previewPageCount },
-                            (_, index) => index + 1,
-                        ).map((page) => (
-                            <option key={page} value={page}>
-                                {page}
-                            </option>
-                        ))}
-                    </select>
-                    <button
-                        type="button"
-                        aria-label="Next preview page"
-                        className="inline-flex size-8 items-center justify-center rounded-full text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
-                        disabled={previewPage >= previewPageCount}
-                        onClick={() => onPreviewPageChange?.(previewPage + 1)}
-                    >
-                        <ChevronRight className="size-4" aria-hidden="true" />
-                    </button>
-                </div>
+                <PreviewPagination
+                    nextLabel="Next preview page"
+                    onPageChange={(page) => onPreviewPageChange?.(page)}
+                    page={previewPage}
+                    pageCount={previewPageCount}
+                    previousLabel="Previous preview page"
+                    selectLabel="Preview page"
+                />
             ) : null}
         </div>
     );

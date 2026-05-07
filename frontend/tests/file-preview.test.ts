@@ -478,6 +478,57 @@ describe("O1 file preview", () => {
         }
     });
 
+    it("lets users jump to a specific enlarged-preview page via a page selector", () => {
+        vi.useFakeTimers();
+
+        try {
+            renderPreview({
+                file: buildFile({ path: "/tmp/results/report.csv" }),
+                content: {
+                    content: buildCsv(2505),
+                    contentType: "text/csv",
+                },
+            });
+
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: /enlarge report.csv preview/i,
+                }),
+            );
+
+            act(() => {
+                vi.runAllTimers();
+            });
+
+            const dialog = screen.getByRole("dialog", {
+                name: /enlarged report.csv preview/i,
+            });
+            const pageSelect = dialog.querySelector(
+                'select[aria-label="Preview page"]',
+            ) as HTMLSelectElement | null;
+
+            if (!pageSelect) {
+                throw new Error("Missing preview page selector");
+            }
+
+            expect(pageSelect.options).toHaveLength(3);
+            expect(
+                Array.from(pageSelect.options).map((option) => option.value),
+            ).toEqual(["1", "2", "3"]);
+
+            act(() => {
+                fireEvent.change(pageSelect, { target: { value: "3" } });
+            });
+
+            expect(
+                screen.getByText("Showing rows 2001-2505 of 2505"),
+            ).toBeTruthy();
+            expect(screen.getByText("Page 3 of 3")).toBeTruthy();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it.each(nonImagePreviewCases)(
         "enlarges $label previews on click",
         ({ content, contentType, filePath }) => {
