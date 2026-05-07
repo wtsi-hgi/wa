@@ -924,6 +924,157 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
+    it("hydrates without mismatches when both server and client use SeqmetaCacheProvider with a stale not_found cookie", async () => {
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+        enrichIdentifierMock.mockReset();
+        enrichIdentifierMock.mockResolvedValue(null);
+
+        // Pre-populate document.cookie with a stale "not_found" entry, as
+        // would happen on a returning user whose previous visit cached a
+        // negative lookup for SANG001.
+        document.cookie = buildSeqmetaCacheCookie({ SANG001: null });
+
+        // Both the server-rendered tree and the client hydrated tree go
+        // through the real SeqmetaCacheProvider, mirroring the production
+        // (results)/layout.tsx wiring.
+        const tree = () =>
+            createElement(
+                SeqmetaCacheProvider,
+                null,
+                createElement(ResultMetadataEnrichment, {
+                    metadata: {
+                        seqmeta_sampleid: "SANG001",
+                    },
+                }),
+            );
+        const serverMarkup = renderToString(tree());
+        const container = document.createElement("div");
+        const recoverableErrors: unknown[] = [];
+
+        container.innerHTML = serverMarkup;
+        document.body.appendChild(container);
+
+        let root: ReturnType<typeof hydrateRoot> | null = null;
+
+        try {
+            await act(async () => {
+                root = hydrateRoot(container, tree(), {
+                    onRecoverableError: (error) => {
+                        recoverableErrors.push(error);
+                    },
+                });
+            });
+
+            // No hydration mismatch errors should have been reported. In
+            // particular the regressed bug surfaced as a mismatch between
+            // server "loading enrichment" and client "enrichment unavailable".
+            const hydrationMismatchErrors = recoverableErrors.filter(
+                (error) =>
+                    error instanceof Error && /hydrat/i.test(error.message),
+            );
+            expect(hydrationMismatchErrors).toEqual([]);
+            expect(recoverableErrors).toEqual([]);
+        } finally {
+            await act(async () => {
+                root?.unmount();
+            });
+            container.remove();
+        }
+    });
+
+    it("renders the same indicator on the server and on the client's first hydration render even when the cookie cache is populated", async () => {
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+        enrichIdentifierMock.mockReset();
+        enrichIdentifierMock.mockResolvedValue(null);
+
+        document.cookie = buildSeqmetaCacheCookie({ SANG001: null });
+
+        const tree = () =>
+            createElement(
+                SeqmetaCacheProvider,
+                null,
+                createElement(ResultMetadataEnrichment, {
+                    metadata: {
+                        seqmeta_sampleid: "SANG001",
+                    },
+                }),
+            );
+
+        const serverMarkup = renderToString(tree());
+        const container = document.createElement("div");
+
+        container.innerHTML = serverMarkup;
+        document.body.appendChild(container);
+
+        // The aria-label that appears in the server-rendered HTML must be one
+        // of the deterministic SSR-safe values: either "loading enrichment"
+        // (initial state) or none at all. Crucially it must NOT be
+        // "enrichment unavailable", because that requires reading the cookie
+        // cache which is only available after hydration.
+        expect(serverMarkup).not.toContain(
+            'aria-label="enrichment unavailable"',
+        );
+
+        // Hydrating with the same tree should not produce any recoverable
+        // hydration errors. The previous bug surfaced as
+        //   server: aria-label="loading enrichment"
+        //   client: aria-label="enrichment unavailable"
+        const recoverableErrors: unknown[] = [];
+        let root: ReturnType<typeof hydrateRoot> | null = null;
+
+        try {
+            await act(async () => {
+                root = hydrateRoot(container, tree(), {
+                    onRecoverableError: (error) => {
+                        recoverableErrors.push(error);
+                    },
+                });
+            });
+
+            expect(recoverableErrors).toEqual([]);
+        } finally {
+            await act(async () => {
+                root?.unmount();
+            });
+            container.remove();
+        }
+    });
+
+    it("renders 'loading enrichment' on the server even when the SeqmetaCacheContext is fed a pre-populated cache (matches the client's first hydration render)", async () => {
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+        enrichIdentifierMock.mockReset();
+        enrichIdentifierMock.mockResolvedValue(null);
+
+        // Simulate the worst case: a SeqmetaCache that already contains a
+        // cached "not_found" result is provided via SeqmetaCacheContext for
+        // the SSR pass. This mirrors what would happen if any code path on
+        // the server (or a returning client whose cookies were merged into
+        // the live cache before hydration completed) hands a populated cache
+        // into the consumer. The component must still render the loading
+        // state on the very first render so that SSR and hydration agree.
+        const populatedCache = new SeqmetaCache({ SANG001: null });
+
+        const serverTree = createElement(
+            SeqmetaCacheContext.Provider,
+            { value: populatedCache },
+            createElement(ResultMetadataEnrichment, {
+                metadata: {
+                    seqmeta_sampleid: "SANG001",
+                },
+            }),
+        );
+
+        const serverMarkup = renderToString(serverTree);
+
+        expect(serverMarkup).toContain('aria-label="loading enrichment"');
+        expect(serverMarkup).not.toContain(
+            'aria-label="enrichment unavailable"',
+        );
+    });
+
     it("shows dialog title matching raw value with key and type in subtitle", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
