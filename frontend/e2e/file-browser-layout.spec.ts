@@ -41,34 +41,16 @@ async function openResultFileBrowser(page: Page) {
     await expect(fileBrowser).toBeVisible({ timeout: 30000 });
 }
 
-async function openFirstSinglePreview(page: Page) {
+async function openFirstSinglePreview(page: Page, directoryPath: string) {
+    await selectDirectory(page, directoryPath);
+
     const singleLayoutContainer = page
-        .locator("[data-file-browser-single-layout]")
+        .locator(`[data-file-browser-single-layout="${directoryPath}"]`)
         .first();
-    const preview = page.locator('[data-file-browser-preview="single"]');
+    const preview = singleLayoutContainer.locator(
+        '[data-file-browser-preview="single"]',
+    );
 
-    let foundLayout = false;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-        const dirButtons = await page
-            .locator('[data-directory-path][data-directory-expanded="false"]')
-            .all();
-
-        if (dirButtons.length === 0) {
-            break;
-        }
-
-        await dirButtons[0].click();
-
-        if (
-            (await singleLayoutContainer.count()) > 0 &&
-            (await preview.count()) > 0
-        ) {
-            foundLayout = true;
-            break;
-        }
-    }
-
-    expect(foundLayout).toBe(true);
     await expect(singleLayoutContainer).toBeVisible();
     await expect(preview).toBeVisible();
 
@@ -235,8 +217,10 @@ test.describe("File Browser single preview layout", () => {
         page,
     }) => {
         await openResultFileBrowser(page);
-        const { preview, singleLayoutContainer } =
-            await openFirstSinglePreview(page);
+        const { preview, singleLayoutContainer } = await openFirstSinglePreview(
+            page,
+            rnaseqNotesPath,
+        );
 
         // Get the first file button in the layout
         const fileButton = singleLayoutContainer
@@ -307,42 +291,14 @@ test.describe("File Browser single preview layout", () => {
     }) => {
         await openResultFileBrowser(page);
 
-        // Navigate directories until we find one with multiple files
-        let foundMultiFileLayout = false;
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-            const dirButtons = await page
-                .locator(
-                    '[data-directory-path][data-directory-expanded="false"]',
-                )
-                .all();
-
-            if (dirButtons.length === 0) {
-                break;
-            }
-
-            await dirButtons[0].click();
-
-            const singleLayoutContainer = page
-                .locator("[data-file-browser-single-layout]")
-                .first();
-            const fileButtons = singleLayoutContainer.locator(
-                "button[data-file-path]",
-            );
-
-            const fileCount = await fileButtons.count();
-
-            if (fileCount > 1) {
-                foundMultiFileLayout = true;
-                break;
-            }
-        }
-
-        expect(foundMultiFileLayout).toBe(true);
+        await selectDirectory(page, rnaseqGalleryPath);
 
         const singleLayoutContainer = page
-            .locator("[data-file-browser-single-layout]")
+            .locator(`[data-file-browser-single-layout="${rnaseqGalleryPath}"]`)
             .first();
-        const preview = page.locator('[data-file-browser-preview="single"]');
+        const preview = singleLayoutContainer.locator(
+            '[data-file-browser-preview="single"]',
+        );
         const fileButtons = singleLayoutContainer.locator(
             "button[data-file-path]",
         );
@@ -456,34 +412,15 @@ test.describe("File Browser single preview layout", () => {
         page,
     }) => {
         await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
         const filePreviewFolderControls = page
-            .locator("[data-file-browser-folder-controls]")
+            .locator(
+                `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+            )
             .filter({
                 has: page.locator('input[aria-label="1 preview per row"]'),
             });
-
-        // Expand a folder with files to reveal folder controls
-        let foundFolderControls = false;
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-            const dirButtons = await page
-                .locator(
-                    '[data-directory-path][data-directory-expanded="false"]',
-                )
-                .all();
-
-            if (dirButtons.length === 0) {
-                break;
-            }
-
-            await dirButtons[0].click();
-
-            if ((await filePreviewFolderControls.count()) > 0) {
-                foundFolderControls = true;
-                break;
-            }
-        }
-
-        expect(foundFolderControls).toBe(true);
 
         const folderControls = filePreviewFolderControls.first();
         const directoryRow = page.locator("[data-directory-row]").filter({

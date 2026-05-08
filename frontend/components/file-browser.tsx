@@ -1137,14 +1137,16 @@ export function FileBrowser({
         parentPath?: string,
     ): ReactNode[] {
         return nodes.flatMap((node) => {
-            const isExpanded = visibleExpandedDirectories.has(node.path);
+            const isStructurallyExpanded = visibleExpandedDirectories.has(
+                node.path,
+            );
             const isSelected = node.path === effectiveSelectedDirectory;
             const isSubdirPreviewOwner =
                 node.path === effectiveSubdirPreviewDirectory;
             const hasChildren = node.children.length > 0;
             const hasFiles = node.descendantFileCount > 0;
             const hasFilePreviewControls =
-                isExpanded &&
+                isStructurallyExpanded &&
                 isSelected &&
                 activeFiles.length > 0 &&
                 hasPreviewableActiveFiles &&
@@ -1153,7 +1155,7 @@ export function FileBrowser({
                 node.path === effectiveSelectedDirectory &&
                 hasPreviewableActiveFiles;
             const hasSubdirPreviewControls =
-                isExpanded &&
+                isStructurallyExpanded &&
                 isSubdirPreviewOwner &&
                 subdirPreviewAvailable &&
                 Boolean(renderGridPreview);
@@ -1165,6 +1167,17 @@ export function FileBrowser({
                   ? renderPreviewControls(node.path, "folder")
                   : null;
             const hasPreviewControls = Boolean(folderControls);
+            const showsDirectoryFiles =
+                isStructurallyExpanded &&
+                node.path === effectiveSelectedDirectory &&
+                displayedFiles.length > 0;
+            const showsChildRows =
+                isStructurallyExpanded && hasChildren && !showSubdirGallery;
+            const isExpanded =
+                hasPreviewControls ||
+                showSubdirGallery ||
+                showsDirectoryFiles ||
+                showsChildRows;
             const rows: ReactNode[] = [
                 <div
                     key={`dir-${node.path}`}
@@ -1326,7 +1339,7 @@ export function FileBrowser({
             }
 
             if (
-                isExpanded &&
+                isStructurallyExpanded &&
                 node.path === effectiveSelectedDirectory &&
                 displayedFiles.length > 0
             ) {
@@ -1411,7 +1424,7 @@ export function FileBrowser({
                 );
             }
 
-            if (isExpanded && hasChildren && !showSubdirGallery) {
+            if (isStructurallyExpanded && hasChildren && !showSubdirGallery) {
                 rows.push(
                     ...renderDirectoryRows(node.children, depth + 1, node.path),
                 );

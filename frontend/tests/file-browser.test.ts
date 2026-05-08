@@ -146,6 +146,63 @@ describe("N1 file browser", () => {
         ).toBeNull();
     });
 
+    it("collapses a sibling leaf folder chevron when selection moves to another sibling", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/results/alpha/one.txt", "output"),
+                        buildFile("/results/beta/two.txt", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const alphaButton = () =>
+            container.querySelector(
+                'button[data-directory-path="/results/alpha"]',
+            );
+        const betaButton = () =>
+            container.querySelector(
+                'button[data-directory-path="/results/beta"]',
+            );
+
+        expect(alphaButton()?.getAttribute("data-directory-expanded")).toBe(
+            "true",
+        );
+        expect(betaButton()?.getAttribute("data-directory-expanded")).toBe(
+            "false",
+        );
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/alpha/one.txt"]',
+            ),
+        ).toBeTruthy();
+
+        await click(betaButton());
+
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/alpha/one.txt"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/beta/two.txt"]',
+            ),
+        ).toBeTruthy();
+        expect(alphaButton()?.getAttribute("data-directory-expanded")).toBe(
+            "false",
+        );
+        expect(betaButton()?.getAttribute("data-directory-expanded")).toBe(
+            "true",
+        );
+    });
+
     it("renders grid previews beside the current page of file rows", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
