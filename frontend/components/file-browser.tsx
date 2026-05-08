@@ -98,6 +98,23 @@ const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(
     subdirPreviewKindGroups.map((group) => group.id),
 );
 const defaultSubdirPreviewKinds = new Set<SubdirPreviewKind>(["image"]);
+const directFilePreviewExtensions = new Set([
+    "csv",
+    "htm",
+    "html",
+    "json",
+    "log",
+    "markdown",
+    "md",
+    "pdf",
+    "py",
+    "svg",
+    "tsv",
+    "txt",
+    "xml",
+    "yaml",
+    "yml",
+]);
 
 function effectiveExtension(path: string): string {
     const name = path.split("/").pop() ?? path;
@@ -130,6 +147,15 @@ function previewKindForPath(path: string): SubdirPreviewKind | null {
     }
 
     return null;
+}
+
+function pathSupportsFilePreview(path: string): boolean {
+    const extension = effectiveExtension(path);
+
+    return (
+        previewKindForPath(path) !== null ||
+        directFilePreviewExtensions.has(extension)
+    );
 }
 
 export function findInitialSubdirPreviewDirectory(
@@ -642,6 +668,9 @@ export function FileBrowser({
         activeFiles[0];
     const effectiveSelectedPath = activeFile?.path;
     const displayedFiles = visibleFiles ?? activeFiles;
+    const hasPreviewableActiveFiles = activeFiles.some((file) =>
+        pathSupportsFilePreview(file.path),
+    );
     const [subdirPreviewEnabled, setSubdirPreviewEnabled] = useState(false);
     const [subdirPreviewKinds, setSubdirPreviewKinds] = useState<
         Set<SubdirPreviewKind>
@@ -1074,8 +1103,12 @@ export function FileBrowser({
             const hasFilePreviewControls =
                 isExpanded &&
                 isSelected &&
-                displayedFiles.length > 0 &&
+                activeFiles.length > 0 &&
+                hasPreviewableActiveFiles &&
                 Boolean(renderGridPreview || renderSinglePreview);
+            const showFilePreviewWidgets =
+                node.path === effectiveSelectedDirectory &&
+                hasPreviewableActiveFiles;
             const hasSubdirPreviewControls =
                 isExpanded &&
                 isSelected &&
@@ -1227,53 +1260,76 @@ export function FileBrowser({
                         key={`files-${node.path}`}
                         className={cn(
                             previewMode === "single"
-                                ? "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
+                                ? showFilePreviewWidgets
+                                    ? "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
+                                    : "space-y-3"
                                 : "space-y-3 xl:col-span-2",
                         )}
                         data-file-browser-directory-files={node.path}
                         data-file-browser-single-layout={
-                            previewMode === "single" ? node.path : undefined
+                            previewMode === "single" && showFilePreviewWidgets
+                                ? node.path
+                                : undefined
                         }
                     >
                         {previewMode === "single"
-                            ? [
-                                  ...displayedFiles.map((file) =>
+                            ? showFilePreviewWidgets
+                                ? [
+                                      ...displayedFiles.map((file) =>
+                                          cloneElement(
+                                              renderFileButton(file, true),
+                                              { key: file.path },
+                                          ),
+                                      ),
+                                      <div
+                                          key={`single-preview-${node.path}`}
+                                          className="sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start"
+                                          data-file-browser-preview="single"
+                                          style={{
+                                              gridRow: `1 / span ${Math.max(displayedFiles.length, 1)}`,
+                                          }}
+                                      >
+                                          {renderSinglePreview?.(
+                                              activeFile ?? null,
+                                          ) ?? null}
+                                      </div>,
+                                  ]
+                                : displayedFiles.map((file) =>
                                       cloneElement(
                                           renderFileButton(file, true),
                                           { key: file.path },
                                       ),
-                                  ),
-                                  <div
-                                      key={`single-preview-${node.path}`}
-                                      className="sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start"
-                                      data-file-browser-preview="single"
-                                      style={{
-                                          gridRow: `1 / span ${Math.max(displayedFiles.length, 1)}`,
-                                      }}
-                                  >
-                                      {renderSinglePreview?.(
-                                          activeFile ?? null,
-                                      ) ?? null}
-                                  </div>,
-                              ]
-                            : displayedFiles.map((file) => (
-                                  <div
-                                      key={file.path}
-                                      className="grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
-                                      data-file-browser-grid-row={file.path}
-                                  >
-                                      <div className="min-w-0 border-r border-border/60 pr-3">
-                                          {renderFileButton(file, true, true)}
-                                      </div>
+                                  )
+                            : displayedFiles.map((file) =>
+                                  showFilePreviewWidgets ? (
                                       <div
-                                          className="min-w-0"
-                                          data-grid-preview-path={file.path}
+                                          key={file.path}
+                                          className="grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
+                                          data-file-browser-grid-row={file.path}
                                       >
-                                          {renderGridPreview?.(file) ?? null}
+                                          <div className="min-w-0 border-r border-border/60 pr-3">
+                                              {renderFileButton(
+                                                  file,
+                                                  true,
+                                                  true,
+                                              )}
+                                          </div>
+                                          <div
+                                              className="min-w-0"
+                                              data-grid-preview-path={file.path}
+                                          >
+                                              {renderGridPreview?.(file) ??
+                                                  null}
+                                          </div>
                                       </div>
-                                  </div>
-                              ))}
-                        {!hasSubdirPreviewControls
+                                  ) : (
+                                      cloneElement(
+                                          renderFileButton(file, true),
+                                          { key: file.path },
+                                      )
+                                  ),
+                              )}
+                        {showFilePreviewWidgets && !hasSubdirPreviewControls
                             ? renderPreviewControls(node.path, "bottom")
                             : null}
                     </div>,

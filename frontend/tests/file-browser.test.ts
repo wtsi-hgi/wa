@@ -925,6 +925,146 @@ describe("N1 file browser", () => {
         expect(container.textContent).not.toContain("Page 1 of 1");
     });
 
+    it("hides preview widgets when a folder only contains unsupported binary files", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/lane-1.bam", "output"),
+            buildFile("/results/lane-2.bam", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        expect(container.textContent).toContain("lane-1.bam");
+        expect(container.textContent).toContain("lane-2.bam");
+        expect(
+            container.querySelector(
+                '[data-file-browser-folder-controls="/results"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector('[data-file-browser-preview="single"]'),
+        ).toBeNull();
+        expect(
+            container.querySelector('[data-testid="single-preview"]'),
+        ).toBeNull();
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "grid",
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": `grid-preview-${file.path}` },
+                            file.path,
+                        ),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        expect(
+            container.querySelector(
+                '[data-file-browser-folder-controls="/results"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                '[data-grid-preview-path="/results/lane-1.bam"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                '[data-grid-preview-path="/results/lane-2.bam"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                '[data-testid="grid-preview-/results/lane-1.bam"]',
+            ),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                '[data-testid="grid-preview-/results/lane-2.bam"]',
+            ),
+        ).toBeNull();
+    });
+
+    it("keeps folder-scoped preview controls when the current page only contains unsupported binaries", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/page-1-plot.png", "output"),
+            buildFile("/results/page-2-lane-1.bam", "output"),
+            buildFile("/results/page-2-lane-2.bam", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    previewPage: 2,
+                    previewPageCount: 2,
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files.slice(1),
+                }),
+            );
+        });
+
+        const folderControls = container.querySelector(
+            '[data-file-browser-folder-controls="/results"]',
+        );
+
+        expect(folderControls).toBeTruthy();
+        expect(folderControls?.textContent).toContain("Preview height");
+        expect(folderControls?.textContent).toContain("1 preview per row");
+        expect(folderControls?.textContent).toContain("Page 2 of 2");
+        expect(container.textContent).toContain("page-2-lane-1.bam");
+        expect(container.textContent).toContain("page-2-lane-2.bam");
+        expect(
+            container.querySelector('[data-file-browser-preview="single"]'),
+        ).toBeTruthy();
+        expect(
+            container.querySelector('[data-testid="single-preview"]')
+                ?.textContent,
+        ).toContain("/results/page-1-plot.png");
+    });
+
     it("hides folder paging controls until the previewable folder is expanded", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 

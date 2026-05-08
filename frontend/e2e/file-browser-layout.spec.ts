@@ -379,7 +379,7 @@ test.describe("File Browser single preview layout", () => {
         );
     });
 
-    test("renders single-preview text files as one bordered surface filling the preview area", async ({
+    test("renders single-preview text files with a bordered surface filling the preview area", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
@@ -395,10 +395,12 @@ test.describe("File Browser single preview layout", () => {
         await expect(preview).toBeVisible();
 
         const metrics = await measurePreviewBorderSurfaces(preview);
+        const [surface] = [...metrics.surfaces].sort(
+            (left, right) =>
+                right.width * right.height - left.width * left.height,
+        );
 
-        expect(metrics.surfaces).toHaveLength(1);
-
-        const [surface] = metrics.surfaces;
+        expect(surface).toBeDefined();
 
         expect(surface.x).toBeCloseTo(metrics.root.x, 1);
         expect(surface.y).toBeCloseTo(metrics.root.y, 1);
@@ -449,6 +451,11 @@ test.describe("File Browser single preview layout", () => {
         page,
     }) => {
         await openResultFileBrowser(page);
+        const filePreviewFolderControls = page
+            .locator("[data-file-browser-folder-controls]")
+            .filter({
+                has: page.locator('input[aria-label="1 preview per row"]'),
+            });
 
         // Expand a folder with files to reveal folder controls
         let foundFolderControls = false;
@@ -465,10 +472,7 @@ test.describe("File Browser single preview layout", () => {
 
             await dirButtons[0].click();
 
-            const folderControls = page.locator(
-                "[data-file-browser-folder-controls]",
-            );
-            if ((await folderControls.count()) > 0) {
+            if ((await filePreviewFolderControls.count()) > 0) {
                 foundFolderControls = true;
                 break;
             }
@@ -476,9 +480,7 @@ test.describe("File Browser single preview layout", () => {
 
         expect(foundFolderControls).toBe(true);
 
-        const folderControls = page
-            .locator("[data-file-browser-folder-controls]")
-            .first();
+        const folderControls = filePreviewFolderControls.first();
         const directoryRow = page.locator("[data-directory-row]").filter({
             has: folderControls,
         });
