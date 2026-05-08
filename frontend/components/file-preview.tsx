@@ -286,15 +286,6 @@ function DownloadIconLink({
     );
 }
 
-function TruncationNote() {
-    return (
-        <p className="mt-3 rounded-[1rem] border border-border/70 bg-background/60 px-4 py-3 text-sm text-muted-foreground">
-            Preview truncated after the first lines. Download the file to
-            inspect the full content.
-        </p>
-    );
-}
-
 function ExpandablePreview({
     children,
     dialogContent,
@@ -450,19 +441,6 @@ function CsvPreview({
         };
     }, [expandedTableReady]);
 
-    const maxRowsForHeight = useMemo(() => {
-        if (!truncated || !maxHeight || isExpanded) {
-            return undefined;
-        }
-
-        const estimatedRowHeight = 52;
-        const estimatedOverhead = 100;
-        const availableHeight = Math.max(0, maxHeight - estimatedOverhead);
-        const maxRows = Math.floor(availableHeight / estimatedRowHeight);
-
-        return Math.max(3, maxRows);
-    }, [isExpanded, maxHeight, truncated]);
-
     const totalExpandedPages = isExpanded
         ? Math.max(1, Math.ceil(sortedRows.length / EXPANDED_TABLE_PAGE_SIZE))
         : 1;
@@ -477,12 +455,7 @@ function CsvPreview({
                   expandedPageStartIndex + EXPANDED_TABLE_PAGE_SIZE,
               )
             : sortedRows
-        : sortedRows.slice(
-              0,
-              maxRowsForHeight !== undefined
-                  ? maxRowsForHeight
-                  : sortedRows.length,
-          );
+        : sortedRows;
 
     const expandedPageEndIndex = expandedPageStartIndex + visibleRows.length;
 
@@ -1051,9 +1024,6 @@ export function FilePreview({
                                                 {dialogContent?.content ?? ""}
                                             </ReactMarkdown>
                                         </article>
-                                        {dialogContent?.truncated ? (
-                                            <TruncationNote />
-                                        ) : null}
                                     </div>
                                 )
                             }
@@ -1080,7 +1050,6 @@ export function FilePreview({
                                         data-truncated="true"
                                     />
                                 </div>
-                                {content?.truncated ? <TruncationNote /> : null}
                             </div>
                         </ExpandablePreview>
                     ) : null}
@@ -1113,9 +1082,6 @@ export function FilePreview({
                                             isExpanded
                                             truncated={dialogContent.truncated}
                                         />
-                                        {dialogContent.truncated ? (
-                                            <TruncationNote />
-                                        ) : null}
                                     </div>
                                 ) : (
                                     enlargedLoadingNode
@@ -1159,7 +1125,6 @@ export function FilePreview({
                                         />
                                     ) : null}
                                 </div>
-                                {content.truncated ? <TruncationNote /> : null}
                             </div>
                         </ExpandablePreview>
                     ) : null}
@@ -1186,9 +1151,6 @@ export function FilePreview({
                                                 />
                                             </pre>
                                         </div>
-                                        {dialogContent?.truncated ? (
-                                            <TruncationNote />
-                                        ) : null}
                                     </div>
                                 )
                             }
@@ -1218,7 +1180,6 @@ export function FilePreview({
                                         data-truncated="true"
                                     />
                                 </div>
-                                {content?.truncated ? <TruncationNote /> : null}
                             </div>
                         </ExpandablePreview>
                     ) : null}

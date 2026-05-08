@@ -1643,7 +1643,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("uses the folder-row control slot for subfolder previews instead of generic file preview controls", async () => {
+    it("keeps direct preview height controls available alongside subfolder preview controls", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/demo/readme.md", "output"),
@@ -1696,14 +1696,15 @@ describe("N1 file browser", () => {
             controls?.closest('[data-file-browser-folder-controls="/demo"]'),
         ).toBe(folderControls);
         expect(controls?.textContent).toContain("Subfolder previews");
-        expect(controls?.textContent).not.toContain("1 preview per row");
         expect(controls?.textContent).not.toContain("Preview file types");
         expect(
-            container.querySelector('input[aria-label="1 preview per row"]'),
-        ).toBeNull();
-        expect(
             container.querySelector('input[aria-label="Preview height"]'),
-        ).toBeNull();
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                'input[aria-label="Subfolder preview height"]',
+            ),
+        ).toBeTruthy();
         expect(
             controls?.querySelector(
                 '[data-subdir-preview-kind-disclosure="/demo"]',

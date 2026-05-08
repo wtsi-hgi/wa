@@ -123,7 +123,7 @@ test("constrained code preview shows truncation indicator instead of scrollbar",
     }
 });
 
-test("inline csv preview is capped at the backend inline-mode line limit", async ({
+test("inline csv preview keeps all rows returned by inline mode regardless of preview height", async ({
     page,
 }) => {
     await openResultFileBrowser(page);
@@ -135,16 +135,16 @@ test("inline csv preview is capped at the backend inline-mode line limit", async
 
         const preview = page.locator('[data-file-browser-preview="single"]');
         await expect(preview).toBeVisible();
-        // The fixture has 20 data rows + 1 header (21 lines), which is more
-        // than the inline mode cap, so the preview must be marked truncated.
         await expect(preview.getByText(/Showing \d+ preview rows/)).toHaveCount(
             0,
         );
 
         const tableRows = preview.locator("tbody tr");
-        // Backend caps inline-mode lines well below the underlying row count.
         const rowCount = await tableRows.count();
-        expect(rowCount).toBeLessThan(20);
+        expect(rowCount).toBe(20);
+        await expect(
+            preview.getByText(/preview truncated after the first lines/i),
+        ).toHaveCount(0);
     }
 });
 

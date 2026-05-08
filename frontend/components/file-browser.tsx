@@ -1161,11 +1161,17 @@ export function FileBrowser({
                 Boolean(renderGridPreview);
             const showSubdirGallery =
                 hasSubdirPreviewControls && subdirPreviewEnabled;
-            const folderControls = hasSubdirPreviewControls
-                ? renderSubdirPreviewControls(node.path)
-                : hasFilePreviewControls
-                  ? renderPreviewControls(node.path, "folder")
-                  : null;
+            const folderControls =
+                hasSubdirPreviewControls || hasFilePreviewControls ? (
+                    <>
+                        {hasSubdirPreviewControls
+                            ? renderSubdirPreviewControls(node.path)
+                            : null}
+                        {hasFilePreviewControls
+                            ? renderPreviewControls(node.path, "folder")
+                            : null}
+                    </>
+                ) : null;
             const hasPreviewControls = Boolean(folderControls);
             const showsDirectoryFiles =
                 isStructurallyExpanded &&
@@ -1417,7 +1423,7 @@ export function FileBrowser({
                                       )
                                   ),
                               )}
-                        {showFilePreviewWidgets && !hasSubdirPreviewControls
+                        {showFilePreviewWidgets
                             ? renderPreviewControls(node.path, "bottom")
                             : null}
                     </div>,

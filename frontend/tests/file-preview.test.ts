@@ -1270,7 +1270,7 @@ describe("O1 file preview", () => {
         ).toBeNull();
     });
 
-    it("shows a visible truncation note when inline preview content was line-limited", () => {
+    it("does not show a truncation note when enlarged preview can expose the remaining content", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/data.tsv" }),
             content: {
@@ -1283,11 +1283,50 @@ describe("O1 file preview", () => {
         });
 
         expect(
-            screen.getByText(/preview truncated after the first lines/i),
-        ).toBeTruthy();
+            screen.queryByText(/preview truncated after the first lines/i),
+        ).toBeNull();
     });
 
-    it("caps inline rows for truncated large delimited previews while keeping enlarged pagination at 1000 rows", () => {
+    it("shows the same inline tsv rows for truncated previews regardless of maxHeight", () => {
+        const tsvContent = buildCsv(20).replaceAll(",", "\t");
+
+        const small = renderPreview({
+            file: buildFile({ path: "/tmp/results/data.tsv" }),
+            content: {
+                content: tsvContent,
+                contentType: "text/tab-separated-values",
+                truncated: true,
+            },
+            maxHeight: 150,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fdata.tsv",
+        });
+
+        const smallRowCount = screen.getAllByRole("row").length;
+
+        expect(
+            screen.queryByText(/preview truncated after the first lines/i),
+        ).toBeNull();
+
+        small.unmount();
+
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/data.tsv" }),
+            content: {
+                content: tsvContent,
+                contentType: "text/tab-separated-values",
+                truncated: true,
+            },
+            maxHeight: 400,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fdata.tsv",
+        });
+
+        const largeRowCount = screen.getAllByRole("row").length;
+
+        expect(smallRowCount).toBe(21);
+        expect(largeRowCount).toBe(21);
+    });
+
+    it("keeps enlarged pagination at 1000 rows for large delimited previews", () => {
         vi.useFakeTimers();
 
         try {
@@ -1304,7 +1343,7 @@ describe("O1 file preview", () => {
             });
 
             expect(screen.queryByText("Showing 3 preview rows")).toBeNull();
-            expect(screen.getAllByRole("row")).toHaveLength(4);
+            expect(screen.getAllByRole("row")).toHaveLength(2506);
 
             fireEvent.click(
                 screen.getByRole("button", {
