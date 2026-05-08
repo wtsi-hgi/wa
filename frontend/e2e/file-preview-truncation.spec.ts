@@ -137,9 +137,9 @@ test("inline csv preview is capped at the backend inline-mode line limit", async
         await expect(preview).toBeVisible();
         // The fixture has 20 data rows + 1 header (21 lines), which is more
         // than the inline mode cap, so the preview must be marked truncated.
-        await expect(
-            preview.getByText(/Showing \d+ preview rows/),
-        ).toBeVisible();
+        await expect(preview.getByText(/Showing \d+ preview rows/)).toHaveCount(
+            0,
+        );
 
         const tableRows = preview.locator("tbody tr");
         // Backend caps inline-mode lines well below the underlying row count.

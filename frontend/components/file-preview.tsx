@@ -497,15 +497,13 @@ function CsvPreview({
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <p className="text-sm text-muted-foreground">
-                    {isExpanded && totalExpandedPages > 1
-                        ? `Showing rows ${expandedPageStartIndex + 1}-${expandedPageEndIndex} of ${sortedRows.length}`
-                        : truncated
-                          ? `Showing ${visibleRows.length} preview rows`
-                          : `Showing ${visibleRows.length} of ${parsed.rows.length} rows`}
-                </p>
-                {isExpanded ? (
+            {isExpanded ? (
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <p className="text-sm text-muted-foreground">
+                        {totalExpandedPages > 1
+                            ? `Showing rows ${expandedPageStartIndex + 1}-${expandedPageEndIndex} of ${sortedRows.length}`
+                            : `Showing ${visibleRows.length} of ${parsed.rows.length} rows`}
+                    </p>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <label className="relative block">
                             <span className="sr-only">Filter rows</span>
@@ -540,8 +538,8 @@ function CsvPreview({
                             </div>
                         ) : null}
                     </div>
-                ) : null}
-            </div>
+                </div>
+            ) : null}
 
             <div className="overflow-auto">
                 <Table>

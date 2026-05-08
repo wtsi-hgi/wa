@@ -502,9 +502,9 @@ test.describe("Q1 critical results flows", () => {
         await expect(preview).toBeVisible();
         // Inline preview is capped server-side so the file browser only renders
         // a small subset of the rows; the full table only appears once enlarged.
-        await expect(
-            preview.getByText(/Showing \d+ preview rows/),
-        ).toBeVisible();
+        await expect(preview.getByText(/Showing \d+ preview rows/)).toHaveCount(
+            0,
+        );
         await expect(
             preview.getByRole("button", { name: "Sort by sample_id" }),
         ).toHaveCount(0);

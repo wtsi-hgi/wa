@@ -340,7 +340,7 @@ describe("O1 file preview", () => {
         ).toContain("download=true");
     });
 
-    it("shows all available rows for inline csv previews with a row count summary", () => {
+    it("shows all available rows for inline csv previews without a row count summary", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/report.csv" }),
             content: {
@@ -351,7 +351,7 @@ describe("O1 file preview", () => {
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
         });
 
-        expect(screen.getByText("Showing 200 of 200 rows")).toBeTruthy();
+        expect(screen.queryByText("Showing 200 of 200 rows")).toBeNull();
         expect(screen.getAllByRole("row")).toHaveLength(201);
     });
 
@@ -366,7 +366,7 @@ describe("O1 file preview", () => {
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
         });
 
-        expect(screen.getByText("Showing 120 of 120 rows")).toBeTruthy();
+        expect(screen.queryByText("Showing 120 of 120 rows")).toBeNull();
         expect(screen.queryByRole("dialog")).toBeNull();
 
         fireEvent.click(
@@ -378,7 +378,7 @@ describe("O1 file preview", () => {
         });
 
         expect(dialog).toBeTruthy();
-        expect(screen.getAllByText("Showing 120 of 120 rows")).toHaveLength(2);
+        expect(screen.getByText("Showing 120 of 120 rows")).toBeTruthy();
         expect(dialog.querySelectorAll("tr")).toHaveLength(121);
     });
 
@@ -668,7 +668,7 @@ describe("O1 file preview", () => {
             screen.queryByRole("button", { name: /show all rows/i }),
         ).toBeNull();
         expect(screen.queryByLabelText(/filter rows/i)).toBeNull();
-        expect(screen.getByText("Showing 200 of 200 rows")).toBeTruthy();
+        expect(screen.queryByText("Showing 200 of 200 rows")).toBeNull();
     });
 
     it("sorts enlarged csv rows ascending then descending when a column header is clicked", () => {
@@ -1131,7 +1131,7 @@ describe("O1 file preview", () => {
 
         const rows = screen.getAllByRole("row");
         expect(rows.length).toBe(51);
-        expect(screen.getByText("Showing 50 of 50 rows")).toBeTruthy();
+        expect(screen.queryByText("Showing 50 of 50 rows")).toBeNull();
     });
 
     it("shows the same inline csv rows regardless of maxHeight until backend truncation occurs", () => {
@@ -1149,7 +1149,7 @@ describe("O1 file preview", () => {
         });
 
         const smallRowCount = screen.getAllByRole("row").length;
-        expect(screen.getByText("Showing 20 of 20 rows")).toBeTruthy();
+        expect(screen.queryByText("Showing 20 of 20 rows")).toBeNull();
         small.unmount();
 
         renderPreview({
@@ -1167,7 +1167,7 @@ describe("O1 file preview", () => {
 
         expect(smallRowCount).toBe(21);
         expect(largeRowCount).toBe(21);
-        expect(screen.getByText("Showing 20 of 20 rows")).toBeTruthy();
+        expect(screen.queryByText("Showing 20 of 20 rows")).toBeNull();
     });
 
     it("constrained markdown preview uses overflow-hidden and shows truncation indicator", () => {
@@ -1271,7 +1271,7 @@ describe("O1 file preview", () => {
                     "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fdata.tsv",
             });
 
-            expect(screen.getByText("Showing 3 preview rows")).toBeTruthy();
+            expect(screen.queryByText("Showing 3 preview rows")).toBeNull();
             expect(screen.getAllByRole("row")).toHaveLength(4);
 
             fireEvent.click(
@@ -1312,7 +1312,7 @@ describe("O1 file preview", () => {
 
         const rows = screen.getAllByRole("row");
         expect(rows.length).toBe(21);
-        expect(screen.getByText("Showing 20 of 20 rows")).toBeTruthy();
+        expect(screen.queryByText("Showing 20 of 20 rows")).toBeNull();
     });
 
     it("shows all rows for small csv when maxHeight is undefined (fallback behavior)", () => {
