@@ -109,7 +109,10 @@ vi.mock("@/components/file-browser", () => ({
         onPreviewHeightChange?: (value: number) => void;
         onPreviewModeChange?: (mode: "single" | "grid") => void;
         onPreviewPageChange?: (page: number) => void;
-        onSelectDirectory?: (path: string) => void;
+        onSelectDirectory?: (
+            path: string,
+            options?: { expanded: boolean; parentPath?: string },
+        ) => void;
         onSelectFile: (file: FileEntry) => void;
         previewHeight?: number;
         previewMode?: "single" | "grid";
@@ -121,8 +124,22 @@ vi.mock("@/components/file-browser", () => ({
         selectedDirectory?: string;
         selectedPath?: string;
         visibleFiles?: FileEntry[];
-    }) =>
-        createElement(
+    }) => {
+        const directoryPaths = [
+            ...new Set(
+                files.map(
+                    (file) =>
+                        file.path.split("/").slice(0, -1).join("/") || "/",
+                ),
+            ),
+        ];
+        const interactiveDirectoryPaths = selectedDirectory
+            ? [selectedDirectory, ...directoryPaths].filter(
+                  (value, index, values) => values.indexOf(value) === index,
+              )
+            : directoryPaths;
+
+        return createElement(
             "div",
             {
                 "data-file-browser": "true",
@@ -135,14 +152,7 @@ vi.mock("@/components/file-browser", () => ({
                 "data-selected-path": selectedPath ?? "",
             },
             createElement("h2", { key: "title" }, "File Browser"),
-            [
-                ...new Set(
-                    files.map(
-                        (file) =>
-                            file.path.split("/").slice(0, -1).join("/") || "/",
-                    ),
-                ),
-            ].map((directoryPath) =>
+            directoryPaths.map((directoryPath) =>
                 createElement(
                     "button",
                     {
@@ -154,6 +164,34 @@ vi.mock("@/components/file-browser", () => ({
                     directoryPath,
                 ),
             ),
+            interactiveDirectoryPaths.flatMap((directoryPath) => [
+                createElement(
+                    "button",
+                    {
+                        key: `dir-expand-${directoryPath}`,
+                        "data-directory-expand-path": directoryPath,
+                        onClick: () =>
+                            onSelectDirectory?.(directoryPath, {
+                                expanded: true,
+                            }),
+                        type: "button",
+                    },
+                    `expand:${directoryPath}`,
+                ),
+                createElement(
+                    "button",
+                    {
+                        key: `dir-collapse-${directoryPath}`,
+                        "data-directory-collapse-path": directoryPath,
+                        onClick: () =>
+                            onSelectDirectory?.(directoryPath, {
+                                expanded: false,
+                            }),
+                        type: "button",
+                    },
+                    `collapse:${directoryPath}`,
+                ),
+            ]),
             (visibleFiles ?? files).map((file) =>
                 createElement(
                     "button",
@@ -233,7 +271,8 @@ vi.mock("@/components/file-browser", () => ({
                       ),
                   )
                 : []),
-        ),
+        );
+    },
 }));
 
 vi.mock("@/components/file-preview", () => ({
@@ -386,7 +425,9 @@ describe("O1 result detail file integration", () => {
         );
 
         fireEvent.click(
-            screen.getByRole("button", { name: "/tmp/results/sample-a" }),
+            screen.getByRole("button", {
+                name: "expand:/tmp/results/sample-a",
+            }),
         );
 
         await waitFor(() => {
@@ -396,7 +437,68 @@ describe("O1 result detail file integration", () => {
         });
 
         fireEvent.click(
-            screen.getByRole("button", { name: "/tmp/results/sample-a" }),
+            screen.getByRole("button", {
+                name: "collapse:/tmp/results/sample-a",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fileBrowser?.getAttribute("data-selected-directory")).toBe(
+                "/tmp/results",
+            );
+        });
+    });
+
+    it("reselects the parent only when closing a selected child and keeps the parent selected when reopening it", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [
+                    buildFile("/tmp/results/sample-a/first.png"),
+                    buildFile("/tmp/results/sample-a/second.png"),
+                    buildFile("/tmp/results/sample-b/third.png"),
+                    buildFile("/tmp/results/sample-b/fourth.png"),
+                ],
+                resultId: "result-1",
+            }),
+        );
+
+        const fileBrowser = screen.getByText("File Browser").parentElement;
+
+        expect(fileBrowser?.getAttribute("data-selected-directory")).toBe(
+            "/tmp/results",
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: "expand:/tmp/results/sample-a",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fileBrowser?.getAttribute("data-selected-directory")).toBe(
+                "/tmp/results/sample-a",
+            );
+        });
+
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: "collapse:/tmp/results/sample-a",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fileBrowser?.getAttribute("data-selected-directory")).toBe(
+                "/tmp/results",
+            );
+        });
+
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: "expand:/tmp/results",
+            }),
         );
 
         await waitFor(() => {

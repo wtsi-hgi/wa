@@ -211,6 +211,11 @@ test.describe("File Browser single preview layout", () => {
         "fixtures",
         "files",
     );
+    const closeSubdirScreenshotPath = path.resolve(
+        process.cwd(),
+        "test-results",
+        "close-subdir-parent-reselected.png",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqGalleryPath = path.join(
         fixturesRoot,
@@ -727,5 +732,89 @@ test.describe("File Browser single preview layout", () => {
         expect(buttonBBox.width).toBeGreaterThan(140);
         expect(imageBBox.width).toBeGreaterThan(140);
         expect(imageBBox.height).toBeGreaterThan(100);
+    });
+
+    test("reselects the parent folder and restores subfolder previews when a selected child is closed", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const parentButton = page.locator(
+            `[data-directory-path="${rnaseqRootPath}"]`,
+        );
+        const parentControls = page.locator(
+            `[data-subdir-preview-controls="${rnaseqRootPath}"]`,
+        );
+        const parentGalleryRow = page
+            .locator("[data-subdir-preview-row]")
+            .first();
+
+        if ((await parentControls.count()) === 0) {
+            await parentButton.click();
+        }
+
+        await expect(parentControls).toBeVisible();
+
+        const subfolderToggle = parentControls
+            .locator('input[aria-label="Subfolder previews"]')
+            .first();
+
+        if (
+            (await parentButton.getAttribute("data-directory-expanded")) !==
+            "true"
+        ) {
+            await parentButton.click();
+        }
+
+        await expect(parentButton).toHaveAttribute(
+            "data-directory-expanded",
+            "true",
+        );
+        await expect(parentControls).toBeVisible();
+
+        const childDirectoryPath = await page
+            .locator("[data-directory-path]")
+            .evaluateAll((elements, rootPath) => {
+                const candidate = elements
+                    .map((element) =>
+                        element.getAttribute("data-directory-path"),
+                    )
+                    .find(
+                        (value): value is string =>
+                            Boolean(value) &&
+                            value !== rootPath &&
+                            value.startsWith(`${rootPath}/`),
+                    );
+
+                return candidate ?? null;
+            }, rnaseqRootPath);
+
+        if (!childDirectoryPath) {
+            throw new Error(
+                "Missing rendered child directory under rnaseq root",
+            );
+        }
+
+        const childButton = page.locator(
+            `[data-directory-path="${childDirectoryPath}"]`,
+        );
+
+        await childButton.click();
+        await expect(parentControls).toHaveCount(0);
+
+        await expect(childButton).toBeVisible();
+        await childButton.click();
+
+        await expect(parentControls).toBeVisible();
+        await expect(subfolderToggle).not.toBeChecked();
+
+        await subfolderToggle.check();
+        await expect(subfolderToggle).toBeChecked();
+        await expect(parentGalleryRow).toBeVisible();
+
+        await page.screenshot({
+            fullPage: true,
+            path: closeSubdirScreenshotPath,
+        });
     });
 });

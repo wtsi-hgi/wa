@@ -280,7 +280,10 @@ type FileBrowserProps = {
     onPreviewHeightChange?: (value: number) => void;
     onPreviewModeChange?: (mode: PreviewMode) => void;
     onPreviewPageChange?: (page: number) => void;
-    onSelectDirectory?: (path: string) => void;
+    onSelectDirectory?: (
+        path: string,
+        options?: { expanded: boolean; parentPath?: string },
+    ) => void;
     onSelectFile: (file: FileEntry) => void;
     previewHeight?: number;
     previewMode?: PreviewMode;
@@ -1094,6 +1097,7 @@ export function FileBrowser({
     function renderDirectoryRows(
         nodes: DirectoryTreeNode[],
         depth = 0,
+        parentPath?: string,
     ): ReactNode[] {
         return nodes.flatMap((node) => {
             const isExpanded = visibleExpandedDirectories.has(node.path);
@@ -1183,7 +1187,10 @@ export function FileBrowser({
                                 setUncontrolledDirectory(node.path);
                             }
 
-                            onSelectDirectory?.(node.path);
+                            onSelectDirectory?.(node.path, {
+                                expanded: nextIsExpanded,
+                                parentPath,
+                            });
                         }}
                         style={{ paddingLeft: `${depth * 1.2 + 0.75}rem` }}
                     >
@@ -1337,7 +1344,9 @@ export function FileBrowser({
             }
 
             if (isExpanded && hasChildren && !showSubdirGallery) {
-                rows.push(...renderDirectoryRows(node.children, depth + 1));
+                rows.push(
+                    ...renderDirectoryRows(node.children, depth + 1, node.path),
+                );
             }
 
             return rows;

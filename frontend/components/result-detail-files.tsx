@@ -241,12 +241,18 @@ function resolveDirectorySelection(
     directoryPath: string,
     currentSelectedDirectory: string | undefined,
     directoryGroups: Array<{ path: string }>,
+    options?: { expanded: boolean; parentPath?: string },
 ): string {
     if (directoryPath !== currentSelectedDirectory) {
         return directoryPath;
     }
 
-    const fallbackDirectory = parentDirectory(directoryPath);
+    if (options?.expanded !== false) {
+        return directoryPath;
+    }
+
+    const fallbackDirectory =
+        options?.parentPath ?? parentDirectory(directoryPath);
 
     return directoryGroups.some(
         (group) =>
@@ -616,11 +622,12 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                 setPreviewPage(1);
             }}
             onPreviewPageChange={setPreviewPage}
-            onSelectDirectory={(directoryPath) => {
+            onSelectDirectory={(directoryPath, options) => {
                 const nextDirectoryPath = resolveDirectorySelection(
                     directoryPath,
                     selectedDirectory,
                     directoryGroups,
+                    options,
                 );
 
                 if (nextDirectoryPath === selectedDirectory) {
