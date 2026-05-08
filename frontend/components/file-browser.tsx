@@ -675,6 +675,13 @@ export function FileBrowser({
         pathSupportsFilePreview(file.path),
     );
     const [subdirPreviewEnabled, setSubdirPreviewEnabled] = useState(false);
+    const [subdirPreviewDirectory, setSubdirPreviewDirectory] = useState<
+        string | undefined
+    >(() =>
+        renderGridPreview
+            ? (selectedDirectory ?? initialSubdirPreviewDirectory)
+            : undefined,
+    );
     const [subdirPreviewKinds, setSubdirPreviewKinds] = useState<
         Set<SubdirPreviewKind>
     >(() => new Set(defaultSubdirPreviewKinds));
@@ -682,20 +689,62 @@ export function FileBrowser({
         SUBDIR_PREVIEW_DEFAULT_HEIGHT,
     );
     const [subdirPreviewPage, setSubdirPreviewPage] = useState(1);
-    const activeTreeNode = useMemo(
+
+    const visibleExpandedDirectories = useMemo(() => {
+        const next = new Set(expandedDirectories);
+
+        for (const path of ancestorPaths(effectiveSelectedDirectory)) {
+            if (!collapsedDirectories.has(path)) {
+                next.add(path);
+            }
+        }
+
+        return next;
+    }, [collapsedDirectories, effectiveSelectedDirectory, expandedDirectories]);
+    const effectiveSubdirPreviewDirectory = useMemo(() => {
+        const candidatePaths = renderGridPreview
+            ? [
+                  subdirPreviewDirectory,
+                  effectiveSelectedDirectory,
+                  initialSubdirPreviewDirectory,
+              ]
+            : [];
+
+        return candidatePaths.find((path): path is string => {
+            if (!path || !visibleExpandedDirectories.has(path)) {
+                return false;
+            }
+
+            const node = findTreeNodeByPath(directoryTree, path);
+
+            return qualifyingSubdirsFor(node, allSubdirPreviewKinds).length > 1;
+        });
+    }, [
+        directoryTree,
+        effectiveSelectedDirectory,
+        initialSubdirPreviewDirectory,
+        renderGridPreview,
+        subdirPreviewDirectory,
+        visibleExpandedDirectories,
+    ]);
+    const subdirPreviewTreeNode = useMemo(
         () =>
-            effectiveSelectedDirectory
-                ? findTreeNodeByPath(directoryTree, effectiveSelectedDirectory)
+            effectiveSubdirPreviewDirectory
+                ? findTreeNodeByPath(
+                      directoryTree,
+                      effectiveSubdirPreviewDirectory,
+                  )
                 : undefined,
-        [directoryTree, effectiveSelectedDirectory],
+        [directoryTree, effectiveSubdirPreviewDirectory],
     );
     const eligibleSubdirs = useMemo(
-        () => qualifyingSubdirsFor(activeTreeNode, allSubdirPreviewKinds),
-        [activeTreeNode],
+        () =>
+            qualifyingSubdirsFor(subdirPreviewTreeNode, allSubdirPreviewKinds),
+        [subdirPreviewTreeNode],
     );
     const qualifyingSubdirs = useMemo(
-        () => qualifyingSubdirsFor(activeTreeNode, subdirPreviewKinds),
-        [activeTreeNode, subdirPreviewKinds],
+        () => qualifyingSubdirsFor(subdirPreviewTreeNode, subdirPreviewKinds),
+        [subdirPreviewKinds, subdirPreviewTreeNode],
     );
     const subdirPreviewAvailable = eligibleSubdirs.length > 1;
     const subdirPreviewPageCount = Math.max(
@@ -712,18 +761,6 @@ export function FileBrowser({
               safeSubdirPreviewPage * SUBDIR_PREVIEW_PAGE_SIZE,
           )
         : [];
-
-    const visibleExpandedDirectories = useMemo(() => {
-        const next = new Set(expandedDirectories);
-
-        for (const path of ancestorPaths(effectiveSelectedDirectory)) {
-            if (!collapsedDirectories.has(path)) {
-                next.add(path);
-            }
-        }
-
-        return next;
-    }, [collapsedDirectories, effectiveSelectedDirectory, expandedDirectories]);
 
     useEffect(() => {
         if (
@@ -1102,6 +1139,8 @@ export function FileBrowser({
         return nodes.flatMap((node) => {
             const isExpanded = visibleExpandedDirectories.has(node.path);
             const isSelected = node.path === effectiveSelectedDirectory;
+            const isSubdirPreviewOwner =
+                node.path === effectiveSubdirPreviewDirectory;
             const hasChildren = node.children.length > 0;
             const hasFiles = node.descendantFileCount > 0;
             const hasFilePreviewControls =
@@ -1115,7 +1154,7 @@ export function FileBrowser({
                 hasPreviewableActiveFiles;
             const hasSubdirPreviewControls =
                 isExpanded &&
-                isSelected &&
+                isSubdirPreviewOwner &&
                 subdirPreviewAvailable &&
                 Boolean(renderGridPreview);
             const showSubdirGallery =
@@ -1146,6 +1185,19 @@ export function FileBrowser({
                         data-directory-path={node.path}
                         onClick={() => {
                             const nextIsExpanded = !isExpanded;
+                            const nodeHasSubdirPreviewControls =
+                                Boolean(renderGridPreview) &&
+                                qualifyingSubdirsFor(
+                                    node,
+                                    allSubdirPreviewKinds,
+                                ).length > 1;
+                            const keepsAncestorSubdirPreviewOwner = Boolean(
+                                effectiveSubdirPreviewDirectory &&
+                                node.path !== effectiveSubdirPreviewDirectory &&
+                                node.path.startsWith(
+                                    `${effectiveSubdirPreviewDirectory}/`,
+                                ),
+                            );
 
                             setCollapsedDirectories((current) => {
                                 const next = new Set(current);
@@ -1182,6 +1234,22 @@ export function FileBrowser({
 
                                 return next;
                             });
+
+                            if (nextIsExpanded) {
+                                if (
+                                    nodeHasSubdirPreviewControls &&
+                                    !keepsAncestorSubdirPreviewOwner
+                                ) {
+                                    setSubdirPreviewDirectory(node.path);
+                                }
+                            } else if (
+                                effectiveSubdirPreviewDirectory === node.path ||
+                                effectiveSubdirPreviewDirectory?.startsWith(
+                                    `${node.path}/`,
+                                )
+                            ) {
+                                setSubdirPreviewDirectory(undefined);
+                            }
 
                             if (selectedDirectory === undefined) {
                                 setUncontrolledDirectory(node.path);

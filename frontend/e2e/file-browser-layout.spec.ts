@@ -734,7 +734,7 @@ test.describe("File Browser single preview layout", () => {
         expect(imageBBox.height).toBeGreaterThan(100);
     });
 
-    test("reselects the parent folder and restores subfolder previews when a selected child is closed", async ({
+    test("keeps parent subfolder preview widgets visible until the parent collapses", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
@@ -771,46 +771,20 @@ test.describe("File Browser single preview layout", () => {
             "true",
         );
         await expect(parentControls).toBeVisible();
-
-        const childDirectoryPath = await page
-            .locator("[data-directory-path]")
-            .evaluateAll((elements, rootPath) => {
-                const candidate = elements
-                    .map((element) =>
-                        element.getAttribute("data-directory-path"),
-                    )
-                    .find(
-                        (value): value is string =>
-                            Boolean(value) &&
-                            value !== rootPath &&
-                            value.startsWith(`${rootPath}/`),
-                    );
-
-                return candidate ?? null;
-            }, rnaseqRootPath);
-
-        if (!childDirectoryPath) {
-            throw new Error(
-                "Missing rendered child directory under rnaseq root",
-            );
-        }
-
-        const childButton = page.locator(
-            `[data-directory-path="${childDirectoryPath}"]`,
-        );
-
-        await childButton.click();
-        await expect(parentControls).toHaveCount(0);
-
-        await expect(childButton).toBeVisible();
-        await childButton.click();
-
-        await expect(parentControls).toBeVisible();
         await expect(subfolderToggle).not.toBeChecked();
 
         await subfolderToggle.check();
+        await expect(parentControls).toBeVisible();
         await expect(subfolderToggle).toBeChecked();
         await expect(parentGalleryRow).toBeVisible();
+
+        await parentButton.click();
+        await expect(parentButton).toHaveAttribute(
+            "data-directory-expanded",
+            "false",
+        );
+        await expect(parentControls).toHaveCount(0);
+        await expect(parentGalleryRow).toHaveCount(0);
 
         await page.screenshot({
             fullPage: true,

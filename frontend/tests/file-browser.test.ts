@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createElement, type ReactNode } from "react";
+import { createElement, type ReactNode, useState } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1342,6 +1342,175 @@ describe("N1 file browser", () => {
                 '[data-subdir-preview-row="/demo/sample-b/run-2"]',
             ),
         ).toBeTruthy();
+    });
+
+    it("keeps subfolder preview widgets visible while the parent folder stays expanded", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-a/notes.txt", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+            buildFile("/demo/sample-b/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a"]',
+            ),
+        );
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-b"]',
+            ),
+        );
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+    });
+
+    it("keeps subfolder preview widgets visible in controlled mode while the parent folder stays expanded", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-a/notes.txt", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+            buildFile("/demo/sample-b/pic-2.png", "output"),
+        ];
+
+        function ControlledHarness(): ReactNode {
+            const [selectedDirectory, setSelectedDirectory] = useState("/demo");
+
+            return createElement(FileBrowser, {
+                files,
+                onSelectDirectory: (path: string) => {
+                    setSelectedDirectory(path);
+                },
+                onSelectFile: vi.fn(),
+                renderGridPreview: (file: FileEntry): ReactNode =>
+                    createElement(
+                        "div",
+                        {
+                            "data-subdir-preview-file": file.path,
+                        },
+                        file.path,
+                    ),
+                selectedDirectory,
+                visibleFiles: [],
+            });
+        }
+
+        await act(async () => {
+            root.render(createElement(ControlledHarness));
+        });
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a"]',
+            ),
+        );
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-b"]',
+            ),
+        );
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+    });
+
+    it("keeps ancestor-owned subfolder preview widgets visible when an expanded child also qualifies for them", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/delivery/plots/volcano.svg", "output"),
+            buildFile("/demo/qc/images/image.png", "output"),
+            buildFile("/demo/qc/images/gallery/plot-1.png", "output"),
+            buildFile("/demo/qc/notes/summary.txt", "output"),
+            buildFile("/demo/qc/notes/multiqc-summary.txt", "output"),
+        ];
+
+        function ControlledHarness(): ReactNode {
+            const [selectedDirectory, setSelectedDirectory] = useState("/demo");
+
+            return createElement(FileBrowser, {
+                files,
+                onSelectDirectory: (path: string) => {
+                    setSelectedDirectory(path);
+                },
+                onSelectFile: vi.fn(),
+                renderGridPreview: (file: FileEntry): ReactNode =>
+                    createElement(
+                        "div",
+                        {
+                            "data-subdir-preview-file": file.path,
+                        },
+                        file.path,
+                    ),
+                selectedDirectory,
+                visibleFiles: [],
+            });
+        }
+
+        await act(async () => {
+            root.render(createElement(ControlledHarness));
+        });
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+
+        await click(
+            container.querySelector('button[data-directory-path="/demo/qc"]'),
+        );
+
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-controls="/demo/qc"]',
+            ),
+        ).toBeNull();
     });
 
     it("shows subfolder preview controls on initial load when the first tree row is the eligible parent folder", async () => {

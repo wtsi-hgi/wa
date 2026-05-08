@@ -198,6 +198,7 @@ test.describe("Q1 critical results flows", () => {
         "reports",
         "report.csv",
     );
+    const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(fixturesRoot, "rnaseq", "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
     const rnaseqImagePath = path.join(
@@ -437,10 +438,14 @@ test.describe("Q1 critical results flows", () => {
         await openResultDetail(page, rnaseqPipelineName);
 
         const fileBrowser = page.locator('[data-file-browser="true"]');
+        const rootSubdirControls = page.locator(
+            `[data-subdir-preview-controls="${rnaseqRootPath}"]`,
+        );
 
         await expect(fileBrowser).toBeVisible();
         await expect(fileBrowser).not.toContainText("Explorer");
         await expect(fileBrowser).not.toContainText("Preview focus");
+        await expect(rootSubdirControls).toBeVisible();
         await expect(
             page.locator(`[data-directory-path="${rnaseqQcPath}"]`),
         ).toBeVisible();
@@ -450,6 +455,7 @@ test.describe("Q1 critical results flows", () => {
 
         await page.locator(`[data-directory-path="${rnaseqQcPath}"]`).click();
 
+        await expect(rootSubdirControls).toBeVisible();
         await expect(
             page.locator(`[data-directory-path="${rnaseqImagesPath}"]`),
         ).toBeVisible();
@@ -461,6 +467,7 @@ test.describe("Q1 critical results flows", () => {
             .locator(`[data-directory-path="${rnaseqImagesPath}"]`)
             .click();
 
+        await expect(rootSubdirControls).toBeVisible();
         await expect(
             page.locator(`[data-file-path="${rnaseqImagePath}"]`),
         ).toBeVisible();
