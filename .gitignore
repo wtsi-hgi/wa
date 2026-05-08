@@ -17,6 +17,12 @@ coverage.*
 *.coverprofile
 profile.cov
 
+# Keep required results-web fixture artefacts tracked even though their
+# filenames match generic test-output ignore patterns.
+!.docs/results-web/fixtures/files/rnaseq/alignment/star/sample-a/Log.final.out
+!.docs/results-web/fixtures/files/rnaseq/alignment/star/sample-b/Log.final.out
+!.docs/results-web/fixtures/files/sarek/reports/html/cohort/coverage.html
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
