@@ -798,76 +798,86 @@ export function FileBrowser({
     const renderPreviewControls = (
         directoryPath: string,
         placement: "folder" | "bottom",
-    ) => (
-        <div
-            className={cn(
-                "flex flex-wrap items-center gap-2 text-sm",
-                placement === "bottom"
-                    ? "col-span-full justify-end pt-1"
-                    : "w-full justify-start px-3 pb-3",
-            )}
-            data-file-browser-bottom-controls={
-                placement === "bottom" ? directoryPath : undefined
-            }
-            data-file-browser-folder-controls={
-                placement === "folder" ? directoryPath : undefined
-            }
-        >
-            {placement === "folder" ? (
-                <>
-                    {displayedFiles.length > 1 ? (
-                        <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
-                            <input
-                                aria-label="1 preview per row"
-                                checked={previewMode === "grid"}
-                                className="size-4 accent-primary"
-                                onChange={(event) =>
-                                    onPreviewModeChange?.(
-                                        event.target.checked
-                                            ? "grid"
-                                            : "single",
-                                    )
-                                }
-                                type="checkbox"
-                            />
-                            <span className="inline-flex items-center gap-2">
-                                <Eye
-                                    className="size-4 text-primary"
-                                    aria-hidden="true"
+    ) => {
+        const showPreviewPaging = previewPageCount > 1;
+
+        if (placement === "bottom" && !showPreviewPaging) {
+            return null;
+        }
+
+        return (
+            <div
+                className={cn(
+                    "flex flex-wrap items-center gap-2 text-sm",
+                    placement === "bottom"
+                        ? "col-span-full justify-end pt-1"
+                        : "w-full justify-start px-3 pb-3",
+                )}
+                data-file-browser-bottom-controls={
+                    placement === "bottom" ? directoryPath : undefined
+                }
+                data-file-browser-folder-controls={
+                    placement === "folder" ? directoryPath : undefined
+                }
+            >
+                {placement === "folder" ? (
+                    <>
+                        {displayedFiles.length > 1 ? (
+                            <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
+                                <input
+                                    aria-label="1 preview per row"
+                                    checked={previewMode === "grid"}
+                                    className="size-4 accent-primary"
+                                    onChange={(event) =>
+                                        onPreviewModeChange?.(
+                                            event.target.checked
+                                                ? "grid"
+                                                : "single",
+                                        )
+                                    }
+                                    type="checkbox"
                                 />
-                                1 preview per row
-                            </span>
-                        </label>
-                    ) : null}
-                    <PreviewHeightControl
-                        onCommit={onPreviewHeightChange}
-                        value={previewHeight}
+                                <span className="inline-flex items-center gap-2">
+                                    <Eye
+                                        className="size-4 text-primary"
+                                        aria-hidden="true"
+                                    />
+                                    1 preview per row
+                                </span>
+                            </label>
+                        ) : null}
+                        <PreviewHeightControl
+                            onCommit={onPreviewHeightChange}
+                            value={previewHeight}
+                        />
+                    </>
+                ) : null}
+
+                {showPreviewPaging ? (
+                    <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                        <ListFilter
+                            className="size-4 text-primary"
+                            aria-hidden="true"
+                        />
+                        <span>
+                            Page {previewPage} of {previewPageCount}
+                        </span>
+                    </div>
+                ) : null}
+
+                {showPreviewPaging ? (
+                    <PreviewPagination
+                        nextLabel="Next preview page"
+                        onPageChange={(page) => onPreviewPageChange?.(page)}
+                        page={previewPage}
+                        pageCount={previewPageCount}
+                        previousLabel="Previous preview page"
+                        selectLabel="Preview page"
                     />
-                </>
-            ) : null}
-
-            <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
-                <ListFilter
-                    className="size-4 text-primary"
-                    aria-hidden="true"
-                />
-                <span>
-                    Page {previewPage} of {previewPageCount}
-                </span>
+                ) : null}
             </div>
-
-            {previewPageCount > 1 ? (
-                <PreviewPagination
-                    nextLabel="Next preview page"
-                    onPageChange={(page) => onPreviewPageChange?.(page)}
-                    page={previewPage}
-                    pageCount={previewPageCount}
-                    previousLabel="Previous preview page"
-                    selectLabel="Preview page"
-                />
-            ) : null}
-        </div>
-    );
+        );
+    };
 
     const renderSubdirPreviewControls = (directoryPath: string) => (
         <div

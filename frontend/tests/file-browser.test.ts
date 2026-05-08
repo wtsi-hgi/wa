@@ -883,6 +883,48 @@ describe("N1 file browser", () => {
         expect(handlePreviewPageChange).toHaveBeenCalledWith(3);
     });
 
+    it("hides the single-page preview widget for expanded folders", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "grid",
+                    previewPage: 1,
+                    previewPageCount: 1,
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement("div", {}, file.path),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        const folderControls = container.querySelector(
+            '[data-file-browser-folder-controls="/results"]',
+        );
+
+        expect(folderControls).toBeTruthy();
+        expect(folderControls?.textContent).toContain("Preview height");
+        expect(folderControls?.textContent).toContain("1 preview per row");
+        expect(folderControls?.textContent).not.toContain("Page 1 of 1");
+        expect(
+            container.querySelector(
+                '[data-file-browser-bottom-controls="/results"]',
+            ),
+        ).toBeNull();
+        expect(container.textContent).not.toContain("Page 1 of 1");
+    });
+
     it("hides folder paging controls until the previewable folder is expanded", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
