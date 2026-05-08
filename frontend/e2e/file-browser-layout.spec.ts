@@ -601,7 +601,7 @@ test.describe("File Browser single preview layout", () => {
         await expect(filename).toContainText(".");
     });
 
-    test("renders image thumbnails at a usable width in subfolder preview cards", async ({
+    test("renders image thumbnails with overlay controls at a usable width in subfolder preview cards", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
@@ -625,14 +625,41 @@ test.describe("File Browser single preview layout", () => {
         const button = page
             .locator('button[aria-label="Open image lightbox"]')
             .first();
+        const downloadLink = page
+            .locator('a[aria-label="Download file"]')
+            .first();
         const card = button.locator(
             "xpath=ancestor::*[@data-subdir-preview-card][1]",
         );
-        const image = button.locator("img").first();
+        const image = card.locator("img").first();
 
         await expect(card).toBeVisible();
         await expect(button).toBeVisible();
+        await expect(downloadLink).toBeVisible();
         await expect(image).toBeVisible();
+        await expect(button.locator("img")).toHaveCount(0);
+
+        const overlayStructure = await card.evaluate((element) => {
+            const cardImage = element.querySelector("img");
+            const cardButton = element.querySelector(
+                'button[aria-label="Open image lightbox"]',
+            );
+            const cardDownloadLink = element.querySelector(
+                'a[aria-label="Download file"]',
+            );
+
+            return {
+                overlaySharesImageSurface:
+                    cardImage?.parentElement ===
+                    cardDownloadLink?.parentElement,
+                lightboxControlOverlaysSameShell:
+                    cardButton?.parentElement ===
+                    cardImage?.parentElement?.parentElement,
+            };
+        });
+
+        expect(overlayStructure.overlaySharesImageSurface).toBe(true);
+        expect(overlayStructure.lightboxControlOverlaysSameShell).toBe(true);
 
         const cardBBox = await card.boundingBox();
         const buttonBBox = await button.boundingBox();

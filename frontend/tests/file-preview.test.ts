@@ -766,6 +766,36 @@ describe("O1 file preview", () => {
         expect(screen.getByText("Click to enlarge")).toBeTruthy();
     });
 
+    it("renders the download button as an overlay on the single-preview image surface", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/image.png" }),
+            content: {
+                content: "",
+                contentType: "image/png",
+            },
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fimage.png",
+        });
+
+        const image = screen.getByAltText("image.png preview");
+        const lightboxButton = screen.getByRole("button", {
+            name: /open image lightbox/i,
+        });
+        const link = screen.getByRole("link", { name: /download file/i });
+        const surface = image.closest("div.group.relative");
+
+        expect(link.getAttribute("href")).toContain("download=true");
+        expect(link.className).toContain("absolute");
+        expect(surface).not.toBeNull();
+        expect(lightboxButton.parentElement).toBe(surface);
+        expect(link.parentElement?.className).toContain(
+            "relative flex w-full justify-center",
+        );
+        expect(surface?.contains(image)).toBe(true);
+        expect(surface?.contains(lightboxButton)).toBe(true);
+        expect(surface?.contains(link)).toBe(true);
+        expect(surface?.textContent).toContain("Click to enlarge");
+    });
+
     it("opens a lightbox overlay when the image thumbnail is clicked", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/image.png" }),
@@ -913,6 +943,34 @@ describe("O1 file preview", () => {
         expect(
             screen.queryByText(/image preview/i, { selector: "p" }),
         ).toBeNull();
+    });
+
+    it("renders a download overlay on FileImageThumbnail previews", async () => {
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+
+        render(
+            createElement(FileImageThumbnail, {
+                file: buildFile({ path: "/tmp/results/plot.png" }),
+                fullSizeUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
+                height: 180,
+                thumbnailUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png&thumb=true",
+            }),
+        );
+
+        const image = screen.getByAltText("plot.png preview");
+        const link = screen.getByRole("link", { name: /download file/i });
+        const surface = image.parentElement;
+
+        expect(link.getAttribute("href")).toContain("download=true");
+        expect(link.className).toContain("absolute");
+        expect(surface).not.toBeNull();
+        expect(link.parentElement).toBe(surface);
+        expect(surface?.contains(image)).toBe(true);
+        expect(surface?.contains(link)).toBe(true);
+        expect(surface?.textContent).toContain("Click to enlarge");
     });
 
     it("applies maxHeight to single-mode image previews so the slider takes effect", () => {

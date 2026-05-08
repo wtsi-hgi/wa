@@ -85,6 +85,7 @@ export type FilePreviewProps = {
 
 type LightboxImageProps = {
     buttonClassName?: string;
+    downloadUrl?: string;
     fileName: string;
     fullSizeUrl: string;
     imageClassName?: string;
@@ -609,6 +610,7 @@ function CsvPreview({
 
 function LightboxImage({
     buttonClassName,
+    downloadUrl,
     fileName,
     fullSizeUrl,
     imageClassName,
@@ -640,15 +642,18 @@ function LightboxImage({
 
     return (
         <>
-            <button
-                type="button"
-                aria-label="Open image lightbox"
+            <div
                 className={
                     buttonClassName ??
-                    "group relative inline-flex cursor-zoom-in overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]"
+                    "group relative inline-flex cursor-zoom-in overflow-hidden rounded-[1.5rem]"
                 }
-                onClick={() => setLightboxOpen(true)}
             >
+                <button
+                    type="button"
+                    aria-label="Open image lightbox"
+                    className="absolute inset-0 z-10 rounded-[inherit] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+                    onClick={() => setLightboxOpen(true)}
+                />
                 <span className="relative flex w-full justify-center">
                     <Image
                         alt={`${fileName} preview`}
@@ -668,12 +673,18 @@ function LightboxImage({
                             maxWidth: `${thumbnailWidth}px`,
                         }}
                     />
+                    {downloadUrl ? (
+                        <DownloadIconLink
+                            className="absolute right-3 top-3 z-20"
+                            href={downloadUrl}
+                        />
+                    ) : null}
                     <span className="pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-2 rounded-full bg-[color:rgba(15,23,42,0.78)] px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-white shadow-lg">
                         <Expand className="size-3.5" aria-hidden="true" />
                         Click to enlarge
                     </span>
                 </span>
-            </button>
+            </div>
 
             {lightboxOpen ? (
                 <div
@@ -724,6 +735,7 @@ function ImagePreview({
 }) {
     return (
         <LightboxImage
+            downloadUrl={buildDownloadUrl(proxyUrl)}
             fileName={fileName}
             fullSizeUrl={proxyUrl}
             maxHeightPx={maxHeightPx}
@@ -743,7 +755,8 @@ export const FileImageThumbnail = memo(
 
         return (
             <LightboxImage
-                buttonClassName="group inline-flex w-full justify-center overflow-hidden rounded-[1.25rem] bg-background/80"
+                buttonClassName="group relative inline-flex w-full justify-center overflow-hidden rounded-[1.25rem]"
+                downloadUrl={buildDownloadUrl(fullSizeUrl)}
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}
                 imageClassName="w-full"
@@ -862,6 +875,7 @@ export function FilePreview({
                 : "Unable to load full preview"}
         </div>
     ) : null;
+    const isImagePreview = !isLoading && previewable && renderer === "image";
 
     if (error?.status === 413) {
         return (
@@ -908,6 +922,18 @@ export function FilePreview({
         );
     }
 
+    if (isImagePreview) {
+        return (
+            <section className="h-full w-full">
+                <ImagePreview
+                    fileName={fileName}
+                    maxHeightPx={maxHeight}
+                    proxyUrl={proxyUrl}
+                />
+            </section>
+        );
+    }
+
     return (
         <section className="h-full w-full">
             <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] p-5 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
@@ -936,14 +962,6 @@ export function FilePreview({
                                 </span>
                             </div>
                         </div>
-                    ) : null}
-
-                    {!isLoading && previewable && renderer === "image" ? (
-                        <ImagePreview
-                            fileName={fileName}
-                            maxHeightPx={maxHeight}
-                            proxyUrl={proxyUrl}
-                        />
                     ) : null}
 
                     {!isLoading && previewable && renderer === "svg" ? (
