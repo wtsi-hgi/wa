@@ -572,10 +572,12 @@ test.describe("Q1 critical results flows", () => {
 
         await expect(row).toBeVisible();
         await expect(previewCell).toBeVisible();
-        await expect(previewCell.getByText("Click to enlarge")).toBeVisible();
+        await expect(previewCell.getByText("Click to enlarge")).toHaveCount(0);
         await expect(thumbnailButton).toBeVisible();
         await expect(thumbnailImage).toBeVisible();
         await expect(thumbnailImage).toHaveAttribute("src", /thumb=true/);
+
+        await expect(thumbnailButton).toHaveCSS("cursor", "zoom-in");
 
         const byteSizeOccurrences = await row.evaluate((element) => {
             const walker = document.createTreeWalker(

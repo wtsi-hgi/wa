@@ -335,12 +335,11 @@ function ExpandablePreview({
                 <button
                     type="button"
                     aria-label={`Enlarge ${fileName} preview`}
-                    className="absolute inset-0 z-10 flex items-end justify-start rounded-[1.5rem] text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+                    className="absolute inset-0 z-10 flex cursor-zoom-in items-end justify-start rounded-[1.5rem] text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
                     onClick={() => setPreviewOpen(true)}
                 >
-                    <span className="pointer-events-none m-3 inline-flex items-center gap-2 rounded-full bg-[color:rgba(15,23,42,0.78)] px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-white opacity-95 shadow-lg transition group-hover:bg-[color:rgba(15,23,42,0.88)]">
+                    <span className="pointer-events-none m-3 inline-flex size-9 items-center justify-center rounded-full bg-[color:rgba(15,23,42,0.78)] text-white opacity-95 shadow-lg transition group-hover:bg-[color:rgba(15,23,42,0.88)]">
                         <Expand className="size-3.5" aria-hidden="true" />
-                        Click to enlarge
                     </span>
                 </button>
             </div>
@@ -649,7 +648,7 @@ function LightboxImage({
                 <button
                     type="button"
                     aria-label="Open image lightbox"
-                    className="absolute inset-0 z-10 rounded-[inherit] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+                    className="absolute inset-0 z-10 cursor-zoom-in rounded-[inherit] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
                     onClick={() => setLightboxOpen(true)}
                 />
                 <span className="relative flex w-full justify-center overflow-hidden rounded-[inherit]">
@@ -677,9 +676,8 @@ function LightboxImage({
                             href={downloadUrl}
                         />
                     ) : null}
-                    <span className="pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-2 rounded-full bg-[color:rgba(15,23,42,0.78)] px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-white shadow-lg">
+                    <span className="pointer-events-none absolute bottom-3 left-3 inline-flex size-9 items-center justify-center rounded-full bg-[color:rgba(15,23,42,0.78)] text-white shadow-lg">
                         <Expand className="size-3.5" aria-hidden="true" />
-                        Click to enlarge
                     </span>
                 </span>
             </div>
@@ -753,7 +751,7 @@ export const FileImageThumbnail = memo(
 
         return (
             <LightboxImage
-                buttonClassName="group relative inline-flex w-full justify-center overflow-hidden rounded-[1.25rem]"
+                buttonClassName="group relative inline-flex w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.25rem]"
                 downloadUrl={buildDownloadUrl(fullSizeUrl)}
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}

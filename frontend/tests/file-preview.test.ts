@@ -754,7 +754,7 @@ describe("O1 file preview", () => {
         expect(image.getAttribute("style")).toContain("max-height: 240px");
     });
 
-    it("shows an explicit enlarge affordance on image previews", () => {
+    it("keeps the enlarge icon without rendering the enlarge text on image previews", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/image.png" }),
             content: {
@@ -764,7 +764,13 @@ describe("O1 file preview", () => {
             proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fimage.png",
         });
 
-        expect(screen.getByText("Click to enlarge")).toBeTruthy();
+        const lightboxButton = screen.getByRole("button", {
+            name: /open image lightbox/i,
+        });
+        const surface = lightboxButton.parentElement;
+
+        expect(surface?.querySelector("span svg")).not.toBeNull();
+        expect(screen.queryByText("Click to enlarge")).toBeNull();
     });
 
     it("renders the download button as an overlay on the single-preview image surface", () => {
@@ -794,7 +800,8 @@ describe("O1 file preview", () => {
         expect(surface?.contains(image)).toBe(true);
         expect(surface?.contains(lightboxButton)).toBe(true);
         expect(surface?.contains(link)).toBe(true);
-        expect(surface?.textContent).toContain("Click to enlarge");
+        expect(surface?.className).toContain("cursor-zoom-in");
+        expect(surface?.textContent).not.toContain("Click to enlarge");
     });
 
     it("uses the preview shell radius for single-preview images instead of a nested image radius", () => {
@@ -1030,15 +1037,40 @@ describe("O1 file preview", () => {
 
         const image = screen.getByAltText("plot.png preview");
         const link = screen.getByRole("link", { name: /download file/i });
-        const surface = image.parentElement;
+        const surface = image.closest("div.group.relative");
 
         expect(link.getAttribute("href")).toContain("download=true");
         expect(link.className).toContain("absolute");
         expect(surface).not.toBeNull();
-        expect(link.parentElement).toBe(surface);
+        expect(link.parentElement?.parentElement).toBe(surface);
         expect(surface?.contains(image)).toBe(true);
         expect(surface?.contains(link)).toBe(true);
-        expect(surface?.textContent).toContain("Click to enlarge");
+        expect(surface?.className).toContain("cursor-zoom-in");
+        expect(surface?.textContent).not.toContain("Click to enlarge");
+    });
+
+    it("uses a pointer affordance without enlarge text for non-image previews", () => {
+        for (const { content, contentType, filePath } of nonImagePreviewCases) {
+            const { container } = renderPreview({
+                file: buildFile({ path: filePath }),
+                content: { content, contentType },
+                proxyUrl: `/api/file?id=result-1&path=${encodeURIComponent(filePath)}`,
+            });
+
+            const surface = container.querySelector("div.group.relative");
+
+            expect(surface?.className).toContain("cursor-zoom-in");
+            expect(surface?.textContent).not.toContain("Click to enlarge");
+            expect(
+                screen.getByRole("button", {
+                    name: new RegExp(
+                        `enlarge ${fileNameFromPath(filePath)} preview`,
+                        "i",
+                    ),
+                }),
+            ).toBeTruthy();
+            cleanup();
+        }
     });
 
     it("uses the thumbnail shell radius for grid previews instead of a nested image radius", async () => {
