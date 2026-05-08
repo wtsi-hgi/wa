@@ -796,6 +796,24 @@ describe("O1 file preview", () => {
         expect(surface?.textContent).toContain("Click to enlarge");
     });
 
+    it("uses the preview shell radius for single-preview images instead of a nested image radius", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/image.png" }),
+            content: {
+                content: "",
+                contentType: "image/png",
+            },
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fimage.png",
+        });
+
+        const image = screen.getByAltText("image.png preview");
+        const surface = image.closest("div.group.relative");
+
+        expect(surface?.className).toContain("rounded-[1.5rem]");
+        expect(image.className).toContain("rounded-[inherit]");
+        expect(image.className).not.toContain("rounded-xl");
+    });
+
     it("opens a lightbox overlay when the image thumbnail is clicked", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/image.png" }),
@@ -971,6 +989,29 @@ describe("O1 file preview", () => {
         expect(surface?.contains(image)).toBe(true);
         expect(surface?.contains(link)).toBe(true);
         expect(surface?.textContent).toContain("Click to enlarge");
+    });
+
+    it("uses the thumbnail shell radius for grid previews instead of a nested image radius", async () => {
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+
+        render(
+            createElement(FileImageThumbnail, {
+                file: buildFile({ path: "/tmp/results/plot.png" }),
+                fullSizeUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png",
+                height: 180,
+                thumbnailUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png&thumb=true",
+            }),
+        );
+
+        const image = screen.getByAltText("plot.png preview");
+        const surface = image.closest("div.group.relative");
+
+        expect(surface?.className).toContain("rounded-[1.25rem]");
+        expect(image.className).toContain("rounded-[inherit]");
+        expect(image.className).not.toContain("rounded-xl");
     });
 
     it("applies maxHeight to single-mode image previews so the slider takes effect", () => {

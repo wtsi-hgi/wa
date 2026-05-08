@@ -395,6 +395,45 @@ test.describe("File Browser single preview layout", () => {
         expect(surface.height).toBeGreaterThanOrEqual(metrics.root.height - 2);
     });
 
+    test("renders single-preview images with the same corner radius as the preview shell", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const preview = page.locator('[data-file-browser-preview="single"]');
+        const lowerFile = page
+            .locator(`[data-file-path="${rnaseqGalleryLowerImagePath}"]`)
+            .first();
+
+        await expect(lowerFile).toBeVisible();
+        await lowerFile.click();
+        await expect(preview).toBeVisible();
+
+        const radiusMetrics = await preview.evaluate((root) => {
+            const image = root.querySelector('img[alt="plot-080.png preview"]');
+            const shell = image?.closest("div.group.relative");
+
+            if (
+                !(image instanceof HTMLElement) ||
+                !(shell instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const imageStyles = window.getComputedStyle(image);
+            const shellStyles = window.getComputedStyle(shell);
+
+            return {
+                imageRadius: imageStyles.borderRadius,
+                shellRadius: shellStyles.borderRadius,
+            };
+        });
+
+        expect(radiusMetrics).not.toBeNull();
+        expect(radiusMetrics?.imageRadius).toBe(radiusMetrics?.shellRadius);
+    });
+
     test("places folder controls beneath the directory heading while keeping compact widgets on the same row surface", async ({
         page,
     }) => {

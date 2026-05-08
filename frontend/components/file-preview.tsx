@@ -654,11 +654,11 @@ function LightboxImage({
                     className="absolute inset-0 z-10 rounded-[inherit] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
                     onClick={() => setLightboxOpen(true)}
                 />
-                <span className="relative flex w-full justify-center">
+                <span className="relative flex w-full justify-center overflow-hidden rounded-[inherit]">
                     <Image
                         alt={`${fileName} preview`}
                         className={cn(
-                            "rounded-xl object-contain transition duration-200 group-hover:scale-[1.01]",
+                            "rounded-[inherit] object-contain transition duration-200 group-hover:scale-[1.01]",
                             imageClassName,
                         )}
                         decoding="async"
