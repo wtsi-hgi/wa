@@ -212,9 +212,11 @@ function qualifyingSubdirsFor(
         return [];
     }
 
-    return node.children.filter((child) =>
-        (parentDirectory(child.path) === node.path || node.fileCount === 0) &&
-        previewableFilesForKinds(child, kinds).length > 0,
+    return node.children.filter(
+        (child) =>
+            (parentDirectory(child.path) === node.path ||
+                node.fileCount === 0) &&
+            previewableFilesForKinds(child, kinds).length > 0,
     );
 }
 
@@ -813,26 +815,30 @@ export function FileBrowser({
         >
             {placement === "folder" ? (
                 <>
-                    <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
-                        <input
-                            aria-label="1 preview per row"
-                            checked={previewMode === "grid"}
-                            className="size-4 accent-primary"
-                            onChange={(event) =>
-                                onPreviewModeChange?.(
-                                    event.target.checked ? "grid" : "single",
-                                )
-                            }
-                            type="checkbox"
-                        />
-                        <span className="inline-flex items-center gap-2">
-                            <Eye
-                                className="size-4 text-primary"
-                                aria-hidden="true"
+                    {displayedFiles.length > 1 ? (
+                        <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
+                            <input
+                                aria-label="1 preview per row"
+                                checked={previewMode === "grid"}
+                                className="size-4 accent-primary"
+                                onChange={(event) =>
+                                    onPreviewModeChange?.(
+                                        event.target.checked
+                                            ? "grid"
+                                            : "single",
+                                    )
+                                }
+                                type="checkbox"
                             />
-                            1 preview per row
-                        </span>
-                    </label>
+                            <span className="inline-flex items-center gap-2">
+                                <Eye
+                                    className="size-4 text-primary"
+                                    aria-hidden="true"
+                                />
+                                1 preview per row
+                            </span>
+                        </label>
+                    ) : null}
                     <PreviewHeightControl
                         onCommit={onPreviewHeightChange}
                         value={previewHeight}

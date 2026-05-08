@@ -539,6 +539,7 @@ test.describe("Q1 critical results flows", () => {
         await openResultDetail(page, rnaseqPipelineName);
 
         await selectDirectoryForFile(page, rnaseqImagePath);
+        await expect(page.getByLabel("1 preview per row")).toHaveCount(0);
         await page.locator(`[data-file-path="${rnaseqImagePath}"]`).click();
 
         await expect(
@@ -555,23 +556,23 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await openResultDetail(page, rnaseqPipelineName);
 
-        await selectDirectoryForFile(page, rnaseqImagePath);
+        await selectDirectoryForFile(page, rnaseqGalleryFirstImagePath);
         await page.getByLabel("1 preview per row").check();
 
         const row = page.locator(
-            `[data-file-browser-grid-row="${rnaseqImagePath}"]`,
+            `[data-file-browser-grid-row="${rnaseqGalleryFirstImagePath}"]`,
         );
         const previewCell = row.locator(
-            `[data-grid-preview-path="${rnaseqImagePath}"]`,
+            `[data-grid-preview-path="${rnaseqGalleryFirstImagePath}"]`,
         );
         const thumbnailButton = previewCell.getByRole("button", {
             name: "Open image lightbox",
         });
-        const thumbnailImage = previewCell.getByAltText("image.png preview");
+        const thumbnailImage = previewCell.getByAltText("plot-001.png preview");
 
         await expect(row).toBeVisible();
         await expect(previewCell).toBeVisible();
-        await expect(page.getByText("Click to enlarge")).toBeVisible();
+        await expect(previewCell.getByText("Click to enlarge")).toBeVisible();
         await expect(thumbnailButton).toBeVisible();
         await expect(thumbnailImage).toBeVisible();
         await expect(thumbnailImage).toHaveAttribute("src", /thumb=true/);
@@ -663,7 +664,7 @@ test.describe("Q1 critical results flows", () => {
 
         await thumbnailButton.click();
 
-        const fullSizeImage = page.getByAltText("image.png full preview");
+        const fullSizeImage = page.getByAltText("plot-001.png full preview");
 
         await expect(
             page.getByRole("dialog", { name: "Image preview lightbox" }),

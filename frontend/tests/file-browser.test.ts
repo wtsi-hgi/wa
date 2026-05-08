@@ -924,6 +924,44 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
+    it("hides the 1 preview per row toggle for folders with only one file", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [buildFile("/results/a/plot-001.png", "output")];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        const folderControls = container.querySelector(
+            '[data-file-browser-folder-controls="/results/a"]',
+        );
+
+        expect(folderControls).toBeTruthy();
+        expect(
+            folderControls?.querySelector(
+                'input[aria-label="1 preview per row"]',
+            ),
+        ).toBeNull();
+        expect(folderControls?.textContent).toContain("Preview height");
+    });
+
     it("renders file buttons and preview as direct grid siblings in single mode", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
