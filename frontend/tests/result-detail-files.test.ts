@@ -363,6 +363,49 @@ describe("O1 result detail file integration", () => {
         });
     });
 
+    it("reselects the parent directory when the selected child directory is clicked again", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [
+                    buildFile("/tmp/results/sample-a/first.png"),
+                    buildFile("/tmp/results/sample-a/second.png"),
+                    buildFile("/tmp/results/sample-b/third.png"),
+                    buildFile("/tmp/results/sample-b/fourth.png"),
+                ],
+                resultId: "result-1",
+            }),
+        );
+
+        const fileBrowser = screen.getByText("File Browser").parentElement;
+
+        expect(fileBrowser?.getAttribute("data-selected-directory")).toBe(
+            "/tmp/results",
+        );
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "/tmp/results/sample-a" }),
+        );
+
+        await waitFor(() => {
+            expect(fileBrowser?.getAttribute("data-selected-directory")).toBe(
+                "/tmp/results/sample-a",
+            );
+        });
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "/tmp/results/sample-a" }),
+        );
+
+        await waitFor(() => {
+            expect(fileBrowser?.getAttribute("data-selected-directory")).toBe(
+                "/tmp/results",
+            );
+        });
+    });
+
     it("renders thumbnail previews in grid mode and paginates after the first 100 files", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");

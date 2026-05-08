@@ -226,6 +226,37 @@ function pageSummary(total: number, page: number): string {
     return `Showing ${start}-${end} of ${total} files`;
 }
 
+function parentDirectory(path: string): string {
+    const normalized = path.trim();
+    const index = normalized.lastIndexOf("/");
+
+    if (index <= 0) {
+        return "/";
+    }
+
+    return normalized.slice(0, index);
+}
+
+function resolveDirectorySelection(
+    directoryPath: string,
+    currentSelectedDirectory: string | undefined,
+    directoryGroups: Array<{ path: string }>,
+): string {
+    if (directoryPath !== currentSelectedDirectory) {
+        return directoryPath;
+    }
+
+    const fallbackDirectory = parentDirectory(directoryPath);
+
+    return directoryGroups.some(
+        (group) =>
+            group.path === fallbackDirectory ||
+            group.path.startsWith(`${fallbackDirectory}/`),
+    )
+        ? fallbackDirectory
+        : directoryPath;
+}
+
 const GalleryPreviewRow = memo(function GalleryPreviewRow({
     file,
     maxHeight,
@@ -586,16 +617,22 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
             }}
             onPreviewPageChange={setPreviewPage}
             onSelectDirectory={(directoryPath) => {
-                if (directoryPath === selectedDirectory) {
+                const nextDirectoryPath = resolveDirectorySelection(
+                    directoryPath,
+                    selectedDirectory,
+                    directoryGroups,
+                );
+
+                if (nextDirectoryPath === selectedDirectory) {
                     return;
                 }
 
                 const nextGroup = directoryGroups.find(
-                    (group) => group.path === directoryPath,
+                    (group) => group.path === nextDirectoryPath,
                 );
                 const nextFile = nextGroup?.files[0] ?? null;
 
-                setSelectedDirectory(directoryPath);
+                setSelectedDirectory(nextDirectoryPath);
                 setSelectedFile(nextFile);
                 setPreviewPage(1);
                 setPreviewState(buildPreviewState(nextFile));
