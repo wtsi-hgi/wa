@@ -543,7 +543,7 @@ function CsvPreview({
                 ) : null}
             </div>
 
-            <div className="rounded-[1.5rem] border border-border/70 bg-background/70 p-2">
+            <div className="overflow-auto">
                 <Table>
                     <TableHeader>
                         <TableRow>
@@ -936,13 +936,13 @@ export function FilePreview({
 
     return (
         <section className="h-full w-full">
-            <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] p-5 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
+            <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(160deg,color-mix(in_oklab,var(--background)_92%,white_8%),color-mix(in_oklab,var(--accent)_10%,var(--background)_90%))] shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
                 <DownloadIconLink
-                    className="absolute right-4 top-4 z-20"
+                    className="absolute right-3 top-3 z-20"
                     href={downloadUrl}
                 />
 
-                <div className="min-h-0 flex-1">
+                <div className="min-h-0 flex-1 overflow-hidden">
                     {isLoading ? (
                         <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
                             Loading preview...
@@ -970,7 +970,7 @@ export function FilePreview({
                             dialogContent={
                                 <Image
                                     alt={`${fileName} full preview`}
-                                    className="mx-auto max-h-[calc(100vh-9rem)] rounded-[1.5rem] object-contain"
+                                    className="mx-auto block max-h-[calc(100vh-9rem)] max-w-full object-contain"
                                     src={proxyUrl}
                                     unoptimized
                                     width={1600}
@@ -979,23 +979,21 @@ export function FilePreview({
                                 />
                             }
                         >
-                            <div className="inline-flex overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-3 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-                                <Image
-                                    alt={`${fileName} preview`}
-                                    className="rounded-xl object-contain"
-                                    src={proxyUrl}
-                                    unoptimized
-                                    width={1200}
-                                    height={1200}
-                                    sizes="100vw"
-                                    style={{
-                                        maxHeight: maxHeight
-                                            ? `${maxHeight}px`
-                                            : "480px",
-                                        maxWidth: "100%",
-                                    }}
-                                />
-                            </div>
+                            <Image
+                                alt={`${fileName} preview`}
+                                className="mx-auto block object-contain"
+                                src={proxyUrl}
+                                unoptimized
+                                width={1200}
+                                height={1200}
+                                sizes="100vw"
+                                style={{
+                                    maxHeight: maxHeight
+                                        ? `${maxHeight}px`
+                                        : "480px",
+                                    maxWidth: "100%",
+                                }}
+                            />
                         </ExpandablePreview>
                     ) : null}
 
@@ -1004,14 +1002,14 @@ export function FilePreview({
                             fileName={fileName}
                             dialogContent={
                                 <iframe
-                                    className="h-[calc(100vh-9rem)] w-full rounded-[1.5rem] border border-border/70 bg-background"
+                                    className="block h-[calc(100vh-9rem)] w-full bg-background"
                                     src={proxyUrl}
                                     title="Enlarged PDF preview"
                                 />
                             }
                         >
                             <iframe
-                                className="w-full rounded-[1.5rem] border border-border/70 bg-background"
+                                className="block w-full bg-background"
                                 src={proxyUrl}
                                 style={{ height: `${maxHeight ?? 512}px` }}
                                 title="PDF preview"
@@ -1024,7 +1022,7 @@ export function FilePreview({
                             fileName={fileName}
                             dialogContent={
                                 <iframe
-                                    className="h-[calc(100vh-9rem)] w-full rounded-[1.5rem] border border-border/70 bg-white"
+                                    className="block h-[calc(100vh-9rem)] w-full bg-white"
                                     sandbox="allow-same-origin"
                                     src={proxyUrl}
                                     title="Enlarged HTML preview"
@@ -1032,7 +1030,7 @@ export function FilePreview({
                             }
                         >
                             <iframe
-                                className="w-full rounded-[1.5rem] border border-border/70 bg-white"
+                                className="block w-full bg-white"
                                 sandbox="allow-same-origin"
                                 src={proxyUrl}
                                 style={{ height: `${maxHeight ?? 512}px` }}
@@ -1051,8 +1049,8 @@ export function FilePreview({
                                 ) : enlargedErrorNode ? (
                                     enlargedErrorNode
                                 ) : (
-                                    <div>
-                                        <article className="max-w-none rounded-[1.5rem] border border-border/70 bg-background/75 p-6 text-foreground">
+                                    <div className="h-full overflow-auto">
+                                        <article className="max-w-none p-6 text-foreground">
                                             <ReactMarkdown>
                                                 {dialogContent?.content ?? ""}
                                             </ReactMarkdown>
@@ -1067,7 +1065,7 @@ export function FilePreview({
                             <div>
                                 <div className="relative">
                                     <article
-                                        className="max-w-none overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/75 p-6"
+                                        className="max-w-none overflow-hidden p-6"
                                         style={
                                             maxHeight
                                                 ? {
@@ -1181,7 +1179,7 @@ export function FilePreview({
                                     enlargedErrorNode
                                 ) : (
                                     <div>
-                                        <div className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
+                                        <div className="overflow-hidden bg-[color:rgba(15,23,42,0.96)]">
                                             <pre className="overflow-auto p-5 text-sm leading-7 text-slate-100">
                                                 <code
                                                     dangerouslySetInnerHTML={{
@@ -1200,7 +1198,7 @@ export function FilePreview({
                             }
                         >
                             <div>
-                                <div className="relative overflow-hidden rounded-[1.5rem] border border-border/70 bg-[color:rgba(15,23,42,0.96)]">
+                                <div className="relative overflow-hidden bg-[color:rgba(15,23,42,0.96)]">
                                     <pre
                                         className="overflow-hidden p-5 text-sm leading-7 text-slate-100"
                                         style={

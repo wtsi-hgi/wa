@@ -219,10 +219,12 @@ test.describe("File Browser single preview layout", () => {
         "images",
         "gallery",
     );
+    const rnaseqNotesPath = path.join(fixturesRoot, "rnaseq", "qc", "notes");
     const rnaseqGalleryLowerImagePath = path.join(
         rnaseqGalleryPath,
         "plot-080.png",
     );
+    const rnaseqNotesSummaryPath = path.join(rnaseqNotesPath, "summary.txt");
 
     test("positions single preview to the right of file metadata at 1024px viewport", async ({
         page,
@@ -377,11 +379,20 @@ test.describe("File Browser single preview layout", () => {
         );
     });
 
-    test("renders the single preview as one bordered surface filling the preview area", async ({
+    test("renders single-preview text files as one bordered surface filling the preview area", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
-        const { preview } = await openFirstSinglePreview(page);
+        await selectDirectory(page, rnaseqNotesPath);
+
+        const preview = page.locator('[data-file-browser-preview="single"]');
+        const summaryFile = page
+            .locator(`[data-file-path="${rnaseqNotesSummaryPath}"]`)
+            .first();
+
+        await expect(summaryFile).toBeVisible();
+        await summaryFile.click();
+        await expect(preview).toBeVisible();
 
         const metrics = await measurePreviewBorderSurfaces(preview);
 

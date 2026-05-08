@@ -201,10 +201,11 @@ describe("O1 file preview", () => {
         });
 
         const image = screen.getByAltText("plot.svg preview");
-        const previewSurface = image.closest("div.inline-flex");
+        const previewSurface = image.parentElement;
 
         expect(image.tagName).toBe("IMG");
-        expect(previewSurface?.querySelector("svg")).toBeNull();
+        expect(previewSurface).not.toBeNull();
+        expect(previewSurface?.querySelector("rect")).toBeNull();
         expect(
             container.querySelector('img[alt="plot.svg preview"]'),
         ).not.toBeNull();
@@ -918,6 +919,55 @@ describe("O1 file preview", () => {
         expect(root?.className).toContain("w-full");
         expect(surface?.className).toContain("h-full");
         expect(surface?.className).toContain("w-full");
+    });
+
+    it("renders html previews without a nested bordered iframe shell", () => {
+        const { container } = renderPreview({
+            file: buildFile({ path: "/tmp/results/report.html" }),
+            content: {
+                content: "<html><body><h1>Report</h1></body></html>",
+                contentType: "text/html",
+            },
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.html",
+        });
+
+        const surface = container.querySelector("section > div");
+        const frame = screen.getByTitle("HTML preview");
+
+        expect(surface?.className).not.toContain("p-5");
+        expect(frame.className).not.toContain("border");
+        expect(frame.className).not.toContain("rounded-[1.5rem]");
+    });
+
+    it("renders text previews directly on the shared surface without a bordered inner box", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/report.txt" }),
+            content: { content: "hello", contentType: "text/plain" },
+        });
+
+        const codeBlock = screen.getByText("highlighted:hello");
+        const shell = codeBlock.closest("div");
+
+        expect(shell?.className).not.toContain("border");
+        expect(shell?.className).not.toContain("rounded-[1.5rem]");
+    });
+
+    it("renders svg previews without a nested bordered frame", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/plot.svg" }),
+            content: {
+                content: "<svg><rect width='10' height='10'/></svg>",
+                contentType: "image/svg+xml",
+            },
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg",
+        });
+
+        const image = screen.getByAltText("plot.svg preview");
+        const surface = image.closest("div");
+
+        expect(surface?.className).not.toContain("border");
+        expect(surface?.className).not.toContain("p-3");
     });
 
     it("uses an icon-only download anchor on the 413 too-large branch without a 'Preview' eyebrow", () => {
