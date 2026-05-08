@@ -600,4 +600,53 @@ test.describe("File Browser single preview layout", () => {
         expect(cardBBox.width).toBeLessThan(rowBBox.width * 0.6);
         await expect(filename).toContainText(".");
     });
+
+    test("renders image thumbnails at a usable width in subfolder preview cards", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const directoryButton = page.locator(
+            `[data-directory-path="${rnaseqRootPath}"]`,
+        );
+        const subdirControls = page.locator(
+            `[data-subdir-preview-controls="${rnaseqRootPath}"]`,
+        );
+
+        if ((await subdirControls.count()) === 0) {
+            await directoryButton.click();
+        }
+
+        await expect(subdirControls).toBeVisible();
+        await subdirControls
+            .locator('input[aria-label="Subfolder previews"]')
+            .check();
+
+        const button = page
+            .locator('button[aria-label="Open image lightbox"]')
+            .first();
+        const card = button.locator(
+            "xpath=ancestor::*[@data-subdir-preview-card][1]",
+        );
+        const image = button.locator("img").first();
+
+        await expect(card).toBeVisible();
+        await expect(button).toBeVisible();
+        await expect(image).toBeVisible();
+
+        const cardBBox = await card.boundingBox();
+        const buttonBBox = await button.boundingBox();
+        const imageBBox = await image.boundingBox();
+
+        if (!cardBBox || !buttonBBox || !imageBBox) {
+            throw new Error(
+                "Missing subfolder preview image bounding boxes for width verification",
+            );
+        }
+
+        expect(cardBBox.width).toBeGreaterThan(140);
+        expect(buttonBBox.width).toBeGreaterThan(140);
+        expect(imageBBox.width).toBeGreaterThan(140);
+        expect(imageBBox.height).toBeGreaterThan(100);
+    });
 });

@@ -1021,7 +1021,12 @@ export function FileBrowser({
                     {previewableFiles.map((file) => (
                         <div
                             key={file.path}
-                            className="inline-flex w-fit max-w-full shrink-0 flex-col gap-2"
+                            className={cn(
+                                "inline-flex max-w-full shrink-0 flex-col gap-2",
+                                previewKindForPath(file.path) === "image"
+                                    ? "w-full"
+                                    : "w-fit",
+                            )}
                             data-subdir-preview-card={file.path}
                             style={{
                                 maxWidth: `calc(var(--subdir-preview-height) * 1.8)`,
@@ -1035,7 +1040,12 @@ export function FileBrowser({
                                 {fileName(file.path)}
                             </p>
                             <div
-                                className="inline-flex w-fit max-w-full items-start overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/70 shadow-sm [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto"
+                                className={cn(
+                                    "inline-flex max-w-full items-start overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/70 shadow-sm",
+                                    previewKindForPath(file.path) === "image"
+                                        ? "w-full justify-center"
+                                        : "w-fit [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
+                                )}
                                 style={{
                                     height: `var(--subdir-preview-height)`,
                                 }}

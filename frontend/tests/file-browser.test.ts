@@ -1424,7 +1424,7 @@ describe("N1 file browser", () => {
         expect(rowA?.className).not.toMatch(/lg:grid-cols-\[/);
         expect(galleryStripA?.className).toMatch(/(?:^|\s)flex/);
         expect(galleryStripA?.className).toMatch(/(?:^|\s)w-full/);
-        expect(cardA?.className).toMatch(/(?:^|\s)w-fit/);
+        expect(cardA?.className).toMatch(/(?:^|\s)w-full/);
         expect(cardA?.className).toMatch(/(?:^|\s)shrink-0/);
 
         // Opting into tables surfaces csv previews on the row.
@@ -1680,5 +1680,56 @@ describe("N1 file browser", () => {
                 '[data-subdir-preview-file="/demo/sample-a/img-1.png"]',
             ),
         ).toBeNull();
+    });
+
+    it("does not apply collapsing width overrides to image subfolder preview cards", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-b/img-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(FileImageThumbnail, {
+                            file,
+                            fullSizeUrl: `/api/file?path=${encodeURIComponent(file.path)}`,
+                            height: 200,
+                            thumbnailUrl: `/api/file?path=${encodeURIComponent(file.path)}&thumb=true&w=320&h=200`,
+                        }),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        await click(
+            container.querySelector('input[aria-label="Subfolder previews"]'),
+        );
+
+        const card = container.querySelector(
+            '[data-subdir-preview-card="/demo/sample-a/img-1.png"]',
+        ) as HTMLElement | null;
+        const surface = card?.lastElementChild as HTMLElement | null;
+
+        expect(card).toBeTruthy();
+        expect(surface).toBeTruthy();
+        expect(card?.className).toContain("w-full");
+        expect(card?.className).not.toContain("w-fit");
+        expect(surface?.className).not.toContain("[&_button]:w-auto");
+        expect(surface?.className).not.toContain("[&_img]:w-auto");
+        expect(
+            surface?.querySelector('button[aria-label="Open image lightbox"]'),
+        ).toBeTruthy();
+        expect(
+            surface?.querySelector('img[alt="img-1.png preview"]'),
+        ).toBeTruthy();
     });
 });
