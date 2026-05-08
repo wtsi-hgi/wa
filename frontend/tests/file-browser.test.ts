@@ -1035,6 +1035,95 @@ describe("N1 file browser", () => {
         ).toBeNull();
     });
 
+    it("hides subfolder preview controls when immediate subdirectories only contain nested previewable files", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/summary.txt", "output"),
+            buildFile("/demo/sample-a/run-1/img-1.png", "output"),
+            buildFile("/demo/sample-a/run-1/img-2.png", "output"),
+            buildFile("/demo/sample-b/run-2/pic-1.png", "output"),
+            buildFile("/demo/sample-b/run-2/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-testid": `subdir-preview-${file.path}`,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [files[0] as FileEntry],
+                }),
+            );
+        });
+
+        expect(container.textContent).toContain("summary.txt");
+        expect(
+            container.querySelector('[data-subdir-preview-controls="/demo"]'),
+        ).toBeNull();
+    });
+
+    it("shows subfolder preview controls for compressed immediate-child chains when the parent has no direct files", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/run-1/img-1.png", "output"),
+            buildFile("/demo/sample-a/run-1/img-2.png", "output"),
+            buildFile("/demo/sample-b/run-2/pic-1.png", "output"),
+            buildFile("/demo/sample-b/run-2/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-testid": `subdir-preview-${file.path}`,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const controls = container.querySelector(
+            '[data-subdir-preview-controls="/demo"]',
+        );
+        const toggle = controls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        ) as HTMLInputElement | null;
+
+        expect(controls).toBeTruthy();
+        expect(toggle).toBeTruthy();
+
+        await click(toggle);
+
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-a/run-1"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-b/run-2"]',
+            ),
+        ).toBeTruthy();
+    });
+
     it("shows subfolder preview controls on initial load when the first tree row is the eligible parent folder", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const onSelectDirectory = vi.fn();

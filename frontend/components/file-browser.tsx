@@ -137,7 +137,7 @@ export function findInitialSubdirPreviewDirectory(
 ): string | undefined {
     return findInitialSubdirPreviewDirectoryInTree(
         buildDirectoryTree(files),
-        defaultSubdirPreviewKinds,
+        allSubdirPreviewKinds,
     );
 }
 
@@ -213,11 +213,8 @@ function qualifyingSubdirsFor(
     }
 
     return node.children.filter((child) =>
-        collectSubtreeFiles(child).some((file) => {
-            const kind = previewKindForPath(file.path);
-
-            return kind !== null && kinds.has(kind);
-        }),
+        (parentDirectory(child.path) === node.path || node.fileCount === 0) &&
+        previewableFilesForKinds(child, kinds).length > 0,
     );
 }
 
@@ -630,7 +627,7 @@ export function FileBrowser({
     const preferredDirectory =
         selectedDirectory ??
         uncontrolledDirectory ??
-        initialSubdirPreviewDirectory ??
+        (renderGridPreview ? initialSubdirPreviewDirectory : undefined) ??
         directoryGroups[0]?.path;
     const activeDirectory = directoryGroups.find(
         (group) => group.path === preferredDirectory,
@@ -646,7 +643,7 @@ export function FileBrowser({
     const [subdirPreviewEnabled, setSubdirPreviewEnabled] = useState(false);
     const [subdirPreviewKinds, setSubdirPreviewKinds] = useState<
         Set<SubdirPreviewKind>
-    >(() => new Set<SubdirPreviewKind>(["image"]));
+    >(() => new Set(defaultSubdirPreviewKinds));
     const [subdirPreviewHeight, setSubdirPreviewHeight] = useState(
         SUBDIR_PREVIEW_DEFAULT_HEIGHT,
     );
