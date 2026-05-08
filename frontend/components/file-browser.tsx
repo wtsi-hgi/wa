@@ -91,7 +91,7 @@ const subdirPreviewKindGroups: ReadonlyArray<{
     },
 ];
 
-const SUBDIR_PREVIEW_PAGE_SIZE = 4;
+const SUBDIR_PREVIEW_PAGE_SIZE = 20;
 const SUBDIR_PREVIEW_DEFAULT_HEIGHT = 200;
 const compressedExtensions = new Set(["gz"]);
 const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(

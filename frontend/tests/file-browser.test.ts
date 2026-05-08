@@ -1492,15 +1492,12 @@ describe("N1 file browser", () => {
         expect(folderControls?.className).not.toContain("justify-end");
     });
 
-    it("paginates and resizes subfolder preview gallery rows", async () => {
+    it("paginates subfolder preview gallery rows at twenty folders per page and preserves preview height", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
-        const subdirs = [
-            "sample-a",
-            "sample-b",
-            "sample-c",
-            "sample-d",
-            "sample-e",
-        ];
+        const subdirs = Array.from(
+            { length: 21 },
+            (_, index) => `sample-${String(index + 1).padStart(2, "0")}`,
+        );
         const files = subdirs.flatMap((name, index) =>
             [1, 2].map((n) =>
                 buildFile(`/demo/${name}/img-${index}-${n}.png`, "output"),
@@ -1538,9 +1535,10 @@ describe("N1 file browser", () => {
                 container.querySelectorAll("[data-subdir-preview-row]"),
             ).map((row) => row.getAttribute("data-subdir-preview-row"));
 
-        expect(visibleRows()).toHaveLength(4);
-        expect(visibleRows()).toContain("/demo/sample-a");
-        expect(visibleRows()).not.toContain("/demo/sample-e");
+        expect(visibleRows()).toHaveLength(20);
+        expect(visibleRows()).toContain("/demo/sample-01");
+        expect(visibleRows()).toContain("/demo/sample-20");
+        expect(visibleRows()).not.toContain("/demo/sample-21");
 
         const pageSelect = container.querySelector(
             'select[aria-label="Subfolder preview page"]',
@@ -1556,7 +1554,7 @@ describe("N1 file browser", () => {
             pageSelect.dispatchEvent(new Event("change", { bubbles: true }));
         });
 
-        expect(visibleRows()).toEqual(["/demo/sample-e"]);
+        expect(visibleRows()).toEqual(["/demo/sample-21"]);
 
         const heightSlider = container.querySelector(
             'input[aria-label="Subfolder preview height"]',
@@ -1579,7 +1577,7 @@ describe("N1 file browser", () => {
         });
 
         const strip = container.querySelector(
-            '[data-subdir-preview-strip="/demo/sample-e"]',
+            '[data-subdir-preview-strip="/demo/sample-21"]',
         ) as HTMLElement | null;
 
         expect(strip).toBeTruthy();
