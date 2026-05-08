@@ -1586,6 +1586,60 @@ describe("N1 file browser", () => {
         );
     });
 
+    it("hides the single-page widget for subfolder previews", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-b/img-1.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const controls = container.querySelector(
+            '[data-subdir-preview-controls="/demo"]',
+        );
+        const toggle = controls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        );
+
+        expect(controls).toBeTruthy();
+        expect(toggle).toBeTruthy();
+
+        await click(toggle);
+
+        const subdirControls = container.querySelector(
+            '[data-subdir-preview-controls="/demo"]',
+        );
+
+        expect(subdirControls).toBeTruthy();
+        expect(subdirControls?.textContent).not.toContain("Page 1 of 1");
+        expect(
+            container.querySelector(
+                'select[aria-label="Subfolder preview page"]',
+            ),
+        ).toBeNull();
+        expect(container.textContent).not.toContain("Page 1 of 1");
+    });
+
     it("keeps subfolder preview controls visible when selected file types narrow the gallery to one subdirectory", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [

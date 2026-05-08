@@ -963,24 +963,27 @@ export function FileBrowser({
                 onCommit={setSubdirPreviewHeight}
                 value={subdirPreviewHeight}
             />
-            <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
-                <ListFilter
-                    className="size-4 text-primary"
-                    aria-hidden="true"
-                />
-                <span>
-                    Page {safeSubdirPreviewPage} of {subdirPreviewPageCount}
-                </span>
-            </div>
             {subdirPreviewPageCount > 1 ? (
-                <PreviewPagination
-                    nextLabel="Next subfolder page"
-                    onPageChange={(page) => setSubdirPreviewPage(page)}
-                    page={safeSubdirPreviewPage}
-                    pageCount={subdirPreviewPageCount}
-                    previousLabel="Previous subfolder page"
-                    selectLabel="Subfolder preview page"
-                />
+                <>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                        <ListFilter
+                            className="size-4 text-primary"
+                            aria-hidden="true"
+                        />
+                        <span>
+                            Page {safeSubdirPreviewPage} of{" "}
+                            {subdirPreviewPageCount}
+                        </span>
+                    </div>
+                    <PreviewPagination
+                        nextLabel="Next subfolder page"
+                        onPageChange={(page) => setSubdirPreviewPage(page)}
+                        page={safeSubdirPreviewPage}
+                        pageCount={subdirPreviewPageCount}
+                        previousLabel="Previous subfolder page"
+                        selectLabel="Subfolder preview page"
+                    />
+                </>
             ) : null}
         </div>
     );
