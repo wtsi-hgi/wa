@@ -2219,6 +2219,139 @@ describe("N1 file browser", () => {
         ).toBeNull();
     });
 
+    it("closes the file types menu on outside clicks without collapsing the folder", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const handleSelectDirectory = vi.fn();
+        const files = [
+            buildFile("/demo/readme.md", "output"),
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+            buildFile("/demo/sample-b/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: handleSelectDirectory,
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [files[0] as FileEntry],
+                }),
+            );
+        });
+
+        const disclosure = () =>
+            container.querySelector(
+                '[data-subdir-preview-kind-disclosure="/demo"]',
+            ) as HTMLElement | null;
+        const trigger = () =>
+            disclosure()?.querySelector(
+                'summary, button[aria-label="File types"]',
+            ) as HTMLElement | null;
+        const directoryButton = () =>
+            container.querySelector(
+                'button[data-directory-path="/demo"]',
+            ) as HTMLElement | null;
+
+        expect(disclosure()).toBeTruthy();
+        expect(directoryButton()).toBeTruthy();
+
+        await click(trigger());
+
+        expect(disclosure()?.hasAttribute("open")).toBe(true);
+        expect(
+            container.querySelector('[data-subdir-preview-kinds="/demo"]'),
+        ).toBeTruthy();
+
+        await act(async () => {
+            directoryButton()?.dispatchEvent(
+                new MouseEvent("click", { bubbles: true, cancelable: true }),
+            );
+        });
+
+        expect(disclosure()?.hasAttribute("open")).toBe(false);
+        expect(directoryButton()?.getAttribute("data-directory-expanded")).toBe(
+            "true",
+        );
+        expect(handleSelectDirectory).not.toHaveBeenCalled();
+    });
+
+    it("closes the file types menu without consuming unrelated outside file clicks", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const handleSelectFile = vi.fn();
+        const files = [
+            buildFile("/demo/readme.md", "output"),
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+            buildFile("/demo/sample-b/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: handleSelectFile,
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [files[0] as FileEntry],
+                }),
+            );
+        });
+
+        const disclosure = () =>
+            container.querySelector(
+                '[data-subdir-preview-kind-disclosure="/demo"]',
+            ) as HTMLElement | null;
+        const trigger = () =>
+            disclosure()?.querySelector(
+                'summary, button[aria-label="File types"]',
+            ) as HTMLElement | null;
+        const fileButton = () =>
+            container.querySelector(
+                'button[data-file-path="/demo/readme.md"]',
+            ) as HTMLElement | null;
+
+        expect(disclosure()).toBeTruthy();
+        expect(fileButton()).toBeTruthy();
+
+        handleSelectFile.mockClear();
+
+        await click(trigger());
+
+        expect(disclosure()?.hasAttribute("open")).toBe(true);
+
+        await act(async () => {
+            fileButton()?.dispatchEvent(
+                new MouseEvent("click", { bubbles: true, cancelable: true }),
+            );
+        });
+
+        expect(disclosure()?.hasAttribute("open")).toBe(false);
+        expect(handleSelectFile).toHaveBeenCalledTimes(1);
+        expect(handleSelectFile).toHaveBeenCalledWith(
+            expect.objectContaining({ path: "/demo/readme.md" }),
+        );
+    });
+
     it("does not apply collapsing width overrides to image subfolder preview cards", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const { FileImageThumbnail } =

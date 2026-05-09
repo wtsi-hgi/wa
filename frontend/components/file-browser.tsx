@@ -682,6 +682,12 @@ export function FileBrowser({
     const [subdirPreviewPages, setSubdirPreviewPages] = useState<
         Record<string, number>
     >({});
+    const [
+        openSubdirPreviewKindDisclosurePath,
+        setOpenSubdirPreviewKindDisclosurePath,
+    ] = useState<string | null>(null);
+    const openSubdirPreviewKindDisclosureRef =
+        useRef<HTMLDetailsElement | null>(null);
     const effectivePreviewHeight = onPreviewHeightChange
         ? previewHeight
         : uncontrolledPreviewHeight;
@@ -733,6 +739,48 @@ export function FileBrowser({
 
         onSelectFile(activeFile);
     }, [activeFile, onSelectFile, preferredSelectedPath, selectedPath]);
+    useEffect(() => {
+        if (!openSubdirPreviewKindDisclosurePath) {
+            return;
+        }
+
+        const handleDocumentClick = (event: MouseEvent) => {
+            const disclosure = openSubdirPreviewKindDisclosureRef.current;
+
+            if (!disclosure) {
+                setOpenSubdirPreviewKindDisclosurePath(null);
+                return;
+            }
+
+            const target = event.target;
+
+            if (target instanceof Node && disclosure.contains(target)) {
+                return;
+            }
+
+            disclosure.open = false;
+            openSubdirPreviewKindDisclosureRef.current = null;
+            setOpenSubdirPreviewKindDisclosurePath(null);
+
+            const targetElement =
+                target instanceof Element
+                    ? target
+                    : target instanceof Node
+                      ? target.parentElement
+                      : null;
+
+            if (targetElement?.closest("button[data-directory-path]")) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        };
+
+        document.addEventListener("click", handleDocumentClick, true);
+
+        return () => {
+            document.removeEventListener("click", handleDocumentClick, true);
+        };
+    }, [openSubdirPreviewKindDisclosurePath]);
 
     const handlePreviewHeightCommit = (value: number) => {
         if (onPreviewHeightChange) {
@@ -876,8 +924,42 @@ export function FileBrowser({
                         <details
                             className="relative"
                             data-subdir-preview-kind-disclosure={directoryPath}
+                            open={
+                                openSubdirPreviewKindDisclosurePath ===
+                                directoryPath
+                            }
+                            ref={(element) => {
+                                if (
+                                    openSubdirPreviewKindDisclosurePath ===
+                                    directoryPath
+                                ) {
+                                    openSubdirPreviewKindDisclosureRef.current =
+                                        element;
+                                    return;
+                                }
+
+                                if (
+                                    openSubdirPreviewKindDisclosureRef.current ===
+                                    element
+                                ) {
+                                    openSubdirPreviewKindDisclosureRef.current =
+                                        null;
+                                }
+                            }}
                         >
-                            <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden">
+                            <summary
+                                aria-label="File types"
+                                className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden"
+                                onClick={(event) => {
+                                    event.preventDefault();
+                                    setOpenSubdirPreviewKindDisclosurePath(
+                                        (current) =>
+                                            current === directoryPath
+                                                ? null
+                                                : directoryPath,
+                                    );
+                                }}
+                            >
                                 <ListFilter
                                     className="size-4 text-primary"
                                     aria-hidden="true"
