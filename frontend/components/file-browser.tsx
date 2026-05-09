@@ -92,7 +92,6 @@ const subdirPreviewKindGroups: ReadonlyArray<{
 ];
 
 const SUBDIR_PREVIEW_PAGE_SIZE = 20;
-const SUBDIR_PREVIEW_DEFAULT_HEIGHT = 200;
 const compressedExtensions = new Set(["gz"]);
 const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(
     subdirPreviewKindGroups.map((group) => group.id),
@@ -674,16 +673,18 @@ export function FileBrowser({
     const hasPreviewableActiveFiles = activeFiles.some((file) =>
         pathSupportsFilePreview(file.path),
     );
+    const [uncontrolledPreviewHeight, setUncontrolledPreviewHeight] =
+        useState(previewHeight);
     const [subdirPreviewEnabled, setSubdirPreviewEnabled] = useState(false);
     const [subdirPreviewKinds, setSubdirPreviewKinds] = useState<
         Set<SubdirPreviewKind>
     >(() => new Set(defaultSubdirPreviewKinds));
-    const [subdirPreviewHeight, setSubdirPreviewHeight] = useState(
-        SUBDIR_PREVIEW_DEFAULT_HEIGHT,
-    );
     const [subdirPreviewPages, setSubdirPreviewPages] = useState<
         Record<string, number>
     >({});
+    const effectivePreviewHeight = onPreviewHeightChange
+        ? previewHeight
+        : uncontrolledPreviewHeight;
 
     const visibleExpandedDirectories = useMemo(() => {
         const next = new Set(expandedDirectories);
@@ -721,7 +722,6 @@ export function FileBrowser({
         selectedDirectory,
         uncontrolledDirectory,
     ]);
-
     useEffect(() => {
         if (!activeFile) {
             return;
@@ -734,39 +734,27 @@ export function FileBrowser({
         onSelectFile(activeFile);
     }, [activeFile, onSelectFile, preferredSelectedPath, selectedPath]);
 
-    if (directoryGroups.length === 0) {
-        return (
-            <section className="rounded-[1.75rem] border border-border/70 bg-card/85 p-5 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)]">
-                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    File Browser
-                </p>
-                <div className="mt-5 rounded-[1.5rem] border border-dashed border-border/70 bg-background/40 px-5 py-8 text-sm text-muted-foreground">
-                    No registered files
-                </div>
-            </section>
-        );
-    }
+    const handlePreviewHeightCommit = (value: number) => {
+        if (onPreviewHeightChange) {
+            onPreviewHeightChange(value);
+            return;
+        }
 
+        setUncontrolledPreviewHeight(value);
+    };
     const renderFileButton = (
         file: FileEntry,
-        nested = false,
-        embedded = false,
+        compact = false,
+        style?: CSSProperties,
     ) => (
         <button
             type="button"
+            key={file.path}
             className={cn(
-                "flex w-full items-start gap-4 text-left transition",
-                embedded
-                    ? "rounded-[1rem] px-0 py-0"
-                    : "rounded-[1.25rem] border px-4 py-4",
-                nested ? "min-h-[5.5rem]" : "",
-                embedded
-                    ? file.path === activeFile?.path
-                        ? "text-foreground"
-                        : "text-foreground/90"
-                    : file.path === activeFile?.path
-                      ? "border-primary/45 bg-primary/10"
-                      : "border-border/60 bg-background/65 hover:border-primary/35 hover:bg-background",
+                "flex w-full items-start gap-3 rounded-[1rem] border border-border/60 bg-background/70 px-3 py-3 text-left transition hover:border-primary/40 hover:bg-background",
+                effectiveSelectedPath === file.path &&
+                    "border-primary/45 bg-primary/10",
+                compact && "h-full min-w-0",
             )}
             data-file-path={file.path}
             onClick={() => {
@@ -776,6 +764,7 @@ export function FileBrowser({
 
                 onSelectFile(file);
             }}
+            style={style}
         >
             <span
                 aria-hidden="true"
@@ -798,85 +787,243 @@ export function FileBrowser({
         </button>
     );
 
-    const renderPreviewControls = (
-        directoryPath: string,
-        placement: "folder" | "bottom",
-    ) => {
+    const renderPreviewControls = (directoryPath: string) => {
         const showPreviewPaging = previewPageCount > 1;
 
-        if (placement === "bottom" && !showPreviewPaging) {
+        if (!showPreviewPaging) {
             return null;
         }
 
         return (
             <div
-                className={cn(
-                    "flex flex-wrap items-center gap-2 text-sm",
-                    placement === "bottom"
-                        ? "col-span-full justify-end pt-1"
-                        : "w-full justify-start px-3 pb-3",
-                )}
-                data-file-browser-bottom-controls={
-                    placement === "bottom" ? directoryPath : undefined
-                }
-                data-file-browser-folder-controls={
-                    placement === "folder" ? directoryPath : undefined
+                className="col-span-full flex flex-wrap items-center justify-end gap-2 pt-1 text-sm"
+                data-file-browser-bottom-controls={directoryPath}
+            >
+                <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                    <ListFilter
+                        className="size-4 text-primary"
+                        aria-hidden="true"
+                    />
+                    <span>
+                        Page {previewPage} of {previewPageCount}
+                    </span>
+                </div>
+
+                <PreviewPagination
+                    nextLabel="Next preview page"
+                    onPageChange={(page) => onPreviewPageChange?.(page)}
+                    page={previewPage}
+                    pageCount={previewPageCount}
+                    previousLabel="Previous preview page"
+                    selectLabel="Preview page"
+                />
+            </div>
+        );
+    };
+
+    const renderFolderControls = (
+        directoryPath: string,
+        options: {
+            hasFilePreviewControls: boolean;
+            hasSubdirPreviewControls: boolean;
+            subdirPageCount: number;
+            safeSubdirPreviewPage: number;
+        },
+    ) => {
+        const {
+            hasFilePreviewControls,
+            hasSubdirPreviewControls,
+            safeSubdirPreviewPage,
+            subdirPageCount,
+        } = options;
+        const showPreviewPaging = previewPageCount > 1;
+
+        if (!hasFilePreviewControls && !hasSubdirPreviewControls) {
+            return null;
+        }
+
+        return (
+            <div
+                className="flex w-full flex-wrap items-center justify-start gap-2 px-3 pb-3 text-sm"
+                data-file-browser-folder-controls={directoryPath}
+                data-subdir-preview-controls={
+                    hasSubdirPreviewControls ? directoryPath : undefined
                 }
             >
-                {placement === "folder" ? (
+                {hasSubdirPreviewControls ? (
                     <>
-                        {displayedFiles.length > 1 ? (
-                            <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
-                                <input
-                                    aria-label="1 preview per row"
-                                    checked={previewMode === "grid"}
-                                    className="size-4 accent-primary"
-                                    onChange={(event) =>
-                                        onPreviewModeChange?.(
-                                            event.target.checked
-                                                ? "grid"
-                                                : "single",
-                                        )
-                                    }
-                                    type="checkbox"
+                        <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
+                            <input
+                                aria-label="Subfolder previews"
+                                checked={subdirPreviewEnabled}
+                                className="size-4 accent-primary"
+                                onChange={(event) => {
+                                    setSubdirPreviewEnabled(
+                                        event.target.checked,
+                                    );
+                                    setSubdirPreviewPages({});
+                                }}
+                                type="checkbox"
+                            />
+                            <span className="inline-flex items-center gap-2">
+                                <FolderTree
+                                    className="size-4 text-primary"
+                                    aria-hidden="true"
                                 />
-                                <span className="inline-flex items-center gap-2">
-                                    <Eye
-                                        className="size-4 text-primary"
-                                        aria-hidden="true"
-                                    />
-                                    1 preview per row
+                                Subfolder previews
+                            </span>
+                        </label>
+                        <details
+                            className="relative"
+                            data-subdir-preview-kind-disclosure={directoryPath}
+                        >
+                            <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden">
+                                <ListFilter
+                                    className="size-4 text-primary"
+                                    aria-hidden="true"
+                                />
+                                <span className="font-medium">File types</span>
+                                <span className="text-xs text-muted-foreground">
+                                    {summarizeSubdirPreviewKinds(
+                                        subdirPreviewKinds,
+                                    )}
                                 </span>
-                            </label>
-                        ) : null}
-                        <PreviewHeightControl
-                            onCommit={onPreviewHeightChange}
-                            value={previewHeight}
+                                <ChevronDown className="size-4 text-muted-foreground" />
+                            </summary>
+                            <div
+                                className="absolute right-0 z-20 mt-2 min-w-52 rounded-[1.25rem] border border-border/70 bg-background/95 p-3 shadow-lg"
+                                data-subdir-preview-kinds={directoryPath}
+                            >
+                                <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                    File types
+                                </div>
+                                <div className="space-y-2">
+                                    {subdirPreviewKindGroups.map((group) => (
+                                        <label
+                                            key={group.id}
+                                            className="flex items-center justify-between gap-3 text-sm"
+                                        >
+                                            <span>{group.label}</span>
+                                            <input
+                                                checked={subdirPreviewKinds.has(
+                                                    group.id,
+                                                )}
+                                                className="size-3.5 accent-primary"
+                                                data-subdir-preview-kind={
+                                                    group.id
+                                                }
+                                                onChange={(event) => {
+                                                    setSubdirPreviewKinds(
+                                                        (current) => {
+                                                            const next =
+                                                                new Set(
+                                                                    current,
+                                                                );
+
+                                                            if (
+                                                                event.target
+                                                                    .checked
+                                                            ) {
+                                                                next.add(
+                                                                    group.id,
+                                                                );
+                                                            } else {
+                                                                next.delete(
+                                                                    group.id,
+                                                                );
+                                                            }
+
+                                                            return next;
+                                                        },
+                                                    );
+                                                    setSubdirPreviewPages({});
+                                                }}
+                                                type="checkbox"
+                                            />
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        </details>
+                    </>
+                ) : null}
+
+                {hasFilePreviewControls && displayedFiles.length > 1 ? (
+                    <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
+                        <input
+                            aria-label="1 preview per row"
+                            checked={previewMode === "grid"}
+                            className="size-4 accent-primary"
+                            onChange={(event) =>
+                                onPreviewModeChange?.(
+                                    event.target.checked ? "grid" : "single",
+                                )
+                            }
+                            type="checkbox"
+                        />
+                        <span className="inline-flex items-center gap-2">
+                            <Eye
+                                className="size-4 text-primary"
+                                aria-hidden="true"
+                            />
+                            1 preview per row
+                        </span>
+                    </label>
+                ) : null}
+
+                <PreviewHeightControl
+                    onCommit={handlePreviewHeightCommit}
+                    value={effectivePreviewHeight}
+                />
+
+                {showPreviewPaging && hasFilePreviewControls ? (
+                    <>
+                        <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                            <ListFilter
+                                className="size-4 text-primary"
+                                aria-hidden="true"
+                            />
+                            <span>
+                                Page {previewPage} of {previewPageCount}
+                            </span>
+                        </div>
+                        <PreviewPagination
+                            nextLabel="Next preview page"
+                            onPageChange={(page) => onPreviewPageChange?.(page)}
+                            page={previewPage}
+                            pageCount={previewPageCount}
+                            previousLabel="Previous preview page"
+                            selectLabel="Preview page"
                         />
                     </>
                 ) : null}
 
-                {showPreviewPaging ? (
-                    <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
-                        <ListFilter
-                            className="size-4 text-primary"
-                            aria-hidden="true"
+                {hasSubdirPreviewControls && subdirPageCount > 1 ? (
+                    <>
+                        <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                            <ListFilter
+                                className="size-4 text-primary"
+                                aria-hidden="true"
+                            />
+                            <span>
+                                Page {safeSubdirPreviewPage} of{" "}
+                                {subdirPageCount}
+                            </span>
+                        </div>
+                        <PreviewPagination
+                            nextLabel="Next subfolder page"
+                            onPageChange={(page) => {
+                                setSubdirPreviewPages((current) => ({
+                                    ...current,
+                                    [directoryPath]: page,
+                                }));
+                            }}
+                            page={safeSubdirPreviewPage}
+                            pageCount={subdirPageCount}
+                            previousLabel="Previous subfolder page"
+                            selectLabel="Subfolder preview page"
                         />
-                        <span>
-                            Page {previewPage} of {previewPageCount}
-                        </span>
-                    </div>
-                ) : null}
-
-                {showPreviewPaging ? (
-                    <PreviewPagination
-                        nextLabel="Next preview page"
-                        onPageChange={(page) => onPreviewPageChange?.(page)}
-                        page={previewPage}
-                        pageCount={previewPageCount}
-                        previousLabel="Previous preview page"
-                        selectLabel="Preview page"
-                    />
+                    </>
                 ) : null}
             </div>
         );
@@ -913,123 +1060,6 @@ export function FileBrowser({
         };
     };
 
-    const renderSubdirPreviewControls = (
-        directoryPath: string,
-        pageCount: number,
-        safePage: number,
-    ) => (
-        <div
-            className="flex w-full flex-wrap items-center justify-start gap-2 px-3 pb-3 text-sm"
-            data-file-browser-folder-controls={directoryPath}
-            data-subdir-preview-controls={directoryPath}
-        >
-            <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
-                <input
-                    aria-label="Subfolder previews"
-                    checked={subdirPreviewEnabled}
-                    className="size-4 accent-primary"
-                    onChange={(event) => {
-                        setSubdirPreviewEnabled(event.target.checked);
-                        setSubdirPreviewPages({});
-                    }}
-                    type="checkbox"
-                />
-                <span className="inline-flex items-center gap-2">
-                    <FolderTree
-                        className="size-4 text-primary"
-                        aria-hidden="true"
-                    />
-                    Subfolder previews
-                </span>
-            </label>
-            <details
-                className="relative"
-                data-subdir-preview-kind-disclosure={directoryPath}
-            >
-                <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden">
-                    <ListFilter
-                        className="size-4 text-primary"
-                        aria-hidden="true"
-                    />
-                    <span className="font-medium">File types</span>
-                    <span className="text-xs text-muted-foreground">
-                        {summarizeSubdirPreviewKinds(subdirPreviewKinds)}
-                    </span>
-                    <ChevronDown className="size-4 text-muted-foreground" />
-                </summary>
-                <div
-                    className="absolute right-0 z-20 mt-2 min-w-52 rounded-[1.25rem] border border-border/70 bg-background/95 p-3 shadow-lg"
-                    data-subdir-preview-kinds={directoryPath}
-                >
-                    <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                        File types
-                    </div>
-                    <div className="space-y-2">
-                        {subdirPreviewKindGroups.map((group) => (
-                            <label
-                                key={group.id}
-                                className="flex items-center justify-between gap-3 text-sm"
-                            >
-                                <span>{group.label}</span>
-                                <input
-                                    checked={subdirPreviewKinds.has(group.id)}
-                                    className="size-3.5 accent-primary"
-                                    data-subdir-preview-kind={group.id}
-                                    onChange={(event) => {
-                                        setSubdirPreviewKinds((current) => {
-                                            const next = new Set(current);
-
-                                            if (event.target.checked) {
-                                                next.add(group.id);
-                                            } else {
-                                                next.delete(group.id);
-                                            }
-
-                                            return next;
-                                        });
-                                        setSubdirPreviewPages({});
-                                    }}
-                                    type="checkbox"
-                                />
-                            </label>
-                        ))}
-                    </div>
-                </div>
-            </details>
-            <PreviewHeightControl
-                ariaLabel="Subfolder preview height"
-                onCommit={setSubdirPreviewHeight}
-                value={subdirPreviewHeight}
-            />
-            {pageCount > 1 ? (
-                <>
-                    <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
-                        <ListFilter
-                            className="size-4 text-primary"
-                            aria-hidden="true"
-                        />
-                        <span>
-                            Page {safePage} of {pageCount}
-                        </span>
-                    </div>
-                    <PreviewPagination
-                        nextLabel="Next subfolder page"
-                        onPageChange={(page) => {
-                            setSubdirPreviewPages((current) => ({
-                                ...current,
-                                [directoryPath]: page,
-                            }));
-                        }}
-                        page={safePage}
-                        pageCount={pageCount}
-                        previousLabel="Previous subfolder page"
-                        selectLabel="Subfolder preview page"
-                    />
-                </>
-            ) : null}
-        </div>
-    );
-
     const renderSubdirGalleryRow = (subdir: DirectoryTreeNode): ReactNode => {
         const previewableFiles = previewableFilesForKinds(
             subdir,
@@ -1059,7 +1089,7 @@ export function FileBrowser({
                     data-subdir-preview-strip={subdir.path}
                     style={
                         {
-                            "--subdir-preview-height": `${subdirPreviewHeight}px`,
+                            "--subdir-preview-height": `${effectivePreviewHeight}px`,
                         } as CSSProperties
                     }
                 >
@@ -1145,21 +1175,12 @@ export function FileBrowser({
                 Boolean(renderGridPreview);
             const showSubdirGallery =
                 hasSubdirPreviewControls && subdirPreviewEnabled;
-            const folderControls =
-                hasSubdirPreviewControls || hasFilePreviewControls ? (
-                    <>
-                        {hasSubdirPreviewControls
-                            ? renderSubdirPreviewControls(
-                                  node.path,
-                                  subdirPreviewPageCount,
-                                  safeSubdirPreviewPage,
-                              )
-                            : null}
-                        {hasFilePreviewControls
-                            ? renderPreviewControls(node.path, "folder")
-                            : null}
-                    </>
-                ) : null;
+            const folderControls = renderFolderControls(node.path, {
+                hasFilePreviewControls,
+                hasSubdirPreviewControls,
+                safeSubdirPreviewPage,
+                subdirPageCount: subdirPreviewPageCount,
+            });
             const hasPreviewControls = Boolean(folderControls);
             const showsDirectoryFiles =
                 isStructurallyExpanded &&
@@ -1361,11 +1382,7 @@ export function FileBrowser({
                                           data-file-browser-grid-row={file.path}
                                       >
                                           <div className="min-w-0 border-r border-border/60 pr-3">
-                                              {renderFileButton(
-                                                  file,
-                                                  true,
-                                                  true,
-                                              )}
+                                              {renderFileButton(file, true)}
                                           </div>
                                           <div
                                               className="min-w-0"
@@ -1383,7 +1400,7 @@ export function FileBrowser({
                                   ),
                               )}
                         {showFilePreviewWidgets
-                            ? renderPreviewControls(node.path, "bottom")
+                            ? renderPreviewControls(node.path)
                             : null}
                     </div>,
                 );
@@ -1417,7 +1434,13 @@ export function FileBrowser({
                 </p>
             </div>
 
-            {previewMode === "single" ? (
+            {files.length === 0 ? (
+                <div className="mt-5 rounded-[1.5rem] border border-dashed border-border/70 bg-background/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                    No registered files
+                </div>
+            ) : null}
+
+            {files.length > 0 && previewMode === "single" ? (
                 <div
                     className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4"
                     data-preview-mode="single"
@@ -1426,7 +1449,8 @@ export function FileBrowser({
                         {renderDirectoryRows(directoryTree)}
                     </div>
                 </div>
-            ) : (
+            ) : null}
+            {files.length > 0 && previewMode !== "single" ? (
                 <div
                     className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4"
                     data-preview-mode="grid"
@@ -1435,7 +1459,7 @@ export function FileBrowser({
                         {renderDirectoryRows(directoryTree)}
                     </div>
                 </div>
-            )}
+            ) : null}
         </section>
     );
 }

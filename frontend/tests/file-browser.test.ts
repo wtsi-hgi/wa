@@ -1401,6 +1401,93 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
+    it("renders one shared height slider for folders eligible for both direct-file and subfolder previews", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const handlePreviewHeightChange = vi.fn();
+        const files = [
+            buildFile("/demo/summary.png", "output"),
+            buildFile("/demo/table.tsv", "output"),
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+            buildFile("/demo/sample-b/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: handlePreviewHeightChange,
+                    onPreviewModeChange: vi.fn(),
+                    onPreviewPageChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewHeight: 220,
+                    previewMode: "single",
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-subdir-preview-file": file.path },
+                            file.path,
+                        ),
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: files.slice(0, 2),
+                }),
+            );
+        });
+
+        const folderControls = container.querySelectorAll(
+            '[data-file-browser-folder-controls="/demo"]',
+        );
+        const previewHeightSliders = container.querySelectorAll(
+            '[data-file-browser-folder-controls="/demo"] input[type="range"]',
+        );
+
+        expect(folderControls).toHaveLength(1);
+        expect(previewHeightSliders).toHaveLength(1);
+        expect(
+            container.querySelector('input[aria-label="1 preview per row"]'),
+        ).toBeTruthy();
+        expect(
+            container.querySelector('input[aria-label="Subfolder previews"]'),
+        ).toBeTruthy();
+
+        const slider = previewHeightSliders[0] as HTMLInputElement;
+
+        await act(async () => {
+            slider.value = "300";
+            slider.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+
+        await act(async () => {
+            slider.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        });
+
+        expect(handlePreviewHeightChange).toHaveBeenCalledTimes(1);
+        expect(handlePreviewHeightChange).toHaveBeenCalledWith(300);
+
+        const subfolderToggle = container.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        ) as HTMLInputElement | null;
+
+        expect(subfolderToggle).toBeTruthy();
+
+        await click(subfolderToggle);
+
+        expect(
+            container.querySelectorAll(
+                '[data-file-browser-folder-controls="/demo"] input[type="range"]',
+            ),
+        ).toHaveLength(1);
+        expect(handlePreviewHeightChange).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps subfolder preview widgets visible while the parent folder stays expanded", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
@@ -1674,7 +1761,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("keeps direct preview height controls available alongside subfolder preview controls", async () => {
+    it("keeps a shared preview height control available alongside subfolder preview controls", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/demo/readme.md", "output"),
@@ -1732,10 +1819,8 @@ describe("N1 file browser", () => {
             container.querySelector('input[aria-label="Preview height"]'),
         ).toBeTruthy();
         expect(
-            container.querySelector(
-                'input[aria-label="Subfolder preview height"]',
-            ),
-        ).toBeTruthy();
+            container.querySelectorAll('input[aria-label="Preview height"]'),
+        ).toHaveLength(1);
         expect(
             controls?.querySelector(
                 '[data-subdir-preview-kind-disclosure="/demo"]',
@@ -1955,7 +2040,7 @@ describe("N1 file browser", () => {
         expect(visibleRows()).toEqual(["/demo/sample-21"]);
 
         const heightSlider = container.querySelector(
-            'input[aria-label="Subfolder preview height"]',
+            'input[aria-label="Preview height"]',
         ) as HTMLInputElement | null;
 
         expect(heightSlider).toBeTruthy();
