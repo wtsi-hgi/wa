@@ -31,7 +31,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"os"
-	"path/filepath"
 	"regexp"
 	"testing"
 	"time"
@@ -237,7 +236,7 @@ func TestResolveLibraryReturnsNotFoundOnWarmCacheMiss(t *testing.T) {
 
 func TestResolveLibraryDocCommentMentionsColdCacheGuidance(t *testing.T) {
 	convey.Convey("Given the resolver source file", t, func() {
-		resolverPath := filepath.Join("/nfs/users/nfs_s/sb10/src/go/github.com/wtsi-hgi/wa2", "mlwh", "resolver.go")
+		resolverPath := "resolver.go"
 
 		content, err := os.ReadFile(resolverPath)
 
