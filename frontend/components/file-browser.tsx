@@ -1093,7 +1093,7 @@ export function FileBrowser({
                                         className={cn(
                                             "inline-flex max-w-full overflow-hidden",
                                             isImageSubdirPreview
-                                                ? "w-full items-start justify-center rounded-[1.25rem] border border-border/60 bg-background/70 shadow-sm"
+                                                ? "w-full items-start justify-center"
                                                 : "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
                                         )}
                                         data-subdir-preview-frame={file.path}

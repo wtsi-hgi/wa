@@ -661,13 +661,20 @@ test.describe("File Browser single preview layout", () => {
         const card = button.locator(
             "xpath=ancestor::*[@data-subdir-preview-card][1]",
         );
+        const frame = page
+            .locator("[data-subdir-preview-frame]")
+            .filter({ has: button })
+            .first();
         const image = card.locator("img").first();
 
         await expect(card).toBeVisible();
+        await expect(frame).toBeVisible();
         await expect(button).toBeVisible();
         await expect(downloadLink).toBeVisible();
         await expect(image).toBeVisible();
         await expect(button.locator("img")).toHaveCount(0);
+        await expect(frame).not.toHaveClass(/border/);
+        await expect(frame).not.toHaveClass(/rounded-\[1\.25rem\]/);
 
         const overlayStructure = await card.evaluate((element) => {
             const cardImage = element.querySelector("img");

@@ -2177,6 +2177,9 @@ describe("N1 file browser", () => {
         expect(card?.className).not.toContain("w-fit");
         expect(surface?.className).not.toContain("[&_button]:w-auto");
         expect(surface?.className).not.toContain("[&_img]:w-auto");
+        expect(surface?.className).not.toContain("border");
+        expect(surface?.className).not.toContain("bg-background");
+        expect(surface?.className).not.toContain("rounded-[1.25rem]");
         expect(
             surface?.querySelector('button[aria-label="Open image lightbox"]'),
         ).toBeTruthy();
@@ -2251,8 +2254,8 @@ describe("N1 file browser", () => {
         ) as HTMLElement | null;
 
         expect(imageFrame).toBeTruthy();
-        expect(imageFrame?.className).toContain("border");
-        expect(imageFrame?.className).toContain("rounded-[1.25rem]");
+        expect(imageFrame?.className).not.toContain("border");
+        expect(imageFrame?.className).not.toContain("rounded-[1.25rem]");
 
         await click(tableCheckbox);
         await click(imageCheckbox);
