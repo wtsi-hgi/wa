@@ -165,11 +165,13 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 
 		outputDirectory := demo["output_directory"].(string)
 		files := demo["files"].([]any)
-		convey.So(len(files), convey.ShouldBeGreaterThanOrEqualTo, 6)
+		convey.So(len(files), convey.ShouldBeGreaterThanOrEqualTo, 12)
 
 		topLevelSubdirs := make(map[string]int)
 		graphicalSubdirs := make(map[string]int)
 		nestedGraphicalSubdirs := make(map[string]int)
+		directKinds := make(map[string]map[string]bool)
+		nestedKinds := make(map[string]map[string]bool)
 
 		for _, rawFile := range files {
 			file := rawFile.(map[string]any)
@@ -186,14 +188,50 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 			topLevelSubdirs[parts[0]]++
 
 			lower := strings.ToLower(relativePath)
+			previewKind := ""
+
 			if strings.HasSuffix(lower, ".svg") || strings.HasSuffix(lower, ".png") ||
 				strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||
 				strings.HasSuffix(lower, ".gif") || strings.HasSuffix(lower, ".webp") {
+				previewKind = "image"
 				graphicalSubdirs[parts[0]]++
 
 				if len(parts) > 2 {
 					nestedGraphicalSubdirs[strings.Join(parts[:len(parts)-1], "/")]++
 				}
+			}
+
+			if previewKind == "" {
+				switch {
+				case strings.HasSuffix(lower, ".csv") || strings.HasSuffix(lower, ".tsv"):
+					previewKind = "table"
+				case strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".markdown"):
+					previewKind = "markdown"
+				case strings.HasSuffix(lower, ".html") || strings.HasSuffix(lower, ".htm") || strings.HasSuffix(lower, ".json") || strings.HasSuffix(lower, ".log") || strings.HasSuffix(lower, ".py") || strings.HasSuffix(lower, ".txt") || strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml"):
+					previewKind = "code"
+				}
+			}
+
+			if previewKind == "" {
+				continue
+			}
+
+			if len(parts) == 2 {
+				if directKinds[parts[0]] == nil {
+					directKinds[parts[0]] = make(map[string]bool)
+				}
+
+				directKinds[parts[0]][previewKind] = true
+			}
+
+			if len(parts) > 2 {
+				directoryPath := strings.Join(parts[:len(parts)-1], "/")
+
+				if nestedKinds[directoryPath] == nil {
+					nestedKinds[directoryPath] = make(map[string]bool)
+				}
+
+				nestedKinds[directoryPath][previewKind] = true
 			}
 		}
 
@@ -220,5 +258,17 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 		convey.So(nestedGraphicalSubdirs["sample-a/overview"], convey.ShouldBeGreaterThanOrEqualTo, 2)
 		convey.So(nestedGraphicalSubdirs["sample-a/lanes/lane-1"], convey.ShouldBeGreaterThanOrEqualTo, 1)
 		convey.So(nestedGraphicalSubdirs["sample-a/lanes/lane-2"], convey.ShouldBeGreaterThanOrEqualTo, 1)
+		convey.So(directKinds["sample-a"]["image"], convey.ShouldBeTrue)
+		convey.So(directKinds["sample-a"]["table"], convey.ShouldBeTrue)
+		convey.So(directKinds["sample-a"]["markdown"], convey.ShouldBeTrue)
+		convey.So(directKinds["sample-a"]["code"], convey.ShouldBeTrue)
+		convey.So(nestedKinds["sample-a/lanes/lane-1"]["image"], convey.ShouldBeTrue)
+		convey.So(nestedKinds["sample-a/lanes/lane-1"]["table"], convey.ShouldBeTrue)
+		convey.So(nestedKinds["sample-a/lanes/lane-1"]["markdown"], convey.ShouldBeTrue)
+		convey.So(nestedKinds["sample-a/lanes/lane-1"]["code"], convey.ShouldBeTrue)
+		convey.So(nestedKinds["sample-a/lanes/lane-2"]["image"], convey.ShouldBeTrue)
+		convey.So(nestedKinds["sample-a/lanes/lane-2"]["table"], convey.ShouldBeTrue)
+		convey.So(nestedKinds["sample-a/lanes/lane-2"]["markdown"], convey.ShouldBeTrue)
+		convey.So(nestedKinds["sample-a/lanes/lane-2"]["code"], convey.ShouldBeTrue)
 	})
 }

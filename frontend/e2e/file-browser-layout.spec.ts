@@ -243,6 +243,11 @@ test.describe("File Browser single preview layout", () => {
         "sample-a",
         "lanes",
     );
+    const galleriesDemoLane1NotesPath = path.join(
+        galleriesDemoSampleALanesPath,
+        "lane-1",
+        "lane-1-notes.tsv",
+    );
 
     test("positions single preview to the right of file metadata at 1024px viewport", async ({
         page,
@@ -700,6 +705,73 @@ test.describe("File Browser single preview layout", () => {
         expect(buttonBBox.width).toBeGreaterThan(140);
         expect(imageBBox.width).toBeGreaterThan(140);
         expect(imageBBox.height).toBeGreaterThan(100);
+    });
+
+    test("renders subfolder table previews with a single bordered surface", async ({
+        page,
+    }) => {
+        await openNamedResultFileBrowser(page, "wtsi/galleries-demo");
+
+        await selectDirectory(page, galleriesDemoSampleAPath);
+        await selectDirectory(page, galleriesDemoSampleALanesPath);
+
+        const controls = page.locator(
+            `[data-subdir-preview-controls="${galleriesDemoSampleALanesPath}"]`,
+        );
+
+        await expect(controls).toBeVisible();
+
+        const toggle = controls.locator(
+            'input[aria-label="Subfolder previews"]',
+        );
+        const disclosure = page
+            .locator("[data-subdir-preview-kind-disclosure]")
+            .last();
+
+        if (!(await toggle.isChecked())) {
+            await toggle.click();
+        }
+
+        await disclosure.evaluate((element) => {
+            const tableCheckbox = element.querySelector(
+                'input[data-subdir-preview-kind="table"]',
+            );
+            const imageCheckbox = element.querySelector(
+                'input[data-subdir-preview-kind="image"]',
+            );
+
+            if (!(tableCheckbox instanceof HTMLInputElement)) {
+                throw new Error("Missing table subdir kind checkbox");
+            }
+
+            if (!(imageCheckbox instanceof HTMLInputElement)) {
+                throw new Error("Missing image subdir kind checkbox");
+            }
+
+            if (!tableCheckbox.checked) {
+                tableCheckbox.click();
+            }
+
+            if (imageCheckbox.checked) {
+                imageCheckbox.click();
+            }
+        });
+
+        const tableFrame = page.locator(
+            `[data-subdir-preview-frame="${galleriesDemoLane1NotesPath}"]`,
+        );
+
+        await expect(tableFrame).toBeVisible();
+
+        const metrics = await measurePreviewBorderSurfaces(tableFrame);
+
+        expect(metrics.surfaces).toHaveLength(1);
+        expect(metrics.surfaces[0]?.width).toBeGreaterThanOrEqual(
+            metrics.root.width - 2,
+        );
+        expect(metrics.surfaces[0]?.height).toBeGreaterThanOrEqual(
+            metrics.root.height - 2,
+        );
     });
 
     test("keeps parent subfolder preview widgets visible until the parent collapses", async ({

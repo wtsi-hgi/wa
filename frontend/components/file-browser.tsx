@@ -1063,42 +1063,50 @@ export function FileBrowser({
                         } as CSSProperties
                     }
                 >
-                    {previewableFiles.map((file) => (
-                        <div
-                            key={file.path}
-                            className={cn(
-                                "inline-flex max-w-full shrink-0 flex-col gap-2",
-                                previewKindForPath(file.path) === "image"
-                                    ? "w-full"
-                                    : "w-fit",
-                            )}
-                            data-subdir-preview-card={file.path}
-                            style={{
-                                maxWidth: `calc(var(--subdir-preview-height) * 1.8)`,
-                            }}
-                        >
-                            <p
-                                className="truncate text-xs font-medium text-muted-foreground"
-                                data-subdir-preview-filename={file.path}
-                                title={fileName(file.path)}
-                            >
-                                {fileName(file.path)}
-                            </p>
-                            <div
-                                className={cn(
-                                    "inline-flex max-w-full items-start overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/70 shadow-sm",
-                                    previewKindForPath(file.path) === "image"
-                                        ? "w-full justify-center"
-                                        : "w-fit [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
-                                )}
-                                style={{
-                                    height: `var(--subdir-preview-height)`,
-                                }}
-                            >
-                                {renderGridPreview?.(file) ?? null}
-                            </div>
-                        </div>
-                    ))}
+                    {previewableFiles.map((file) =>
+                        (() => {
+                            const isImageSubdirPreview =
+                                previewKindForPath(file.path) === "image";
+
+                            return (
+                                <div
+                                    key={file.path}
+                                    className={cn(
+                                        "inline-flex max-w-full shrink-0 flex-col gap-2",
+                                        isImageSubdirPreview
+                                            ? "w-full"
+                                            : "w-fit",
+                                    )}
+                                    data-subdir-preview-card={file.path}
+                                    style={{
+                                        maxWidth: `calc(var(--subdir-preview-height) * 1.8)`,
+                                    }}
+                                >
+                                    <p
+                                        className="truncate text-xs font-medium text-muted-foreground"
+                                        data-subdir-preview-filename={file.path}
+                                        title={fileName(file.path)}
+                                    >
+                                        {fileName(file.path)}
+                                    </p>
+                                    <div
+                                        className={cn(
+                                            "inline-flex max-w-full overflow-hidden",
+                                            isImageSubdirPreview
+                                                ? "w-full items-start justify-center rounded-[1.25rem] border border-border/60 bg-background/70 shadow-sm"
+                                                : "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
+                                        )}
+                                        data-subdir-preview-frame={file.path}
+                                        style={{
+                                            height: `var(--subdir-preview-height)`,
+                                        }}
+                                    >
+                                        {renderGridPreview?.(file) ?? null}
+                                    </div>
+                                </div>
+                            );
+                        })(),
+                    )}
                 </div>
             </div>
         );

@@ -338,7 +338,7 @@ const GalleryPreviewRow = memo(function GalleryPreviewRow({
     }, [file.path, resultId]);
 
     return (
-        <div data-grid-preview-path={file.path}>
+        <div className="h-full w-full" data-grid-preview-path={file.path}>
             <FilePreview
                 content={previewState.content}
                 error={previewState.error}

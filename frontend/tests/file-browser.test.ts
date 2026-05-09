@@ -2184,4 +2184,91 @@ describe("N1 file browser", () => {
             surface?.querySelector('img[alt="img-1.png preview"]'),
         ).toBeTruthy();
     });
+
+    it("renders table subfolder previews on the shared preview surface without an extra bordered frame", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const { FileImageThumbnail, FilePreview } =
+            await import("@/components/file-preview");
+        const files = [
+            buildFile("/demo/lanes/lane-1/lane-1-plot.svg", "output"),
+            buildFile("/demo/lanes/lane-1/lane-1-notes.tsv", "output"),
+            buildFile("/demo/lanes/lane-2/lane-2-plot.svg", "output"),
+            buildFile("/demo/lanes/lane-2/lane-2-notes.tsv", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        file.path.endsWith(".svg")
+                            ? createElement(FileImageThumbnail, {
+                                  file,
+                                  fullSizeUrl: `/api/file?path=${encodeURIComponent(file.path)}`,
+                                  height: 200,
+                                  thumbnailUrl: `/api/file?path=${encodeURIComponent(file.path)}&thumb=true&w=320&h=200`,
+                              })
+                            : createElement(FilePreview, {
+                                  content: {
+                                      content:
+                                          "metric\tvalue\nyield\t0.92\nclusters\t184\n",
+                                      contentType: "text/tab-separated-values",
+                                  },
+                                  file,
+                                  maxHeight: 200,
+                                  proxyUrl: `/api/file?path=${encodeURIComponent(file.path)}`,
+                              }),
+                    selectedDirectory: "/demo/lanes",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const controls = container.querySelector(
+            '[data-subdir-preview-controls="/demo/lanes"]',
+        );
+        const toggle = controls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        ) as HTMLInputElement | null;
+        const imageCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="image"]',
+        ) as HTMLInputElement | null;
+        const tableCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="table"]',
+        ) as HTMLInputElement | null;
+
+        expect(controls).toBeTruthy();
+        expect(toggle).toBeTruthy();
+        expect(imageCheckbox?.checked).toBe(true);
+        expect(tableCheckbox?.checked).toBe(false);
+
+        await click(toggle);
+
+        const imageFrame = container.querySelector(
+            '[data-subdir-preview-frame="/demo/lanes/lane-1/lane-1-plot.svg"]',
+        ) as HTMLElement | null;
+
+        expect(imageFrame).toBeTruthy();
+        expect(imageFrame?.className).toContain("border");
+        expect(imageFrame?.className).toContain("rounded-[1.25rem]");
+
+        await click(tableCheckbox);
+        await click(imageCheckbox);
+
+        const tableFrame = container.querySelector(
+            '[data-subdir-preview-frame="/demo/lanes/lane-1/lane-1-notes.tsv"]',
+        ) as HTMLElement | null;
+        const tableShell = tableFrame?.querySelector(
+            "section > div",
+        ) as HTMLElement | null;
+
+        expect(tableFrame).toBeTruthy();
+        expect(tableFrame?.className).not.toContain("border");
+        expect(tableFrame?.className).not.toContain("rounded-[1.25rem]");
+        expect(tableShell).toBeTruthy();
+        expect(tableShell?.className).toContain("border");
+        expect(tableShell?.className).toContain("rounded-[1.75rem]");
+    });
 });

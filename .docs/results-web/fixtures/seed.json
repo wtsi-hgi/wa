@@ -1051,6 +1051,24 @@
                 "kind": "output"
             },
             {
+                "path": "sample-a/notes.md",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/run.log",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/dashboard.html",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
                 "path": "sample-a/overview/navy-summary.svg",
                 "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
@@ -1075,6 +1093,18 @@
                 "kind": "output"
             },
             {
+                "path": "sample-a/lanes/lane-1/lane-1-summary.md",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/lanes/lane-1/lane-1-run.log",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
                 "path": "sample-a/lanes/lane-2/lane-2-plot.svg",
                 "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
@@ -1082,6 +1112,18 @@
             },
             {
                 "path": "sample-a/lanes/lane-2/lane-2-notes.tsv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/lanes/lane-2/lane-2-summary.md",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/lanes/lane-2/lane-2-run.log",
                 "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
