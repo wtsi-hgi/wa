@@ -1091,13 +1091,9 @@ export function FilePreview({
                             <div>
                                 <div className="relative">
                                     <div
-                                        className={
-                                            content.truncated
-                                                ? "overflow-hidden"
-                                                : undefined
-                                        }
+                                        className="h-full overflow-hidden"
                                         style={
-                                            content.truncated && maxHeight
+                                            maxHeight
                                                 ? {
                                                       maxHeight: `${maxHeight}px`,
                                                   }

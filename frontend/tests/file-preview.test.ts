@@ -1326,6 +1326,28 @@ describe("O1 file preview", () => {
         expect(largeRowCount).toBe(21);
     });
 
+    it("applies maxHeight to complete inline tsv previews with an invisible layout wrapper", () => {
+        renderPreview({
+            file: buildFile({ path: "/tmp/results/data.tsv" }),
+            content: {
+                content: buildCsv(20).replaceAll(",", "\t"),
+                contentType: "text/tab-separated-values",
+            },
+            maxHeight: 220,
+            proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fdata.tsv",
+        });
+
+        const table = screen.getByRole("table");
+        const heightWrapper = table.closest(
+            'div[style*="max-height: 220px"]',
+        ) as HTMLElement | null;
+
+        expect(heightWrapper).toBeTruthy();
+        expect(heightWrapper?.className).toContain("overflow-hidden");
+        expect(heightWrapper?.className).not.toContain("border");
+        expect(heightWrapper?.className).not.toContain("rounded");
+    });
+
     it("keeps enlarged pagination at 1000 rows for large delimited previews", () => {
         vi.useFakeTimers();
 
