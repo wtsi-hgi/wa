@@ -378,7 +378,9 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         [directoryGroups, initialSelectedDirectory],
     );
     const [previewMode, setPreviewMode] = useState<PreviewMode>("single");
-    const [previewHeight, setPreviewHeight] = useState(defaultPreviewHeight);
+    const [previewHeightsByDirectory, setPreviewHeightsByDirectory] = useState<
+        Record<string, number>
+    >({});
     const [selectedDirectory, setSelectedDirectory] = useState<
         string | undefined
     >(initialSelectedDirectory);
@@ -397,6 +399,10 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
     });
     const effectiveSelectedDirectory =
         selectedDirectory ?? initialSelectedDirectory;
+    const previewHeight = effectiveSelectedDirectory
+        ? (previewHeightsByDirectory[effectiveSelectedDirectory] ??
+          defaultPreviewHeight)
+        : defaultPreviewHeight;
 
     const selectedGroup = useMemo(
         () =>
@@ -616,7 +622,16 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
     return (
         <FileBrowser
             files={files}
-            onPreviewHeightChange={setPreviewHeight}
+            onPreviewHeightChange={(value) => {
+                if (!effectiveSelectedDirectory) {
+                    return;
+                }
+
+                setPreviewHeightsByDirectory((current) => ({
+                    ...current,
+                    [effectiveSelectedDirectory]: value,
+                }));
+            }}
             onPreviewModeChange={(nextMode) => {
                 setPreviewMode(nextMode);
                 setPreviewPage(1);

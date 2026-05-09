@@ -769,6 +769,72 @@ describe("O1 result detail file integration", () => {
         expect(fetchMock.mock.calls.length).toBe(fetchCallsAfterInitialLoad);
     });
 
+    it("restores preview height per selected directory instead of sharing one global value", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+        const fileBrowser = () =>
+            document.querySelector('[data-file-browser="true"]');
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [
+                    buildFile("/tmp/results/a/plot-001.png"),
+                    buildFile("/tmp/results/a/plot-002.png"),
+                    buildFile("/tmp/results/b/plot-003.png"),
+                    buildFile("/tmp/results/b/plot-004.png"),
+                ],
+                resultId: "result-1",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fileBrowser()).toBeTruthy();
+        });
+
+        expect(fileBrowser()?.getAttribute("data-selected-directory")).toBe(
+            "/tmp/results",
+        );
+        expect(fileBrowser()?.getAttribute("data-preview-height")).toBe("220");
+
+        fireEvent.click(screen.getByRole("button", { name: "/tmp/results/a" }));
+
+        await waitFor(() => {
+            expect(fileBrowser()?.getAttribute("data-selected-directory")).toBe(
+                "/tmp/results/a",
+            );
+        });
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "preview-height-320" }),
+        );
+
+        await waitFor(() => {
+            expect(fileBrowser()?.getAttribute("data-preview-height")).toBe(
+                "320",
+            );
+        });
+
+        fireEvent.click(screen.getByRole("button", { name: "/tmp/results/b" }));
+
+        await waitFor(() => {
+            expect(fileBrowser()?.getAttribute("data-selected-directory")).toBe(
+                "/tmp/results/b",
+            );
+        });
+
+        expect(fileBrowser()?.getAttribute("data-preview-height")).toBe("220");
+
+        fireEvent.click(screen.getByRole("button", { name: "/tmp/results/a" }));
+
+        await waitFor(() => {
+            expect(fileBrowser()?.getAttribute("data-selected-directory")).toBe(
+                "/tmp/results/a",
+            );
+        });
+
+        expect(fileBrowser()?.getAttribute("data-preview-height")).toBe("320");
+    });
+
     it("rerenders non-image grid previews once when preview height changes", async () => {
         // Updated test: non-image previews (including CSV) now re-render when
         // maxHeight changes to enable proper truncation based on preview height

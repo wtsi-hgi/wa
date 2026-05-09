@@ -675,10 +675,11 @@ export function FileBrowser({
     );
     const [uncontrolledPreviewHeight, setUncontrolledPreviewHeight] =
         useState(previewHeight);
-    const [subdirPreviewEnabled, setSubdirPreviewEnabled] = useState(false);
-    const [subdirPreviewKinds, setSubdirPreviewKinds] = useState<
-        Set<SubdirPreviewKind>
-    >(() => new Set(defaultSubdirPreviewKinds));
+    const [subdirPreviewEnabledByPath, setSubdirPreviewEnabledByPath] =
+        useState<Record<string, boolean>>({});
+    const [subdirPreviewKindsByPath, setSubdirPreviewKindsByPath] = useState<
+        Record<string, Set<SubdirPreviewKind>>
+    >({});
     const [subdirPreviewPages, setSubdirPreviewPages] = useState<
         Record<string, number>
     >({});
@@ -691,6 +692,13 @@ export function FileBrowser({
     const effectivePreviewHeight = onPreviewHeightChange
         ? previewHeight
         : uncontrolledPreviewHeight;
+    const subdirPreviewEnabledFor = (directoryPath: string): boolean =>
+        subdirPreviewEnabledByPath[directoryPath] ?? false;
+    const subdirPreviewKindsFor = (
+        directoryPath: string,
+    ): Set<SubdirPreviewKind> =>
+        subdirPreviewKindsByPath[directoryPath] ??
+        new Set(defaultSubdirPreviewKinds);
 
     const visibleExpandedDirectories = useMemo(() => {
         const next = new Set(expandedDirectories);
@@ -874,6 +882,7 @@ export function FileBrowser({
         options: {
             hasFilePreviewControls: boolean;
             hasSubdirPreviewControls: boolean;
+            isSelected: boolean;
             subdirPageCount: number;
             safeSubdirPreviewPage: number;
         },
@@ -881,10 +890,13 @@ export function FileBrowser({
         const {
             hasFilePreviewControls,
             hasSubdirPreviewControls,
+            isSelected,
             safeSubdirPreviewPage,
             subdirPageCount,
         } = options;
         const showPreviewPaging = previewPageCount > 1;
+        const subdirPreviewEnabled = subdirPreviewEnabledFor(directoryPath);
+        const subdirPreviewKinds = subdirPreviewKindsFor(directoryPath);
 
         if (!hasFilePreviewControls && !hasSubdirPreviewControls) {
             return null;
@@ -906,10 +918,17 @@ export function FileBrowser({
                                 checked={subdirPreviewEnabled}
                                 className="size-4 accent-primary"
                                 onChange={(event) => {
-                                    setSubdirPreviewEnabled(
-                                        event.target.checked,
+                                    setSubdirPreviewEnabledByPath(
+                                        (current) => ({
+                                            ...current,
+                                            [directoryPath]:
+                                                event.target.checked,
+                                        }),
                                     );
-                                    setSubdirPreviewPages({});
+                                    setSubdirPreviewPages((current) => ({
+                                        ...current,
+                                        [directoryPath]: 1,
+                                    }));
                                 }}
                                 type="checkbox"
                             />
@@ -995,30 +1014,42 @@ export function FileBrowser({
                                                     group.id
                                                 }
                                                 onChange={(event) => {
-                                                    setSubdirPreviewKinds(
+                                                    setSubdirPreviewKindsByPath(
                                                         (current) => {
-                                                            const next =
+                                                            const next = {
+                                                                ...current,
+                                                            };
+                                                            const nextKinds =
                                                                 new Set(
-                                                                    current,
+                                                                    subdirPreviewKinds,
                                                                 );
 
                                                             if (
                                                                 event.target
                                                                     .checked
                                                             ) {
-                                                                next.add(
+                                                                nextKinds.add(
                                                                     group.id,
                                                                 );
                                                             } else {
-                                                                next.delete(
+                                                                nextKinds.delete(
                                                                     group.id,
                                                                 );
                                                             }
 
+                                                            next[
+                                                                directoryPath
+                                                            ] = nextKinds;
+
                                                             return next;
                                                         },
                                                     );
-                                                    setSubdirPreviewPages({});
+                                                    setSubdirPreviewPages(
+                                                        (current) => ({
+                                                            ...current,
+                                                            [directoryPath]: 1,
+                                                        }),
+                                                    );
                                                 }}
                                                 type="checkbox"
                                             />
@@ -1112,6 +1143,7 @@ export function FileBrowser({
     };
 
     const subdirPreviewStateFor = (node: DirectoryTreeNode) => {
+        const subdirPreviewKinds = subdirPreviewKindsFor(node.path);
         const eligibleSubdirs = qualifyingSubdirsFor(
             node,
             allSubdirPreviewKinds,
@@ -1142,11 +1174,11 @@ export function FileBrowser({
         };
     };
 
-    const renderSubdirGalleryRow = (subdir: DirectoryTreeNode): ReactNode => {
-        const previewableFiles = previewableFilesForKinds(
-            subdir,
-            subdirPreviewKinds,
-        );
+    const renderSubdirGalleryRow = (
+        subdir: DirectoryTreeNode,
+        kinds: ReadonlySet<SubdirPreviewKind>,
+    ): ReactNode => {
+        const previewableFiles = previewableFilesForKinds(subdir, kinds);
 
         return (
             <div
@@ -1255,11 +1287,15 @@ export function FileBrowser({
                 isStructurallyExpanded &&
                 subdirPreviewAvailable &&
                 Boolean(renderGridPreview);
+            const subdirPreviewKinds = subdirPreviewKindsFor(node.path);
             const showSubdirGallery =
-                hasSubdirPreviewControls && subdirPreviewEnabled;
+                hasSubdirPreviewControls &&
+                isSelected &&
+                subdirPreviewEnabledFor(node.path);
             const folderControls = renderFolderControls(node.path, {
                 hasFilePreviewControls,
                 hasSubdirPreviewControls,
+                isSelected,
                 safeSubdirPreviewPage,
                 subdirPageCount: subdirPreviewPageCount,
             });
@@ -1268,8 +1304,7 @@ export function FileBrowser({
                 isStructurallyExpanded &&
                 node.path === effectiveSelectedDirectory &&
                 displayedFiles.length > 0;
-            const showsChildRows =
-                isStructurallyExpanded && hasChildren && !showSubdirGallery;
+            const showsChildRows = isStructurallyExpanded && hasChildren;
             const isExpanded =
                 hasPreviewControls ||
                 showSubdirGallery ||
@@ -1400,7 +1435,7 @@ export function FileBrowser({
                         data-subdir-preview-gallery={node.path}
                     >
                         {visibleSubdirs.map((subdir) =>
-                            renderSubdirGalleryRow(subdir),
+                            renderSubdirGalleryRow(subdir, subdirPreviewKinds),
                         )}
                     </div>,
                 );
@@ -1488,7 +1523,7 @@ export function FileBrowser({
                 );
             }
 
-            if (isStructurallyExpanded && hasChildren && !showSubdirGallery) {
+            if (isStructurallyExpanded && hasChildren) {
                 rows.push(
                     ...renderDirectoryRows(node.children, depth + 1, node.path),
                 );

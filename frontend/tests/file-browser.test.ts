@@ -1688,6 +1688,156 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
+    it("keeps nested subfolder preview ownership and file-type settings on the selected folder", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/direct.png", "output"),
+            buildFile("/demo/sample-a/direct.tsv", "output"),
+            buildFile("/demo/sample-a/lanes/lane-1/plot.png", "output"),
+            buildFile("/demo/sample-a/lanes/lane-1/metrics.tsv", "output"),
+            buildFile("/demo/sample-a/lanes/lane-2/plot.png", "output"),
+            buildFile("/demo/sample-a/lanes/lane-2/metrics.tsv", "output"),
+            buildFile("/demo/sample-b/direct.png", "output"),
+            buildFile("/demo/sample-b/direct.tsv", "output"),
+        ];
+
+        function ControlledHarness(): ReactNode {
+            const [selectedDirectory, setSelectedDirectory] = useState("/demo");
+
+            return createElement(FileBrowser, {
+                files,
+                onSelectDirectory: (path: string) => {
+                    setSelectedDirectory(path);
+                },
+                onSelectFile: vi.fn(),
+                renderGridPreview: (file: FileEntry): ReactNode =>
+                    createElement(
+                        "div",
+                        {
+                            "data-subdir-preview-file": file.path,
+                        },
+                        file.path,
+                    ),
+                selectedDirectory,
+                visibleFiles: [],
+            });
+        }
+
+        await act(async () => {
+            root.render(createElement(ControlledHarness));
+        });
+
+        const demoControls = () =>
+            container.querySelector(
+                '[data-subdir-preview-controls="/demo"]',
+            ) as HTMLElement | null;
+        const lanesControls = () =>
+            container.querySelector(
+                '[data-subdir-preview-controls="/demo/sample-a/lanes"]',
+            ) as HTMLElement | null;
+
+        await click(
+            demoControls()?.querySelector(
+                'input[aria-label="Subfolder previews"]',
+            ) ?? null,
+        );
+
+        expect(
+            container.querySelector('[data-subdir-preview-gallery="/demo"]'),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/direct.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/direct.tsv"]',
+            ),
+        ).toBeNull();
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a"]',
+            ),
+        );
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a/lanes"]',
+            ),
+        );
+
+        expect(lanesControls()).toBeTruthy();
+
+        await click(
+            lanesControls()?.querySelector(
+                'input[aria-label="Subfolder previews"]',
+            ) ?? null,
+        );
+        await click(
+            lanesControls()?.querySelector(
+                'input[data-subdir-preview-kind="table"]',
+            ) ?? null,
+        );
+
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-gallery="/demo/sample-a/lanes"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector('[data-subdir-preview-gallery="/demo"]'),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/lanes/lane-1/metrics.tsv"]',
+            ),
+        ).toBeTruthy();
+
+        await click(
+            container.querySelector('button[data-directory-path="/demo"]'),
+        );
+        await click(
+            container.querySelector('button[data-directory-path="/demo"]'),
+        );
+
+        expect(
+            container.querySelector('[data-subdir-preview-gallery="/demo"]'),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/direct.tsv"]',
+            ),
+        ).toBeNull();
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a"]',
+            ),
+        );
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a/lanes"]',
+            ),
+        );
+
+        const lanesTableCheckbox = lanesControls()?.querySelector(
+            'input[data-subdir-preview-kind="table"]',
+        ) as HTMLInputElement | null;
+
+        expect(lanesTableCheckbox?.checked).toBe(true);
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-gallery="/demo/sample-a/lanes"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/lanes/lane-1/metrics.tsv"]',
+            ),
+        ).toBeTruthy();
+    });
+
     it("shows subfolder preview controls on initial load when the first tree row is the eligible parent folder", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const onSelectDirectory = vi.fn();
