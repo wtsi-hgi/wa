@@ -41,6 +41,27 @@ async function openResultFileBrowser(page: Page) {
     await expect(fileBrowser).toBeVisible({ timeout: 30000 });
 }
 
+async function openNamedResultFileBrowser(page: Page, pipelineName: string) {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/");
+    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.locator('tbody tr[data-result-row="true"]')).toHaveCount(
+        4,
+    );
+
+    const resultLink = page.getByRole("link", { name: pipelineName }).first();
+    const href = await resultLink.getAttribute("href");
+
+    await page.goto(href ?? "/results/");
+    await expect(page).toHaveURL(new RegExp(`${href ?? "/results/"}$`));
+    await expect(
+        page.getByRole("heading", { level: 1, name: pipelineName }),
+    ).toBeVisible({ timeout: 30000 });
+
+    const fileBrowser = page.locator('[data-file-browser="true"]');
+    await expect(fileBrowser).toBeVisible({ timeout: 30000 });
+}
+
 async function openFirstSinglePreview(page: Page, directoryPath: string) {
     await selectDirectory(page, directoryPath);
 
@@ -212,6 +233,16 @@ test.describe("File Browser single preview layout", () => {
         "plot-080.png",
     );
     const rnaseqNotesSummaryPath = path.join(rnaseqNotesPath, "summary.txt");
+    const galleriesDemoRootPath = path.join(fixturesRoot, "galleries-demo");
+    const galleriesDemoSampleAPath = path.join(
+        galleriesDemoRootPath,
+        "sample-a",
+    );
+    const galleriesDemoSampleALanesPath = path.join(
+        galleriesDemoRootPath,
+        "sample-a",
+        "lanes",
+    );
 
     test("positions single preview to the right of file metadata at 1024px viewport", async ({
         page,
@@ -727,5 +758,33 @@ test.describe("File Browser single preview layout", () => {
             fullPage: true,
             path: closeSubdirScreenshotPath,
         });
+    });
+
+    test("shows nested eligible subfolder preview controls on both the parent and child rows", async ({
+        page,
+    }) => {
+        await openNamedResultFileBrowser(page, "wtsi/galleries-demo");
+
+        await selectDirectory(page, galleriesDemoSampleAPath);
+
+        const sampleAControls = page.locator(
+            `[data-subdir-preview-controls="${galleriesDemoSampleAPath}"]`,
+        );
+
+        await expect(sampleAControls).toBeVisible();
+        await expect(
+            page.locator(
+                `[data-file-browser-folder-controls="${galleriesDemoSampleAPath}"] input[aria-label="1 preview per row"]`,
+            ),
+        ).toHaveCount(1);
+
+        await selectDirectory(page, galleriesDemoSampleALanesPath);
+
+        const lanesControls = page.locator(
+            `[data-subdir-preview-controls="${galleriesDemoSampleALanesPath}"]`,
+        );
+
+        await expect(sampleAControls).toBeVisible();
+        await expect(lanesControls).toBeVisible();
     });
 });

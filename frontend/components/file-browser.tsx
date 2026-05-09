@@ -675,20 +675,15 @@ export function FileBrowser({
         pathSupportsFilePreview(file.path),
     );
     const [subdirPreviewEnabled, setSubdirPreviewEnabled] = useState(false);
-    const [subdirPreviewDirectory, setSubdirPreviewDirectory] = useState<
-        string | undefined
-    >(() =>
-        renderGridPreview
-            ? (selectedDirectory ?? initialSubdirPreviewDirectory)
-            : undefined,
-    );
     const [subdirPreviewKinds, setSubdirPreviewKinds] = useState<
         Set<SubdirPreviewKind>
     >(() => new Set(defaultSubdirPreviewKinds));
     const [subdirPreviewHeight, setSubdirPreviewHeight] = useState(
         SUBDIR_PREVIEW_DEFAULT_HEIGHT,
     );
-    const [subdirPreviewPage, setSubdirPreviewPage] = useState(1);
+    const [subdirPreviewPages, setSubdirPreviewPages] = useState<
+        Record<string, number>
+    >({});
 
     const visibleExpandedDirectories = useMemo(() => {
         const next = new Set(expandedDirectories);
@@ -701,67 +696,6 @@ export function FileBrowser({
 
         return next;
     }, [collapsedDirectories, effectiveSelectedDirectory, expandedDirectories]);
-    const effectiveSubdirPreviewDirectory = useMemo(() => {
-        const candidatePaths = renderGridPreview
-            ? [
-                  subdirPreviewDirectory,
-                  effectiveSelectedDirectory,
-                  initialSubdirPreviewDirectory,
-              ]
-            : [];
-
-        return candidatePaths.find((path): path is string => {
-            if (!path || !visibleExpandedDirectories.has(path)) {
-                return false;
-            }
-
-            const node = findTreeNodeByPath(directoryTree, path);
-
-            return qualifyingSubdirsFor(node, allSubdirPreviewKinds).length > 1;
-        });
-    }, [
-        directoryTree,
-        effectiveSelectedDirectory,
-        initialSubdirPreviewDirectory,
-        renderGridPreview,
-        subdirPreviewDirectory,
-        visibleExpandedDirectories,
-    ]);
-    const subdirPreviewTreeNode = useMemo(
-        () =>
-            effectiveSubdirPreviewDirectory
-                ? findTreeNodeByPath(
-                      directoryTree,
-                      effectiveSubdirPreviewDirectory,
-                  )
-                : undefined,
-        [directoryTree, effectiveSubdirPreviewDirectory],
-    );
-    const eligibleSubdirs = useMemo(
-        () =>
-            qualifyingSubdirsFor(subdirPreviewTreeNode, allSubdirPreviewKinds),
-        [subdirPreviewTreeNode],
-    );
-    const qualifyingSubdirs = useMemo(
-        () => qualifyingSubdirsFor(subdirPreviewTreeNode, subdirPreviewKinds),
-        [subdirPreviewKinds, subdirPreviewTreeNode],
-    );
-    const subdirPreviewAvailable = eligibleSubdirs.length > 1;
-    const subdirPreviewPageCount = Math.max(
-        1,
-        Math.ceil(qualifyingSubdirs.length / SUBDIR_PREVIEW_PAGE_SIZE),
-    );
-    const safeSubdirPreviewPage = Math.min(
-        subdirPreviewPage,
-        subdirPreviewPageCount,
-    );
-    const visibleSubdirs = subdirPreviewAvailable
-        ? qualifyingSubdirs.slice(
-              (safeSubdirPreviewPage - 1) * SUBDIR_PREVIEW_PAGE_SIZE,
-              safeSubdirPreviewPage * SUBDIR_PREVIEW_PAGE_SIZE,
-          )
-        : [];
-
     useEffect(() => {
         if (
             !effectiveSelectedDirectory ||
@@ -948,7 +882,42 @@ export function FileBrowser({
         );
     };
 
-    const renderSubdirPreviewControls = (directoryPath: string) => (
+    const subdirPreviewStateFor = (node: DirectoryTreeNode) => {
+        const eligibleSubdirs = qualifyingSubdirsFor(
+            node,
+            allSubdirPreviewKinds,
+        );
+        const qualifyingSubdirs = qualifyingSubdirsFor(
+            node,
+            subdirPreviewKinds,
+        );
+        const available = eligibleSubdirs.length > 1;
+        const pageCount = Math.max(
+            1,
+            Math.ceil(qualifyingSubdirs.length / SUBDIR_PREVIEW_PAGE_SIZE),
+        );
+        const requestedPage = subdirPreviewPages[node.path] ?? 1;
+        const safePage = Math.min(requestedPage, pageCount);
+        const visibleSubdirs = available
+            ? qualifyingSubdirs.slice(
+                  (safePage - 1) * SUBDIR_PREVIEW_PAGE_SIZE,
+                  safePage * SUBDIR_PREVIEW_PAGE_SIZE,
+              )
+            : [];
+
+        return {
+            available,
+            pageCount,
+            safePage,
+            visibleSubdirs,
+        };
+    };
+
+    const renderSubdirPreviewControls = (
+        directoryPath: string,
+        pageCount: number,
+        safePage: number,
+    ) => (
         <div
             className="flex w-full flex-wrap items-center justify-start gap-2 px-3 pb-3 text-sm"
             data-file-browser-folder-controls={directoryPath}
@@ -961,7 +930,7 @@ export function FileBrowser({
                     className="size-4 accent-primary"
                     onChange={(event) => {
                         setSubdirPreviewEnabled(event.target.checked);
-                        setSubdirPreviewPage(1);
+                        setSubdirPreviewPages({});
                     }}
                     type="checkbox"
                 />
@@ -1018,7 +987,7 @@ export function FileBrowser({
 
                                             return next;
                                         });
-                                        setSubdirPreviewPage(1);
+                                        setSubdirPreviewPages({});
                                     }}
                                     type="checkbox"
                                 />
@@ -1032,7 +1001,7 @@ export function FileBrowser({
                 onCommit={setSubdirPreviewHeight}
                 value={subdirPreviewHeight}
             />
-            {subdirPreviewPageCount > 1 ? (
+            {pageCount > 1 ? (
                 <>
                     <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
                         <ListFilter
@@ -1040,15 +1009,19 @@ export function FileBrowser({
                             aria-hidden="true"
                         />
                         <span>
-                            Page {safeSubdirPreviewPage} of{" "}
-                            {subdirPreviewPageCount}
+                            Page {safePage} of {pageCount}
                         </span>
                     </div>
                     <PreviewPagination
                         nextLabel="Next subfolder page"
-                        onPageChange={(page) => setSubdirPreviewPage(page)}
-                        page={safeSubdirPreviewPage}
-                        pageCount={subdirPreviewPageCount}
+                        onPageChange={(page) => {
+                            setSubdirPreviewPages((current) => ({
+                                ...current,
+                                [directoryPath]: page,
+                            }));
+                        }}
+                        page={safePage}
+                        pageCount={pageCount}
                         previousLabel="Previous subfolder page"
                         selectLabel="Subfolder preview page"
                     />
@@ -1141,10 +1114,14 @@ export function FileBrowser({
                 node.path,
             );
             const isSelected = node.path === effectiveSelectedDirectory;
-            const isSubdirPreviewOwner =
-                node.path === effectiveSubdirPreviewDirectory;
             const hasChildren = node.children.length > 0;
             const hasFiles = node.descendantFileCount > 0;
+            const {
+                available: subdirPreviewAvailable,
+                pageCount: subdirPreviewPageCount,
+                safePage: safeSubdirPreviewPage,
+                visibleSubdirs,
+            } = subdirPreviewStateFor(node);
             const hasFilePreviewControls =
                 isStructurallyExpanded &&
                 isSelected &&
@@ -1156,7 +1133,6 @@ export function FileBrowser({
                 hasPreviewableActiveFiles;
             const hasSubdirPreviewControls =
                 isStructurallyExpanded &&
-                isSubdirPreviewOwner &&
                 subdirPreviewAvailable &&
                 Boolean(renderGridPreview);
             const showSubdirGallery =
@@ -1165,7 +1141,11 @@ export function FileBrowser({
                 hasSubdirPreviewControls || hasFilePreviewControls ? (
                     <>
                         {hasSubdirPreviewControls
-                            ? renderSubdirPreviewControls(node.path)
+                            ? renderSubdirPreviewControls(
+                                  node.path,
+                                  subdirPreviewPageCount,
+                                  safeSubdirPreviewPage,
+                              )
                             : null}
                         {hasFilePreviewControls
                             ? renderPreviewControls(node.path, "folder")
@@ -1204,19 +1184,6 @@ export function FileBrowser({
                         data-directory-path={node.path}
                         onClick={() => {
                             const nextIsExpanded = !isExpanded;
-                            const nodeHasSubdirPreviewControls =
-                                Boolean(renderGridPreview) &&
-                                qualifyingSubdirsFor(
-                                    node,
-                                    allSubdirPreviewKinds,
-                                ).length > 1;
-                            const keepsAncestorSubdirPreviewOwner = Boolean(
-                                effectiveSubdirPreviewDirectory &&
-                                node.path !== effectiveSubdirPreviewDirectory &&
-                                node.path.startsWith(
-                                    `${effectiveSubdirPreviewDirectory}/`,
-                                ),
-                            );
 
                             setCollapsedDirectories((current) => {
                                 const next = new Set(current);
@@ -1253,22 +1220,6 @@ export function FileBrowser({
 
                                 return next;
                             });
-
-                            if (nextIsExpanded) {
-                                if (
-                                    nodeHasSubdirPreviewControls &&
-                                    !keepsAncestorSubdirPreviewOwner
-                                ) {
-                                    setSubdirPreviewDirectory(node.path);
-                                }
-                            } else if (
-                                effectiveSubdirPreviewDirectory === node.path ||
-                                effectiveSubdirPreviewDirectory?.startsWith(
-                                    `${node.path}/`,
-                                )
-                            ) {
-                                setSubdirPreviewDirectory(undefined);
-                            }
 
                             if (selectedDirectory === undefined) {
                                 setUncontrolledDirectory(node.path);

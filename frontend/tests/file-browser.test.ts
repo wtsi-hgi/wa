@@ -1516,12 +1516,21 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("keeps ancestor-owned subfolder preview widgets visible when an expanded child also qualifies for them", async () => {
+    it("shows subfolder preview widgets on both an expanded eligible parent and an expanded eligible child", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
+            buildFile("/demo/qc/direct-plot.svg", "output"),
             buildFile("/demo/delivery/plots/volcano.svg", "output"),
+            buildFile("/demo/qc/images/overview/plot-0.png", "output"),
+            buildFile("/demo/qc/images/overview/plot-1.png", "output"),
             buildFile("/demo/qc/images/image.png", "output"),
+            buildFile("/demo/qc/images/image-2.png", "output"),
             buildFile("/demo/qc/images/gallery/plot-1.png", "output"),
+            buildFile("/demo/qc/images/gallery/plot-2.png", "output"),
+            buildFile("/demo/qc/images/gallery/plate-a/plot-a.png", "output"),
+            buildFile("/demo/qc/images/gallery/plate-a/metrics.tsv", "output"),
+            buildFile("/demo/qc/images/gallery/plate-b/plot-b.png", "output"),
+            buildFile("/demo/qc/images/gallery/plate-b/metrics.tsv", "output"),
             buildFile("/demo/qc/notes/summary.txt", "output"),
             buildFile("/demo/qc/notes/multiqc-summary.txt", "output"),
         ];
@@ -1560,14 +1569,36 @@ describe("N1 file browser", () => {
             container.querySelector('button[data-directory-path="/demo/qc"]'),
         );
 
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/qc/images"]',
+            ),
+        );
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/qc/images/gallery"]',
+            ),
+        );
+
         expect(
             container.querySelector('[data-subdir-preview-controls="/demo"]'),
         ).toBeTruthy();
         expect(
             container.querySelector(
+                '[data-subdir-preview-controls="/demo/qc/images"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-controls="/demo/qc/images/gallery"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
                 '[data-subdir-preview-controls="/demo/qc"]',
             ),
-        ).toBeNull();
+        ).toBeTruthy();
     });
 
     it("shows subfolder preview controls on initial load when the first tree row is the eligible parent folder", async () => {

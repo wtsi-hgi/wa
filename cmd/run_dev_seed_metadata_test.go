@@ -140,7 +140,7 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 		convey.So(hasLibraryOnlyFixture, convey.ShouldBeTrue)
 	})
 
-	convey.Convey("seed.json includes a galleries-demo fixture with multiple sibling subdirectories of graphical files on disk", t, func() {
+	convey.Convey("seed.json includes a galleries-demo fixture with sibling and nested eligible graphical subdirectories on disk", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		seedPath := filepath.Join(repoRoot, ".docs", "results-web", "fixtures", "seed.json")
 
@@ -167,8 +167,9 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 		files := demo["files"].([]any)
 		convey.So(len(files), convey.ShouldBeGreaterThanOrEqualTo, 6)
 
-		subdirs := make(map[string]int)
+		topLevelSubdirs := make(map[string]int)
 		graphicalSubdirs := make(map[string]int)
+		nestedGraphicalSubdirs := make(map[string]int)
 
 		for _, rawFile := range files {
 			file := rawFile.(map[string]any)
@@ -179,21 +180,24 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 			convey.So(statErr, convey.ShouldBeNil)
 			convey.So(info.Size(), convey.ShouldBeGreaterThan, 0)
 
-			parts := strings.SplitN(relativePath, "/", 2)
-			convey.So(len(parts), convey.ShouldEqual, 2)
+			parts := strings.Split(relativePath, "/")
+			convey.So(len(parts), convey.ShouldBeGreaterThanOrEqualTo, 2)
 
-			subdir := parts[0]
-			subdirs[subdir]++
+			topLevelSubdirs[parts[0]]++
 
 			lower := strings.ToLower(relativePath)
 			if strings.HasSuffix(lower, ".svg") || strings.HasSuffix(lower, ".png") ||
 				strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||
 				strings.HasSuffix(lower, ".gif") || strings.HasSuffix(lower, ".webp") {
-				graphicalSubdirs[subdir]++
+				graphicalSubdirs[parts[0]]++
+
+				if len(parts) > 2 {
+					nestedGraphicalSubdirs[strings.Join(parts[:len(parts)-1], "/")]++
+				}
 			}
 		}
 
-		convey.So(len(subdirs), convey.ShouldBeGreaterThanOrEqualTo, 3)
+		convey.So(len(topLevelSubdirs), convey.ShouldBeGreaterThanOrEqualTo, 3)
 
 		subdirsWithGraphics := 0
 
@@ -212,5 +216,9 @@ func TestRunDevSeedMetadataUsesRealSagaIdentifiers(t *testing.T) {
 				convey.So(count, convey.ShouldBeGreaterThanOrEqualTo, 2)
 			}
 		}
+
+		convey.So(nestedGraphicalSubdirs["sample-a/overview"], convey.ShouldBeGreaterThanOrEqualTo, 2)
+		convey.So(nestedGraphicalSubdirs["sample-a/lanes/lane-1"], convey.ShouldBeGreaterThanOrEqualTo, 1)
+		convey.So(nestedGraphicalSubdirs["sample-a/lanes/lane-2"], convey.ShouldBeGreaterThanOrEqualTo, 1)
 	})
 }

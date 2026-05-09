@@ -1051,6 +1051,42 @@
                 "kind": "output"
             },
             {
+                "path": "sample-a/overview/navy-summary.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/overview/gold-summary.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/lanes/lane-1/lane-1-plot.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/lanes/lane-1/lane-1-notes.tsv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/lanes/lane-2/lane-2-plot.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "sample-a/lanes/lane-2/lane-2-notes.tsv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
                 "path": "sample-b/orange-heatmap.svg",
                 "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
