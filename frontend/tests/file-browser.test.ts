@@ -227,6 +227,55 @@ describe("N1 file browser", () => {
         expect(resultsButton?.textContent).toContain("/results");
     });
 
+    it("wraps an expanded nested directory's files and child folders in the parent group shell", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/results/root/alpha/summary.txt", "output"),
+                        buildFile("/results/root/alpha/sub/plot.png", "output"),
+                        buildFile("/results/root/beta/readme.txt", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const alphaGroup = container.querySelector(
+            '[data-directory-group="/results/root/alpha"]',
+        );
+        const alphaContent = container.querySelector(
+            '[data-directory-group-content="/results/root/alpha"]',
+        );
+        const alphaRow = container.querySelector(
+            '[data-directory-row="/results/root/alpha"]',
+        );
+        const alphaFiles = container.querySelector(
+            '[data-file-browser-directory-files="/results/root/alpha"]',
+        );
+        const alphaChildGroup = container.querySelector(
+            '[data-directory-group="/results/root/alpha/sub"]',
+        );
+        const betaGroup = container.querySelector(
+            '[data-directory-group="/results/root/beta"]',
+        );
+
+        expect(alphaGroup).toBeTruthy();
+        expect(alphaContent).toBeTruthy();
+        expect(alphaRow).toBeTruthy();
+        expect(alphaFiles).toBeTruthy();
+        expect(alphaChildGroup).toBeTruthy();
+        expect(betaGroup).toBeTruthy();
+        expect(alphaGroup?.contains(alphaRow ?? null)).toBe(true);
+        expect(alphaGroup?.contains(alphaContent ?? null)).toBe(true);
+        expect(alphaContent?.contains(alphaFiles ?? null)).toBe(true);
+        expect(alphaContent?.contains(alphaChildGroup ?? null)).toBe(true);
+        expect(alphaContent?.contains(betaGroup ?? null)).toBe(false);
+    });
+
     it("renders grid previews beside the current page of file rows", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [

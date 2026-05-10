@@ -18,6 +18,38 @@ type PreviewBorderSurfaceMetrics = {
     }[];
 };
 
+type GroupedShellVisualMetrics = {
+    childGroupRect: {
+        height: number;
+        width: number;
+        x: number;
+        y: number;
+    } | null;
+    connectorElbow: {
+        borderBottomStyle: string;
+        borderBottomWidth: number;
+        borderLeftStyle: string;
+        borderLeftWidth: number;
+    } | null;
+    connectorRail: {
+        backgroundImage: string;
+        height: number;
+        width: number;
+    } | null;
+    fileRowsRect: {
+        height: number;
+        width: number;
+        x: number;
+        y: number;
+    } | null;
+    shellRect: { height: number; width: number; x: number; y: number } | null;
+    shellSurface: {
+        backgroundImage: string;
+        borderStyle: string;
+        borderWidth: number;
+    } | null;
+};
+
 async function openResultFileBrowser(page: Page) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
@@ -224,6 +256,88 @@ async function measurePreviewBorderSurfaces(
     });
 }
 
+async function measureGroupedShellVisuals(
+    groupContent: Locator,
+): Promise<GroupedShellVisualMetrics> {
+    return groupContent.evaluate((root) => {
+        const [connectorElbow, connectorRail, shellSurface] = Array.from(
+            root.children,
+        );
+        const fileRows = root.querySelector(
+            "[data-file-browser-directory-files]",
+        );
+        const childGroup = root.querySelector("[data-directory-group]");
+
+        function rectMetrics(element: Element | null) {
+            if (!(element instanceof HTMLElement)) {
+                return null;
+            }
+
+            const rect = element.getBoundingClientRect();
+
+            return {
+                height: rect.height,
+                width: rect.width,
+                x: rect.x,
+                y: rect.y,
+            };
+        }
+
+        function borderMetrics(element: Element | null) {
+            if (!(element instanceof HTMLElement)) {
+                return null;
+            }
+
+            const styles = window.getComputedStyle(element);
+
+            return {
+                borderBottomStyle: styles.borderBottomStyle,
+                borderBottomWidth: Number.parseFloat(styles.borderBottomWidth),
+                borderLeftStyle: styles.borderLeftStyle,
+                borderLeftWidth: Number.parseFloat(styles.borderLeftWidth),
+            };
+        }
+
+        function shellSurfaceMetrics(element: Element | null) {
+            if (!(element instanceof HTMLElement)) {
+                return null;
+            }
+
+            const styles = window.getComputedStyle(element);
+
+            return {
+                backgroundImage: styles.backgroundImage,
+                borderStyle: styles.borderTopStyle,
+                borderWidth: Number.parseFloat(styles.borderTopWidth),
+            };
+        }
+
+        function railMetrics(element: Element | null) {
+            if (!(element instanceof HTMLElement)) {
+                return null;
+            }
+
+            const styles = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+
+            return {
+                backgroundImage: styles.backgroundImage,
+                height: rect.height,
+                width: rect.width,
+            };
+        }
+
+        return {
+            childGroupRect: rectMetrics(childGroup),
+            connectorElbow: borderMetrics(connectorElbow ?? null),
+            connectorRail: railMetrics(connectorRail ?? null),
+            fileRowsRect: rectMetrics(fileRows),
+            shellRect: rectMetrics(root),
+            shellSurface: shellSurfaceMetrics(shellSurface ?? null),
+        };
+    });
+}
+
 test.describe("File Browser single preview layout", () => {
     const fixturesRoot = path.resolve(
         process.cwd(),
@@ -239,6 +353,7 @@ test.describe("File Browser single preview layout", () => {
         "close-subdir-parent-reselected.png",
     );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
+    const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
     const rnaseqGalleryPath = path.join(
         fixturesRoot,
         "rnaseq",
@@ -461,6 +576,73 @@ test.describe("File Browser single preview layout", () => {
 
         expect(radiusMetrics).not.toBeNull();
         expect(radiusMetrics?.imageRadius).toBe(radiusMetrics?.shellRadius);
+    });
+
+    test("renders a visible grouped shell around an expanded nested folder's files and child folders", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqImagesPath);
+
+        const groupContent = page.locator(
+            `[data-directory-group-content="${rnaseqImagesPath}"]`,
+        );
+        const fileRows = page.locator(
+            `[data-file-browser-directory-files="${rnaseqImagesPath}"]`,
+        );
+        const childGroup = page.locator(
+            `[data-directory-group="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(groupContent).toBeVisible();
+        await expect(fileRows).toBeVisible();
+        await expect(childGroup).toBeVisible();
+
+        const metrics = await measureGroupedShellVisuals(groupContent);
+
+        if (
+            !metrics.shellRect ||
+            !metrics.shellSurface ||
+            !metrics.connectorElbow ||
+            !metrics.connectorRail ||
+            !metrics.fileRowsRect ||
+            !metrics.childGroupRect
+        ) {
+            throw new Error(
+                "Missing grouped shell metrics for browser assertion",
+            );
+        }
+
+        expect(metrics.shellSurface.borderWidth).toBeGreaterThan(0);
+        expect(metrics.shellSurface.borderStyle).not.toBe("none");
+        expect(metrics.shellSurface.backgroundImage).not.toBe("none");
+
+        expect(metrics.connectorElbow.borderLeftWidth).toBeGreaterThan(0);
+        expect(metrics.connectorElbow.borderBottomWidth).toBeGreaterThan(0);
+        expect(metrics.connectorElbow.borderLeftStyle).not.toBe("none");
+        expect(metrics.connectorElbow.borderBottomStyle).not.toBe("none");
+
+        expect(metrics.connectorRail.width).toBeLessThanOrEqual(2);
+        expect(metrics.connectorRail.height).toBeGreaterThan(24);
+        expect(metrics.connectorRail.backgroundImage).not.toBe("none");
+
+        expect(metrics.fileRowsRect.x).toBeGreaterThan(metrics.shellRect.x);
+        expect(metrics.fileRowsRect.y).toBeGreaterThan(metrics.shellRect.y);
+        expect(
+            metrics.fileRowsRect.x + metrics.fileRowsRect.width,
+        ).toBeLessThanOrEqual(metrics.shellRect.x + metrics.shellRect.width);
+
+        expect(metrics.childGroupRect.x).toBeGreaterThan(metrics.shellRect.x);
+        expect(metrics.childGroupRect.y).toBeGreaterThan(
+            metrics.fileRowsRect.y,
+        );
+        expect(
+            metrics.childGroupRect.x + metrics.childGroupRect.width,
+        ).toBeLessThanOrEqual(metrics.shellRect.x + metrics.shellRect.width);
+
+        expect(
+            metrics.shellRect.width - metrics.fileRowsRect.width,
+        ).toBeLessThan(96);
     });
 
     test("places folder controls beneath the directory heading while keeping compact widgets on the same row surface", async ({

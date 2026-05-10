@@ -1385,7 +1385,7 @@ export function FileBrowser({
             const showsChildRows = isStructurallyExpanded && hasChildren;
             const isExpanded =
                 hasPreviewControls || showsDirectoryFiles || showsChildRows;
-            const rows: ReactNode[] = [
+            const directoryRow = (
                 <div
                     key={`dir-${node.path}`}
                     className={cn(
@@ -1515,8 +1515,9 @@ export function FileBrowser({
                               inlineSubdirPreviewKinds,
                           )
                         : null}
-                </div>,
-            ];
+                </div>
+            );
+            const contentRows: ReactNode[] = [];
 
             if (
                 isStructurallyExpanded &&
@@ -1525,7 +1526,7 @@ export function FileBrowser({
             ) {
                 const directoryDisplayedFiles = displayedFiles;
 
-                rows.push(
+                contentRows.push(
                     <div
                         key={`files-${node.path}`}
                         className={cn(
@@ -1609,12 +1610,47 @@ export function FileBrowser({
             }
 
             if (isStructurallyExpanded && hasChildren) {
-                rows.push(
+                contentRows.push(
                     ...renderDirectoryRows(node.children, depth + 1, node.path),
                 );
             }
 
-            return rows;
+            const showsGroupedContent = contentRows.length > 0;
+
+            return [
+                <div
+                    key={`group-${node.path}`}
+                    className="space-y-2"
+                    data-directory-group={node.path}
+                >
+                    {directoryRow}
+                    {showsGroupedContent ? (
+                        <div
+                            className="relative pl-4"
+                            data-directory-group-content={node.path}
+                        >
+                            <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute left-1.5 top-0 h-4 w-5 rounded-bl-[1rem] border-b border-l border-primary/25"
+                            />
+                            <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-y-3 left-1.5 w-px rounded-full bg-gradient-to-b from-primary/30 via-primary/16 to-transparent"
+                            />
+                            <div
+                                className={cn(
+                                    "relative space-y-3 rounded-[1.35rem] border px-3 py-3 shadow-[0_18px_60px_-54px_rgba(48,67,98,0.85)]",
+                                    isSelected
+                                        ? "border-primary/20 bg-gradient-to-br from-primary/[0.11] via-background/92 to-background/78"
+                                        : "border-border/50 bg-gradient-to-br from-background/92 via-background/78 to-muted/25",
+                                )}
+                            >
+                                {contentRows}
+                            </div>
+                        </div>
+                    ) : null}
+                </div>,
+            ];
         });
     }
 
