@@ -26,6 +26,7 @@ type GroupedShellVisualMetrics = {
         y: number;
     } | null;
     connectorElbow: {
+        borderBottomLeftRadius: string;
         borderBottomStyle: string;
         borderBottomWidth: number;
         borderLeftStyle: string;
@@ -291,6 +292,7 @@ async function measureGroupedShellVisuals(
             const styles = window.getComputedStyle(element);
 
             return {
+                borderBottomLeftRadius: styles.borderBottomLeftRadius,
                 borderBottomStyle: styles.borderBottomStyle,
                 borderBottomWidth: Number.parseFloat(styles.borderBottomWidth),
                 borderLeftStyle: styles.borderLeftStyle,
@@ -621,6 +623,7 @@ test.describe("File Browser single preview layout", () => {
         expect(metrics.connectorElbow.borderBottomWidth).toBeGreaterThan(0);
         expect(metrics.connectorElbow.borderLeftStyle).not.toBe("none");
         expect(metrics.connectorElbow.borderBottomStyle).not.toBe("none");
+        expect(metrics.connectorElbow.borderBottomLeftRadius).toBe("0px");
 
         expect(metrics.connectorRail.width).toBeLessThanOrEqual(2);
         expect(metrics.connectorRail.height).toBeGreaterThan(24);
