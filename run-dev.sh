@@ -430,6 +430,18 @@ wait_for_http() {
   return 1
 }
 
+http_is_healthy() {
+  local url="$1"
+  local mode="${2:-strict}"
+
+  if [[ "$mode" == "strict" ]]; then
+    curl -fsS --max-time 2 "$url" >/dev/null 2>&1
+    return $?
+  fi
+
+  curl -fsS --max-time 2 -o /dev/null "$url" 2>/dev/null
+}
+
 seed_results() {
   node - "$REPO_ROOT" "$SEED_PATH" "$WA_RESULTS_BACKEND_URL" <<'NODE'
 const fs = require("node:fs");
@@ -533,14 +545,24 @@ fi
 export WA_RESULTS_BACKEND_URL="http://127.0.0.1:$results_port"
 unset WA_SEQMETA_BACKEND_URL
 
+RESULTS_STARTED=0
+SEQMETA_STARTED=0
+FRONTEND_STARTED=0
+
 : >"$RESULTS_LOG"
 : >"$FRONTEND_LOG"
 
-printf 'Starting results server on %s (mode=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario"
-"$BIN_PATH" results serve --port "$results_port" >"$RESULTS_LOG" 2>&1 &
-PIDS+=("$!")
+if [[ "$scenario" == "dev" ]] && http_is_healthy "$RESULTS_HEALTH_URL" "strict"; then
+  printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL"
+  printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL" >"$RESULTS_LOG"
+else
+  printf 'Starting results server on %s (mode=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario"
+  "$BIN_PATH" results serve --port "$results_port" >"$RESULTS_LOG" 2>&1 &
+  PIDS+=("$!")
+  RESULTS_STARTED=1
 
-wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict"
+  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict"
+fi
 
 seed_fixtures=0
 case "$scenario" in
@@ -559,35 +581,57 @@ fi
 if [[ -n "$SEQMETA_CMD" ]]; then
   export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
-  printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-  WA_RUN_DEV_SEQMETA_CMD="$SEQMETA_CMD" \
-    bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"' \
-    >>"$SEQMETA_LOG" 2>&1 &
-  PIDS+=("$!")
-  wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
+  if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
+    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
+    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL" >"$SEQMETA_LOG"
+  else
+    printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
+    WA_RUN_DEV_SEQMETA_CMD="$SEQMETA_CMD" \
+      bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"' \
+      >>"$SEQMETA_LOG" 2>&1 &
+    PIDS+=("$!")
+    SEQMETA_STARTED=1
+    wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
+  fi
 elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
   export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
-  printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-  "${BIN_PATH}" seqmeta serve --port "$seqmeta_port" >"$SEQMETA_LOG" 2>&1 &
-  PIDS+=("$!")
-  wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
+  if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
+    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
+    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL" >"$SEQMETA_LOG"
+  else
+    printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
+    seqmeta_args=(seqmeta serve --port "$seqmeta_port")
+    if (( seed_fixtures )); then
+      seqmeta_args+=(--mlwh-sync-interval 24h)
+    fi
+    "${BIN_PATH}" "${seqmeta_args[@]}" >"$SEQMETA_LOG" 2>&1 &
+    PIDS+=("$!")
+    SEQMETA_STARTED=1
+    wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
+  fi
 else
 	printf 'seqmeta server skipped because no explicit command or MLWH DSN is set\n' >"$SEQMETA_LOG"
 fi
 
 printf '\n[dev]\n' >>"$FRONTEND_LOG"
-printf 'Starting frontend dev server on http://127.0.0.1:%s\n' "$frontend_port"
 if [[ -n "$MLWH_CACHE_PATH" ]]; then
   export WA_MLWH_CACHE_PATH="$MLWH_CACHE_PATH"
 fi
-WA_RUN_DEV_FRONTEND_DEV_CMD="$FRONTEND_DEV_CMD" \
-  bash -lc 'cd "$1" && eval "exec $WA_RUN_DEV_FRONTEND_DEV_CMD"' -- "$FRONTEND_DIR" \
-  >>"$FRONTEND_LOG" 2>&1 &
-PIDS+=("$!")
-FRONTEND_PID="$!"
+if [[ "$scenario" == "dev" ]] && http_is_healthy "$FRONTEND_HEALTH_URL" "strict"; then
+  printf 'Reusing existing frontend dev server on http://127.0.0.1:%s\n' "$frontend_port"
+  printf 'Reusing existing frontend dev server on http://127.0.0.1:%s\n' "$frontend_port" >>"$FRONTEND_LOG"
+else
+  printf 'Starting frontend dev server on http://127.0.0.1:%s\n' "$frontend_port"
+  WA_RUN_DEV_FRONTEND_DEV_CMD="$FRONTEND_DEV_CMD" \
+    bash -lc 'cd "$1" && eval "exec $WA_RUN_DEV_FRONTEND_DEV_CMD"' -- "$FRONTEND_DIR" \
+    >>"$FRONTEND_LOG" 2>&1 &
+  PIDS+=("$!")
+  FRONTEND_PID="$!"
+  FRONTEND_STARTED=1
 
-wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS"
+  wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS"
+fi
 
 printf 'Development environment is ready.\n'
 printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
@@ -597,4 +641,10 @@ fi
 printf 'Frontend: http://127.0.0.1:%s\n' "$frontend_port"
 printf 'Logs: %s\n' "$LOG_DIR"
 
-wait "$FRONTEND_PID"
+if (( ${#PIDS[@]} > 0 )); then
+  wait "${PIDS[@]}"
+else
+  while true; do
+    read -r -t 3600 _ || true
+  done
+fi

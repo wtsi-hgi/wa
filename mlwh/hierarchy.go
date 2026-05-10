@@ -42,6 +42,8 @@ const expandIdentifierTTL = 5 * time.Minute
 var (
 	samplesForStudyCacheSQL    = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
 	samplesForStudySourceSQL   = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForLibraryTypeCacheSQL  = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
+	samplesForLibraryTypeSourceSQL = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForLibraryCacheSQL  = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
 	samplesForLibrarySourceSQL = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForRunSourceSQL     = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
@@ -59,30 +61,68 @@ type hierarchyReadThroughRow struct {
 	LastUpdated    time.Time
 }
 
+type nullableHierarchySampleFields struct {
+	idLims          sql.NullString
+	idSampleLims    sql.NullString
+	uuidSampleLims  sql.NullString
+	idStudyLims     sql.NullString
+	name            sql.NullString
+	sangerID        sql.NullString
+	sangerSampleID  sql.NullString
+	supplierName    sql.NullString
+	accessionNumber sql.NullString
+	donorID         sql.NullString
+	libraryType     sql.NullString
+	taxonID         sql.NullInt64
+	commonName      sql.NullString
+	description     sql.NullString
+}
+
+func applyNullableHierarchySampleFields(sample *Sample, nullable *nullableHierarchySampleFields) {
+	sample.IDLims = nullStringValue(nullable.idLims)
+	sample.IDSampleLims = nullStringValue(nullable.idSampleLims)
+	sample.UUIDSampleLims = nullStringValue(nullable.uuidSampleLims)
+	sample.IDStudyLims = nullStringValue(nullable.idStudyLims)
+	sample.Name = nullStringValue(nullable.name)
+	sample.SangerID = nullStringValue(nullable.sangerID)
+	sample.SangerSampleID = nullStringValue(nullable.sangerSampleID)
+	sample.SupplierName = nullStringValue(nullable.supplierName)
+	sample.AccessionNumber = nullStringValue(nullable.accessionNumber)
+	sample.DonorID = nullStringValue(nullable.donorID)
+	sample.LibraryType = nullStringValue(nullable.libraryType)
+	if nullable.taxonID.Valid {
+		sample.TaxonID = int(nullable.taxonID.Int64)
+	}
+	sample.CommonName = nullStringValue(nullable.commonName)
+	sample.Description = nullStringValue(nullable.description)
+}
+
 func scanHierarchyReadThroughRow(rows *sql.Rows) (hierarchyReadThroughRow, error) {
 	row := hierarchyReadThroughRow{}
 	var lastUpdated any
+	nullable := &nullableHierarchySampleFields{}
 	if err := rows.Scan(
 		&row.PipelineIDLims,
 		&row.Sample.IDSampleTmp,
-		&row.Sample.IDLims,
-		&row.Sample.IDSampleLims,
-		&row.Sample.UUIDSampleLims,
-		&row.Sample.IDStudyLims,
-		&row.Sample.Name,
-		&row.Sample.SangerID,
-		&row.Sample.SangerSampleID,
-		&row.Sample.SupplierName,
-		&row.Sample.AccessionNumber,
-		&row.Sample.DonorID,
-		&row.Sample.LibraryType,
-		&row.Sample.TaxonID,
-		&row.Sample.CommonName,
-		&row.Sample.Description,
+		&nullable.idLims,
+		&nullable.idSampleLims,
+		&nullable.uuidSampleLims,
+		&nullable.idStudyLims,
+		&nullable.name,
+		&nullable.sangerID,
+		&nullable.sangerSampleID,
+		&nullable.supplierName,
+		&nullable.accessionNumber,
+		&nullable.donorID,
+		&nullable.libraryType,
+		&nullable.taxonID,
+		&nullable.commonName,
+		&nullable.description,
 		&lastUpdated,
 	); err != nil {
 		return hierarchyReadThroughRow{}, err
 	}
+	applyNullableHierarchySampleFields(&row.Sample, nullable)
 
 	parsed, err := parseSyncTimeValue(lastUpdated)
 	if err != nil {
@@ -141,8 +181,12 @@ func (c *Client) upsertHierarchyReadThrough(ctx context.Context, studyLimsID str
 	}()
 
 	for _, row := range rows {
+		effectiveStudyLimsID := studyLimsID
+		if effectiveStudyLimsID == "" {
+			effectiveStudyLimsID = row.Sample.IDStudyLims
+		}
 		if row.Sample.IDStudyLims == "" {
-			row.Sample.IDStudyLims = studyLimsID
+			row.Sample.IDStudyLims = effectiveStudyLimsID
 		}
 		if row.Sample.SangerID == "" {
 			row.Sample.SangerID = row.Sample.Name
@@ -151,7 +195,7 @@ func (c *Client) upsertHierarchyReadThrough(ctx context.Context, studyLimsID str
 			row.Sample.LibraryType = row.PipelineIDLims
 		}
 
-		if upsertErr := upsertSampleMirror(ctx, tx, c.cache.Dialect(), sampleSyncRow{Sample: row.Sample, IDStudyLims: studyLimsID, LastUpdated: row.LastUpdated}); upsertErr != nil {
+		if upsertErr := upsertSampleMirror(ctx, tx, c.cache.Dialect(), sampleSyncRow{Sample: row.Sample, IDStudyLims: effectiveStudyLimsID, LastUpdated: row.LastUpdated}); upsertErr != nil {
 			return fmt.Errorf("%w: %w", ErrUpstreamImpaired, upsertErr)
 		}
 
@@ -161,13 +205,13 @@ func (c *Client) upsertHierarchyReadThrough(ctx context.Context, studyLimsID str
 			`SELECT 1 FROM library_samples WHERE pipeline_id_lims = ? AND id_sample_tmp = ? AND id_study_lims = ? LIMIT 1`,
 			row.PipelineIDLims,
 			row.Sample.IDSampleTmp,
-			studyLimsID,
+			effectiveStudyLimsID,
 		)
 		if existsErr != nil {
 			return fmt.Errorf("%w: query library_samples row existence: %w", ErrUpstreamImpaired, existsErr)
 		}
 		if !libraryExists {
-			if replaceErr := replaceLibrarySample(ctx, tx, flowcellSyncRow{PipelineIDLims: row.PipelineIDLims, IDSampleTmp: row.Sample.IDSampleTmp, IDStudyLims: studyLimsID, LastUpdated: row.LastUpdated}); replaceErr != nil {
+			if replaceErr := replaceLibrarySample(ctx, tx, flowcellSyncRow{PipelineIDLims: row.PipelineIDLims, IDSampleTmp: row.Sample.IDSampleTmp, IDStudyLims: effectiveStudyLimsID, LastUpdated: row.LastUpdated}); replaceErr != nil {
 				return fmt.Errorf("%w: %w", ErrUpstreamImpaired, replaceErr)
 			}
 		}
@@ -207,25 +251,27 @@ func querySamples(ctx context.Context, querier Querier, query, action string, ar
 
 func scanSampleRow(scan func(dest ...any) error) (Sample, error) {
 	sample := Sample{}
+	nullable := &nullableHierarchySampleFields{}
 	if err := scan(
 		&sample.IDSampleTmp,
-		&sample.IDLims,
-		&sample.IDSampleLims,
-		&sample.UUIDSampleLims,
-		&sample.IDStudyLims,
-		&sample.Name,
-		&sample.SangerID,
-		&sample.SangerSampleID,
-		&sample.SupplierName,
-		&sample.AccessionNumber,
-		&sample.DonorID,
-		&sample.LibraryType,
-		&sample.TaxonID,
-		&sample.CommonName,
-		&sample.Description,
+		&nullable.idLims,
+		&nullable.idSampleLims,
+		&nullable.uuidSampleLims,
+		&nullable.idStudyLims,
+		&nullable.name,
+		&nullable.sangerID,
+		&nullable.sangerSampleID,
+		&nullable.supplierName,
+		&nullable.accessionNumber,
+		&nullable.donorID,
+		&nullable.libraryType,
+		&nullable.taxonID,
+		&nullable.commonName,
+		&nullable.description,
 	); err != nil {
 		return Sample{}, err
 	}
+	applyNullableHierarchySampleFields(&sample, nullable)
 
 	return sample, nil
 }
@@ -503,6 +549,40 @@ func (c *Client) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLim
 		return []Sample{}, nil
 	}
 	if err = c.upsertHierarchyReadThrough(ctx, studyLimsID, readThroughRows); err != nil {
+		return nil, err
+	}
+
+	result := make([]Sample, 0, len(readThroughRows))
+	for _, row := range readThroughRows {
+		result = append(result, row.Sample)
+	}
+
+	return result, nil
+}
+
+// SamplesForLibraryType returns samples linked to a library type across all studies.
+func (c *Client) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]Sample, error) {
+	cacheDB := c.readCacheDB()
+	if cacheDB == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	samples, err := querySamples(ctx, cacheDB, samplesForLibraryTypeCacheSQL, "query library-type samples cache", pipelineIDLims, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if len(samples) > 0 {
+		return samples, nil
+	}
+
+	readThroughRows, err := c.queryHierarchyReadThroughRows(ctx, samplesForLibraryTypeSourceSQL, "query library-type samples source", pipelineIDLims, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if len(readThroughRows) == 0 {
+		return []Sample{}, nil
+	}
+	if err = c.upsertHierarchyReadThrough(ctx, "", readThroughRows); err != nil {
 		return nil, err
 	}
 

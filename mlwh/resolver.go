@@ -167,6 +167,20 @@ func (c *Client) ResolveLibrary(ctx context.Context, raw string) (Match, error) 
 		return Match{}, err
 	}
 
+	match, err := c.resolveLibraryFromCache(ctx, raw)
+	if errors.Is(err, ErrNotFound) {
+		if _, syncErr := c.Sync(ctx, syncTableIseqFlowcell); syncErr != nil {
+			return Match{}, syncErr
+		}
+
+		match, err = c.resolveLibraryFromCache(ctx, raw)
+	}
+
+	return match, err
+}
+
+func (c *Client) resolveLibraryFromCache(ctx context.Context, raw string) (Match, error) {
+
 	db := c.readCacheDB()
 	if db == nil {
 		return Match{}, fmt.Errorf("mlwh: cache reader not configured")

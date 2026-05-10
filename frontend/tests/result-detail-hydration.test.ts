@@ -18,6 +18,7 @@ const enrichSeqmetaMetadataMock = vi.fn();
 const getRequestSeqmetaCacheMock = vi.fn();
 const buildCachedEnrichmentStateMock = vi.fn();
 const collectSeqmetaValuesMock = vi.fn();
+const hasUsableSeqmetaCacheEntryMock = vi.fn();
 const mergeSeqmetaEnrichmentStateMock = vi.fn();
 const primeSeqmetaCacheMock = vi.fn();
 const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
@@ -44,6 +45,7 @@ vi.mock("@/lib/seqmeta-enrichment", () => ({
     buildCachedEnrichmentState: buildCachedEnrichmentStateMock,
     collectSeqmetaValues: collectSeqmetaValuesMock,
     enrichSeqmetaMetadata: enrichSeqmetaMetadataMock,
+    hasUsableSeqmetaCacheEntry: hasUsableSeqmetaCacheEntryMock,
     mergeSeqmetaEnrichmentState: mergeSeqmetaEnrichmentStateMock,
     primeSeqmetaCache: primeSeqmetaCacheMock,
 }));
@@ -198,6 +200,7 @@ describe("O1 result detail hydration", () => {
             errors: {},
         });
         collectSeqmetaValuesMock.mockReturnValue(["SANG001"]);
+        hasUsableSeqmetaCacheEntryMock.mockReturnValue(false);
         mergeSeqmetaEnrichmentStateMock.mockImplementation(
             (base, override) => ({
                 enrichments: {

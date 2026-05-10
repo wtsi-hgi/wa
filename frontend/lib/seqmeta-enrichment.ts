@@ -17,6 +17,23 @@ export function isSeqmetaKey(key: string): boolean {
     return key.startsWith("seqmeta_");
 }
 
+function looksLikeLibraryType(value: string): boolean {
+    return /\s/.test(value);
+}
+
+export function hasUsableSeqmetaCacheEntry(
+    cache: SeqmetaCacheStore,
+    value: string,
+): boolean {
+    if (!cache.has(value)) {
+        return false;
+    }
+
+    const cached = cache.get(value);
+
+    return !(cached === null && looksLikeLibraryType(value));
+}
+
 export function collectSeqmetaValues(
     metadata: Record<string, string>,
 ): string[] {
@@ -107,7 +124,7 @@ export function buildCachedEnrichmentState(
     const errors: Record<string, "not_found" | "upstream_impaired"> = {};
 
     for (const value of collectSeqmetaValues(metadata)) {
-        if (!cache.has(value)) {
+        if (!hasUsableSeqmetaCacheEntry(cache, value)) {
             continue;
         }
 
@@ -245,7 +262,7 @@ export async function enrichSeqmetaMetadata(
 ): Promise<SeqmetaEnrichmentState> {
     const state = buildCachedEnrichmentState(metadata, cache);
     const pendingValues = collectSeqmetaLookupValues(metadata).filter(
-        (value) => !cache.has(value),
+        (value) => !hasUsableSeqmetaCacheEntry(cache, value),
     );
 
     if (pendingValues.length === 0) {

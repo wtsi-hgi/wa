@@ -184,22 +184,16 @@ func (a *ClientAdapter) FindSamplesByLibraryType(ctx context.Context, libraryTyp
 		return nil, err
 	}
 
-	studies, err := listAllStudies(ctx, provider)
+	return provider.SamplesForLibraryType(ctx, libraryType, providerFetchLimit, 0)
+}
+
+func (a *ClientAdapter) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
 	if err != nil {
 		return nil, err
 	}
 
-	samples := make([]mlwh.Sample, 0)
-	for _, study := range studies {
-		studySamples, studyErr := provider.SamplesForLibrary(ctx, libraryType, study.IDStudyLims, providerFetchLimit, 0)
-		if studyErr != nil {
-			return nil, studyErr
-		}
-
-		samples = append(samples, studySamples...)
-	}
-
-	return samples, nil
+	return provider.SamplesForLibraryType(ctx, pipelineIDLims, limit, offset)
 }
 
 func (a *ClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {

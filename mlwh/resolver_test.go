@@ -221,15 +221,48 @@ func TestResolveLibraryReturnsNotFoundOnWarmCacheMiss(t *testing.T) {
 			cache:       cache,
 			cacheReader: cacheReadDB(cache),
 			syncRunner: func(context.Context, *sql.Tx, []string) error {
-				return errors.New("unexpected sync invocation")
+				return nil
 			},
 		}
 
 		match, err := client.ResolveLibrary(context.Background(), "Unknown")
 
-		convey.Convey("when ResolveLibrary executes, then it returns ErrNotFound", func() {
+		convey.Convey("when ResolveLibrary executes, then it refreshes once and still returns ErrNotFound", func() {
 			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 			convey.So(match, convey.ShouldResemble, Match{})
+		})
+	})
+}
+
+func TestResolveLibraryWarmCacheMissResyncsOnce(t *testing.T) {
+	convey.Convey("Given a warm cache miss where a refresh repopulates the requested library", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 15, 30, 0, 0, time.UTC))
+		syncCalls := 0
+
+		client := &Client{
+			cache:       cache,
+			cacheReader: cacheReadDB(cache),
+			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
+				syncCalls++
+				convey.So(tables, convey.ShouldResemble, []string{syncTableIseqFlowcell})
+
+				_, err := tx.ExecContext(ctx, `INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "Chromium single cell 3 prime v3", 71, "6568")
+				return err
+			},
+		}
+
+		match, err := client.ResolveLibrary(context.Background(), "Chromium single cell 3 prime v3")
+
+		convey.Convey("when ResolveLibrary executes, then it refreshes the flowcell cache once and returns the match", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(syncCalls, convey.ShouldEqual, 1)
+			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
+			convey.So(match.Canonical, convey.ShouldEqual, "Chromium single cell 3 prime v3")
+			convey.So(match.Library, convey.ShouldNotBeNil)
+			convey.So(match.Library.PipelineIDLims, convey.ShouldEqual, "Chromium single cell 3 prime v3")
 		})
 	})
 }

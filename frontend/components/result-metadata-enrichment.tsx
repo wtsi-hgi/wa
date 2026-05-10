@@ -15,6 +15,7 @@ import {
     buildCachedEnrichmentState,
     collectSeqmetaValues,
     enrichSeqmetaMetadata,
+    hasUsableSeqmetaCacheEntry,
     mergeSeqmetaEnrichmentState,
     primeSeqmetaCache,
 } from "@/lib/seqmeta-enrichment";
@@ -95,7 +96,7 @@ export function ResultMetadataEnrichment({
         values
             .filter(
                 (value) =>
-                    !cache.has(value) &&
+                    !hasUsableSeqmetaCacheEntry(cache, value) &&
                     !(value in initialErrors) &&
                     !(value in activeLiveErrors) &&
                     !(value in activeLiveEnrichments),
@@ -112,7 +113,7 @@ export function ResultMetadataEnrichment({
 
         const pendingValues = values.filter(
             (value) =>
-                !liveCache.has(value) &&
+                !hasUsableSeqmetaCacheEntry(liveCache, value) &&
                 !inFlightValuesRef.current.has(value) &&
                 !(value in initialErrors) &&
                 !(value in activeLiveErrors) &&

@@ -345,12 +345,16 @@ func syncFlowcellTable(ctx context.Context, tx *sql.Tx, source Querier, highWate
 		}
 
 		sawRows = true
+		if row.LastUpdated.After(report.HighWater) {
+			report.HighWater = row.LastUpdated
+		}
+
+		if row.PipelineIDLims == "" {
+			continue
+		}
 
 		key := flowcellKey(row)
 		if _, ok := seen[key]; ok {
-			if row.LastUpdated.After(report.HighWater) {
-				report.HighWater = row.LastUpdated
-			}
 			continue
 		}
 		seen[key] = struct{}{}
@@ -375,9 +379,6 @@ func syncFlowcellTable(ctx context.Context, tx *sql.Tx, source Querier, highWate
 			report.Updated++
 		} else {
 			report.Inserted++
-		}
-		if row.LastUpdated.After(report.HighWater) {
-			report.HighWater = row.LastUpdated
 		}
 	}
 
@@ -653,27 +654,57 @@ type sampleSyncRow struct {
 	LastUpdated time.Time
 }
 
+type nullableSampleSyncFields struct {
+	idLims          sql.NullString
+	idSampleLims    sql.NullString
+	uuidSampleLims  sql.NullString
+	name            sql.NullString
+	sangerSampleID  sql.NullString
+	supplierName    sql.NullString
+	accessionNumber sql.NullString
+	donorID         sql.NullString
+	taxonID         sql.NullInt64
+	commonName      sql.NullString
+	description     sql.NullString
+	idStudyLims     sql.NullString
+}
+
 func scanSampleSyncRow(rows *sql.Rows) (sampleSyncRow, error) {
 	var row sampleSyncRow
 	var lastUpdated any
+	nullable := &nullableSampleSyncFields{}
 	if err := rows.Scan(
 		&row.Sample.IDSampleTmp,
-		&row.Sample.IDLims,
-		&row.Sample.IDSampleLims,
-		&row.Sample.UUIDSampleLims,
-		&row.Sample.Name,
-		&row.Sample.SangerSampleID,
-		&row.Sample.SupplierName,
-		&row.Sample.AccessionNumber,
-		&row.Sample.DonorID,
-		&row.Sample.TaxonID,
-		&row.Sample.CommonName,
-		&row.Sample.Description,
-		&row.IDStudyLims,
+		&nullable.idLims,
+		&nullable.idSampleLims,
+		&nullable.uuidSampleLims,
+		&nullable.name,
+		&nullable.sangerSampleID,
+		&nullable.supplierName,
+		&nullable.accessionNumber,
+		&nullable.donorID,
+		&nullable.taxonID,
+		&nullable.commonName,
+		&nullable.description,
+		&nullable.idStudyLims,
 		&lastUpdated,
 	); err != nil {
 		return sampleSyncRow{}, fmt.Errorf("mlwh: scan sample sync row: %w", err)
 	}
+	row.Sample.IDLims = nullStringValue(nullable.idLims)
+	row.Sample.IDSampleLims = nullStringValue(nullable.idSampleLims)
+	row.Sample.UUIDSampleLims = nullStringValue(nullable.uuidSampleLims)
+	row.Sample.Name = nullStringValue(nullable.name)
+	row.Sample.SangerSampleID = nullStringValue(nullable.sangerSampleID)
+	row.Sample.SupplierName = nullStringValue(nullable.supplierName)
+	row.Sample.AccessionNumber = nullStringValue(nullable.accessionNumber)
+	row.Sample.DonorID = nullStringValue(nullable.donorID)
+	if nullable.taxonID.Valid {
+		row.Sample.TaxonID = int(nullable.taxonID.Int64)
+	}
+	row.Sample.CommonName = nullStringValue(nullable.commonName)
+	row.Sample.Description = nullStringValue(nullable.description)
+	row.IDStudyLims = nullStringValue(nullable.idStudyLims)
 	row.Sample.IDStudyLims = row.IDStudyLims
 	row.Sample.SangerID = row.Sample.Name
 
@@ -801,10 +832,14 @@ type flowcellSyncRow struct {
 
 func scanFlowcellSyncRow(rows *sql.Rows) (flowcellSyncRow, error) {
 	var row flowcellSyncRow
+	var pipelineIDLims sql.NullString
+	var studyLims sql.NullString
 	var lastUpdated any
-	if err := rows.Scan(&row.PipelineIDLims, &row.IDSampleTmp, &row.IDStudyLims, &lastUpdated); err != nil {
+	if err := rows.Scan(&pipelineIDLims, &row.IDSampleTmp, &studyLims, &lastUpdated); err != nil {
 		return flowcellSyncRow{}, fmt.Errorf("mlwh: scan iseq_flowcell sync row: %w", err)
 	}
+	row.PipelineIDLims = nullStringValue(pipelineIDLims)
+	row.IDStudyLims = nullStringValue(studyLims)
 
 	parsed, err := parseSyncTimeValue(lastUpdated)
 	if err != nil {

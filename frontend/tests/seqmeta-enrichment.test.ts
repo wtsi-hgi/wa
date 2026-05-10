@@ -13,7 +13,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EnrichmentResult, EnrichmentStudy } from "@/lib/contracts";
-import { SeqmetaCacheProvider } from "@/lib/seqmeta-cache";
+import {
+    SeqmetaCache,
+    SeqmetaCacheContext,
+    SeqmetaCacheProvider,
+} from "@/lib/seqmeta-cache";
 
 const enrichIdentifierMock = vi.fn();
 const fetchStudyLibrarySamplesMock = vi.fn();
@@ -149,6 +153,85 @@ describe("H3 enrichment state and badge", () => {
             );
         });
         expect(screen.queryByText("Some details unavailable")).toBeNull();
+    });
+
+    it("refreshes a study identifier when the cache only holds an aliased sample result", async () => {
+        const cachedAlias = buildEnrichmentResult({
+            identifier: "6568",
+            type: "study_id",
+            graph: {
+                study: buildEnrichmentStudy(),
+                sample: {
+                    id_study_lims: "6568",
+                    id_sample_lims: "LIMS001",
+                    sanger_id: "SANG001",
+                    sample_name: "Sample 1",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "RNA",
+                    id_run: 1234,
+                    lane: 1,
+                    tag_index: 7,
+                    irods_path: "/seq/1234",
+                    study_accession_number: "ERP123456",
+                    accession_number: "ERS123456",
+                },
+                sample_detail: {
+                    sanger_id: "SANG001",
+                    sample_name: "Sample 1",
+                    sample: {
+                        id_study_lims: "6568",
+                        id_sample_lims: "LIMS001",
+                        sanger_id: "SANG001",
+                        sample_name: "Sample 1",
+                        taxon_id: 9606,
+                        common_name: "Human",
+                        library_type: "RNA",
+                        id_run: 1234,
+                        lane: 1,
+                        tag_index: 7,
+                        irods_path: "/seq/1234",
+                        study_accession_number: "ERP123456",
+                        accession_number: "ERS123456",
+                    },
+                    lanes: [{ id_run: "1234", lane: "1", tag_index: 7 }],
+                },
+            },
+        });
+        enrichIdentifierMock.mockResolvedValue(buildEnrichmentResult());
+
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+
+        render(
+            createElement(ResultMetadataEnrichment, {
+                metadata: { seqmeta_studyid: "6568" },
+            }),
+            {
+                wrapper: ({ children }) =>
+                    createElement(
+                        SeqmetaCacheContext.Provider,
+                        { value: new SeqmetaCache({ "6568": cachedAlias }) },
+                        children,
+                    ),
+            },
+        );
+
+        await waitFor(() => {
+            expect(enrichIdentifierMock).toHaveBeenCalledWith("6568");
+        });
+
+        await openSeqmetaDetails();
+
+        await waitFor(() => {
+            expect(screen.getByText("Libraries")).toBeTruthy();
+        });
+
+        expect(
+            screen.queryByText(
+                "No enrichment matched this library type value.",
+            ),
+        ).toBeNull();
     });
 
     it("loads study library samples through server action for JIT expansion", async () => {
@@ -632,6 +715,115 @@ describe("H3 enrichment state and badge", () => {
                 screen.getByLabelText("enrichment unavailable"),
             ).toBeTruthy();
         });
+    });
+
+    it("refreshes stale negative cache entries for library-like identifiers", async () => {
+        enrichIdentifierMock.mockResolvedValue(
+            buildEnrichmentResult({
+                identifier: "Chromium single cell 3 prime v3",
+                type: "library_type",
+                graph: {
+                    studies: [buildEnrichmentStudy()],
+                    study_details: [
+                        {
+                            study: buildEnrichmentStudy(),
+                            library_details: [
+                                {
+                                    library: {
+                                        pipeline_id_lims:
+                                            "Chromium single cell 3 prime v3",
+                                        sample_count: 1,
+                                    },
+                                    samples: [
+                                        {
+                                            id_study_lims: "6568",
+                                            id_sample_lims: "LIMS001",
+                                            sanger_id: "SANG001",
+                                            sample_name: "Sample 1",
+                                            taxon_id: 9606,
+                                            common_name: "Human",
+                                            library_type:
+                                                "Chromium single cell 3 prime v3",
+                                            id_run: 1234,
+                                            lane: 1,
+                                            tag_index: 7,
+                                            irods_path: "/seq/1234",
+                                            study_accession_number: "ERP123456",
+                                            accession_number: "ERS123456",
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                    libraries: [
+                        {
+                            library_type: "Chromium single cell 3 prime v3",
+                            id_study_lims: "6568",
+                        },
+                    ],
+                    samples: [
+                        {
+                            id_study_lims: "6568",
+                            id_sample_lims: "LIMS001",
+                            sanger_id: "SANG001",
+                            sample_name: "Sample 1",
+                            taxon_id: 9606,
+                            common_name: "Human",
+                            library_type: "Chromium single cell 3 prime v3",
+                            id_run: 1234,
+                            lane: 1,
+                            tag_index: 7,
+                            irods_path: "/seq/1234",
+                            study_accession_number: "ERP123456",
+                            accession_number: "ERS123456",
+                        },
+                    ],
+                },
+            }),
+        );
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+
+        render(
+            createElement(ResultMetadataEnrichment, {
+                metadata: {
+                    seqmeta_library: "Chromium single cell 3 prime v3",
+                },
+            }),
+            {
+                wrapper: ({ children }) =>
+                    createElement(
+                        SeqmetaCacheContext.Provider,
+                        {
+                            value: new SeqmetaCache({
+                                "Chromium single cell 3 prime v3": null,
+                            }),
+                        },
+                        children,
+                    ),
+            },
+        );
+
+        await waitFor(() => {
+            expect(enrichIdentifierMock).toHaveBeenCalledWith(
+                "Chromium single cell 3 prime v3",
+            );
+        });
+
+        await openSeqmetaDetails();
+
+        await waitFor(() => {
+            expect(
+                screen.queryByLabelText("enrichment unavailable"),
+            ).toBeNull();
+        });
+
+        expect(
+            screen.queryByText(
+                "No enrichment matched this library type value.",
+            ),
+        ).toBeNull();
     });
 
     it("shows the impaired marker when enrichment rejects with a 502 backend error", async () => {

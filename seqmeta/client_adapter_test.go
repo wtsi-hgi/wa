@@ -26,9 +26,12 @@
 package seqmeta
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 func TestNewClientAdapterSatisfiesProvider(t *testing.T) {
@@ -37,6 +40,44 @@ func TestNewClientAdapterSatisfiesProvider(t *testing.T) {
 
 		convey.Convey("when assigned to a variable of type Provider, then it compiles", func() {
 			convey.So(provider, convey.ShouldHaveSameTypeAs, &ClientAdapter{})
+		})
+	})
+}
+
+func TestClientAdapterFindSamplesByLibraryTypeUsesDirectLookup(t *testing.T) {
+	convey.Convey("Given a client adapter wrapping a provider", t, func() {
+		provider := &MockProvider{}
+		adapter := NewClientAdapter(provider)
+
+		convey.Convey("when finding samples by library type, then it uses the provider's direct library-type lookup", func() {
+			provider.AllStudiesFunc = func(_ context.Context, _, _ int) ([]mlwh.Study, error) {
+				return nil, errors.New("unexpected AllStudies call")
+			}
+			provider.SamplesForLibraryFunc = func(_ context.Context, _, _ string, _, _ int) ([]mlwh.Sample, error) {
+				return nil, errors.New("unexpected SamplesForLibrary call")
+			}
+			provider.SamplesForLibraryTypeFunc = func(_ context.Context, libraryType string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(libraryType, convey.ShouldEqual, "Chromium single cell 3 prime v3")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return []mlwh.Sample{{
+					IDStudyLims: "6568",
+					SangerID:    "S1",
+					Name:        "Sample 1",
+					LibraryType: libraryType,
+				}}, nil
+			}
+
+			samples, err := adapter.FindSamplesByLibraryType(context.Background(), "Chromium single cell 3 prime v3")
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldResemble, []mlwh.Sample{{
+				IDStudyLims: "6568",
+				SangerID:    "S1",
+				Name:        "Sample 1",
+				LibraryType: "Chromium single cell 3 prime v3",
+			}})
 		})
 	})
 }

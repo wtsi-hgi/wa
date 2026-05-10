@@ -46,6 +46,7 @@ var (
 	sampleByNameCacheQuery            = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`
 	samplesForRunQuery                = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForRunParentQuery          = `SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`
+	samplesForLibraryTypeSourceQuery  = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForLibraryCacheQuery       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
 	samplesForLibraryStudyParentQuery = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
 )
@@ -265,6 +266,115 @@ func TestSamplesForLibraryColdCacheExistingStudyWithoutMatchingLibraryReturnsEmp
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(samples, convey.ShouldResemble, []Sample{})
+	})
+}
+
+func TestSamplesForLibraryTypeColdCacheReadsThroughWithoutResolverSync(t *testing.T) {
+	convey.Convey("Given a cold cache and upstream library-type rows, then SamplesForLibraryType reads through directly without a resolver sync gate", t, func() {
+		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForLibraryTypeSourceQuery)).
+			WithArgs("Chromium single cell 3 prime v3", 100, 0).
+			WillReturnRows(sqlmock.NewRows([]string{
+				"pipeline_id_lims",
+				"id_sample_tmp",
+				"id_lims",
+				"id_sample_lims",
+				"uuid_sample_lims",
+				"id_study_lims",
+				"name",
+				"sanger_id",
+				"sanger_sample_id",
+				"supplier_name",
+				"accession_number",
+				"donor_id",
+				"library_type",
+				"taxon_id",
+				"common_name",
+				"description",
+				"last_updated",
+			}).AddRow(
+				"Chromium single cell 3 prime v3",
+				int64(11),
+				"SQSCP",
+				"501",
+				"sample-uuid-11",
+				"6568",
+				"sample-a",
+				"sample-a",
+				"sanger-id-a",
+				"supplier-a",
+				"accession-a",
+				"donor-a",
+				"Chromium single cell 3 prime v3",
+				9606,
+				"human",
+				"desc-a",
+				formatSyncTime(time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)),
+			))
+
+		samples, err := client.SamplesForLibraryType(context.Background(), "Chromium single cell 3 prime v3", 100, 0)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].Name, convey.ShouldEqual, "sample-a")
+		convey.So(samples[0].IDStudyLims, convey.ShouldEqual, "6568")
+	})
+}
+
+func TestSamplesForLibraryTypeColdCacheUsesJoinedStudyLimsSourceQuery(t *testing.T) {
+	convey.Convey("Given a cold cache and a library-type read-through", t, func() {
+		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		query := `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+
+		sourceMock.ExpectQuery(regexp.QuoteMeta(query)).
+			WithArgs("Chromium single cell 3 prime v3", 100, 0).
+			WillReturnRows(sqlmock.NewRows([]string{
+				"pipeline_id_lims",
+				"id_sample_tmp",
+				"id_lims",
+				"id_sample_lims",
+				"uuid_sample_lims",
+				"id_study_lims",
+				"name",
+				"sanger_id",
+				"sanger_sample_id",
+				"supplier_name",
+				"accession_number",
+				"donor_id",
+				"library_type",
+				"taxon_id",
+				"common_name",
+				"description",
+				"last_updated",
+			}).AddRow(
+				"Chromium single cell 3 prime v3",
+				int64(11),
+				"SQSCP",
+				"501",
+				"sample-uuid-11",
+				"6568",
+				"sample-a",
+				"sample-a",
+				"sanger-id-a",
+				"supplier-a",
+				"accession-a",
+				"donor-a",
+				"Chromium single cell 3 prime v3",
+				9606,
+				"human",
+				"desc-a",
+				formatSyncTime(time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)),
+			))
+
+		samples, err := client.SamplesForLibraryType(context.Background(), "Chromium single cell 3 prime v3", 100, 0)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].IDStudyLims, convey.ShouldEqual, "6568")
 	})
 }
 

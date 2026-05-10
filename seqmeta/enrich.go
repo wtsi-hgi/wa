@@ -27,7 +27,9 @@ package seqmeta
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -316,6 +318,26 @@ func Enrich(ctx context.Context, provider Provider, identifier string) (*Enrichm
 	if identifier == "" {
 		return nil, ErrUnknownIdentifier
 	}
+	if looksLikeLibraryType(identifier) {
+		result, matched, missing, err := classifyLibraryType(ctx, provider, identifier)
+		if err != nil {
+			return nil, err
+		}
+		if matched {
+			if len(missing) > 0 {
+				result.Missing = append(missing, result.Missing...)
+				result.Partial = true
+			}
+
+			return result, nil
+		}
+
+		if allClassificationHopsFailed(identifier, missing) {
+			return nil, &enrichError{err: ErrAllHopsFailed, missing: missing}
+		}
+
+		return nil, ErrUnknownIdentifier
+	}
 
 	missing := make([]MissingHop, 0, len(enrichClassifiers))
 
@@ -390,6 +412,10 @@ func classifyStudyID(ctx context.Context, provider Provider, identifier string) 
 }
 
 func classifyStudyAccession(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+	if looksLikeLibraryType(identifier) {
+		return nil, false, nil, nil
+	}
+
 	studies, err := listAllStudies(ctx, provider)
 	if err != nil {
 		if isContextError(err) {
@@ -558,53 +584,129 @@ func looksLikeLibraryType(identifier string) bool {
 	return strings.ContainsAny(identifier, " \t")
 }
 
+func cachedStudiesByID(ctx context.Context, provider Provider, studyIDs []string) (map[string]mlwh.Study, bool, error) {
+	if len(studyIDs) == 0 {
+		return map[string]mlwh.Study{}, true, nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(studyIDs)), ",")
+	args := make([]any, 0, len(studyIDs))
+	for _, studyID := range studyIDs {
+		args = append(args, studyID)
+	}
+
+	rows, err := provider.QueryContext(
+		ctx,
+		fmt.Sprintf(
+			`SELECT id_study_lims, name, accession_number FROM study_mirror WHERE id_lims = 'SQSCP' AND id_study_lims IN (%s)`,
+			placeholders,
+		),
+		args...,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if rows == nil {
+		return map[string]mlwh.Study{}, false, nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	studies := make(map[string]mlwh.Study, len(studyIDs))
+	for rows.Next() {
+		var (
+			studyID string
+			name sql.NullString
+			accession sql.NullString
+		)
+
+		if err = rows.Scan(&studyID, &name, &accession); err != nil {
+			return nil, true, err
+		}
+
+		studies[studyID] = mlwh.Study{
+			IDStudyLims:     studyID,
+			IDLims:          "SQSCP",
+			Name:            name.String,
+			AccessionNumber: accession.String,
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, true, err
+	}
+
+	return studies, true, nil
+}
+
 func libraryStudyDetails(ctx context.Context, provider Provider, libraryType string, samples []mlwh.Sample) ([]mlwh.StudyDetail, []MissingHop, error) {
-	studies, err := listAllStudies(ctx, provider)
+	studySamplesByID := make(map[string][]mlwh.Sample)
+	orderedStudyIDs := make([]string, 0)
+	for _, sample := range samples {
+		if sample.IDStudyLims == "" {
+			continue
+		}
+
+		if _, seen := studySamplesByID[sample.IDStudyLims]; !seen {
+			orderedStudyIDs = append(orderedStudyIDs, sample.IDStudyLims)
+		}
+
+		studySamplesByID[sample.IDStudyLims] = append(
+			studySamplesByID[sample.IDStudyLims],
+			sample,
+		)
+	}
+
+	cachedStudies, cacheAvailable, err := cachedStudiesByID(ctx, provider, orderedStudyIDs)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(studies) == 0 {
-		derivedStudies, studyErr := studiesForSamples(ctx, provider, samples)
-		if studyErr != nil {
-			return nil, nil, studyErr
-		}
 
-		return buildStudyDetails(derivedStudies, samples), nil, nil
-	}
-
-	studyDetails := make([]mlwh.StudyDetail, 0)
+	studyDetails := make([]mlwh.StudyDetail, 0, len(orderedStudyIDs))
 	missing := make([]MissingHop, 0, 1)
+	missingStudyMetadata := false
 	truncated := false
 
-	for _, study := range studies {
-		studySamples, sampleErr := provider.SamplesForLibrary(ctx, libraryType, study.IDStudyLims, MaxLibrarySamples, 0)
-		if sampleErr != nil {
-			if isClientError(sampleErr) {
+	for _, studyID := range orderedStudyIDs {
+		study, ok := cachedStudies[studyID]
+		if !ok {
+			if cacheAvailable {
+				study = mlwh.Study{IDStudyLims: studyID, IDLims: "SQSCP"}
+				missingStudyMetadata = true
+			} else {
+			resolvedStudy, getErr := provider.GetStudy(ctx, studyID)
+			if getErr != nil {
+				if isClientError(getErr) {
+					continue
+				}
+
+				return nil, nil, getErr
+			}
+			if resolvedStudy == nil {
 				continue
 			}
 
-			return nil, nil, sampleErr
+			study = *resolvedStudy
+			}
 		}
+
+		studySamples := studySamplesByID[studyID]
 		if len(studySamples) == 0 {
 			continue
 		}
 
-		if len(studySamples) >= MaxLibrarySamples {
+		if len(studySamples) > MaxLibrarySamples {
 			truncated = true
 			studySamples = studySamples[:MaxLibrarySamples]
 		}
 
-		studyDetails = append(studyDetails, mlwh.StudyDetail{
-			Study: study,
-			Libraries: []mlwh.LibraryDetail{{
-				Library: mlwh.Library{PipelineIDLims: libraryType, SampleCount: len(studySamples)},
-				Samples: studySamples,
-			}},
-		})
+		studyDetails = append(studyDetails, buildStudyDetail(study, studySamples))
 	}
 
 	if truncated {
 		missing = append(missing, MissingHop{Hop: HopLibraries, Reason: ReasonSamplesTruncated, Status: http.StatusOK})
+	}
+	if missingStudyMetadata {
+		missing = append(missing, MissingHop{Hop: HopStudies, Reason: ReasonNotFound, Status: http.StatusOK})
 	}
 
 	return studyDetails, missing, nil

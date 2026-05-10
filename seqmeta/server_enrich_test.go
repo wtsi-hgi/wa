@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/mlwh"
@@ -124,5 +125,42 @@ func TestServerEnrichEndpoint(t *testing.T) {
 		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
 		convey.So(body["error"], convey.ShouldContainSubstring, context.DeadlineExceeded.Error())
+	})
+
+	convey.Convey("enrich endpoint ignores stale negative cache entries for library-type identifiers", t, func() {
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "RNA PolyA",
+			Body:       []byte(`{"error":"seqmeta: unknown identifier"}`),
+			FetchedAt:  time.Now(),
+			TTL:        time.Hour,
+			Negative:   true,
+		}), convey.ShouldBeNil)
+
+		provider.FindSamplesByLibraryTypeFn = func(_ context.Context, libraryType string) ([]mlwh.Sample, error) {
+			convey.So(libraryType, convey.ShouldEqual, "RNA PolyA")
+
+			return []mlwh.Sample{
+				{SangerID: "S1", Name: "Sample 1", IDStudyLims: "6568", LibraryType: libraryType},
+			}, nil
+		}
+		provider.GetStudyFunc = func(_ context.Context, identifier string) (*mlwh.Study, error) {
+			if identifier != "6568" {
+				return nil, mlwh.ErrNotFound
+			}
+
+			return study, nil
+		}
+
+		request := httptest.NewRequest(http.MethodGet, "/enrich/RNA%20PolyA", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		var result EnrichmentResult
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(result.Graph.Studies, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 1)
 	})
 }

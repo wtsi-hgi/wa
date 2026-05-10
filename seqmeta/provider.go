@@ -49,6 +49,7 @@ type Provider interface {
 	FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error)
 	FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error)
 	SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error)
+	SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error)
 	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
 	StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error)

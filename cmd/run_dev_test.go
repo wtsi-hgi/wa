@@ -40,6 +40,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -90,6 +91,73 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
 		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh --mode dev reuses already-healthy services on the configured dev ports", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		frontendSentinelPath := filepath.Join(t.TempDir(), "frontend-started.txt")
+		seqmetaSentinelPath := filepath.Join(t.TempDir(), "seqmeta-started.txt")
+		resultsDBPath := filepath.Join(t.TempDir(), "results-dev.sqlite")
+		var seededResultsMu sync.Mutex
+		seededResults := 0
+
+		startRunDevResultsStubForTest(t, resultsPort, func() {
+			seededResultsMu.Lock()
+			defer seededResultsMu.Unlock()
+			seededResults++
+		})
+		startStaticEndpointServerForTest(t, seqmetaPort, map[string][]byte{
+			"/studies": []byte(`[]`),
+		})
+
+		startStaticEndpointServerForTest(t, frontendPort, map[string][]byte{
+			"/api/health": []byte(`{"ok":true}`),
+		})
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:          "dev",
+			fixtures:      true,
+			omitPortFlags: true,
+			env: map[string]string{
+				"WA_ENV":                              "development",
+				"WA_RESULTS_DB_PATH":                  resultsDBPath,
+				"WA_MLWH_DSN":                         "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+				"WA_DEV_FRONTEND_PORT":                fmt.Sprintf("%d", frontendPort),
+				"WA_DEV_RESULTS_PORT":                 fmt.Sprintf("%d", resultsPort),
+				"WA_DEV_SEQMETA_PORT":                 fmt.Sprintf("%d", seqmetaPort),
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":         fmt.Sprintf(`node -e "require('node:fs').writeFileSync(%q, 'started'); process.exit(1)"`, frontendSentinelPath),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":      fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+				"WA_RUN_DEV_SEQMETA_CMD":              fmt.Sprintf(`node -e "require('node:fs').writeFileSync(%q, 'started'); process.exit(1)"`, seqmetaSentinelPath),
+				"WA_RUN_DEV_SEQMETA_HEALTH_URL":       fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort),
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+			},
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		resultsURL := runDevExtractURLForTest(t, stdout, "Results")
+		seqmetaURL := runDevExtractURLForTest(t, stdout, "Seqmeta")
+		frontendURL := runDevExtractURLForTest(t, stdout, "Frontend")
+
+		convey.So(frontendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", frontendPort))
+		convey.So(resultsURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", resultsPort))
+		convey.So(seqmetaURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		seededResultsMu.Lock()
+		convey.So(seededResults, convey.ShouldEqual, 4)
+		seededResultsMu.Unlock()
+		convey.So(runDevPathExistsWithinForTest(frontendSentinelPath, 2*time.Second), convey.ShouldBeFalse)
+		convey.So(runDevPathExistsWithinForTest(seqmetaSentinelPath, 2*time.Second), convey.ShouldBeFalse)
+		convey.So(runDevProcessExitedWithinForTest(process, 2*time.Second), convey.ShouldBeFalse)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -1024,10 +1092,33 @@ type runDevProcess struct {
 	Command *exec.Cmd
 	stdout  *bytes.Buffer
 	stderr  *bytes.Buffer
+	waitMu  sync.Mutex
+	waitCh  chan error
+	waitErr error
+	waitDone bool
 }
 
 func (process *runDevProcess) Wait() error {
-	err := process.Command.Wait()
+	process.waitMu.Lock()
+	if process.waitDone {
+		err := process.waitErr
+		process.waitMu.Unlock()
+		if err != nil {
+			return fmt.Errorf("%w\nstdout:\n%s\nstderr:\n%s", err, process.stdout.String(), process.stderr.String())
+		}
+
+		return nil
+	}
+	waitCh := process.waitCh
+	process.waitMu.Unlock()
+
+	err := <-waitCh
+
+	process.waitMu.Lock()
+	process.waitErr = err
+	process.waitDone = true
+	process.waitMu.Unlock()
+
 	if err != nil {
 		return fmt.Errorf("%w\nstdout:\n%s\nstderr:\n%s", err, process.stdout.String(), process.stderr.String())
 	}
@@ -1039,10 +1130,34 @@ func (process *runDevProcess) Stderr() string {
 	return process.stderr.String()
 }
 
+func (process *runDevProcess) ExitedWithin(timeout time.Duration) bool {
+	process.waitMu.Lock()
+	if process.waitDone {
+		process.waitMu.Unlock()
+		return true
+	}
+	waitCh := process.waitCh
+	process.waitMu.Unlock()
+
+	select {
+	case err := <-waitCh:
+		process.waitMu.Lock()
+		process.waitErr = err
+		process.waitDone = true
+		process.waitMu.Unlock()
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 type runDevStartOptions struct {
+	mode          string
+	fixtures      bool
 	frontendPort int
 	resultsPort  int
 	seqmetaPort  int
+	omitPortFlags bool
 	startDir     string
 	unsetEnv     []string
 	env          map[string]string
@@ -1053,11 +1168,24 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 
 	args := []string{
 		filepath.Join(repoRoot, "run-dev.sh"),
-		"--frontend-port", fmt.Sprintf("%d", options.frontendPort),
-		"--results-port", fmt.Sprintf("%d", options.resultsPort),
 	}
 
-	if options.seqmetaPort != 0 {
+	if options.mode != "" {
+		args = append(args, "--mode", options.mode)
+	}
+
+	if options.fixtures {
+		args = append(args, "--fixtures")
+	}
+
+	if !options.omitPortFlags {
+		args = append(args,
+			"--frontend-port", fmt.Sprintf("%d", options.frontendPort),
+			"--results-port", fmt.Sprintf("%d", options.resultsPort),
+		)
+}
+
+	if !options.omitPortFlags && options.seqmetaPort != 0 {
 		args = append(args, "--seqmeta-port", fmt.Sprintf("%d", options.seqmetaPort))
 	}
 
@@ -1084,8 +1212,13 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 		t.Fatalf("run-dev.sh did not start a process")
 	}
 
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- command.Wait()
+	}()
+
 	t.Cleanup(func() {
-		if command.ProcessState == nil || !command.ProcessState.Exited() {
+		if !(&runDevProcess{Command: command, waitCh: waitCh}).ExitedWithin(0) {
 			terminateRunDevCommandForTest(command)
 		}
 	})
@@ -1094,6 +1227,7 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 		Command: command,
 		stdout:  stdout,
 		stderr:  stderr,
+		waitCh:  waitCh,
 	}
 }
 
@@ -1118,6 +1252,93 @@ func runDevFreePortForTest(t *testing.T) int {
 	defer func() { _ = listener.Close() }()
 
 	return listener.Addr().(*net.TCPAddr).Port
+}
+
+func startStaticEndpointServerForTest(t *testing.T, port int, responses map[string][]byte) {
+	t.Helper()
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			body, ok := responses[request.URL.Path]
+			if !ok {
+				writer.WriteHeader(http.StatusNotFound)
+				return
+			}
+
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write(body)
+		}),
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("listen on static health server port %d: %v", port, err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(listener)
+	}()
+
+	t.Cleanup(func() {
+		_ = server.Close()
+
+		select {
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				t.Errorf("static health server failed: %v", err)
+			}
+		default:
+		}
+	})
+}
+
+func startRunDevResultsStubForTest(t *testing.T, port int, onSeed func()) {
+	t.Helper()
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			switch {
+			case request.Method == http.MethodGet && request.URL.Path == "/results/stats":
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusOK)
+				_, _ = writer.Write([]byte(`{"ok":true}`))
+			case request.Method == http.MethodPost && request.URL.Path == "/results":
+				if onSeed != nil {
+					onSeed()
+				}
+
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusCreated)
+				_, _ = writer.Write([]byte(`{"id":"seeded"}`))
+			default:
+				writer.WriteHeader(http.StatusNotFound)
+			}
+		}),
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("listen on results stub port %d: %v", port, err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(listener)
+	}()
+
+	t.Cleanup(func() {
+		_ = server.Close()
+
+		select {
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				t.Errorf("results stub server failed: %v", err)
+			}
+		default:
+		}
+	})
 }
 
 func waitForRunDevSnapshotForTest(t *testing.T, snapshotPath string) runDevEnvSnapshot {
@@ -1225,6 +1446,25 @@ func waitForRunDevStdoutForTest(t *testing.T, process *runDevProcess, substring 
 	}
 
 	return strings.Contains(process.stdout.String(), substring)
+}
+
+func runDevProcessExitedWithinForTest(process *runDevProcess, timeout time.Duration) bool {
+	return process.ExitedWithin(timeout)
+}
+
+func runDevExtractURLForTest(t *testing.T, stdout string, label string) string {
+	t.Helper()
+
+	prefix := label + ": "
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+
+	t.Fatalf("did not find %s URL in stdout:\n%s", label, stdout)
+
+	return ""
 }
 
 func runDevPathExistsForTest(path string) bool {

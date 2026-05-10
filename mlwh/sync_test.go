@@ -140,6 +140,50 @@ func TestClientSyncSampleColdCachePopulatesMirrorsAndWatermark(t *testing.T) {
 	})
 }
 
+func TestClientSyncSampleColdCacheToleratesNullableTextFields(t *testing.T) {
+	convey.Convey("Given a cold cache and a sample row with nullable text fields", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		sourceDB, sourceMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = sourceDB.Close() }()
+
+		timestamp := time.Date(2026, time.May, 10, 9, 30, 0, 0, time.UTC)
+
+		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
+			WithArgs(formatSyncTime(time.Time{})).
+			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
+				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", nil, "acc-a", "donor-a", 9606, "human", "desc-a", "study-a", formatSyncTime(timestamp)).
+				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", nil, nil, nil, nil, nil, "study-b", formatSyncTime(timestamp.Add(time.Minute))))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
+
+		reports, err := client.Sync(context.Background(), "sample")
+
+		convey.Convey("when Sync runs, then it stores empty strings for NULL text columns instead of failing", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 2)
+
+			var supplierName, accessionNumber, donorID, commonName, description string
+			var taxonID int
+			err = cache.DB().QueryRow(
+				`SELECT supplier_name, accession_number, donor_id, taxon_id, common_name, description FROM sample_mirror WHERE id_sample_tmp = ?`,
+				2,
+			).Scan(&supplierName, &accessionNumber, &donorID, &taxonID, &commonName, &description)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(supplierName, convey.ShouldEqual, "supplier-b")
+			convey.So(accessionNumber, convey.ShouldEqual, "")
+			convey.So(donorID, convey.ShouldEqual, "")
+			convey.So(taxonID, convey.ShouldEqual, 0)
+			convey.So(commonName, convey.ShouldEqual, "")
+			convey.So(description, convey.ShouldEqual, "")
+			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
 func TestClientSyncSampleWarmCacheUsesHighWaterFilter(t *testing.T) {
 	convey.Convey("Given a warm sample cache with an existing high water mark", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -261,6 +305,41 @@ func TestClientSyncIseqFlowcellPopulatesDistinctLibrarySamples(t *testing.T) {
 
 			convey.So(rows.Err(), convey.ShouldBeNil)
 			convey.So(triples, convey.ShouldResemble, []string{"lib-a:study-a:11", "lib-b:study-b:12"})
+			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestClientSyncIseqFlowcellSkipsNullLibraryTypes(t *testing.T) {
+	convey.Convey("Given a cold cache and an iseq_flowcell row without pipeline_id_lims", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		t1 := time.Date(2026, time.May, 10, 11, 40, 0, 0, time.UTC)
+		t2 := t1.Add(time.Minute)
+
+		sourceDB, sourceMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = sourceDB.Close() }()
+
+		sourceMock.ExpectQuery(regexp.QuoteMeta(flowcellSyncSourceQuery())).
+			WithArgs(formatSyncTime(time.Time{})).
+			WillReturnRows(sqlmock.NewRows([]string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"}).
+				AddRow(nil, 11, "study-a", formatSyncTime(t1)).
+				AddRow("lib-b", 12, "study-b", formatSyncTime(t2)))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
+
+		reports, err := client.Sync(context.Background(), "iseq_flowcell")
+
+		convey.Convey("when Sync runs, then it skips the NULL library row and still advances the watermark", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+			convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+			convey.So(reports[0].HighWater, convey.ShouldHappenOnOrBetween, t2, t2)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
+			convey.So(readSyncHighWater(t, cache.DB(), "iseq_flowcell"), convey.ShouldHappenOnOrBetween, t2, t2)
 			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
 	})

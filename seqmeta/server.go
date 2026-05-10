@@ -342,14 +342,18 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := s.loadFreshEnrichCache(identifier, time.Now())
 	if err == nil {
-		status := http.StatusOK
-		if entry.Negative {
-			status = http.StatusNotFound
+		if !(entry.Negative && looksLikeLibraryType(identifier)) {
+			status := http.StatusOK
+			if entry.Negative {
+				status = http.StatusNotFound
+			}
+
+			_ = writeJSONBytes(w, status, entry.Body)
+
+			return
 		}
 
-		_ = writeJSONBytes(w, status, entry.Body)
-
-		return
+		err = sql.ErrNoRows
 	}
 
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -370,16 +374,18 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			if saveErr := s.store.SaveEnrichCache(enrichCacheEntry{
-				Identifier: identifier,
-				Body:       body,
-				FetchedAt:  time.Now(),
-				TTL:        s.negativeTTL,
-				Negative:   true,
-			}); saveErr != nil {
-				_ = writeError(w, http.StatusInternalServerError, saveErr.Error())
+			if !looksLikeLibraryType(identifier) {
+				if saveErr := s.store.SaveEnrichCache(enrichCacheEntry{
+					Identifier: identifier,
+					Body:       body,
+					FetchedAt:  time.Now(),
+					TTL:        s.negativeTTL,
+					Negative:   true,
+				}); saveErr != nil {
+					_ = writeError(w, http.StatusInternalServerError, saveErr.Error())
 
-				return
+					return
+				}
 			}
 
 			_ = writeJSONBytes(w, status, body)
