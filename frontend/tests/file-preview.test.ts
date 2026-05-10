@@ -29,6 +29,23 @@ vi.mock("highlight.js/lib/core", () => ({
 import { FilePreview, type FilePreviewProps } from "@/components/file-preview";
 import type { FileEntry } from "@/lib/contracts";
 
+function mockElementOverflow(
+    element: Element,
+    {
+        clientHeight,
+        scrollHeight,
+    }: { clientHeight: number; scrollHeight: number },
+) {
+    Object.defineProperty(element, "clientHeight", {
+        configurable: true,
+        value: clientHeight,
+    });
+    Object.defineProperty(element, "scrollHeight", {
+        configurable: true,
+        value: scrollHeight,
+    });
+}
+
 function buildFile(overrides: Partial<FileEntry> = {}): FileEntry {
     return {
         kind: "output",
@@ -960,6 +977,118 @@ describe("O1 file preview", () => {
         expect(shell?.className).not.toContain("rounded-[1.5rem]");
     });
 
+    it("only shows the truncation fade for code previews when inline content actually overflows", () => {
+        const { container, rerender } = renderPreview({
+            file: buildFile({ path: "/tmp/results/report.txt" }),
+            content: { content: "line 1\nline 2", contentType: "text/plain" },
+            maxHeight: 120,
+        });
+
+        const initialPre = container.querySelector("pre");
+
+        if (!initialPre) {
+            throw new Error("Missing code preview element");
+        }
+
+        mockElementOverflow(initialPre, {
+            clientHeight: 120,
+            scrollHeight: 120,
+        });
+
+        act(() => {
+            window.dispatchEvent(new Event("resize"));
+        });
+
+        expect(screen.queryByLabelText(/content truncated/i)).toBeNull();
+
+        rerender(
+            createElement(FilePreview, {
+                file: buildFile({ path: "/tmp/results/report.txt" }),
+                proxyUrl:
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.txt",
+                content: {
+                    content: "line 1\nline 2\nline 3\nline 4",
+                    contentType: "text/plain",
+                },
+                maxHeight: 120,
+            }),
+        );
+
+        const overflowPre = container.querySelector("pre");
+
+        if (!overflowPre) {
+            throw new Error("Missing rerendered code preview element");
+        }
+
+        mockElementOverflow(overflowPre, {
+            clientHeight: 120,
+            scrollHeight: 220,
+        });
+
+        act(() => {
+            window.dispatchEvent(new Event("resize"));
+        });
+
+        expect(screen.getByLabelText(/content truncated/i)).toBeTruthy();
+    });
+
+    it("shows the truncation fade for csv previews when preview height clips the table locally", () => {
+        const props: Partial<FilePreviewProps> = {
+            file: buildFile({ path: "/tmp/results/report.csv" }),
+            content: {
+                content: buildCsv(20),
+                contentType: "text/csv",
+            },
+            maxHeight: 120,
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
+        };
+        const { container, rerender } = renderPreview(props);
+
+        const tableWrapper = container.querySelector(
+            "div.h-full.overflow-hidden",
+        );
+
+        if (!tableWrapper) {
+            throw new Error("Missing inline csv wrapper");
+        }
+
+        mockElementOverflow(tableWrapper, {
+            clientHeight: 120,
+            scrollHeight: 260,
+        });
+
+        rerender(
+            createElement(FilePreview, {
+                file: props.file ?? buildFile(),
+                proxyUrl:
+                    props.proxyUrl ??
+                    "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.csv",
+                content: props.content,
+                maxHeight: 119,
+            }),
+        );
+
+        const rerenderedWrapper = container.querySelector(
+            "div.h-full.overflow-hidden",
+        );
+
+        if (!rerenderedWrapper) {
+            throw new Error("Missing rerendered inline csv wrapper");
+        }
+
+        mockElementOverflow(rerenderedWrapper, {
+            clientHeight: 119,
+            scrollHeight: 260,
+        });
+
+        act(() => {
+            window.dispatchEvent(new Event("resize"));
+        });
+
+        expect(screen.getByLabelText(/content truncated/i)).toBeTruthy();
+    });
+
     it("renders svg previews without a nested bordered frame", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/plot.svg" }),
@@ -1202,12 +1331,13 @@ describe("O1 file preview", () => {
         expect(screen.queryByText("Showing 20 of 20 rows")).toBeNull();
     });
 
-    it("constrained markdown preview uses overflow-hidden and shows truncation indicator", () => {
+    it("constrained markdown preview shows the truncation indicator when the preview content is marked truncated", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/readme.md" }),
             content: {
                 content: "# Title\n\n" + "Line content\n".repeat(50),
                 contentType: "text/markdown",
+                truncated: true,
             },
             maxHeight: 200,
             proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freadme.md",
@@ -1225,12 +1355,13 @@ describe("O1 file preview", () => {
         expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
     });
 
-    it("constrained code preview uses overflow-hidden and shows truncation indicator", () => {
+    it("constrained code preview shows the truncation indicator when the preview content is marked truncated", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/script.py" }),
             content: {
                 content: "def function():\n    " + "pass\n".repeat(50),
                 contentType: "text/x-python",
+                truncated: true,
             },
             maxHeight: 200,
             proxyUrl: "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fscript.py",
@@ -1248,11 +1379,11 @@ describe("O1 file preview", () => {
         expect(truncationIndicator.getAttribute("data-truncated")).toBe("true");
     });
 
-    it("inline csv preview does not show a truncation indicator when the backend response is complete", () => {
+    it("inline csv preview does not show a truncation indicator when the backend response is complete and the selected height fits the table", () => {
         const { container } = renderPreview({
             file: buildFile({ path: "/tmp/results/data.csv" }),
             content: {
-                content: buildCsv(50),
+                content: buildCsv(2),
                 contentType: "text/csv",
             },
             maxHeight: 200,

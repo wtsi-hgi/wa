@@ -38,6 +38,8 @@ const STABLE_THUMBNAIL_WIDTH = Math.max(
     Math.round(STABLE_THUMBNAIL_HEIGHT * 1.6),
 );
 const EXPANDED_TABLE_PAGE_SIZE = 1000;
+const INLINE_TABLE_HEADER_HEIGHT = 48;
+const INLINE_TABLE_ROW_HEIGHT = 44;
 const imageExtensions = new Set([
     "png",
     "jpg",
@@ -116,6 +118,63 @@ type ParsedTable = {
 };
 
 type SortDirection = "asc" | "desc";
+
+function hasVerticalOverflow(element: HTMLElement): boolean {
+    return element.scrollHeight > element.clientHeight + 1;
+}
+
+function useInlinePreviewOverflow<T extends HTMLElement>(
+    enabled: boolean,
+    contentKey: string,
+    maxHeight?: number,
+) {
+    const measureRef = useRef<T | null>(null);
+    const [isOverflowing, setIsOverflowing] = useState(false);
+
+    useEffect(() => {
+        if (!enabled) {
+            return undefined;
+        }
+
+        const node = measureRef.current;
+
+        if (!node) {
+            return undefined;
+        }
+
+        const updateOverflow = () => {
+            const nextValue = hasVerticalOverflow(node);
+
+            setIsOverflowing((currentValue) =>
+                currentValue === nextValue ? currentValue : nextValue,
+            );
+        };
+        const initialFrame = window.requestAnimationFrame(updateOverflow);
+
+        window.addEventListener("resize", updateOverflow);
+
+        if (typeof ResizeObserver === "undefined") {
+            return () => {
+                window.cancelAnimationFrame(initialFrame);
+                window.removeEventListener("resize", updateOverflow);
+            };
+        }
+
+        const resizeObserver = new ResizeObserver(() => {
+            updateOverflow();
+        });
+
+        resizeObserver.observe(node);
+
+        return () => {
+            window.cancelAnimationFrame(initialFrame);
+            resizeObserver.disconnect();
+            window.removeEventListener("resize", updateOverflow);
+        };
+    }, [contentKey, enabled, maxHeight]);
+
+    return [measureRef, isOverflowing] as const;
+}
 
 function normalizeContentType(contentType: string): string {
     return (
@@ -254,6 +313,13 @@ function inferHighlightLanguage(contentType: string): string | undefined {
     return undefined;
 }
 
+function estimateInlineTableHeight(parsed: ParsedTable): number {
+    const headerHeight =
+        parsed.headers.length > 0 ? INLINE_TABLE_HEADER_HEIGHT : 0;
+
+    return headerHeight + parsed.rows.length * INLINE_TABLE_ROW_HEIGHT;
+}
+
 function highlightCode(content: string, contentType: string): string {
     const language = inferHighlightLanguage(contentType);
 
@@ -283,6 +349,19 @@ function DownloadIconLink({
         >
             <ArrowDownToLine className="size-4" aria-hidden="true" />
         </a>
+    );
+}
+
+function TruncationFade({ className }: { className?: string }) {
+    return (
+        <div
+            aria-label="Content truncated"
+            className={cn(
+                "pointer-events-none absolute inset-x-0 bottom-0 h-16",
+                className,
+            )}
+            data-truncated="true"
+        />
     );
 }
 
@@ -817,6 +896,13 @@ export function FilePreview({
     }, [content?.content, content?.contentType, renderer]);
 
     const dialogContent = enlargedContent ?? content;
+    const inlineCsvParsed = useMemo(() => {
+        if (renderer !== "csv" || !content) {
+            return undefined;
+        }
+
+        return parseDelimitedContent(content.content, content.contentType);
+    }, [content, renderer]);
     const dialogHighlightedContent = useMemo(() => {
         if (renderer !== "code") {
             return undefined;
@@ -845,6 +931,37 @@ export function FilePreview({
         </div>
     ) : null;
     const isImagePreview = !isLoading && previewable && renderer === "image";
+    const [markdownMeasureRef, markdownIsOverflowing] =
+        useInlinePreviewOverflow<HTMLElement>(
+            !isLoading && previewable && renderer === "markdown",
+            content?.content ?? "",
+            maxHeight,
+        );
+    const [csvMeasureRef, csvIsOverflowing] =
+        useInlinePreviewOverflow<HTMLDivElement>(
+            !isLoading && previewable && renderer === "csv",
+            content?.content ?? "",
+            maxHeight,
+        );
+    const [codeMeasureRef, codeIsOverflowing] =
+        useInlinePreviewOverflow<HTMLPreElement>(
+            !isLoading && previewable && renderer === "code",
+            highlightedContent ?? content?.content ?? "",
+            maxHeight,
+        );
+    const markdownInlineTruncated =
+        renderer === "markdown" &&
+        (Boolean(content?.truncated) || markdownIsOverflowing);
+    const csvInlineTruncated =
+        renderer === "csv" &&
+        (Boolean(content?.truncated) ||
+            csvIsOverflowing ||
+            (maxHeight !== undefined &&
+                inlineCsvParsed !== undefined &&
+                estimateInlineTableHeight(inlineCsvParsed) > maxHeight));
+    const codeInlineTruncated =
+        renderer === "code" &&
+        (Boolean(content?.truncated) || codeIsOverflowing);
 
     if (error?.status === 413) {
         return (
@@ -1031,6 +1148,7 @@ export function FilePreview({
                             <div>
                                 <div className="relative">
                                     <article
+                                        ref={markdownMeasureRef}
                                         className="max-w-none overflow-hidden p-6"
                                         style={
                                             maxHeight
@@ -1044,11 +1162,9 @@ export function FilePreview({
                                             {content?.content ?? ""}
                                         </ReactMarkdown>
                                     </article>
-                                    <div
-                                        aria-label="Content truncated"
-                                        className="pointer-events-none absolute inset-x-0 bottom-0 h-16 rounded-b-[1.5rem] bg-gradient-to-t from-background/95 via-background/60 to-transparent"
-                                        data-truncated="true"
-                                    />
+                                    {markdownInlineTruncated ? (
+                                        <TruncationFade className="rounded-b-[1.5rem] bg-gradient-to-t from-background/95 via-background/60 to-transparent" />
+                                    ) : null}
                                 </div>
                             </div>
                         </ExpandablePreview>
@@ -1091,6 +1207,7 @@ export function FilePreview({
                             <div>
                                 <div className="relative">
                                     <div
+                                        ref={csvMeasureRef}
                                         className="h-full overflow-hidden"
                                         style={
                                             maxHeight
@@ -1113,12 +1230,8 @@ export function FilePreview({
                                             truncated={content.truncated}
                                         />
                                     </div>
-                                    {content.truncated ? (
-                                        <div
-                                            aria-label="Content truncated"
-                                            className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background/95 via-background/60 to-transparent"
-                                            data-truncated="true"
-                                        />
+                                    {csvInlineTruncated ? (
+                                        <TruncationFade className="bg-gradient-to-t from-background/95 via-background/60 to-transparent" />
                                     ) : null}
                                 </div>
                             </div>
@@ -1154,6 +1267,7 @@ export function FilePreview({
                             <div>
                                 <div className="relative overflow-hidden bg-[color:rgba(15,23,42,0.96)]">
                                     <pre
+                                        ref={codeMeasureRef}
                                         className="overflow-hidden p-5 text-sm leading-7 text-slate-100"
                                         style={
                                             maxHeight
@@ -1170,11 +1284,9 @@ export function FilePreview({
                                             }}
                                         />
                                     </pre>
-                                    <div
-                                        aria-label="Content truncated"
-                                        className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[color:rgba(15,23,42,0.96)] via-[color:rgba(15,23,42,0.7)] to-transparent"
-                                        data-truncated="true"
-                                    />
+                                    {codeInlineTruncated ? (
+                                        <TruncationFade className="bg-gradient-to-t from-[color:rgba(15,23,42,0.96)] via-[color:rgba(15,23,42,0.7)] to-transparent" />
+                                    ) : null}
                                 </div>
                             </div>
                         </ExpandablePreview>
