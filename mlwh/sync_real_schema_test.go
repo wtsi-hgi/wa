@@ -39,8 +39,9 @@ import (
 // TestSyncAgainstRealMLWHSchema exercises the full Client.Sync path against an
 // upstream "MLWH" SQLite database whose table shapes faithfully match the real
 // Sanger MLWH columns (in particular: the upstream `sample` table has NO
-// `id_study_lims` column; sample-to-study links live on `iseq_flowcell`, and
-// the study table uses the current `ega_dac_accession_number` spelling).
+// `id_study_lims` column; `iseq_flowcell` links to `study` via
+// `id_study_tmp` rather than carrying `id_study_lims`; and the study table
+// uses the current `ega_dac_accession_number` spelling).
 // This regression test would have caught the production bug where
 // `wa mlwh sync --env development` failed with
 // `Unknown column 'id_study_lims' in 'field list'` because the previous sync
@@ -51,7 +52,7 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 		seedRealMLWHSampleRow(t, source, 1, "SQSCP", "1001", "uuid-sample-1", "sample-a", "ssid-a", "supplier-a", "acc-sa", "donor-a", 9606, "human", "desc-a", time.Date(2026, time.May, 7, 9, 0, 0, 0, time.UTC))
 		seedRealMLWHSampleRow(t, source, 2, "SQSCP", "1002", "uuid-sample-2", "sample-b", "ssid-b", "supplier-b", "acc-sb", "donor-b", 9606, "human", "desc-b", time.Date(2026, time.May, 7, 9, 5, 0, 0, time.UTC))
 		seedRealMLWHStudyRow(t, source, 10, "SQSCP", "5001", "uuid-study-1", "Study One", "acc-st-1", time.Date(2026, time.May, 7, 8, 0, 0, 0, time.UTC))
-		seedRealMLWHFlowcellRow(t, source, 100, "Standard", 1, "5001", time.Date(2026, time.May, 7, 9, 10, 0, 0, time.UTC))
+		seedRealMLWHFlowcellRow(t, source, 100, "Standard", 1, 10, time.Date(2026, time.May, 7, 9, 10, 0, 0, time.UTC))
 		// sample 2 deliberately has no flowcell entry, so its mirrored
 		// id_study_lims must be the empty string rather than failing the sync.
 
@@ -62,7 +63,7 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 
 		reports, err := client.Sync(context.Background())
 
-		convey.Convey("when Sync runs without restricting tables, then every table is synced and id_study_lims comes from iseq_flowcell", func() {
+		convey.Convey("when Sync runs without restricting tables, then every table is synced and id_study_lims is resolved through study.id_study_lims", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(reports, convey.ShouldHaveLength, 3)
 
@@ -172,7 +173,8 @@ func TestUpstreamSampleResolverAgainstRealMLWHSchema(t *testing.T) {
 	convey.Convey("Given a cold cache and an upstream with the real MLWH schema", t, func() {
 		source := openRealMLWHSchemaSource(t)
 		seedRealMLWHSampleRow(t, source, 5, "SQSCP", "5005", "b7daafb8-c59f-11ee-8fba-024224dd57f4", "name-5", "ssid-5", "supplier-5", "acc-5", "donor-5", 9606, "human", "desc-5", time.Date(2026, time.May, 7, 10, 0, 0, 0, time.UTC))
-		seedRealMLWHFlowcellRow(t, source, 500, "Standard", 5, "9999", time.Date(2026, time.May, 7, 10, 5, 0, 0, time.UTC))
+		seedRealMLWHStudyRow(t, source, 99, "SQSCP", "9999", "uuid-study-99", "Study Ninety Nine", "acc-st-99", time.Date(2026, time.May, 7, 8, 30, 0, 0, time.UTC))
+		seedRealMLWHFlowcellRow(t, source, 500, "Standard", 5, 99, time.Date(2026, time.May, 7, 10, 5, 0, 0, time.UTC))
 
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -181,7 +183,7 @@ func TestUpstreamSampleResolverAgainstRealMLWHSchema(t *testing.T) {
 
 		match, err := client.ResolveSample(context.Background(), "b7daafb8-c59f-11ee-8fba-024224dd57f4")
 
-		convey.Convey("when ResolveSample runs against the upstream, then it returns the sample with id_study_lims sourced from iseq_flowcell", func() {
+		convey.Convey("when ResolveSample runs against the upstream, then it returns the sample with id_study_lims sourced through study.id_study_lims", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(match.Kind, convey.ShouldEqual, KindSampleUUID)
 			convey.So(match.Sample, convey.ShouldNotBeNil)
@@ -253,7 +255,7 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		id_iseq_flowcell_tmp INTEGER PRIMARY KEY,
 		pipeline_id_lims     TEXT NOT NULL,
 		id_sample_tmp        INTEGER NOT NULL,
-		id_study_lims        TEXT NOT NULL,
+		id_study_tmp         INTEGER NOT NULL,
 		last_updated         TEXT NOT NULL
 	)`)
 
@@ -284,12 +286,12 @@ func seedRealMLWHStudyRow(t *testing.T, db *sql.DB, idTmp int64, idLims, idStudy
 	}
 }
 
-func seedRealMLWHFlowcellRow(t *testing.T, db *sql.DB, idTmp int64, pipelineIDLims string, idSampleTmp int64, idStudyLims string, lastUpdated time.Time) {
+func seedRealMLWHFlowcellRow(t *testing.T, db *sql.DB, idTmp int64, pipelineIDLims string, idSampleTmp int64, idStudyTmp int64, lastUpdated time.Time) {
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO iseq_flowcell(id_iseq_flowcell_tmp, pipeline_id_lims, id_sample_tmp, id_study_lims, last_updated) VALUES (?, ?, ?, ?, ?)`,
-		idTmp, pipelineIDLims, idSampleTmp, idStudyLims, formatSyncTime(lastUpdated),
+		`INSERT INTO iseq_flowcell(id_iseq_flowcell_tmp, pipeline_id_lims, id_sample_tmp, id_study_tmp, last_updated) VALUES (?, ?, ?, ?, ?)`,
+		idTmp, pipelineIDLims, idSampleTmp, idStudyTmp, formatSyncTime(lastUpdated),
 	)
 	if err != nil {
 		t.Fatalf("seedRealMLWHFlowcellRow: %v", err)

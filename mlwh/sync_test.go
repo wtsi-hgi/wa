@@ -57,10 +57,10 @@ var sampleSyncSourceColumns = []string{
 	"last_updated",
 }
 
-// sampleSyncSourceQuery mirrors the upstream sync.go SELECT against MLWH and
+// sampleSyncSourceQueryForTest mirrors the upstream sync.go SELECT against MLWH and
 // must use the iseq_flowcell-correlated id_study_lims subquery because the
 // real `sample` table has no `id_study_lims` column.
-var sampleSyncSourceQuery = `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, ` + sampleStudyLimsSubquery + `, last_updated FROM sample WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_sample_tmp`
+var sampleSyncSourceQueryForTest = sampleSyncSourceQuery()
 
 var studySyncSourceColumns = []string{
 	"id_study_tmp",
@@ -105,7 +105,7 @@ func TestClientSyncSampleColdCachePopulatesMirrorsAndWatermark(t *testing.T) {
 		t2 := t1.Add(10 * time.Minute)
 		t3 := t2.Add(10 * time.Minute)
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQuery)).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(time.Time{})).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
 				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", 9606, "human", "desc-a", "study-a", formatSyncTime(t1)).
@@ -155,7 +155,7 @@ func TestClientSyncSampleWarmCacheUsesHighWaterFilter(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		defer func() { _ = sourceDB.Close() }()
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQuery)).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(t2)).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
 				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", "study-c", formatSyncTime(t3)))
@@ -197,7 +197,7 @@ func TestClientSyncSampleRollbackLeavesMirrorAndWatermarkUnchanged(t *testing.T)
 		convey.So(err, convey.ShouldBeNil)
 		defer func() { _ = sourceDB.Close() }()
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQuery)).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(t1)).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
 				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", 9606, "human", "desc-b", "study-b", formatSyncTime(t2)).
@@ -230,7 +230,7 @@ func TestClientSyncIseqFlowcellPopulatesDistinctLibrarySamples(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		defer func() { _ = sourceDB.Close() }()
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT pipeline_id_lims, id_sample_tmp, id_study_lims, last_updated FROM iseq_flowcell WHERE last_updated >= ? ORDER BY last_updated, pipeline_id_lims, id_sample_tmp, id_study_lims`)).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(flowcellSyncSourceQuery())).
 			WithArgs(formatSyncTime(time.Time{})).
 			WillReturnRows(sqlmock.NewRows([]string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"}).
 				AddRow("lib-a", 11, "study-a", formatSyncTime(t1)).

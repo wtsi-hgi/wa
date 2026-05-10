@@ -129,6 +129,14 @@ var studySourceColumnSpecs = []studySourceColumnSpec{
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run"}
 
+func sampleSyncSourceQuery() string {
+	return `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, ` + sampleStudyLimsSubquery + `, last_updated FROM sample WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_sample_tmp`
+}
+
+func flowcellSyncSourceQuery() string {
+	return `SELECT iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, COALESCE(study.id_study_lims, ''), iseq_flowcell.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp WHERE iseq_flowcell.last_updated >= ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) ORDER BY iseq_flowcell.last_updated, iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, COALESCE(study.id_study_lims, '')`
+}
+
 // Querier provides the upstream MLWH query surface used by sync.
 type Querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -145,7 +153,7 @@ type SyncReport struct {
 func syncSampleTable(ctx context.Context, tx *sql.Tx, source Querier, dialect string, highWater time.Time) (SyncReport, bool, error) {
 	rows, err := source.QueryContext(
 		ctx,
-		`SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, `+sampleStudyLimsSubquery+`, last_updated FROM sample WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_sample_tmp`,
+		sampleSyncSourceQuery(),
 		formatSyncTime(highWater),
 	)
 	if err != nil {
@@ -318,7 +326,7 @@ func isUnknownStudyColumnError(err error) bool {
 func syncFlowcellTable(ctx context.Context, tx *sql.Tx, source Querier, highWater time.Time) (SyncReport, bool, error) {
 	rows, err := source.QueryContext(
 		ctx,
-		`SELECT pipeline_id_lims, id_sample_tmp, id_study_lims, last_updated FROM iseq_flowcell WHERE last_updated >= ? ORDER BY last_updated, pipeline_id_lims, id_sample_tmp, id_study_lims`,
+		flowcellSyncSourceQuery(),
 		formatSyncTime(highWater),
 	)
 	if err != nil {
