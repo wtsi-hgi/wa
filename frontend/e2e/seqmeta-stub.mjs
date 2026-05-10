@@ -69,6 +69,48 @@ const partialStudy = {
     ],
 };
 
+const laneFilterSample = {
+    id_study_lims: "5993",
+    id_sample_lims: "SMP10524782",
+    sanger_id: "WTSI_wEMB10524782",
+    sample_name: "WTSI_wEMB10524782",
+    taxon_id: 9606,
+    common_name: "Human",
+    library_type: "exon",
+    id_run: 48522,
+    lane: 1,
+    tag_index: 1,
+    irods_path: "/irods/5993/WTSI_wEMB10524782",
+    study_accession_number: "ERP5993",
+    accession_number: "SAMEA10524782",
+};
+
+const laneFilterEnrichment = {
+    identifier: "WTSI_wEMB10524782",
+    type: "sanger_sample_id",
+    object: laneFilterSample,
+    graph: {
+        study: partialStudy.graph.study,
+        sample: laneFilterSample,
+        samples: [laneFilterSample],
+        library: partialStudy.graph.libraries[0],
+        libraries: partialStudy.graph.libraries,
+        sample_detail: {
+            sanger_id: laneFilterSample.sanger_id,
+            sample_name: laneFilterSample.sample_name,
+            sample: laneFilterSample,
+            lanes: [
+                {
+                    id_run: String(laneFilterSample.id_run),
+                    lane: String(laneFilterSample.lane),
+                    tag_index: laneFilterSample.tag_index,
+                },
+            ],
+        },
+    },
+    partial: false,
+};
+
 const degradedSampleLims = {
     identifier: "SMP5994",
     type: "sample_lims_id",
@@ -141,6 +183,14 @@ const libraryEnrichment = {
 
 const validations = new Map([
     [
+        "WTSI_wEMB10524782",
+        {
+            identifier: "WTSI_wEMB10524782",
+            type: "sanger_sample_id",
+            object: laneFilterSample,
+        },
+    ],
+    [
         "SANG5993",
         {
             identifier: "SANG5993",
@@ -177,6 +227,11 @@ const server = http.createServer((request, response) => {
 
     if (url.pathname === "/enrich/SANG5993") {
         sendJson(response, 200, partialStudy);
+        return;
+    }
+
+    if (url.pathname === "/enrich/WTSI_wEMB10524782") {
+        sendJson(response, 200, laneFilterEnrichment);
         return;
     }
 

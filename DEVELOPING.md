@@ -265,9 +265,19 @@ cd frontend
 # Install Playwright browsers (first time only)
 pnpm exec playwright install
 
-# Run e2e tests (requires backend running)
+# Run e2e tests
 pnpm exec playwright test
 ```
+
+Playwright coverage is hermetic. `make test-e2e` and `pnpm exec playwright test`
+start the app through `run-dev.sh --mode test`, which refuses `WA_MLWH_DSN` and
+uses the stub seqmeta server at `frontend/e2e/seqmeta-stub.mjs` instead of a
+real MLWH connection. Missing MLWH settings in `.env.development.local` do not
+change Playwright skip counts.
+
+There is currently no Playwright suite that exercises a real MLWH database.
+Live MLWH-backed integration coverage belongs in the Go integration tests, not
+the browser harness.
 
 ## Database
 

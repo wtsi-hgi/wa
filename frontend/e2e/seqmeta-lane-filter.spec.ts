@@ -1,44 +1,52 @@
 /**
  * Regression tests for lane filtering support (bugfix 260501-4).
  *
- * Tests that lane rows in seqmeta details have a Filter button that
- * links to the landing page with a seqmeta_lane filter.
+ * Tests that the seeded nf-core/sarek sample details render a lane Filter
+ * button that links to the landing page with a seqmeta_lane filter.
  */
 
 import { expect, test } from "@playwright/test";
 
 test.describe("Lane filtering support (bugfix 260501-4)", () => {
-    test.skip("lane rows show a Filter button that links to seqmeta_lane filter", async ({
+    test("lane rows show a Filter button that links to seqmeta_lane filter", async ({
         page,
     }) => {
-        // NOTE: This test requires a seqmeta fixture with sample details including lanes.
-        // Skip until such fixtures are available in the test harness.
-        // The implementation is verified via the simpler unit/contract tests.
-
         await page.goto("/");
+        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(
+            page.locator('tbody tr[data-result-row="true"]'),
+        ).toHaveCount(4);
 
-        // Navigate to a result with sample metadata
+        const resultLink = page
+            .getByRole("link", { name: "nf-core/sarek" })
+            .first();
+        const href = await resultLink.getAttribute("href");
+
+        await page.goto(href ?? "/results/");
+        await expect(page).toHaveURL(new RegExp(`${href ?? "/results/"}$`));
+        await expect(
+            page.getByRole("heading", { level: 1, name: "nf-core/sarek" }),
+        ).toBeVisible({ timeout: 30000 });
+
         const metadataRow = page.locator(
             '[data-metadata-row="seqmeta_sampleid"]',
         );
-        if (!(await metadataRow.isVisible())) {
-            test.skip();
-        }
+        await expect(metadataRow).toContainText("WTSI_wEMB10524782");
 
-        // Open seqmeta details dialog
         const trigger = metadataRow.getByTestId("seqmeta-badge-trigger");
         await trigger.click();
 
-        const dialog = page.getByRole("dialog", { name: /seqmeta details/i });
+        const dialog = page.getByRole("dialog", {
+            name: /WTSI_wEMB10524782/i,
+        });
         await expect(dialog).toBeVisible();
+        await expect(
+            dialog.getByRole("heading", { name: /WTSI_wEMB10524782/i }),
+        ).toBeVisible();
 
-        // Look for lanes section
         const lanesGroup = dialog.locator('[data-field-group="lanes"]');
-        if (!(await lanesGroup.isVisible())) {
-            test.skip();
-        }
+        await expect(lanesGroup).toBeVisible();
 
-        // Check that first lane row has both Copy and Filter buttons
         const firstLane = lanesGroup
             .locator('[data-seqmeta-detail-key="lane"]')
             .first();
@@ -51,9 +59,9 @@ test.describe("Lane filtering support (bugfix 260501-4)", () => {
 
         const filterLink = firstLane.getByRole("link", { name: /filter/i });
         await expect(filterLink).toBeVisible();
-
-        // Verify filter link has correct href format
-        const href = await filterLink.getAttribute("href");
-        expect(href).toMatch(/^\/\?seqmeta_lane=\d+_\d+#\d+$/);
+        await expect(filterLink).toHaveAttribute(
+            "href",
+            "/?seqmeta_lane=48522_1#1",
+        );
     });
 });
