@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,6 +119,58 @@ func TestOpenCacheSQLiteSchemaMismatchResetsSchema(t *testing.T) {
 		convey.Convey("when OpenCache runs, then it recreates all tables and updates schema_version", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(version, convey.ShouldEqual, CacheSchemaVersion)
+			convey.So(count, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestOpenCacheSQLiteSchemaShapeMismatchResetsSchema(t *testing.T) {
+	convey.Convey("Given a SQLite cache whose schema version matches but whose table shape is stale", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		db, err := sql.Open("sqlite", cachePath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = db.Close() })
+
+		_, err = db.Exec(`CREATE TABLE schema_version(version INTEGER NOT NULL PRIMARY KEY, applied_at TEXT NOT NULL)`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`INSERT INTO schema_version(version, applied_at) VALUES (?, ?)`, CacheSchemaVersion, "2026-05-10T09:00:00Z")
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`CREATE TABLE sample_mirror (
+			id_sample_tmp INTEGER NOT NULL PRIMARY KEY,
+			id_lims TEXT NOT NULL,
+			id_sample_lims TEXT NOT NULL,
+			uuid_sample_lims TEXT NOT NULL,
+			id_study_lims TEXT NOT NULL,
+			name TEXT NOT NULL,
+			sanger_sample_id TEXT NOT NULL,
+			supplier_name TEXT NOT NULL,
+			accession_number TEXT NOT NULL,
+			donor_id TEXT NOT NULL,
+			taxon_id INTEGER NOT NULL,
+			common_name TEXT NOT NULL,
+			description TEXT NOT NULL
+		)`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`CREATE TABLE negative_cache(raw TEXT PRIMARY KEY, reason TEXT, fetched_at TEXT, ttl_seconds INTEGER)`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`INSERT INTO negative_cache(raw, reason, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)`, "stale", "old", "2026-05-10T09:00:00Z", 900)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(db.Close(), convey.ShouldBeNil)
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(cache.Close(), convey.ShouldBeNil) })
+
+		var sampleMirrorColumns int
+		convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sample_mirror')`).Scan(&sampleMirrorColumns), convey.ShouldBeNil)
+
+		var count int
+		err = cache.DB().QueryRow(`SELECT COUNT(*) FROM negative_cache`).Scan(&count)
+
+		convey.Convey("when OpenCache runs, then it recreates the embedded cache schema even without a version bump", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleMirrorColumns, convey.ShouldEqual, 16)
 			convey.So(count, convey.ShouldEqual, 0)
 		})
 	})
@@ -365,8 +418,25 @@ func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 	if err != nil {
 		panic(err)
 	}
+	expectedShape, err := parseSchemaShape(stmts)
+	if err != nil {
+		panic(err)
+	}
 
 	mock.ExpectPing()
+
+	for _, table := range schemaStatementOrder {
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
+			WithArgs(table).
+			WillReturnRows(sqlmock.NewRows([]string{"COLUMN_NAME", "DATA_TYPE"}))
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`)).
+			WithArgs(table).
+			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME", "COLUMN_NAME"}))
+	}
+
+	for idx := len(schemaStatementOrder) - 1; idx >= 0; idx-- {
+		mock.ExpectExec(regexp.QuoteMeta(`DROP TABLE IF EXISTS ` + schemaStatementOrder[idx])).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
 
 	for _, group := range stmts {
 		for _, stmt := range splitSQLStatements(group) {
@@ -379,6 +449,32 @@ func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 	)
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(CacheSchemaVersion).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	for _, table := range schemaStatementOrder {
+		columnRows := sqlmock.NewRows([]string{"COLUMN_NAME", "DATA_TYPE"})
+		columnNames := make([]string, 0, len(expectedShape.Tables[table]))
+		for name := range expectedShape.Tables[table] {
+			columnNames = append(columnNames, name)
+		}
+		sort.Strings(columnNames)
+		for _, name := range columnNames {
+			columnRows.AddRow(name, expectedShape.Tables[table][name])
+		}
+
+		indexRows := sqlmock.NewRows([]string{"INDEX_NAME", "COLUMN_NAME"})
+		for indexNumber, indexSpec := range expectedShape.Index[table] {
+			for _, columnName := range strings.Split(indexSpec, ",") {
+				indexRows.AddRow(fmt.Sprintf("%s_idx_%d", table, indexNumber), columnName)
+			}
+		}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
+			WithArgs(table).
+			WillReturnRows(columnRows)
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`)).
+			WithArgs(table).
+			WillReturnRows(indexRows)
+	}
 }
 
 func TestClientReadOnlyHandleRejectsWrites(t *testing.T) {

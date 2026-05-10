@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -85,13 +86,7 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 		return nil, fmt.Errorf("mlwh: ping sqlite cache: %w", err)
 	}
 
-	if err = applySQLiteSchema(ctx, rwDB); err != nil {
-		_ = rwDB.Close()
-
-		return nil, err
-	}
-
-	if err = ensureSchemaVersion(ctx, rwDB, "sqlite"); err != nil {
+	if err = prepareCacheSchema(ctx, rwDB, "sqlite"); err != nil {
 		_ = rwDB.Close()
 
 		return nil, err
@@ -134,13 +129,7 @@ func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 		return nil, fmt.Errorf("mlwh: ping mysql cache: %w", err)
 	}
 
-	if err = applyMySQLSchema(ctx, rwDB); err != nil {
-		_ = rwDB.Close()
-
-		return nil, err
-	}
-
-	if err = ensureSchemaVersion(ctx, rwDB, "mysql"); err != nil {
+	if err = prepareCacheSchema(ctx, rwDB, "mysql"); err != nil {
 		_ = rwDB.Close()
 
 		return nil, err
@@ -342,8 +331,266 @@ func applySQLiteSchema(ctx context.Context, db *sql.DB) error {
 	return applySchema(ctx, db, "sqlite")
 }
 
-func applyMySQLSchema(ctx context.Context, db *sql.DB) error {
-	return applySchema(ctx, db, "mysql")
+func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
+	needsReset, err := cacheSchemaNeedsReset(ctx, db, dialect)
+	if err != nil {
+		return err
+	}
+	if needsReset {
+		if err = resetSchema(ctx, db, dialect); err != nil {
+			return err
+		}
+	}
+
+	if err = ensureSchemaVersion(ctx, db, dialect); err != nil {
+		return err
+	}
+
+	needsReset, err = cacheSchemaNeedsReset(ctx, db, dialect)
+	if err != nil {
+		return err
+	}
+	if !needsReset {
+		return nil
+	}
+
+	if err = resetSchema(ctx, db, dialect); err != nil {
+		return err
+	}
+
+	return writeSchemaVersion(ctx, db)
+}
+
+func cacheSchemaNeedsReset(ctx context.Context, db *sql.DB, dialect string) (bool, error) {
+	expectedStatements, err := loadSchema(dialect)
+	if err != nil {
+		return false, err
+	}
+
+	expectedShape, err := parseSchemaShape(expectedStatements)
+	if err != nil {
+		return false, err
+	}
+
+	actualShape, err := inspectCacheSchema(ctx, db, dialect, expectedShape)
+	if err != nil {
+		return false, err
+	}
+
+	return !schemaShapeMatches(expectedShape, actualShape), nil
+}
+
+func inspectCacheSchema(ctx context.Context, db *sql.DB, dialect string, expected schemaShape) (schemaShape, error) {
+	shape := schemaShape{
+		Tables: make(map[string]map[string]string, len(expected.Tables)),
+		Index:  make(map[string][]string, len(expected.Index)),
+	}
+
+	for _, table := range schemaStatementOrder {
+		columns, err := inspectCacheTableColumns(ctx, db, dialect, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		shape.Tables[table] = columns
+
+		indexes, err := inspectCacheTableIndexes(ctx, db, dialect, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		shape.Index[table] = indexes
+	}
+
+	return shape, nil
+}
+
+func inspectCacheTableColumns(ctx context.Context, db *sql.DB, dialect, table string) (map[string]string, error) {
+	if dialect == "sqlite" {
+		return inspectSQLiteTableColumns(ctx, db, table)
+	}
+
+	return inspectMySQLTableColumns(ctx, db, table)
+}
+
+func inspectCacheTableIndexes(ctx context.Context, db *sql.DB, dialect, table string) ([]string, error) {
+	if dialect == "sqlite" {
+		return inspectSQLiteTableIndexes(ctx, db, table)
+	}
+
+	return inspectMySQLTableIndexes(ctx, db, table)
+}
+
+func inspectSQLiteTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: inspect sqlite table %s columns: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns := make(map[string]string)
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			typeName   string
+			notNull    int
+			defaultVal any
+			pk         int
+		)
+		if err = rows.Scan(&cid, &name, &typeName, &notNull, &defaultVal, &pk); err != nil {
+			return nil, fmt.Errorf("mlwh: scan sqlite table %s columns: %w", table, err)
+		}
+		columns[name] = normaliseTypeFamily(typeName)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite table %s columns: %w", table, err)
+	}
+
+	return columns, nil
+}
+
+func inspectSQLiteTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_list(%s)", table))
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: inspect sqlite table %s indexes: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var indexes []string
+	for rows.Next() {
+		var (
+			seq     int
+			name    string
+			unique  int
+			origin  string
+			partial int
+		)
+		if err = rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			return nil, fmt.Errorf("mlwh: scan sqlite table %s indexes: %w", table, err)
+		}
+		if origin != "c" {
+			continue
+		}
+
+		columns, indexErr := inspectSQLiteIndexColumns(ctx, db, name)
+		if indexErr != nil {
+			return nil, indexErr
+		}
+		indexes = append(indexes, strings.Join(columns, ","))
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite table %s indexes: %w", table, err)
+	}
+
+	sort.Strings(indexes)
+
+	return indexes, nil
+}
+
+func inspectSQLiteIndexColumns(ctx context.Context, db *sql.DB, indexName string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info(%s)", indexName))
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: inspect sqlite index %s columns: %w", indexName, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var columns []string
+	for rows.Next() {
+		var seqno, cid int
+		var name string
+		if err = rows.Scan(&seqno, &cid, &name); err != nil {
+			return nil, fmt.Errorf("mlwh: scan sqlite index %s columns: %w", indexName, err)
+		}
+		columns = append(columns, name)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite index %s columns: %w", indexName, err)
+	}
+
+	return columns, nil
+}
+
+func inspectMySQLTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, table)
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: inspect mysql table %s columns: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns := make(map[string]string)
+	for rows.Next() {
+		var name, typeName string
+		if err = rows.Scan(&name, &typeName); err != nil {
+			return nil, fmt.Errorf("mlwh: scan mysql table %s columns: %w", table, err)
+		}
+		columns[name] = normaliseTypeFamily(typeName)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read mysql table %s columns: %w", table, err)
+	}
+
+	return columns, nil
+}
+
+func inspectMySQLTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table)
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: inspect mysql table %s indexes: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	grouped := make(map[string][]string)
+	for rows.Next() {
+		var indexName, columnName string
+		if err = rows.Scan(&indexName, &columnName); err != nil {
+			return nil, fmt.Errorf("mlwh: scan mysql table %s indexes: %w", table, err)
+		}
+		if indexName == "PRIMARY" {
+			continue
+		}
+		grouped[indexName] = append(grouped[indexName], columnName)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read mysql table %s indexes: %w", table, err)
+	}
+
+	indexes := make([]string, 0, len(grouped))
+	for _, columns := range grouped {
+		indexes = append(indexes, strings.Join(columns, ","))
+	}
+	sort.Strings(indexes)
+
+	return indexes, nil
+}
+
+func schemaShapeMatches(expected, actual schemaShape) bool {
+	for table, expectedColumns := range expected.Tables {
+		actualColumns, ok := actual.Tables[table]
+		if !ok || len(actualColumns) != len(expectedColumns) {
+			return false
+		}
+		for column, expectedType := range expectedColumns {
+			if actualColumns[column] != expectedType {
+				return false
+			}
+		}
+
+		expectedIndexes := append([]string(nil), expected.Index[table]...)
+		actualIndexes := append([]string(nil), actual.Index[table]...)
+		sort.Strings(expectedIndexes)
+		sort.Strings(actualIndexes)
+		if len(expectedIndexes) != len(actualIndexes) {
+			return false
+		}
+		for idx := range expectedIndexes {
+			if expectedIndexes[idx] != actualIndexes[idx] {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func ensureSchemaVersion(ctx context.Context, db *sql.DB, dialect string) error {
