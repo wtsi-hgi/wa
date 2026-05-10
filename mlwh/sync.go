@@ -93,6 +93,40 @@ var studyMirrorColumns = []string{
 	"last_updated",
 }
 
+type studySourceColumnSpec struct {
+	canonical string
+	aliases   []string
+}
+
+var studySourceColumnSpecs = []studySourceColumnSpec{
+	{canonical: "id_study_tmp"},
+	{canonical: "id_lims"},
+	{canonical: "id_study_lims"},
+	{canonical: "uuid_study_lims"},
+	{canonical: "name"},
+	{canonical: "accession_number"},
+	{canonical: "study_title"},
+	{canonical: "faculty_sponsor"},
+	{canonical: "state"},
+	{canonical: "abstract"},
+	{canonical: "abbreviation"},
+	{canonical: "description"},
+	{canonical: "data_release_strategy"},
+	{canonical: "data_access_group"},
+	{canonical: "hmdmc_number"},
+	{canonical: "programme"},
+	{canonical: "created"},
+	{canonical: "reference_genome"},
+	{canonical: "ethically_approved"},
+	{canonical: "study_type"},
+	{canonical: "contains_human_dna"},
+	{canonical: "contaminated_human_dna"},
+	{canonical: "study_visibility"},
+	{canonical: "egadac_accession_number", aliases: []string{"ega_dac_accession_number"}},
+	{canonical: "ega_policy_accession_number"},
+	{canonical: "data_release_timing"},
+}
+
 var syncStateColumns = []string{"table_name", "high_water", "last_run"}
 
 // Querier provides the upstream MLWH query surface used by sync.
@@ -163,11 +197,9 @@ func syncSampleTable(ctx context.Context, tx *sql.Tx, source Querier, dialect st
 }
 
 func syncStudyTable(ctx context.Context, tx *sql.Tx, source Querier, dialect string, highWater time.Time) (SyncReport, bool, error) {
-	rows, err := source.QueryContext(
-		ctx,
-		`SELECT id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`,
-		formatSyncTime(highWater),
-	)
+	rows, err := queryStudySourceContext(ctx, source, func(columns string) string {
+		return `SELECT ` + columns + `, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`
+	}, formatSyncTime(highWater))
 	if err != nil {
 		return SyncReport{}, false, fmt.Errorf("mlwh: query study sync source: %w", err)
 	}
@@ -211,6 +243,76 @@ func syncStudyTable(ctx context.Context, tx *sql.Tx, source Querier, dialect str
 	}
 
 	return report, sawRows, nil
+}
+
+func queryStudySourceContext(ctx context.Context, source Querier, queryForColumns func(string) string, args ...any) (*sql.Rows, error) {
+	rows, err := source.QueryContext(ctx, queryForColumns(studySelectColumns), args...)
+	if err == nil || !isUnknownStudyColumnError(err) {
+		return rows, err
+	}
+
+	resolvedColumns, resolveErr := resolveStudySourceColumns(ctx, source)
+	if resolveErr != nil {
+		return nil, errors.Join(err, resolveErr)
+	}
+
+	return source.QueryContext(ctx, queryForColumns(resolvedColumns), args...)
+}
+
+func resolveStudySourceColumns(ctx context.Context, source Querier) (string, error) {
+	rows, err := source.QueryContext(ctx, `SELECT * FROM study WHERE id_lims = 'SQSCP' LIMIT 0`)
+	if err != nil {
+		return "", fmt.Errorf("mlwh: probe study schema: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", fmt.Errorf("mlwh: read study schema columns: %w", err)
+	}
+
+	available := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		available[column] = struct{}{}
+	}
+
+	resolved := make([]string, 0, len(studySourceColumnSpecs))
+	for _, spec := range studySourceColumnSpecs {
+		column, ok := resolveStudySourceColumn(spec, available)
+		if !ok {
+			return "", fmt.Errorf("mlwh: study source missing required column %q", spec.canonical)
+		}
+
+		if column == spec.canonical {
+			resolved = append(resolved, column)
+
+			continue
+		}
+
+		resolved = append(resolved, column+` AS `+spec.canonical)
+	}
+
+	return strings.Join(resolved, ", "), nil
+}
+
+func resolveStudySourceColumn(spec studySourceColumnSpec, available map[string]struct{}) (string, bool) {
+	if _, ok := available[spec.canonical]; ok {
+		return spec.canonical, true
+	}
+
+	for _, alias := range spec.aliases {
+		if _, ok := available[alias]; ok {
+			return alias, true
+		}
+	}
+
+	return "", false
+}
+
+func isUnknownStudyColumnError(err error) bool {
+	message := strings.ToLower(err.Error())
+
+	return strings.Contains(message, "unknown column") || strings.Contains(message, "no such column")
 }
 
 func syncFlowcellTable(ctx context.Context, tx *sql.Tx, source Querier, highWater time.Time) (SyncReport, bool, error) {
@@ -628,37 +730,12 @@ type studySyncRow struct {
 func scanStudySyncRow(rows *sql.Rows) (studySyncRow, error) {
 	var row studySyncRow
 	var lastUpdated any
-	if err := rows.Scan(
-		&row.Study.IDStudyTmp,
-		&row.Study.IDLims,
-		&row.Study.IDStudyLims,
-		&row.Study.UUIDStudyLims,
-		&row.Study.Name,
-		&row.Study.AccessionNumber,
-		&row.Study.StudyTitle,
-		&row.Study.FacultySponsor,
-		&row.Study.State,
-		&row.Study.Abstract,
-		&row.Study.Abbreviation,
-		&row.Study.Description,
-		&row.Study.DataReleaseStrategy,
-		&row.Study.DataAccessGroup,
-		&row.Study.HMDMCNumber,
-		&row.Study.Programme,
-		&row.Study.Created,
-		&row.Study.ReferenceGenome,
-		&row.Study.EthicallyApproved,
-		&row.Study.StudyType,
-		&row.Study.ContainsHumanDNA,
-		&row.Study.ContaminatedHumanDNA,
-		&row.Study.StudyVisibility,
-		&row.Study.EGADACAccessionNumber,
-		&row.Study.EGAPolicyAccessionNumber,
-		&row.Study.DataReleaseTiming,
-		&lastUpdated,
-	); err != nil {
+	targets, apply := studyScanTargets(&row.Study)
+	targets = append(targets, &lastUpdated)
+	if err := rows.Scan(targets...); err != nil {
 		return studySyncRow{}, fmt.Errorf("mlwh: scan study sync row: %w", err)
 	}
+	apply()
 
 	parsed, err := parseSyncTimeValue(lastUpdated)
 	if err != nil {

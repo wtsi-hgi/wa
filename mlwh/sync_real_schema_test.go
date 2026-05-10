@@ -39,7 +39,8 @@ import (
 // TestSyncAgainstRealMLWHSchema exercises the full Client.Sync path against an
 // upstream "MLWH" SQLite database whose table shapes faithfully match the real
 // Sanger MLWH columns (in particular: the upstream `sample` table has NO
-// `id_study_lims` column; sample-to-study links live on `iseq_flowcell`).
+// `id_study_lims` column; sample-to-study links live on `iseq_flowcell`, and
+// the study table uses the current `ega_dac_accession_number` spelling).
 // This regression test would have caught the production bug where
 // `wa mlwh sync --env development` failed with
 // `Unknown column 'id_study_lims' in 'field list'` because the previous sync
@@ -82,6 +83,83 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 			convey.So(studyLimsForSample1, convey.ShouldEqual, "5001")
 			convey.So(cache.DB().QueryRow(`SELECT id_study_lims FROM sample_mirror WHERE id_sample_tmp = 2`).Scan(&studyLimsForSample2), convey.ShouldBeNil)
 			convey.So(studyLimsForSample2, convey.ShouldEqual, "")
+		})
+	})
+}
+
+// TestAllStudiesAgainstRealMLWHSchema verifies that the cold-cache study list
+// path tolerates the current upstream study column spelling used by MLWH.
+func TestAllStudiesAgainstRealMLWHSchema(t *testing.T) {
+	convey.Convey("Given a cold cache and an upstream database with the current MLWH study schema", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		seedRealMLWHStudyRow(t, source, 10, "SQSCP", "5001", "uuid-study-1", "Study One", "acc-st-1", time.Date(2026, time.May, 7, 8, 0, 0, 0, time.UTC))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		studies, err := client.AllStudies(context.Background(), 100, 0)
+
+		convey.Convey("when AllStudies runs, then it returns the study and read-through populates study_mirror", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(studies, convey.ShouldHaveLength, 1)
+			convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "5001")
+			convey.So(studies[0].EGADACAccessionNumber, convey.ShouldEqual, "")
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 1)
+		})
+	})
+}
+
+func TestAllStudiesAgainstRealMLWHSchemaAllowsNullStudyStrings(t *testing.T) {
+	convey.Convey("Given a cold cache and an upstream study row with nullable text fields", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		_, err := source.Exec(
+			`INSERT INTO study(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			11,
+			"SQSCP",
+			"5002",
+			"uuid-study-2",
+			"Study Two",
+			nil,
+			"Study title 2",
+			nil,
+			"active",
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			true,
+			nil,
+			false,
+			false,
+			nil,
+			nil,
+			nil,
+			nil,
+			formatSyncTime(time.Date(2026, time.May, 7, 8, 10, 0, 0, time.UTC)),
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		studies, err := client.AllStudies(context.Background(), 100, 0)
+
+		convey.Convey("when AllStudies runs, then nullable upstream strings are normalized to empty strings", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(studies, convey.ShouldHaveLength, 1)
+			convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "5002")
+			convey.So(studies[0].AccessionNumber, convey.ShouldEqual, "")
+			convey.So(studies[0].FacultySponsor, convey.ShouldEqual, "")
+			convey.So(studies[0].EGADACAccessionNumber, convey.ShouldEqual, "")
 		})
 	})
 }
@@ -147,27 +225,27 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		id_study_lims               TEXT NOT NULL,
 		uuid_study_lims             TEXT NOT NULL,
 		name                        TEXT NOT NULL,
-		accession_number            TEXT NOT NULL,
-		study_title                 TEXT NOT NULL,
-		faculty_sponsor             TEXT NOT NULL,
+		accession_number            TEXT,
+		study_title                 TEXT,
+		faculty_sponsor             TEXT,
 		state                       TEXT NOT NULL,
-		abstract                    TEXT NOT NULL,
-		abbreviation                TEXT NOT NULL,
-		description                 TEXT NOT NULL,
-		data_release_strategy       TEXT NOT NULL,
-		data_access_group           TEXT NOT NULL,
-		hmdmc_number                TEXT NOT NULL,
-		programme                   TEXT NOT NULL,
-		created                     TEXT NOT NULL,
-		reference_genome            TEXT NOT NULL,
+		abstract                    TEXT,
+		abbreviation                TEXT,
+		description                 TEXT,
+		data_release_strategy       TEXT,
+		data_access_group           TEXT,
+		hmdmc_number                TEXT,
+		programme                   TEXT,
+		created                     TEXT,
+		reference_genome            TEXT,
 		ethically_approved          INTEGER NOT NULL,
-		study_type                  TEXT NOT NULL,
+		study_type                  TEXT,
 		contains_human_dna          INTEGER NOT NULL,
 		contaminated_human_dna      INTEGER NOT NULL,
-		study_visibility            TEXT NOT NULL,
-		egadac_accession_number     TEXT NOT NULL,
-		ega_policy_accession_number TEXT NOT NULL,
-		data_release_timing         TEXT NOT NULL,
+		study_visibility            TEXT,
+		ega_dac_accession_number    TEXT,
+		ega_policy_accession_number TEXT,
+		data_release_timing         TEXT,
 		last_updated                TEXT NOT NULL
 	)`)
 
@@ -198,7 +276,7 @@ func seedRealMLWHStudyRow(t *testing.T, db *sql.DB, idTmp int64, idLims, idStudy
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO study(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, '', '', 'active', '', '', '', '', '', '', '', '', '', 1, '', 0, 0, '', '', '', '', ?)`,
+		`INSERT INTO study(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, '', '', 'active', '', '', '', '', '', '', '', '', '', 1, '', 0, 0, '', '', '', '', ?)`,
 		idTmp, idLims, idStudyLims, uuidLims, name, accession, formatSyncTime(lastUpdated),
 	)
 	if err != nil {

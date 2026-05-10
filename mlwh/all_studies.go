@@ -34,38 +34,108 @@ import (
 
 var studySelectColumns = studyMirrorSelectColumns
 
+type nullableStudyScanFields struct {
+	idLims                   sql.NullString
+	idStudyLims              sql.NullString
+	uuidStudyLims            sql.NullString
+	name                     sql.NullString
+	accessionNumber          sql.NullString
+	studyTitle               sql.NullString
+	facultySponsor           sql.NullString
+	state                    sql.NullString
+	abstract                 sql.NullString
+	abbreviation             sql.NullString
+	description              sql.NullString
+	dataReleaseStrategy      sql.NullString
+	dataAccessGroup          sql.NullString
+	hmdmcNumber              sql.NullString
+	programme                sql.NullString
+	created                  sql.NullString
+	referenceGenome          sql.NullString
+	ethicallyApproved        sql.NullBool
+	studyType                sql.NullString
+	containsHumanDNA         sql.NullBool
+	contaminatedHumanDNA     sql.NullBool
+	studyVisibility          sql.NullString
+	egaDACAccessionNumber    sql.NullString
+	egaPolicyAccessionNumber sql.NullString
+	dataReleaseTiming        sql.NullString
+}
+
+func studyScanTargets(study *Study) ([]any, func()) {
+	nullable := &nullableStudyScanFields{}
+
+	return []any{
+			&study.IDStudyTmp,
+			&nullable.idLims,
+			&nullable.idStudyLims,
+			&nullable.uuidStudyLims,
+			&nullable.name,
+			&nullable.accessionNumber,
+			&nullable.studyTitle,
+			&nullable.facultySponsor,
+			&nullable.state,
+			&nullable.abstract,
+			&nullable.abbreviation,
+			&nullable.description,
+			&nullable.dataReleaseStrategy,
+			&nullable.dataAccessGroup,
+			&nullable.hmdmcNumber,
+			&nullable.programme,
+			&nullable.created,
+			&nullable.referenceGenome,
+			&nullable.ethicallyApproved,
+			&nullable.studyType,
+			&nullable.containsHumanDNA,
+			&nullable.contaminatedHumanDNA,
+			&nullable.studyVisibility,
+			&nullable.egaDACAccessionNumber,
+			&nullable.egaPolicyAccessionNumber,
+			&nullable.dataReleaseTiming,
+		}, func() {
+			study.IDLims = nullStringValue(nullable.idLims)
+			study.IDStudyLims = nullStringValue(nullable.idStudyLims)
+			study.UUIDStudyLims = nullStringValue(nullable.uuidStudyLims)
+			study.Name = nullStringValue(nullable.name)
+			study.AccessionNumber = nullStringValue(nullable.accessionNumber)
+			study.StudyTitle = nullStringValue(nullable.studyTitle)
+			study.FacultySponsor = nullStringValue(nullable.facultySponsor)
+			study.State = nullStringValue(nullable.state)
+			study.Abstract = nullStringValue(nullable.abstract)
+			study.Abbreviation = nullStringValue(nullable.abbreviation)
+			study.Description = nullStringValue(nullable.description)
+			study.DataReleaseStrategy = nullStringValue(nullable.dataReleaseStrategy)
+			study.DataAccessGroup = nullStringValue(nullable.dataAccessGroup)
+			study.HMDMCNumber = nullStringValue(nullable.hmdmcNumber)
+			study.Programme = nullStringValue(nullable.programme)
+			study.Created = nullStringValue(nullable.created)
+			study.ReferenceGenome = nullStringValue(nullable.referenceGenome)
+			study.EthicallyApproved = nullable.ethicallyApproved.Valid && nullable.ethicallyApproved.Bool
+			study.StudyType = nullStringValue(nullable.studyType)
+			study.ContainsHumanDNA = nullable.containsHumanDNA.Valid && nullable.containsHumanDNA.Bool
+			study.ContaminatedHumanDNA = nullable.contaminatedHumanDNA.Valid && nullable.contaminatedHumanDNA.Bool
+			study.StudyVisibility = nullStringValue(nullable.studyVisibility)
+			study.EGADACAccessionNumber = nullStringValue(nullable.egaDACAccessionNumber)
+			study.EGAPolicyAccessionNumber = nullStringValue(nullable.egaPolicyAccessionNumber)
+			study.DataReleaseTiming = nullStringValue(nullable.dataReleaseTiming)
+		}
+}
+
+func nullStringValue(value sql.NullString) string {
+	if value.Valid {
+		return value.String
+	}
+
+	return ""
+}
+
 func scanStudyRow(scan func(dest ...any) error) (Study, error) {
 	study := Study{}
-	if err := scan(
-		&study.IDStudyTmp,
-		&study.IDLims,
-		&study.IDStudyLims,
-		&study.UUIDStudyLims,
-		&study.Name,
-		&study.AccessionNumber,
-		&study.StudyTitle,
-		&study.FacultySponsor,
-		&study.State,
-		&study.Abstract,
-		&study.Abbreviation,
-		&study.Description,
-		&study.DataReleaseStrategy,
-		&study.DataAccessGroup,
-		&study.HMDMCNumber,
-		&study.Programme,
-		&study.Created,
-		&study.ReferenceGenome,
-		&study.EthicallyApproved,
-		&study.StudyType,
-		&study.ContainsHumanDNA,
-		&study.ContaminatedHumanDNA,
-		&study.StudyVisibility,
-		&study.EGADACAccessionNumber,
-		&study.EGAPolicyAccessionNumber,
-		&study.DataReleaseTiming,
-	); err != nil {
+	targets, apply := studyScanTargets(&study)
+	if err := scan(targets...); err != nil {
 		return Study{}, err
 	}
+	apply()
 
 	return study, nil
 }
@@ -147,12 +217,9 @@ func (c *Client) queryAllStudiesSource(ctx context.Context, limit, offset int) (
 		return nil, fmt.Errorf("mlwh: cache client not configured")
 	}
 
-	rows, err := c.syncSource.QueryContext(
-		ctx,
-		`SELECT `+studySelectColumns+`, last_updated FROM study WHERE id_lims = 'SQSCP' ORDER BY id_study_lims LIMIT ? OFFSET ?`,
-		limit,
-		offset,
-	)
+	rows, err := queryStudySourceContext(ctx, c.syncSource, func(columns string) string {
+		return `SELECT ` + columns + `, last_updated FROM study WHERE id_lims = 'SQSCP' ORDER BY id_study_lims LIMIT ? OFFSET ?`
+	}, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query study source: %w", ErrUpstreamImpaired, err)
 	}
