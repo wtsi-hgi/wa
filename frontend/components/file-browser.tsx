@@ -1240,7 +1240,7 @@ export function FileBrowser({
         };
     };
 
-    const renderSubdirGalleryRow = (
+    const renderSubdirPreviewStrip = (
         subdir: DirectoryTreeNode,
         kinds: ReadonlySet<SubdirPreviewKind>,
     ): ReactNode => {
@@ -1248,22 +1248,9 @@ export function FileBrowser({
 
         return (
             <div
-                key={`subdir-gallery-${subdir.path}`}
-                className="flex w-full flex-col items-start gap-3 rounded-[1.25rem] border border-border/60 bg-background/60 p-3"
-                data-subdir-preview-row={subdir.path}
+                className="px-3 pb-3"
+                data-subdir-preview-strip-wrapper={subdir.path}
             >
-                <div
-                    className="min-w-0"
-                    data-subdir-preview-heading={subdir.path}
-                >
-                    <p className="truncate text-base font-medium text-foreground">
-                        {subdir.label || directoryLabel(subdir.path)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {previewableFiles.length} preview
-                        {previewableFiles.length === 1 ? "" : "s"}
-                    </p>
-                </div>
                 <div
                     className="flex w-full min-w-0 items-start gap-4 overflow-x-auto pb-1"
                     data-subdir-preview-strip={subdir.path}
@@ -1354,10 +1341,21 @@ export function FileBrowser({
                 subdirPreviewAvailable &&
                 Boolean(renderGridPreview);
             const subdirPreviewKinds = subdirPreviewKindsFor(node.path);
-            const showSubdirGallery =
-                hasSubdirPreviewControls &&
-                isSelected &&
-                subdirPreviewEnabledFor(node.path);
+            const parentNode = parentPath
+                ? findTreeNodeByPath(directoryTree, parentPath)
+                : undefined;
+            const inlineSubdirPreviewKinds = parentNode
+                ? subdirPreviewKindsFor(parentNode.path)
+                : null;
+            const showInlineSubdirPreview = Boolean(
+                parentNode &&
+                parentNode.path === effectiveSelectedDirectory &&
+                subdirPreviewEnabledFor(parentNode.path) &&
+                !isStructurallyExpanded &&
+                subdirPreviewStateFor(parentNode).visibleSubdirs.some(
+                    (subdir) => subdir.path === node.path,
+                ),
+            );
             const folderControls = renderFolderControls(node.path, {
                 hasFilePreviewControls,
                 hasSubdirPreviewControls,
@@ -1374,10 +1372,7 @@ export function FileBrowser({
                 displayedFiles.length > 0;
             const showsChildRows = isStructurallyExpanded && hasChildren;
             const isExpanded =
-                hasPreviewControls ||
-                showSubdirGallery ||
-                showsDirectoryFiles ||
-                showsChildRows;
+                hasPreviewControls || showsDirectoryFiles || showsChildRows;
             const rows: ReactNode[] = [
                 <div
                     key={`dir-${node.path}`}
@@ -1389,6 +1384,9 @@ export function FileBrowser({
                             : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
                     )}
                     data-directory-row={node.path}
+                    data-subdir-preview-row={
+                        showInlineSubdirPreview ? node.path : undefined
+                    }
                 >
                     <button
                         type="button"
@@ -1396,6 +1394,9 @@ export function FileBrowser({
                         data-depth={depth}
                         data-directory-expanded={String(isExpanded)}
                         data-directory-path={node.path}
+                        data-subdir-preview-heading={
+                            showInlineSubdirPreview ? node.path : undefined
+                        }
                         onClick={() => {
                             const nextIsExpanded = !isExpanded;
 
@@ -1492,22 +1493,14 @@ export function FileBrowser({
                         </span>
                     </button>
                     {folderControls}
+                    {showInlineSubdirPreview && inlineSubdirPreviewKinds
+                        ? renderSubdirPreviewStrip(
+                              node,
+                              inlineSubdirPreviewKinds,
+                          )
+                        : null}
                 </div>,
             ];
-
-            if (showSubdirGallery) {
-                rows.push(
-                    <div
-                        key={`subdir-gallery-${node.path}`}
-                        className="space-y-3"
-                        data-subdir-preview-gallery={node.path}
-                    >
-                        {visibleSubdirs.map((subdir) =>
-                            renderSubdirGalleryRow(subdir, subdirPreviewKinds),
-                        )}
-                    </div>,
-                );
-            }
 
             if (
                 isStructurallyExpanded &&

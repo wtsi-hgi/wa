@@ -1300,7 +1300,6 @@ describe("N1 file browser", () => {
                             },
                             file.path,
                         ),
-                    selectedDirectory: "/demo",
                     visibleFiles: [],
                 }),
             );
@@ -1884,7 +1883,9 @@ describe("N1 file browser", () => {
         );
 
         expect(
-            container.querySelector('[data-subdir-preview-gallery="/demo"]'),
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-a"]',
+            ),
         ).toBeTruthy();
         expect(
             container.querySelector(
@@ -1918,11 +1919,13 @@ describe("N1 file browser", () => {
 
         expect(
             container.querySelector(
-                '[data-subdir-preview-gallery="/demo/sample-a/lanes"]',
+                '[data-subdir-preview-row="/demo/sample-a/lanes/lane-1"]',
             ),
         ).toBeTruthy();
         expect(
-            container.querySelector('[data-subdir-preview-gallery="/demo"]'),
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-a"]',
+            ),
         ).toBeNull();
         expect(
             container.querySelector(
@@ -1938,7 +1941,9 @@ describe("N1 file browser", () => {
         );
 
         expect(
-            container.querySelector('[data-subdir-preview-gallery="/demo"]'),
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-a"]',
+            ),
         ).toBeTruthy();
         expect(
             container.querySelector(
@@ -1964,7 +1969,7 @@ describe("N1 file browser", () => {
         expect(lanesTableCheckbox?.checked).toBe(true);
         expect(
             container.querySelector(
-                '[data-subdir-preview-gallery="/demo/sample-a/lanes"]',
+                '[data-subdir-preview-row="/demo/sample-a/lanes/lane-1"]',
             ),
         ).toBeTruthy();
         expect(
@@ -2202,6 +2207,86 @@ describe("N1 file browser", () => {
         expect(
             rowA?.querySelector(
                 '[data-subdir-preview-file="/demo/sample-a/data.csv"]',
+            ),
+        ).toBeNull();
+    });
+
+    it("renders subfolder previews inside the original subdirectory row and hides them when that row expands", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/img-1.png", "output"),
+            buildFile("/demo/sample-a/img-2.png", "output"),
+            buildFile("/demo/sample-b/pic-1.png", "output"),
+            buildFile("/demo/sample-b/pic-2.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const controls = container.querySelector(
+            '[data-subdir-preview-controls="/demo"]',
+        );
+        const toggle = controls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        );
+
+        expect(controls).toBeTruthy();
+        expect(toggle).toBeTruthy();
+
+        await click(toggle);
+
+        const sampleARow = container.querySelector(
+            '[data-directory-row="/demo/sample-a"]',
+        );
+
+        expect(sampleARow).toBeTruthy();
+        expect(
+            container.querySelector('[data-subdir-preview-gallery="/demo"]'),
+        ).toBeNull();
+        expect(
+            container.querySelectorAll('[data-directory-row="/demo/sample-a"]'),
+        ).toHaveLength(1);
+        expect(
+            sampleARow?.querySelector(
+                '[data-subdir-preview-strip="/demo/sample-a"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            sampleARow?.querySelector(
+                '[data-subdir-preview-file="/demo/sample-a/img-1.png"]',
+            ),
+        ).toBeTruthy();
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a"]',
+            ),
+        );
+
+        const expandedSampleARow = container.querySelector(
+            '[data-directory-row="/demo/sample-a"]',
+        );
+
+        expect(
+            expandedSampleARow?.querySelector(
+                '[data-subdir-preview-strip="/demo/sample-a"]',
             ),
         ).toBeNull();
     });
