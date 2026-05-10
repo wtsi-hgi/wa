@@ -203,6 +203,30 @@ describe("N1 file browser", () => {
         );
     });
 
+    it("renders top-level directory labels with a leading slash", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/results/alpha/one.txt", "output"),
+                        buildFile("/results/beta/two.txt", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const resultsButton = container.querySelector(
+            'button[data-directory-path="/results"]',
+        );
+
+        expect(resultsButton).toBeTruthy();
+        expect(resultsButton?.textContent).toContain("/results");
+    });
+
     it("renders grid previews beside the current page of file rows", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [

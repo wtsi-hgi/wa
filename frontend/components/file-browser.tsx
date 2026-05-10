@@ -418,6 +418,18 @@ function directoryLabel(path: string): string {
     return path === "/" ? "/" : path.slice(1);
 }
 
+function visibleDirectoryLabel(
+    path: string,
+    label: string,
+    depth: number,
+): string {
+    if (depth === 0) {
+        return path;
+    }
+
+    return label || directoryLabel(path);
+}
+
 function pathSegments(path: string): string[] {
     if (path === "/") {
         return [];
@@ -1466,7 +1478,11 @@ export function FileBrowser({
                         </span>
                         <span className="min-w-0">
                             <span className="block truncate text-base font-medium text-foreground">
-                                {node.label || directoryLabel(node.path)}
+                                {visibleDirectoryLabel(
+                                    node.path,
+                                    node.label,
+                                    depth,
+                                )}
                             </span>
                             <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
                                 <span>
