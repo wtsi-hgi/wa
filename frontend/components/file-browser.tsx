@@ -718,8 +718,13 @@ export function FileBrowser({
         openSubdirPreviewKindDisclosurePath,
         setOpenSubdirPreviewKindDisclosurePath,
     ] = useState<string | null>(null);
+    const [openPreviewModeDisclosurePath, setOpenPreviewModeDisclosurePath] =
+        useState<string | null>(null);
     const openSubdirPreviewKindDisclosureRef =
         useRef<HTMLDetailsElement | null>(null);
+    const openPreviewModeDisclosureRef = useRef<HTMLDetailsElement | null>(
+        null,
+    );
     const effectivePreviewHeight = onPreviewHeightChange
         ? previewHeight
         : uncontrolledPreviewHeight;
@@ -840,6 +845,48 @@ export function FileBrowser({
             document.removeEventListener("click", handleDocumentClick, true);
         };
     }, [openSubdirPreviewKindDisclosurePath]);
+    useEffect(() => {
+        if (!openPreviewModeDisclosurePath) {
+            return;
+        }
+
+        const handleDocumentClick = (event: MouseEvent) => {
+            const disclosure = openPreviewModeDisclosureRef.current;
+
+            if (!disclosure) {
+                setOpenPreviewModeDisclosurePath(null);
+                return;
+            }
+
+            const target = event.target;
+
+            if (target instanceof Node && disclosure.contains(target)) {
+                return;
+            }
+
+            disclosure.open = false;
+            openPreviewModeDisclosureRef.current = null;
+            setOpenPreviewModeDisclosurePath(null);
+
+            const targetElement =
+                target instanceof Element
+                    ? target
+                    : target instanceof Node
+                      ? target.parentElement
+                      : null;
+
+            if (targetElement?.closest("button[data-directory-path]")) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        };
+
+        document.addEventListener("click", handleDocumentClick, true);
+
+        return () => {
+            document.removeEventListener("click", handleDocumentClick, true);
+        };
+    }, [openPreviewModeDisclosurePath]);
 
     const handlePreviewHeightCommit = (value: number) => {
         if (onPreviewHeightChange) {
@@ -966,10 +1013,36 @@ export function FileBrowser({
                 }
             >
                 {hasPreviewModeControls ? (
-                    <details className="relative">
+                    <details
+                        className="relative"
+                        data-preview-mode-disclosure={directoryPath}
+                        open={openPreviewModeDisclosurePath === directoryPath}
+                        ref={(element) => {
+                            if (
+                                openPreviewModeDisclosurePath === directoryPath
+                            ) {
+                                openPreviewModeDisclosureRef.current = element;
+                                return;
+                            }
+
+                            if (
+                                openPreviewModeDisclosureRef.current === element
+                            ) {
+                                openPreviewModeDisclosureRef.current = null;
+                            }
+                        }}
+                    >
                         <summary
                             aria-label="Preview modes"
                             className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden"
+                            onClick={(event) => {
+                                event.preventDefault();
+                                setOpenPreviewModeDisclosurePath((current) =>
+                                    current === directoryPath
+                                        ? null
+                                        : directoryPath,
+                                );
+                            }}
                         >
                             <Eye
                                 className="size-4 text-primary"
@@ -984,7 +1057,10 @@ export function FileBrowser({
                             </span>
                             <ChevronDown className="size-4 text-muted-foreground" />
                         </summary>
-                        <div className="absolute left-0 z-20 mt-2 min-w-56 rounded-[1.25rem] border border-border/70 bg-background/95 p-3 shadow-lg">
+                        <div
+                            className="absolute left-0 z-20 mt-2 min-w-56 rounded-[1.25rem] border border-border/70 bg-background/95 p-3 shadow-lg"
+                            data-preview-modes-menu={directoryPath}
+                        >
                             <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
                                 Preview modes
                             </div>

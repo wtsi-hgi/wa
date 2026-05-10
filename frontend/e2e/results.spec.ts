@@ -721,6 +721,10 @@ test.describe("Q1 critical results flows", () => {
 
         await openPreviewModes(folderControls);
         await folderControls.getByLabel("1 preview per row").check();
+        await folderControls
+            .locator('summary[aria-label="Preview modes"]')
+            .first()
+            .click();
 
         await expect(folderControls.getByText("Page 1 of 2")).toBeVisible();
         await expect(bottomControls.getByText("Page 1 of 2")).toBeVisible();

@@ -1000,6 +1000,9 @@ test.describe("File Browser single preview layout", () => {
         const parentControls = page.locator(
             `[data-subdir-preview-controls="${rnaseqRootPath}"]`,
         );
+        const previewModeDisclosure = page.locator(
+            `[data-preview-mode-disclosure="${rnaseqRootPath}"]`,
+        );
         const parentGalleryRow = page
             .locator("[data-subdir-preview-row]")
             .first();
@@ -1032,6 +1035,15 @@ test.describe("File Browser single preview layout", () => {
         await subfolderToggle.check();
         await expect(parentControls).toBeVisible();
         await expect(subfolderToggle).toBeChecked();
+        await expect(parentGalleryRow).toBeVisible();
+
+        await parentButton.click();
+        await expect(previewModeDisclosure).not.toHaveAttribute("open", "");
+        await expect(parentButton).toHaveAttribute(
+            "data-directory-expanded",
+            "true",
+        );
+        await expect(parentControls).toBeVisible();
         await expect(parentGalleryRow).toBeVisible();
 
         await parentButton.click();
