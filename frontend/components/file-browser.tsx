@@ -51,7 +51,12 @@ const fileKindOrder: Record<FileEntry["kind"], number> = {
     pipeline: 2,
 };
 
-export type SubdirPreviewKind = "image" | "table" | "markdown" | "code";
+export type SubdirPreviewKind =
+    | "image"
+    | "table"
+    | "markdown"
+    | "code"
+    | "document";
 
 const subdirPreviewKindGroups: ReadonlyArray<{
     extensions: ReadonlyArray<string>;
@@ -85,9 +90,24 @@ const subdirPreviewKindGroups: ReadonlyArray<{
         label: "Markdown",
     },
     {
-        extensions: ["htm", "html", "json", "log", "py", "txt", "yaml", "yml"],
+        extensions: [
+            "htm",
+            "html",
+            "json",
+            "log",
+            "py",
+            "txt",
+            "xml",
+            "yaml",
+            "yml",
+        ],
         id: "code",
         label: "Text & code",
+    },
+    {
+        extensions: ["pdf"],
+        id: "document",
+        label: "Documents",
     },
 ];
 
@@ -96,24 +116,9 @@ const compressedExtensions = new Set(["gz"]);
 const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(
     subdirPreviewKindGroups.map((group) => group.id),
 );
-const defaultSubdirPreviewKinds = new Set<SubdirPreviewKind>(["image"]);
-const directFilePreviewExtensions = new Set([
-    "csv",
-    "htm",
-    "html",
-    "json",
-    "log",
-    "markdown",
-    "md",
-    "pdf",
-    "py",
-    "svg",
-    "tsv",
-    "txt",
-    "xml",
-    "yaml",
-    "yml",
-]);
+const defaultSubdirPreviewKinds = new Set<SubdirPreviewKind>(
+    allSubdirPreviewKinds,
+);
 
 function effectiveExtension(path: string): string {
     const name = path.split("/").pop() ?? path;
@@ -149,12 +154,7 @@ function previewKindForPath(path: string): SubdirPreviewKind | null {
 }
 
 function pathSupportsFilePreview(path: string): boolean {
-    const extension = effectiveExtension(path);
-
-    return (
-        previewKindForPath(path) !== null ||
-        directFilePreviewExtensions.has(extension)
-    );
+    return previewKindForPath(path) !== null;
 }
 
 export function findInitialSubdirPreviewDirectory(
@@ -272,6 +272,34 @@ function summarizeSubdirPreviewKinds(
     }
 
     return `${selectedGroups.length} file types`;
+}
+
+function summarizePreviewModes(
+    previewMode: PreviewMode,
+    subdirPreviewEnabled: boolean,
+): string {
+    if (previewMode === "grid" && subdirPreviewEnabled) {
+        return "Grid + subfolders";
+    }
+
+    if (previewMode === "grid") {
+        return "1 per row";
+    }
+
+    if (subdirPreviewEnabled) {
+        return "Subfolders";
+    }
+
+    return "Single preview";
+}
+
+function fileMatchesPreviewKinds(
+    file: FileEntry,
+    kinds: ReadonlySet<SubdirPreviewKind>,
+): boolean {
+    const kind = previewKindForPath(file.path);
+
+    return kind !== null && kinds.has(kind);
 }
 
 type FileBrowserProps = {
@@ -664,15 +692,6 @@ export function FileBrowser({
     );
     const activeFiles = activeDirectory?.files ?? [];
     const effectiveSelectedDirectory = preferredDirectory;
-    const preferredSelectedPath = selectedPath ?? uncontrolledPath;
-    const activeFile =
-        activeFiles.find((file) => file.path === preferredSelectedPath) ??
-        activeFiles[0];
-    const effectiveSelectedPath = activeFile?.path;
-    const displayedFiles = visibleFiles ?? activeFiles;
-    const hasPreviewableActiveFiles = activeFiles.some((file) =>
-        pathSupportsFilePreview(file.path),
-    );
     const [uncontrolledPreviewHeight, setUncontrolledPreviewHeight] =
         useState(previewHeight);
     const [subdirPreviewEnabledByPath, setSubdirPreviewEnabledByPath] =
@@ -699,6 +718,26 @@ export function FileBrowser({
     ): Set<SubdirPreviewKind> =>
         subdirPreviewKindsByPath[directoryPath] ??
         new Set(defaultSubdirPreviewKinds);
+    const selectedPreviewKinds = effectiveSelectedDirectory
+        ? subdirPreviewKindsFor(effectiveSelectedDirectory)
+        : defaultSubdirPreviewKinds;
+    const previewableActiveFiles = activeFiles.filter((file) =>
+        fileMatchesPreviewKinds(file, selectedPreviewKinds),
+    );
+    const preferredSelectedPath = selectedPath ?? uncontrolledPath;
+    const activeFile =
+        previewableActiveFiles.find(
+            (file) => file.path === preferredSelectedPath,
+        ) ??
+        previewableActiveFiles[0] ??
+        activeFiles.find((file) => file.path === preferredSelectedPath) ??
+        activeFiles[0];
+    const effectiveSelectedPath = activeFile?.path;
+    const displayedFiles = visibleFiles ?? activeFiles;
+    const previewableDisplayedFiles = displayedFiles.filter((file) =>
+        fileMatchesPreviewKinds(file, selectedPreviewKinds),
+    );
+    const hasPreviewableActiveFiles = previewableActiveFiles.length > 0;
 
     const visibleExpandedDirectories = useMemo(() => {
         const next = new Set(expandedDirectories);
@@ -883,6 +922,7 @@ export function FileBrowser({
             hasFilePreviewControls: boolean;
             hasSubdirPreviewControls: boolean;
             isSelected: boolean;
+            showGridToggle: boolean;
             subdirPageCount: number;
             safeSubdirPreviewPage: number;
         },
@@ -892,11 +932,14 @@ export function FileBrowser({
             hasSubdirPreviewControls,
             isSelected,
             safeSubdirPreviewPage,
+            showGridToggle,
             subdirPageCount,
         } = options;
         const showPreviewPaging = previewPageCount > 1;
         const subdirPreviewEnabled = subdirPreviewEnabledFor(directoryPath);
         const subdirPreviewKinds = subdirPreviewKindsFor(directoryPath);
+        const hasPreviewModeControls =
+            hasSubdirPreviewControls || showGridToggle;
 
         if (!hasFilePreviewControls && !hasSubdirPreviewControls) {
             return null;
@@ -910,36 +953,82 @@ export function FileBrowser({
                     hasSubdirPreviewControls ? directoryPath : undefined
                 }
             >
-                {hasSubdirPreviewControls ? (
-                    <>
-                        <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
-                            <input
-                                aria-label="Subfolder previews"
-                                checked={subdirPreviewEnabled}
-                                className="size-4 accent-primary"
-                                onChange={(event) => {
-                                    setSubdirPreviewEnabledByPath(
-                                        (current) => ({
-                                            ...current,
-                                            [directoryPath]:
-                                                event.target.checked,
-                                        }),
-                                    );
-                                    setSubdirPreviewPages((current) => ({
-                                        ...current,
-                                        [directoryPath]: 1,
-                                    }));
-                                }}
-                                type="checkbox"
+                {hasPreviewModeControls ? (
+                    <details className="relative">
+                        <summary
+                            aria-label="Preview modes"
+                            className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden"
+                        >
+                            <Eye
+                                className="size-4 text-primary"
+                                aria-hidden="true"
                             />
-                            <span className="inline-flex items-center gap-2">
-                                <FolderTree
-                                    className="size-4 text-primary"
-                                    aria-hidden="true"
-                                />
-                                Subfolder previews
+                            <span className="font-medium">Preview modes</span>
+                            <span className="text-xs text-muted-foreground">
+                                {summarizePreviewModes(
+                                    previewMode,
+                                    subdirPreviewEnabled,
+                                )}
                             </span>
-                        </label>
+                            <ChevronDown className="size-4 text-muted-foreground" />
+                        </summary>
+                        <div className="absolute left-0 z-20 mt-2 min-w-56 rounded-[1.25rem] border border-border/70 bg-background/95 p-3 shadow-lg">
+                            <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                Preview modes
+                            </div>
+                            <div className="space-y-2">
+                                {showGridToggle ? (
+                                    <label className="flex items-center justify-between gap-3 text-sm">
+                                        <span>1 preview per row</span>
+                                        <input
+                                            aria-label="1 preview per row"
+                                            checked={previewMode === "grid"}
+                                            className="size-4 accent-primary"
+                                            onChange={(event) =>
+                                                onPreviewModeChange?.(
+                                                    event.target.checked
+                                                        ? "grid"
+                                                        : "single",
+                                                )
+                                            }
+                                            type="checkbox"
+                                        />
+                                    </label>
+                                ) : null}
+                                {hasSubdirPreviewControls ? (
+                                    <label className="flex items-center justify-between gap-3 text-sm">
+                                        <span>Subfolder previews</span>
+                                        <input
+                                            aria-label="Subfolder previews"
+                                            checked={subdirPreviewEnabled}
+                                            className="size-4 accent-primary"
+                                            onChange={(event) => {
+                                                setSubdirPreviewEnabledByPath(
+                                                    (current) => ({
+                                                        ...current,
+                                                        [directoryPath]:
+                                                            event.target
+                                                                .checked,
+                                                    }),
+                                                );
+                                                setSubdirPreviewPages(
+                                                    (current) => ({
+                                                        ...current,
+                                                        [directoryPath]: 1,
+                                                    }),
+                                                );
+                                            }}
+                                            type="checkbox"
+                                        />
+                                    </label>
+                                ) : null}
+                            </div>
+                        </div>
+                    </details>
+                ) : null}
+
+                {hasFilePreviewControls || hasSubdirPreviewControls ? (
+                    <>
                         <details
                             className="relative"
                             data-subdir-preview-kind-disclosure={directoryPath}
@@ -1059,29 +1148,6 @@ export function FileBrowser({
                             </div>
                         </details>
                     </>
-                ) : null}
-
-                {hasFilePreviewControls && displayedFiles.length > 1 ? (
-                    <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
-                        <input
-                            aria-label="1 preview per row"
-                            checked={previewMode === "grid"}
-                            className="size-4 accent-primary"
-                            onChange={(event) =>
-                                onPreviewModeChange?.(
-                                    event.target.checked ? "grid" : "single",
-                                )
-                            }
-                            type="checkbox"
-                        />
-                        <span className="inline-flex items-center gap-2">
-                            <Eye
-                                className="size-4 text-primary"
-                                aria-hidden="true"
-                            />
-                            1 preview per row
-                        </span>
-                    </label>
                 ) : null}
 
                 <PreviewHeightControl
@@ -1296,6 +1362,8 @@ export function FileBrowser({
                 hasFilePreviewControls,
                 hasSubdirPreviewControls,
                 isSelected,
+                showGridToggle:
+                    hasFilePreviewControls && previewableActiveFiles.length > 1,
                 safeSubdirPreviewPage,
                 subdirPageCount: subdirPreviewPageCount,
             });
@@ -1446,6 +1514,8 @@ export function FileBrowser({
                 node.path === effectiveSelectedDirectory &&
                 displayedFiles.length > 0
             ) {
+                const directoryDisplayedFiles = displayedFiles;
+
                 rows.push(
                     <div
                         key={`files-${node.path}`}
@@ -1466,7 +1536,7 @@ export function FileBrowser({
                         {previewMode === "single"
                             ? showFilePreviewWidgets
                                 ? [
-                                      ...displayedFiles.map((file) =>
+                                      ...directoryDisplayedFiles.map((file) =>
                                           cloneElement(
                                               renderFileButton(file, true),
                                               { key: file.path },
@@ -1477,7 +1547,7 @@ export function FileBrowser({
                                           className="sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start"
                                           data-file-browser-preview="single"
                                           style={{
-                                              gridRow: `1 / span ${Math.max(displayedFiles.length, 1)}`,
+                                              gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
                                           }}
                                       >
                                           {renderSinglePreview?.(
@@ -1485,13 +1555,13 @@ export function FileBrowser({
                                           ) ?? null}
                                       </div>,
                                   ]
-                                : displayedFiles.map((file) =>
+                                : directoryDisplayedFiles.map((file) =>
                                       cloneElement(
                                           renderFileButton(file, true),
                                           { key: file.path },
                                       ),
                                   )
-                            : displayedFiles.map((file) =>
+                            : directoryDisplayedFiles.map((file) =>
                                   showFilePreviewWidgets ? (
                                       <div
                                           key={file.path}
@@ -1505,8 +1575,14 @@ export function FileBrowser({
                                               className="min-w-0"
                                               data-grid-preview-path={file.path}
                                           >
-                                              {renderGridPreview?.(file) ??
-                                                  null}
+                                              {fileMatchesPreviewKinds(
+                                                  file,
+                                                  selectedPreviewKinds,
+                                              )
+                                                  ? (renderGridPreview?.(
+                                                        file,
+                                                    ) ?? null)
+                                                  : null}
                                           </div>
                                       </div>
                                   ) : (

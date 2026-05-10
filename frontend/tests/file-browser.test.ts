@@ -1109,7 +1109,6 @@ describe("N1 file browser", () => {
 
         expect(folderControls).toBeTruthy();
         expect(folderControls?.textContent).toContain("Preview height");
-        expect(folderControls?.textContent).toContain("1 preview per row");
         expect(folderControls?.textContent).toContain("Page 2 of 2");
         expect(container.textContent).toContain("page-2-lane-1.bam");
         expect(container.textContent).toContain("page-2-lane-2.bam");
@@ -1478,7 +1477,16 @@ describe("N1 file browser", () => {
 
         expect(subfolderToggle).toBeTruthy();
 
-        await click(subfolderToggle);
+        await act(async () => {
+            if (!subfolderToggle) {
+                throw new Error("Missing subfolder preview toggle");
+            }
+
+            subfolderToggle.checked = true;
+            subfolderToggle.dispatchEvent(
+                new Event("change", { bubbles: true }),
+            );
+        });
 
         expect(
             container.querySelectorAll(
@@ -1486,6 +1494,134 @@ describe("N1 file browser", () => {
             ),
         ).toHaveLength(1);
         expect(handlePreviewHeightChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("applies the file types widget to single, grid, and subfolder previews with all previewable types selected by default", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/photo.png", "output"),
+            buildFile("/demo/notes.txt", "output"),
+            buildFile("/demo/sample-a/plot.png", "output"),
+            buildFile("/demo/sample-a/table.csv", "output"),
+            buildFile("/demo/sample-b/readme.md", "output"),
+            buildFile("/demo/sample-b/stats.tsv", "output"),
+        ];
+        function PreviewModeHarness(): ReactNode {
+            const [previewMode, setPreviewMode] = useState<"single" | "grid">(
+                "single",
+            );
+
+            return createElement(FileBrowser, {
+                files,
+                onPreviewModeChange: setPreviewMode,
+                onSelectDirectory: vi.fn(),
+                onSelectFile: vi.fn(),
+                previewMode,
+                renderGridPreview: (file: FileEntry): ReactNode =>
+                    createElement(
+                        "div",
+                        { "data-subdir-preview-file": file.path },
+                        file.path,
+                    ),
+                renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                    createElement(
+                        "div",
+                        { "data-testid": "single-preview" },
+                        file?.path ?? "none",
+                    ),
+                selectedDirectory: "/demo",
+                visibleFiles: files.slice(0, 2),
+            });
+        }
+
+        await act(async () => {
+            root.render(createElement(PreviewModeHarness));
+        });
+
+        const folderControls = container.querySelector(
+            '[data-file-browser-folder-controls="/demo"]',
+        );
+        const gridToggle = folderControls?.querySelector(
+            'input[aria-label="1 preview per row"]',
+        ) as HTMLInputElement | null;
+        const subfolderToggle = folderControls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        ) as HTMLInputElement | null;
+        const disclosureTrigger = folderControls?.querySelector(
+            'summary[aria-label="File types"]',
+        ) as HTMLElement | null;
+        const previewModesTrigger = folderControls?.querySelector(
+            'summary[aria-label="Preview modes"]',
+        ) as HTMLElement | null;
+
+        expect(folderControls).toBeTruthy();
+        expect(gridToggle).toBeTruthy();
+        expect(subfolderToggle).toBeTruthy();
+        expect(previewModesTrigger).toBeTruthy();
+        expect(
+            folderControls?.querySelectorAll(
+                "input[data-subdir-preview-kind]:checked",
+            ),
+        ).toHaveLength(5);
+        expect(
+            container.querySelector('[data-testid="single-preview"]')
+                ?.textContent,
+        ).toContain("/demo/photo.png");
+
+        await click(previewModesTrigger);
+        await click(gridToggle);
+
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/demo/photo.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/demo/notes.txt"]',
+            ),
+        ).toBeTruthy();
+
+        await click(disclosureTrigger);
+
+        const imageCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="image"]',
+        ) as HTMLInputElement | null;
+        const tableCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="table"]',
+        ) as HTMLInputElement | null;
+        const markdownCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="markdown"]',
+        ) as HTMLInputElement | null;
+        const codeCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="code"]',
+        ) as HTMLInputElement | null;
+
+        expect(imageCheckbox?.checked).toBe(true);
+        expect(tableCheckbox?.checked).toBe(true);
+        expect(markdownCheckbox?.checked).toBe(true);
+        expect(codeCheckbox?.checked).toBe(true);
+
+        await click(tableCheckbox);
+        await click(markdownCheckbox);
+        await click(codeCheckbox);
+
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/demo/photo.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/demo/notes.txt"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-grid-preview-path="/demo/notes.txt"]',
+            )?.textContent,
+        ).toBe("");
+        expect(subfolderToggle?.checked).toBe(false);
     });
 
     it("keeps subfolder preview widgets visible while the parent folder stays expanded", async () => {
@@ -1741,6 +1877,11 @@ describe("N1 file browser", () => {
                 'input[aria-label="Subfolder previews"]',
             ) ?? null,
         );
+        await click(
+            demoControls()?.querySelector(
+                'input[data-subdir-preview-kind="table"]',
+            ) ?? null,
+        );
 
         expect(
             container.querySelector('[data-subdir-preview-gallery="/demo"]'),
@@ -1772,11 +1913,6 @@ describe("N1 file browser", () => {
         await click(
             lanesControls()?.querySelector(
                 'input[aria-label="Subfolder previews"]',
-            ) ?? null,
-        );
-        await click(
-            lanesControls()?.querySelector(
-                'input[data-subdir-preview-kind="table"]',
             ) ?? null,
         );
 
@@ -1991,7 +2127,7 @@ describe("N1 file browser", () => {
         expect(toggle).toBeTruthy();
         expect(toggle?.checked).toBe(false);
 
-        // Default file-type selection is graphical only.
+        // Default file-type selection includes all previewable types.
         const imageCheckbox = controls?.querySelector(
             'input[data-subdir-preview-kind="image"]',
         ) as HTMLInputElement | null;
@@ -2000,7 +2136,7 @@ describe("N1 file browser", () => {
         ) as HTMLInputElement | null;
 
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(false);
+        expect(tableCheckbox?.checked).toBe(true);
 
         await click(toggle);
 
@@ -2014,7 +2150,7 @@ describe("N1 file browser", () => {
         expect(rowA).toBeTruthy();
         expect(rowB).toBeTruthy();
 
-        // Each row shows previews for graphical files only by default.
+        // Each row shows all selected previewable file types by default.
         expect(
             rowA?.querySelector(
                 '[data-subdir-preview-file="/demo/sample-a/img-1.png"]',
@@ -2029,7 +2165,7 @@ describe("N1 file browser", () => {
             rowA?.querySelector(
                 '[data-subdir-preview-file="/demo/sample-a/data.csv"]',
             ),
-        ).toBeNull();
+        ).toBeTruthy();
         expect(
             rowB?.querySelector(
                 '[data-subdir-preview-file="/demo/sample-b/pic-1.png"]',
@@ -2060,14 +2196,14 @@ describe("N1 file browser", () => {
         expect(cardA?.className).toMatch(/(?:^|\s)w-full/);
         expect(cardA?.className).toMatch(/(?:^|\s)shrink-0/);
 
-        // Opting into tables surfaces csv previews on the row.
+        // Narrowing away from tables removes csv previews on the row.
         await click(tableCheckbox);
 
         expect(
             rowA?.querySelector(
                 '[data-subdir-preview-file="/demo/sample-a/data.csv"]',
             ),
-        ).toBeTruthy();
+        ).toBeNull();
     });
 
     it("stacks folder-row widgets beneath the directory button inside the same row surface", async () => {
@@ -2317,11 +2453,9 @@ describe("N1 file browser", () => {
         expect(controls).toBeTruthy();
         expect(toggle).toBeTruthy();
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(false);
+        expect(tableCheckbox?.checked).toBe(true);
 
         await click(toggle);
-        await click(tableCheckbox);
-
         expect(
             container.querySelector('[data-subdir-preview-controls="/demo"]'),
         ).toBeTruthy();
@@ -2613,7 +2747,7 @@ describe("N1 file browser", () => {
         expect(controls).toBeTruthy();
         expect(toggle).toBeTruthy();
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(false);
+        expect(tableCheckbox?.checked).toBe(true);
 
         await click(toggle);
 
@@ -2625,7 +2759,6 @@ describe("N1 file browser", () => {
         expect(imageFrame?.className).not.toContain("border");
         expect(imageFrame?.className).not.toContain("rounded-[1.25rem]");
 
-        await click(tableCheckbox);
         await click(imageCheckbox);
 
         const tableFrame = container.querySelector(

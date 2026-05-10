@@ -143,6 +143,25 @@ async function selectDirectoryForFile(
     ).toBeVisible();
 }
 
+async function openPreviewModes(controls: Locator): Promise<void> {
+    const summary = controls
+        .locator('summary[aria-label="Preview modes"]')
+        .first();
+
+    await expect(summary).toBeVisible();
+    await summary.evaluate((element) => {
+        const details = element.closest("details");
+
+        if (!(details instanceof HTMLDetailsElement)) {
+            throw new Error("Missing preview modes disclosure");
+        }
+
+        if (!details.open) {
+            (element as HTMLElement).click();
+        }
+    });
+}
+
 async function openSeqmetaDetailsDialog(
     page: Page,
     metadataKey: string,
@@ -564,7 +583,12 @@ test.describe("Q1 critical results flows", () => {
         await openResultDetail(page, rnaseqPipelineName);
 
         await selectDirectoryForFile(page, rnaseqGalleryFirstImagePath);
-        await page.getByLabel("1 preview per row").check();
+        const folderControls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+
+        await openPreviewModes(folderControls);
+        await folderControls.getByLabel("1 preview per row").check();
 
         const row = page.locator(
             `[data-file-browser-grid-row="${rnaseqGalleryFirstImagePath}"]`,
@@ -688,14 +712,15 @@ test.describe("Q1 critical results flows", () => {
         await openResultDetail(page, rnaseqPipelineName);
 
         await selectDirectoryForFile(page, rnaseqGalleryFirstImagePath);
-        await page.getByLabel("1 preview per row").check();
-
         const folderControls = page.locator(
             `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
         );
         const bottomControls = page.locator(
             `[data-file-browser-bottom-controls="${rnaseqGalleryPath}"]`,
         );
+
+        await openPreviewModes(folderControls);
+        await folderControls.getByLabel("1 preview per row").check();
 
         await expect(folderControls.getByText("Page 1 of 2")).toBeVisible();
         await expect(bottomControls.getByText("Page 1 of 2")).toBeVisible();

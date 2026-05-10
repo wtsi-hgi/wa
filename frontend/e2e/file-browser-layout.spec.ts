@@ -62,6 +62,25 @@ async function openNamedResultFileBrowser(page: Page, pipelineName: string) {
     await expect(fileBrowser).toBeVisible({ timeout: 30000 });
 }
 
+async function openPreviewModes(controls: Locator) {
+    const summary = controls
+        .locator('summary[aria-label="Preview modes"]')
+        .first();
+
+    await expect(summary).toBeVisible();
+    await summary.evaluate((element) => {
+        const details = element.closest("details");
+
+        if (!(details instanceof HTMLDetailsElement)) {
+            throw new Error("Missing preview modes disclosure");
+        }
+
+        if (!details.open) {
+            (element as HTMLElement).click();
+        }
+    });
+}
+
 async function openFirstSinglePreview(page: Page, directoryPath: string) {
     await selectDirectory(page, directoryPath);
 
@@ -469,6 +488,7 @@ test.describe("File Browser single preview layout", () => {
         await expect(directoryRow).toBeVisible();
         await expect(directoryButton).toBeVisible();
         await expect(folderControls).toBeVisible();
+        await openPreviewModes(folderControls);
 
         // Verify "1 preview per row" toggle is present
         const previewModeToggle = folderControls.locator(
@@ -596,6 +616,7 @@ test.describe("File Browser single preview layout", () => {
         }
 
         await expect(subdirControls).toBeVisible();
+        await openPreviewModes(subdirControls);
         await subdirControls
             .locator('input[aria-label="Subfolder previews"]')
             .check();
@@ -648,6 +669,7 @@ test.describe("File Browser single preview layout", () => {
         }
 
         await expect(subdirControls).toBeVisible();
+        await openPreviewModes(subdirControls);
         await subdirControls
             .locator('input[aria-label="Subfolder previews"]')
             .check();
@@ -727,6 +749,7 @@ test.describe("File Browser single preview layout", () => {
         );
 
         await expect(controls).toBeVisible();
+        await openPreviewModes(controls);
 
         const toggle = controls.locator(
             'input[aria-label="Subfolder previews"]',
@@ -801,6 +824,7 @@ test.describe("File Browser single preview layout", () => {
         }
 
         await expect(parentControls).toBeVisible();
+        await openPreviewModes(parentControls);
 
         const subfolderToggle = parentControls
             .locator('input[aria-label="Subfolder previews"]')
