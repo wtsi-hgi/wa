@@ -43,14 +43,9 @@ type nullableStudyScanFields struct {
 	studyTitle               sql.NullString
 	facultySponsor           sql.NullString
 	state                    sql.NullString
-	abstract                 sql.NullString
-	abbreviation             sql.NullString
-	description              sql.NullString
 	dataReleaseStrategy      sql.NullString
 	dataAccessGroup          sql.NullString
-	hmdmcNumber              sql.NullString
 	programme                sql.NullString
-	created                  sql.NullString
 	referenceGenome          sql.NullString
 	ethicallyApproved        sql.NullBool
 	studyType                sql.NullString
@@ -75,14 +70,9 @@ func studyScanTargets(study *Study) ([]any, func()) {
 			&nullable.studyTitle,
 			&nullable.facultySponsor,
 			&nullable.state,
-			&nullable.abstract,
-			&nullable.abbreviation,
-			&nullable.description,
 			&nullable.dataReleaseStrategy,
 			&nullable.dataAccessGroup,
-			&nullable.hmdmcNumber,
 			&nullable.programme,
-			&nullable.created,
 			&nullable.referenceGenome,
 			&nullable.ethicallyApproved,
 			&nullable.studyType,
@@ -101,14 +91,9 @@ func studyScanTargets(study *Study) ([]any, func()) {
 			study.StudyTitle = nullStringValue(nullable.studyTitle)
 			study.FacultySponsor = nullStringValue(nullable.facultySponsor)
 			study.State = nullStringValue(nullable.state)
-			study.Abstract = nullStringValue(nullable.abstract)
-			study.Abbreviation = nullStringValue(nullable.abbreviation)
-			study.Description = nullStringValue(nullable.description)
 			study.DataReleaseStrategy = nullStringValue(nullable.dataReleaseStrategy)
 			study.DataAccessGroup = nullStringValue(nullable.dataAccessGroup)
-			study.HMDMCNumber = nullStringValue(nullable.hmdmcNumber)
 			study.Programme = nullStringValue(nullable.programme)
-			study.Created = nullStringValue(nullable.created)
 			study.ReferenceGenome = nullStringValue(nullable.referenceGenome)
 			study.EthicallyApproved = nullable.ethicallyApproved.Valid && nullable.ethicallyApproved.Bool
 			study.StudyType = nullStringValue(nullable.studyType)
@@ -140,9 +125,7 @@ func scanStudyRow(scan func(dest ...any) error) (Study, error) {
 	return study, nil
 }
 
-// AllStudies returns a paged ordered study list from the cache, falling back to
-// a direct MLWH query on a cold cache and writing the fetched rows back into
-// study_mirror without advancing the sync watermark.
+// AllStudies returns a paged ordered study list.
 func (c *Client) AllStudies(ctx context.Context, limit, offset int) ([]Study, error) {
 	cacheDB := c.readCacheDB()
 	if cacheDB == nil {

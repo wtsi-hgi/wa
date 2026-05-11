@@ -76,8 +76,8 @@ func (c *seqmetaTestClient) ResolveSample(ctx context.Context, raw string) (mlwh
 	return c.provider.ResolveSample(ctx, raw)
 }
 
-func (c *seqmetaTestClient) ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
-	return c.provider.ResolveStudy(ctx, raw, options...)
+func (c *seqmetaTestClient) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
+	return c.provider.ResolveStudy(ctx, raw)
 }
 
 func (c *seqmetaTestClient) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -517,7 +517,7 @@ type seqmetaMockProvider struct {
 	queryContextFunc              func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	classifyIdentifierFunc        func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveSampleFunc             func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveStudyFunc              func(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	resolveStudyFunc              func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveRunFunc                func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveLibraryFunc            func(ctx context.Context, raw string) (mlwh.Match, error)
 	allStudiesFunc                func(ctx context.Context, limit, offset int) ([]mlwh.Study, error)
@@ -563,9 +563,9 @@ func (m *seqmetaMockProvider) ResolveSample(ctx context.Context, raw string) (ml
 	return mlwh.Match{}, nil
 }
 
-func (m *seqmetaMockProvider) ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+func (m *seqmetaMockProvider) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
 	if m != nil && m.resolveStudyFunc != nil {
-		return m.resolveStudyFunc(ctx, raw, options...)
+		return m.resolveStudyFunc(ctx, raw)
 	}
 
 	return mlwh.Match{}, nil
@@ -826,7 +826,12 @@ func TestFindSamplesByLibraryTypeUsesCachedStudyIDs(t *testing.T) {
 				t.Fatalf("unexpected offset: %d", offset)
 			}
 
-			return []mlwh.Sample{{IDStudyLims: studyLimsID, SangerID: "S" + studyLimsID, Name: "Sample " + studyLimsID, LibraryType: pipelineIDLims}}, nil
+				return []mlwh.Sample{{
+					Name:           "Sample " + studyLimsID,
+					SangerSampleID: "S" + studyLimsID,
+					Studies:        []mlwh.Study{{IDStudyLims: studyLimsID}},
+					Libraries:      []mlwh.Library{{PipelineIDLims: pipelineIDLims, IDStudyLims: studyLimsID}},
+				}}, nil
 		},
 	}
 
@@ -838,8 +843,8 @@ func TestFindSamplesByLibraryTypeUsesCachedStudyIDs(t *testing.T) {
 	convey.Convey("library sample lookup uses cached study ids instead of enumerating all studies", t, func() {
 		convey.So(calledStudies, convey.ShouldResemble, []string{"6568", "7777"})
 		convey.So(samples, convey.ShouldHaveLength, 2)
-		convey.So(samples[0].IDStudyLims, convey.ShouldEqual, "6568")
-		convey.So(samples[1].IDStudyLims, convey.ShouldEqual, "7777")
+		convey.So(samples[0].Libraries, convey.ShouldResemble, []mlwh.Library{{PipelineIDLims: "Chromium single cell 3 prime v3", IDStudyLims: "6568"}})
+		convey.So(samples[1].Libraries, convey.ShouldResemble, []mlwh.Library{{PipelineIDLims: "Chromium single cell 3 prime v3", IDStudyLims: "7777"}})
 	})
 }
 
@@ -885,10 +890,10 @@ func TestFindSamplesByLibraryTypeFallsBackWhenDirectLookupReturnsEmpty(t *testin
 			calledStudies = append(calledStudies, studyLimsID)
 
 			return []mlwh.Sample{{
-				IDStudyLims: studyLimsID,
-				SangerID:    "S" + studyLimsID,
-				Name:        "Sample " + studyLimsID,
-				LibraryType: pipelineIDLims,
+					Name:           "Sample " + studyLimsID,
+					SangerSampleID: "S" + studyLimsID,
+					Studies:        []mlwh.Study{{IDStudyLims: studyLimsID}},
+					Libraries:      []mlwh.Library{{PipelineIDLims: pipelineIDLims, IDStudyLims: studyLimsID}},
 			}}, nil
 		},
 	}
@@ -901,7 +906,7 @@ func TestFindSamplesByLibraryTypeFallsBackWhenDirectLookupReturnsEmpty(t *testin
 	convey.Convey("library sample lookup falls back to cached study ids when the direct lookup returns empty", t, func() {
 		convey.So(calledStudies, convey.ShouldResemble, []string{"6568", "7777"})
 		convey.So(samples, convey.ShouldHaveLength, 2)
-		convey.So(samples[0].IDStudyLims, convey.ShouldEqual, "6568")
-		convey.So(samples[1].IDStudyLims, convey.ShouldEqual, "7777")
+		convey.So(samples[0].Studies, convey.ShouldResemble, []mlwh.Study{{IDStudyLims: "6568"}})
+		convey.So(samples[1].Studies, convey.ShouldResemble, []mlwh.Study{{IDStudyLims: "7777"}})
 	})
 }

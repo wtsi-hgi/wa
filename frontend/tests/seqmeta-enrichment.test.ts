@@ -37,16 +37,11 @@ function buildEnrichmentStudy(
         name: "Cancer Programme",
         faculty_sponsor: "Faculty Sponsor",
         state: "active",
-        abstract: "Study abstract",
-        abbreviation: "CP",
         accession_number: "ERP123456",
-        description: "Study description",
         data_release_strategy: "open",
         study_title: "Cancer Programme",
         data_access_group: "public",
-        hmdmc_number: "",
         programme: "Cancer",
-        created: "2026-04-30",
         reference_genome: "GRCh38",
         ethically_approved: true,
         study_type: "Genomic sequencing",
@@ -729,11 +724,9 @@ describe("H3 enrichment state and badge", () => {
                             study: buildEnrichmentStudy(),
                             library_details: [
                                 {
-                                    library: {
-                                        pipeline_id_lims:
-                                            "Chromium single cell 3 prime v3",
-                                        sample_count: 1,
-                                    },
+                                    library_type:
+                                        "Chromium single cell 3 prime v3",
+                                    id_study_lims: "6568",
                                     samples: [
                                         {
                                             id_study_lims: "6568",
@@ -871,7 +864,6 @@ describe("H3 enrichment state and badge", () => {
                         id_study_tmp: 6568,
                         id_study_lims: "6568",
                         name: "Cancer Programme",
-                        description: "Study description",
                     }),
                     sample: {
                         id_sample_lims: "2153063",

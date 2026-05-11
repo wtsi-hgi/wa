@@ -32,37 +32,15 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"time"
 )
 
-const sampleNegativeCacheTTLSeconds = 15 * 60
+var sampleSelectColumns = `id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description`
 
-// sampleStudyLimsSubquery resolves a sample's study_lims_id via iseq_flowcell
-// joined through study.id_study_lims because the upstream MLWH `sample` table
-// has no `id_study_lims` column and current iseq_flowcell rows link to study
-// by id_study_tmp. COALESCE squashes a NULL (sample with no flowcell entry,
-// e.g. PacBio-only) to an empty string for safe Scan.
-const sampleStudyLimsSubquery = `COALESCE((SELECT study.id_study_lims FROM iseq_flowcell INNER JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp WHERE iseq_flowcell.id_sample_tmp = sample.id_sample_tmp AND study.id_lims = 'SQSCP' LIMIT 1), '') AS id_study_lims`
+var sampleMirrorSelectColumns = `sample_mirror.id_sample_tmp, sample_mirror.id_lims, sample_mirror.id_sample_lims, sample_mirror.uuid_sample_lims, sample_mirror.name, sample_mirror.sanger_sample_id, sample_mirror.supplier_name, sample_mirror.accession_number, sample_mirror.donor_id, sample_mirror.taxon_id, sample_mirror.common_name, sample_mirror.description`
 
-var sampleSelectColumns = `id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, ` + sampleStudyLimsSubquery + `, name, name AS sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, '' AS library_type, taxon_id, common_name, description`
-
-var sampleMirrorSelectColumns = `sample_mirror.id_sample_tmp, sample_mirror.id_lims, sample_mirror.id_sample_lims, sample_mirror.uuid_sample_lims, sample_mirror.id_study_lims, sample_mirror.name, sample_mirror.sanger_id, sample_mirror.sanger_sample_id, sample_mirror.supplier_name, sample_mirror.accession_number, sample_mirror.donor_id, sample_mirror.library_type, sample_mirror.taxon_id, sample_mirror.common_name, sample_mirror.description`
-
-var negativeCacheColumns = []string{"raw", "reason", "fetched_at", "ttl_seconds"}
-
-var studyMirrorSelectColumns = `id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing`
+var studyMirrorSelectColumns = `id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing`
 
 var uuidShapePattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-// ResolveStudyOption customizes ResolveStudy name matching behavior.
-type ResolveStudyOption func(*resolveStudyOpts)
-
-// WithCaseInsensitiveStudyName enables case-insensitive matching for the name step.
-func WithCaseInsensitiveStudyName() ResolveStudyOption {
-	return func(opts *resolveStudyOpts) {
-		opts.caseInsensitiveName = true
-	}
-}
 
 func isUUIDShape(raw string) bool {
 	return uuidShapePattern.MatchString(raw)
@@ -244,19 +222,8 @@ func (c *Client) ResolveRun(ctx context.Context, raw string) (Match, error) {
 	return Match{Kind: KindRunID, Canonical: strconv.Itoa(resolvedRunID), Run: run}, nil
 }
 
-type resolveStudyOpts struct {
-	caseInsensitiveName bool
-}
-
 // ResolveStudy resolves a study from cache-backed indexed lookups.
-func (c *Client) ResolveStudy(ctx context.Context, raw string, opts ...ResolveStudyOption) (Match, error) {
-	config := resolveStudyOpts{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&config)
-		}
-	}
-
+func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 	if isUUIDShape(raw) {
 		study, err := c.resolveStudyFromCacheWithWarmup(
 			ctx,
@@ -295,7 +262,7 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string, opts ...ResolveSt
 		return Match{}, err
 	}
 
-	study, err = c.resolveStudyByNameWithWarmup(ctx, raw, config.caseInsensitiveName)
+	study, err = c.resolveStudyByNameWithWarmup(ctx, raw)
 	if err != nil {
 		return Match{}, err
 	}
@@ -307,14 +274,6 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string, opts ...ResolveSt
 func (c *Client) ResolveSample(ctx context.Context, raw string) (Match, error) {
 	if isRejectedLIMSProviderConstant(raw) {
 		return Match{}, fmt.Errorf("%w: %q looks like a LIMS provider constant", ErrUnsupportedIdentifier, raw)
-	}
-
-	negativeCached, err := c.isSampleNegativeCached(ctx, raw)
-	if err != nil {
-		return Match{}, err
-	}
-	if negativeCached {
-		return Match{}, ErrNotFound
 	}
 
 	sampleCacheWarm, err := c.sampleResolverCacheWarm(ctx)
@@ -390,12 +349,6 @@ func (c *Client) ResolveSample(ctx context.Context, raw string) (Match, error) {
 		raw,
 	)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			if cacheErr := c.cacheSampleNegativeLookup(ctx, raw); cacheErr != nil {
-				return Match{}, cacheErr
-			}
-		}
-
 		return Match{}, err
 	}
 
@@ -479,8 +432,8 @@ func (c *Client) resolveStudyFromCacheWithWarmup(ctx context.Context, query, raw
 	return c.resolveStudyFromCache(ctx, query, raw)
 }
 
-func (c *Client) resolveStudyByNameWithWarmup(ctx context.Context, raw string, caseInsensitive bool) (*Study, error) {
-	study, err := c.resolveStudyByName(ctx, raw, caseInsensitive)
+func (c *Client) resolveStudyByNameWithWarmup(ctx context.Context, raw string) (*Study, error) {
+	study, err := c.resolveStudyByName(ctx, raw)
 	if err == nil || !errors.Is(err, ErrNotFound) || c == nil || c.syncSource == nil {
 		return study, err
 	}
@@ -497,7 +450,7 @@ func (c *Client) resolveStudyByNameWithWarmup(ctx context.Context, raw string, c
 		return nil, syncErr
 	}
 
-	return c.resolveStudyByName(ctx, raw, caseInsensitive)
+	return c.resolveStudyByName(ctx, raw)
 }
 
 func (c *Client) resolveSampleByUUID(ctx context.Context, raw string) (*Sample, error) {
@@ -567,14 +520,11 @@ func (c *Client) resolveSampleFromUpstream(ctx context.Context, query, raw strin
 		&sample.IDLims,
 		&sample.IDSampleLims,
 		&sample.UUIDSampleLims,
-		&sample.IDStudyLims,
 		&sample.Name,
-		&sample.SangerID,
 		&sample.SangerSampleID,
 		&sample.SupplierName,
 		&sample.AccessionNumber,
 		&sample.DonorID,
-		&sample.LibraryType,
 		&sample.TaxonID,
 		&sample.CommonName,
 		&sample.Description,
@@ -583,60 +533,6 @@ func (c *Client) resolveSampleFromUpstream(ctx context.Context, query, raw strin
 	}
 
 	return sample, nil
-}
-
-func (c *Client) isSampleNegativeCached(ctx context.Context, raw string) (bool, error) {
-	db := c.readCacheDB()
-	if db == nil {
-		return false, nil
-	}
-
-	var fetchedAt string
-	var ttlSeconds int
-	err := db.QueryRowContext(ctx, `SELECT fetched_at, ttl_seconds FROM negative_cache WHERE raw = ? LIMIT 1`, raw).Scan(&fetchedAt, &ttlSeconds)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("%w: query negative cache: %w", ErrUpstreamImpaired, err)
-	}
-
-	fetchedTime, err := time.Parse(time.RFC3339Nano, fetchedAt)
-	if err != nil {
-		return false, fmt.Errorf("%w: parse negative cache timestamp: %w", ErrUpstreamImpaired, err)
-	}
-
-	if time.Since(fetchedTime) <= time.Duration(ttlSeconds)*time.Second {
-		return true, nil
-	}
-
-	if _, err = c.cache.DB().ExecContext(ctx, `DELETE FROM negative_cache WHERE raw = ?`, raw); err != nil {
-		return false, fmt.Errorf("%w: clear expired negative cache: %w", ErrUpstreamImpaired, err)
-	}
-
-	return false, nil
-}
-
-func (c *Client) cacheSampleNegativeLookup(ctx context.Context, raw string) error {
-	if c == nil || c.cache == nil {
-		return nil
-	}
-
-	stmt := buildUpsertStatement(c.cache.Dialect(), "negative_cache", negativeCacheColumns, []string{"raw"})
-
-	_, err := c.cache.DB().ExecContext(
-		ctx,
-		stmt,
-		raw,
-		"not_found",
-		time.Now().UTC().Format(time.RFC3339Nano),
-		sampleNegativeCacheTTLSeconds,
-	)
-	if err != nil {
-		return fmt.Errorf("%w: write negative cache: %w", ErrUpstreamImpaired, err)
-	}
-
-	return nil
 }
 
 func (c *Client) resolveSampleFromCache(ctx context.Context, query, raw string) (*Sample, error) {
@@ -651,14 +547,11 @@ func (c *Client) resolveSampleFromCache(ctx context.Context, query, raw string) 
 		&sample.IDLims,
 		&sample.IDSampleLims,
 		&sample.UUIDSampleLims,
-		&sample.IDStudyLims,
 		&sample.Name,
-		&sample.SangerID,
 		&sample.SangerSampleID,
 		&sample.SupplierName,
 		&sample.AccessionNumber,
 		&sample.DonorID,
-		&sample.LibraryType,
 		&sample.TaxonID,
 		&sample.CommonName,
 		&sample.Description,
@@ -680,56 +573,26 @@ func (c *Client) resolveStudyFromCache(ctx context.Context, query, raw string) (
 	}
 
 	study := &Study{}
-	err := db.QueryRowContext(ctx, query, raw).Scan(
-		&study.IDStudyTmp,
-		&study.IDLims,
-		&study.IDStudyLims,
-		&study.UUIDStudyLims,
-		&study.Name,
-		&study.AccessionNumber,
-		&study.StudyTitle,
-		&study.FacultySponsor,
-		&study.State,
-		&study.Abstract,
-		&study.Abbreviation,
-		&study.Description,
-		&study.DataReleaseStrategy,
-		&study.DataAccessGroup,
-		&study.HMDMCNumber,
-		&study.Programme,
-		&study.Created,
-		&study.ReferenceGenome,
-		&study.EthicallyApproved,
-		&study.StudyType,
-		&study.ContainsHumanDNA,
-		&study.ContaminatedHumanDNA,
-		&study.StudyVisibility,
-		&study.EGADACAccessionNumber,
-		&study.EGAPolicyAccessionNumber,
-		&study.DataReleaseTiming,
-	)
+	targets, apply := studyScanTargets(study)
+	err := db.QueryRowContext(ctx, query, raw).Scan(targets...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: query study cache: %w", ErrUpstreamImpaired, err)
 	}
+	apply()
 
 	return study, nil
 }
 
-func (c *Client) resolveStudyByName(ctx context.Context, raw string, caseInsensitive bool) (*Study, error) {
+func (c *Client) resolveStudyByName(ctx context.Context, raw string) (*Study, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	query := `SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`
-	if caseInsensitive {
-		query = `SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE LOWER(name) = LOWER(?) AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`
-	}
-
-	rows, err := db.QueryContext(ctx, query, raw)
+	rows, err := db.QueryContext(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`, raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query study cache: %w", ErrUpstreamImpaired, err)
 	}
@@ -738,36 +601,11 @@ func (c *Client) resolveStudyByName(ctx context.Context, raw string, caseInsensi
 	studies := make([]*Study, 0, 2)
 	for rows.Next() {
 		study := &Study{}
-		if err = rows.Scan(
-			&study.IDStudyTmp,
-			&study.IDLims,
-			&study.IDStudyLims,
-			&study.UUIDStudyLims,
-			&study.Name,
-			&study.AccessionNumber,
-			&study.StudyTitle,
-			&study.FacultySponsor,
-			&study.State,
-			&study.Abstract,
-			&study.Abbreviation,
-			&study.Description,
-			&study.DataReleaseStrategy,
-			&study.DataAccessGroup,
-			&study.HMDMCNumber,
-			&study.Programme,
-			&study.Created,
-			&study.ReferenceGenome,
-			&study.EthicallyApproved,
-			&study.StudyType,
-			&study.ContainsHumanDNA,
-			&study.ContaminatedHumanDNA,
-			&study.StudyVisibility,
-			&study.EGADACAccessionNumber,
-			&study.EGAPolicyAccessionNumber,
-			&study.DataReleaseTiming,
-		); err != nil {
+		targets, apply := studyScanTargets(study)
+		if err = rows.Scan(targets...); err != nil {
 			return nil, fmt.Errorf("%w: scan study cache: %w", ErrUpstreamImpaired, err)
 		}
+		apply()
 
 		studies = append(studies, study)
 	}

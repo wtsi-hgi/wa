@@ -379,7 +379,7 @@ func TestResolveStudyNameReturnsCanonicalLimsID(t *testing.T) {
 	})
 }
 
-func TestResolveStudyNameIsCaseSensitiveByDefault(t *testing.T) {
+func TestResolveStudyNameIsCaseInsensitiveByDefault(t *testing.T) {
 	convey.Convey("Given a differently cased study name without opts", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -390,25 +390,9 @@ func TestResolveStudyNameIsCaseSensitiveByDefault(t *testing.T) {
 
 		match, err := client.ResolveStudy(context.Background(), "some title")
 
-		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
-		convey.So(match, convey.ShouldResemble, Match{})
-	})
-}
-
-func TestResolveStudyCaseInsensitiveNameOption(t *testing.T) {
-	convey.Convey("Given a differently cased study name with the case-insensitive option", t, func() {
-		cache := openSQLiteSyncTestCache(t)
-		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
-
-		seedStudyMirrorRow(t, cache.DB(), 18, "6518", "study-uuid-18", "Some Title", "EGAS00001001818")
-
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
-
-		match, err := client.ResolveStudy(context.Background(), "some title", WithCaseInsensitiveStudyName())
-
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(match.Kind, convey.ShouldEqual, KindStudyName)
-		convey.So(match.Canonical, convey.ShouldEqual, "6518")
+		convey.So(match.Canonical, convey.ShouldEqual, "6517")
 		convey.So(match.Study, convey.ShouldNotBeNil)
 		convey.So(match.Study.Name, convey.ShouldEqual, "Some Title")
 	})
@@ -435,32 +419,27 @@ func TestResolveStudyColdCacheSyncsBeforeLookup(t *testing.T) {
 
 				if upsertErr := upsertStudyMirror(ctx, tx, "sqlite", studySyncRow{
 					Study: Study{
-						IDStudyTmp:                19,
-						IDLims:                    "SQSCP",
-						IDStudyLims:               "6519",
-						UUIDStudyLims:             "study-uuid-19",
-						Name:                      "Study 19",
-						AccessionNumber:           "EGAS00001001919",
-						StudyTitle:                "Study title 19",
-						FacultySponsor:            "Faculty sponsor 19",
-						State:                     "active",
-						Abstract:                  "abstract",
-						Abbreviation:              "abbr",
-						Description:               "description",
-						DataReleaseStrategy:       "strategy",
-						DataAccessGroup:           "group",
-						HMDMCNumber:               "hmdmc",
-						Programme:                 "programme",
-						Created:                   "2026-05-06",
-						ReferenceGenome:           "GRCh38",
-						EthicallyApproved:         true,
-						StudyType:                 "study-type",
-						ContainsHumanDNA:          false,
-						ContaminatedHumanDNA:      false,
-						StudyVisibility:           "public",
-						EGADACAccessionNumber:     "EGAD0001",
-						EGAPolicyAccessionNumber:  "EGAP0001",
-						DataReleaseTiming:         "immediate",
+						IDStudyTmp:               19,
+						IDLims:                   "SQSCP",
+						IDStudyLims:              "6519",
+						UUIDStudyLims:            "study-uuid-19",
+						Name:                     "Study 19",
+						AccessionNumber:          "EGAS00001001919",
+						StudyTitle:               "Study title 19",
+						FacultySponsor:           "Faculty sponsor 19",
+						State:                    "active",
+						DataReleaseStrategy:      "strategy",
+						DataAccessGroup:          "group",
+						Programme:                "programme",
+						ReferenceGenome:          "GRCh38",
+						EthicallyApproved:        true,
+						StudyType:                "study-type",
+						ContainsHumanDNA:         false,
+						ContaminatedHumanDNA:     false,
+						StudyVisibility:          "public",
+						EGADACAccessionNumber:    "EGAD0001",
+						EGAPolicyAccessionNumber: "EGAP0001",
+						DataReleaseTiming:        "immediate",
 					},
 					LastUpdated: time.Date(2026, time.May, 6, 16, 5, 0, 0, time.UTC),
 				}); upsertErr != nil {
@@ -514,7 +493,7 @@ func seedStudyMirrorRow(t *testing.T, db *sql.DB, id int64, idStudyLims, uuidStu
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id,
 		"SQSCP",
 		idStudyLims,
@@ -524,14 +503,9 @@ func seedStudyMirrorRow(t *testing.T, db *sql.DB, id int64, idStudyLims, uuidStu
 		"Study title "+idStudyLims,
 		"Faculty sponsor "+idStudyLims,
 		"active",
-		"abstract",
-		"abbr",
-		"description",
 		"strategy",
 		"group",
-		"hmdmc",
 		"programme",
-		"2026-05-06",
 		"GRCh38",
 		true,
 		"study-type",
@@ -736,21 +710,16 @@ func studyResolverColumns() []string {
 		"study_title",
 		"faculty_sponsor",
 		"state",
-		"abstract",
-		"abbreviation",
-		"description",
 		"data_release_strategy",
 		"data_access_group",
-		"hmdmc_number",
 		"programme",
-		"created",
 		"reference_genome",
 		"ethically_approved",
 		"study_type",
 		"contains_human_dna",
 		"contaminated_human_dna",
 		"study_visibility",
-		"egadac_accession_number",
+		"ega_dac_accession_number",
 		"ega_policy_accession_number",
 		"data_release_timing",
 	}
@@ -767,14 +736,9 @@ func studyResolverRow(id int64, idStudyLims, uuidStudyLims, name, accession stri
 		"Study title " + idStudyLims,
 		"Faculty sponsor " + idStudyLims,
 		"active",
-		"abstract",
-		"abbr",
-		"description",
 		"strategy",
 		"group",
-		"hmdmc",
 		"programme",
-		"2026-05-06",
 		"GRCh38",
 		true,
 		"study-type",

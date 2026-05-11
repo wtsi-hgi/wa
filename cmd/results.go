@@ -130,7 +130,7 @@ func startResultsServeMLWHSync(ctx context.Context, client resultsServeSyncClien
 
 type resultsRegisterResolver interface {
 	ResolveSample(context.Context, string) (mlwh.Match, error)
-	ResolveStudy(context.Context, string, ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveStudy(context.Context, string) (mlwh.Match, error)
 	ResolveRun(context.Context, string) (mlwh.Match, error)
 	ResolveLibrary(context.Context, string) (mlwh.Match, error)
 	Close() error

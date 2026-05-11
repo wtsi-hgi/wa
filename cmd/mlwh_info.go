@@ -50,7 +50,7 @@ var openMLWHInfoClient = func(ctx context.Context, cfg mlwh.Config) (mlwhInfoCli
 type mlwhInfoClient interface {
 	ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveSample(ctx context.Context, raw string) (mlwh.Match, error)
-	ResolveStudy(ctx context.Context, raw string, opts ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveRun(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
 
@@ -151,8 +151,9 @@ func writeInfoReportText(out io.Writer, report infoReport) {
 	}
 
 	if report.Library != nil {
-		_, _ = fmt.Fprintf(out, "\nLibrary:\n  pipeline_id_lims: %s\n  sample_count:     %d\n",
-			report.Library.PipelineIDLims, report.Library.SampleCount)
+		_, _ = fmt.Fprintf(out, "\nLibrary:\n  pipeline_id_lims: %s\n",
+			report.Library.PipelineIDLims)
+		writeKV(out, "  id_study_lims", report.Library.IDStudyLims)
 	}
 
 	writeLanesSection(out, report.Lanes)
@@ -172,8 +173,6 @@ func writeSampleSection(out io.Writer, sample *mlwh.Sample) {
 	writeKV(out, "  supplier_name", sample.SupplierName)
 	writeKV(out, "  accession_number", sample.AccessionNumber)
 	writeKV(out, "  donor_id", sample.DonorID)
-	writeKV(out, "  id_study_lims", sample.IDStudyLims)
-	writeKV(out, "  library_type", sample.LibraryType)
 	writeKV(out, "  common_name", sample.CommonName)
 }
 
@@ -192,7 +191,6 @@ func writeStudySection(out io.Writer, study *mlwh.Study) {
 	writeKV(out, "  name", study.Name)
 	writeKV(out, "  accession_number", study.AccessionNumber)
 	writeKV(out, "  study_title", study.StudyTitle)
-	writeKV(out, "  abbreviation", study.Abbreviation)
 	writeKV(out, "  faculty_sponsor", study.FacultySponsor)
 	writeKV(out, "  programme", study.Programme)
 }
@@ -215,7 +213,11 @@ func writeLibrariesSection(out io.Writer, libraries []mlwh.Library) {
 
 	_, _ = fmt.Fprintf(out, "\nLibraries (%d):\n", len(libraries))
 	for _, lib := range libraries {
-		_, _ = fmt.Fprintf(out, "  pipeline_id_lims=%s sample_count=%d\n", lib.PipelineIDLims, lib.SampleCount)
+		_, _ = fmt.Fprintf(out, "  pipeline_id_lims=%s", lib.PipelineIDLims)
+		if strings.TrimSpace(lib.IDStudyLims) != "" {
+			_, _ = fmt.Fprintf(out, " id_study_lims=%s", lib.IDStudyLims)
+		}
+		_, _ = fmt.Fprintln(out)
 	}
 }
 

@@ -63,7 +63,7 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 
 		reports, err := client.Sync(context.Background())
 
-		convey.Convey("when Sync runs without restricting tables, then every table is synced and id_study_lims is resolved through study.id_study_lims", func() {
+		convey.Convey("when Sync runs without restricting tables, then every table is synced and the study mapping is stored via library_samples", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(reports, convey.ShouldHaveLength, 3)
 
@@ -79,11 +79,10 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 1)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
 
-			var studyLimsForSample1, studyLimsForSample2 string
-			convey.So(cache.DB().QueryRow(`SELECT id_study_lims FROM sample_mirror WHERE id_sample_tmp = 1`).Scan(&studyLimsForSample1), convey.ShouldBeNil)
+			var studyLimsForSample1 string
+			convey.So(cache.DB().QueryRow(`SELECT id_study_lims FROM library_samples WHERE id_sample_tmp = 1`).Scan(&studyLimsForSample1), convey.ShouldBeNil)
 			convey.So(studyLimsForSample1, convey.ShouldEqual, "5001")
-			convey.So(cache.DB().QueryRow(`SELECT id_study_lims FROM sample_mirror WHERE id_sample_tmp = 2`).Scan(&studyLimsForSample2), convey.ShouldBeNil)
-			convey.So(studyLimsForSample2, convey.ShouldEqual, "")
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples WHERE id_sample_tmp = 2`), convey.ShouldEqual, 0)
 		})
 	})
 }
@@ -167,8 +166,7 @@ func TestAllStudiesAgainstRealMLWHSchemaAllowsNullStudyStrings(t *testing.T) {
 
 // TestUpstreamSampleResolverAgainstRealMLWHSchema verifies that the cold-cache
 // resolver path that queries `FROM sample` directly works against the real
-// MLWH schema (i.e. the embedded id_study_lims subquery against iseq_flowcell
-// is valid). The previous code selected `sample.id_study_lims` and failed.
+// MLWH schema, where `sample` has no `id_study_lims` column.
 func TestUpstreamSampleResolverAgainstRealMLWHSchema(t *testing.T) {
 	convey.Convey("Given a cold cache and an upstream with the real MLWH schema", t, func() {
 		source := openRealMLWHSchemaSource(t)
@@ -183,12 +181,13 @@ func TestUpstreamSampleResolverAgainstRealMLWHSchema(t *testing.T) {
 
 		match, err := client.ResolveSample(context.Background(), "b7daafb8-c59f-11ee-8fba-024224dd57f4")
 
-		convey.Convey("when ResolveSample runs against the upstream, then it returns the sample with id_study_lims sourced through study.id_study_lims", func() {
+		convey.Convey("when ResolveSample runs against the upstream, then it returns the sample without relying on a removed sample.id_study_lims column", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(match.Kind, convey.ShouldEqual, KindSampleUUID)
 			convey.So(match.Sample, convey.ShouldNotBeNil)
 			convey.So(match.Sample.UUIDSampleLims, convey.ShouldEqual, "b7daafb8-c59f-11ee-8fba-024224dd57f4")
-			convey.So(match.Sample.IDStudyLims, convey.ShouldEqual, "9999")
+			convey.So(match.Sample.Studies, convey.ShouldBeEmpty)
+			convey.So(match.Sample.Libraries, convey.ShouldBeEmpty)
 		})
 	})
 }

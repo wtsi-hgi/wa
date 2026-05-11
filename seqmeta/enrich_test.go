@@ -37,6 +37,15 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+func detailGraphSample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
+	return mlwh.Sample{
+		Name:           name,
+		SangerSampleID: sangerSampleID,
+		Studies:        []mlwh.Study{{IDStudyLims: studyID}},
+		Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
+	}
+}
+
 func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 	ctx := context.Background()
 
@@ -45,18 +54,18 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 			Study: mlwh.Study{IDStudyLims: "6568", Name: "Study 6568"},
 			Libraries: []mlwh.LibraryDetail{
 				{
-					Library: mlwh.Library{PipelineIDLims: "Standard", SampleCount: 3},
+					Library: mlwh.Library{PipelineIDLims: "Standard", IDStudyLims: "6568"},
 					Samples: []mlwh.Sample{
-						{IDStudyLims: "6568", SangerID: "S1", Name: "Sample 1", LibraryType: "Standard"},
-						{IDStudyLims: "6568", SangerID: "S2", Name: "Sample 2", LibraryType: "Standard"},
-						{IDStudyLims: "6568", SangerID: "S3", Name: "Sample 3", LibraryType: "Standard"},
+						detailGraphSample("6568", "S1", "Sample 1", "Standard"),
+						detailGraphSample("6568", "S2", "Sample 2", "Standard"),
+						detailGraphSample("6568", "S3", "Sample 3", "Standard"),
 					},
 				},
 				{
-					Library: mlwh.Library{PipelineIDLims: "Bespoke", SampleCount: 2},
+					Library: mlwh.Library{PipelineIDLims: "Bespoke", IDStudyLims: "6568"},
 					Samples: []mlwh.Sample{
-						{IDStudyLims: "6568", SangerID: "S4", Name: "Sample 4", LibraryType: "Bespoke"},
-						{IDStudyLims: "6568", SangerID: "S5", Name: "Sample 5", LibraryType: "Bespoke"},
+						detailGraphSample("6568", "S4", "Sample 4", "Bespoke"),
+						detailGraphSample("6568", "S5", "Sample 5", "Bespoke"),
 					},
 				},
 			},
@@ -104,7 +113,7 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 
 	convey.Convey("D3.2: sample enrichment emits lanes from mlwh.SampleDetail", t, func() {
 		sampleDetail := &mlwh.SampleDetail{
-			Sample: mlwh.Sample{SangerID: "7607STDY14643771", Name: "Sample 7607STDY14643771", IDStudyLims: "6568", LibraryType: "Standard"},
+			Sample: detailGraphSample("6568", "7607STDY14643771", "Sample 7607STDY14643771", "Standard"),
 			Lanes: []mlwh.Lane{{IDRun: 101, Position: 1, TagIndex: 10}, {IDRun: 101, Position: 2, TagIndex: 11}, {IDRun: 102, Position: 1, TagIndex: 12}},
 		}
 
@@ -136,7 +145,7 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		sampleNode := decoded["graph"].(map[string]any)["sample_detail"].(map[string]any)
 		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
 		convey.So(len(sampleNode["lanes"].([]any)), convey.ShouldEqual, 3)
-		convey.So(sampleNode["sample"].(map[string]any)["sanger_id"], convey.ShouldEqual, "7607STDY14643771")
+		convey.So(sampleNode["sample"].(map[string]any)["sanger_sample_id"], convey.ShouldEqual, "7607STDY14643771")
 	})
 
 	convey.Convey("D3.3: enrichment JSON omits legacy project and users graph keys", t, func() {
@@ -177,12 +186,7 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		librarySamples := make([]mlwh.Sample, 0, 1500)
 
 		for sampleNumber := range 1500 {
-			librarySamples = append(librarySamples, mlwh.Sample{
-				IDStudyLims: "6568",
-				SangerID:   "S" + string(rune('A'+(sampleNumber%26))),
-				Name:       "Library Sample",
-				LibraryType: "RNA PolyA",
-			})
+			librarySamples = append(librarySamples, detailGraphSample("6568", "S"+string(rune('A'+(sampleNumber%26))), "Library Sample", "RNA PolyA"))
 		}
 
 		provider := &MockProvider{
@@ -219,9 +223,9 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 				convey.So(libraryType, convey.ShouldEqual, "Chromium single cell 3 prime v3")
 
 				return []mlwh.Sample{
-					{IDStudyLims: "6568", SangerID: "S1", Name: "Sample 1", LibraryType: libraryType},
-					{IDStudyLims: "6568", SangerID: "S2", Name: "Sample 2", LibraryType: libraryType},
-					{IDStudyLims: "7777", SangerID: "S3", Name: "Sample 3", LibraryType: libraryType},
+					detailGraphSample("6568", "S1", "Sample 1", libraryType),
+					detailGraphSample("6568", "S2", "Sample 2", libraryType),
+					detailGraphSample("7777", "S3", "Sample 3", libraryType),
 				}, nil
 			},
 			AllStudiesFunc: func(_ context.Context, _, _ int) ([]mlwh.Study, error) {
@@ -276,8 +280,8 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 				convey.So(libraryType, convey.ShouldEqual, "Chromium single cell 3 prime v3")
 
 				return []mlwh.Sample{
-					{IDStudyLims: "6568", SangerID: "S1", Name: "Sample 1", LibraryType: libraryType},
-					{IDStudyLims: "7777", SangerID: "S2", Name: "Sample 2", LibraryType: libraryType},
+					detailGraphSample("6568", "S1", "Sample 1", libraryType),
+					detailGraphSample("7777", "S2", "Sample 2", libraryType),
 				}, nil
 			},
 			GetStudyFunc: func(_ context.Context, _ string) (*mlwh.Study, error) {
@@ -312,8 +316,8 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 			QueryContextFunc: db.QueryContext,
 			FindSamplesByLibraryTypeFn: func(_ context.Context, libraryType string) ([]mlwh.Sample, error) {
 				return []mlwh.Sample{
-					{IDStudyLims: "6568", SangerID: "S1", Name: "Sample 1", LibraryType: libraryType},
-					{IDStudyLims: "7777", SangerID: "S2", Name: "Sample 2", LibraryType: libraryType},
+					detailGraphSample("6568", "S1", "Sample 1", libraryType),
+					detailGraphSample("7777", "S2", "Sample 2", libraryType),
 				}, nil
 			},
 			GetStudyFunc: func(_ context.Context, _ string) (*mlwh.Study, error) {
@@ -348,7 +352,7 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 
 		provider := &MockProvider{
 			FindSamplesByLibraryTypeFn: func(_ context.Context, libraryType string) ([]mlwh.Sample, error) {
-				return []mlwh.Sample{{IDStudyLims: "6568", SangerID: "S1", Name: "Sample 1", LibraryType: libraryType}}, nil
+				return []mlwh.Sample{detailGraphSample("6568", "S1", "Sample 1", libraryType)}, nil
 			},
 			QueryContextFunc: db.QueryContext,
 			GetStudyFunc: func(_ context.Context, _ string) (*mlwh.Study, error) {

@@ -33,15 +33,33 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+func hierarchySample(studyID, sampleLimsID, sangerSampleID, name, libraryType string) mlwh.Sample {
+	sample := mlwh.Sample{
+		IDSampleLims:   sampleLimsID,
+		SangerSampleID: sangerSampleID,
+		Name:           name,
+	}
+
+	if studyID != "" {
+		sample.Studies = []mlwh.Study{{IDStudyLims: studyID}}
+	}
+
+	if studyID != "" || libraryType != "" {
+		sample.Libraries = []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}}
+	}
+
+	return sample
+}
+
 func TestEnrichmentHierarchy(t *testing.T) {
 	ctx := context.Background()
 
 	convey.Convey("H1: study enrichment preserves library grouping in StudyDetail", t, func() {
 		study := &mlwh.Study{IDStudyLims: "6568", Name: "Test Study", AccessionNumber: "ERP001"}
 		samples := []mlwh.Sample{
-			{IDStudyLims: "6568", IDSampleLims: "SL1", SangerID: "S1", Name: "Sample 1", LibraryType: "A"},
-			{IDStudyLims: "6568", IDSampleLims: "SL2", SangerID: "S2", Name: "Sample 2", LibraryType: "A"},
-			{IDStudyLims: "6568", IDSampleLims: "SL3", SangerID: "S3", Name: "Sample 3", LibraryType: "B"},
+			hierarchySample("6568", "SL1", "S1", "Sample 1", "A"),
+			hierarchySample("6568", "SL2", "S2", "Sample 2", "A"),
+			hierarchySample("6568", "SL3", "S3", "Sample 3", "B"),
 		}
 
 		provider := &MockProvider{
@@ -79,7 +97,7 @@ func TestEnrichmentHierarchy(t *testing.T) {
 
 	convey.Convey("H2: sample enrichment preserves sample detail and linked study", t, func() {
 		study := &mlwh.Study{IDStudyLims: "6568", Name: "Test Study"}
-		samples := []mlwh.Sample{{IDStudyLims: "6568", SangerID: "S1", Name: "Sample 1", LibraryType: "A"}}
+		samples := []mlwh.Sample{hierarchySample("6568", "", "S1", "Sample 1", "A")}
 
 		provider := &MockProvider{
 			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
@@ -106,7 +124,7 @@ func TestEnrichmentHierarchy(t *testing.T) {
 			return
 		}
 
-		convey.So(result.Graph.SampleDetail.Sample.SangerID, convey.ShouldEqual, "S1")
+		convey.So(result.Graph.SampleDetail.Sample.SangerSampleID, convey.ShouldEqual, "S1")
 		convey.So(result.Graph.SampleDetail.Sample.Name, convey.ShouldEqual, "Sample 1")
 		convey.So(result.Graph.SampleDetail.Sample, convey.ShouldResemble, samples[0])
 		convey.So(result.Graph.SampleDetail.Lanes, convey.ShouldBeEmpty)
@@ -116,9 +134,9 @@ func TestEnrichmentHierarchy(t *testing.T) {
 		study1 := mlwh.Study{IDStudyLims: "6568", Name: "Study 1"}
 		study2 := mlwh.Study{IDStudyLims: "7890", Name: "Study 2"}
 		samples := []mlwh.Sample{
-			{IDStudyLims: "6568", SangerID: "S1", Name: "Sample 1", LibraryType: "A"},
-			{IDStudyLims: "6568", SangerID: "S2", Name: "Sample 2", LibraryType: "B"},
-			{IDStudyLims: "7890", SangerID: "S3", Name: "Sample 3", LibraryType: "C"},
+			hierarchySample("6568", "", "S1", "Sample 1", "A"),
+			hierarchySample("6568", "", "S2", "Sample 2", "B"),
+			hierarchySample("7890", "", "S3", "Sample 3", "C"),
 		}
 
 		provider := &MockProvider{
@@ -155,8 +173,8 @@ func TestEnrichmentHierarchy(t *testing.T) {
 		study1 := mlwh.Study{IDStudyLims: "6568", Name: "Study 1"}
 		study2 := mlwh.Study{IDStudyLims: "7890", Name: "Study 2"}
 		samples := []mlwh.Sample{
-			{IDStudyLims: "6568", SangerID: "S1", Name: "Sample 1", LibraryType: "RNA PolyA"},
-			{IDStudyLims: "7890", SangerID: "S2", Name: "Sample 2", LibraryType: "RNA PolyA"},
+			hierarchySample("6568", "", "S1", "Sample 1", "RNA PolyA"),
+			hierarchySample("7890", "", "S2", "Sample 2", "RNA PolyA"),
 		}
 
 		provider := &MockProvider{

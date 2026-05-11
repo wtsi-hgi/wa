@@ -37,6 +37,15 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+func serverEnrichSample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
+	return mlwh.Sample{
+		Name:           name,
+		SangerSampleID: sangerSampleID,
+		Studies:        []mlwh.Study{{IDStudyLims: studyID}},
+		Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
+	}
+}
+
 func TestServerEnrichEndpoint(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
@@ -46,9 +55,9 @@ func TestServerEnrichEndpoint(t *testing.T) {
 
 	study := &mlwh.Study{IDStudyLims: "6568", Name: "Study 6568"}
 	samples := []mlwh.Sample{
-		{SangerID: "S1", Name: "Sample 1", IDStudyLims: "6568", LibraryType: "RNA PolyA"},
-		{SangerID: "S2", Name: "Sample 2", IDStudyLims: "6568", LibraryType: "RNA PolyA"},
-		{SangerID: "S3", Name: "Sample 3", IDStudyLims: "6568", LibraryType: "PCR free"},
+		serverEnrichSample("6568", "S1", "Sample 1", "RNA PolyA"),
+		serverEnrichSample("6568", "S2", "Sample 2", "RNA PolyA"),
+		serverEnrichSample("6568", "S3", "Sample 3", "PCR free"),
 	}
 	received := ""
 
@@ -140,7 +149,7 @@ func TestServerEnrichEndpoint(t *testing.T) {
 			convey.So(libraryType, convey.ShouldEqual, "RNA PolyA")
 
 			return []mlwh.Sample{
-				{SangerID: "S1", Name: "Sample 1", IDStudyLims: "6568", LibraryType: libraryType},
+				serverEnrichSample("6568", "S1", "Sample 1", libraryType),
 			}, nil
 		}
 		provider.GetStudyFunc = func(_ context.Context, identifier string) (*mlwh.Study, error) {

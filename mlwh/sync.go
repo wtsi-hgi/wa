@@ -49,14 +49,11 @@ var sampleMirrorColumns = []string{
 	"id_lims",
 	"id_sample_lims",
 	"uuid_sample_lims",
-	"id_study_lims",
 	"name",
-	"sanger_id",
 	"sanger_sample_id",
 	"supplier_name",
 	"accession_number",
 	"donor_id",
-	"library_type",
 	"taxon_id",
 	"common_name",
 	"description",
@@ -73,21 +70,16 @@ var studyMirrorColumns = []string{
 	"study_title",
 	"faculty_sponsor",
 	"state",
-	"abstract",
-	"abbreviation",
-	"description",
 	"data_release_strategy",
 	"data_access_group",
-	"hmdmc_number",
 	"programme",
-	"created",
 	"reference_genome",
 	"ethically_approved",
 	"study_type",
 	"contains_human_dna",
 	"contaminated_human_dna",
 	"study_visibility",
-	"egadac_accession_number",
+	"ega_dac_accession_number",
 	"ega_policy_accession_number",
 	"data_release_timing",
 	"last_updated",
@@ -108,29 +100,26 @@ var studySourceColumnSpecs = []studySourceColumnSpec{
 	{canonical: "study_title"},
 	{canonical: "faculty_sponsor"},
 	{canonical: "state"},
-	{canonical: "abstract"},
-	{canonical: "abbreviation"},
-	{canonical: "description"},
 	{canonical: "data_release_strategy"},
 	{canonical: "data_access_group"},
-	{canonical: "hmdmc_number"},
 	{canonical: "programme"},
-	{canonical: "created"},
 	{canonical: "reference_genome"},
 	{canonical: "ethically_approved"},
 	{canonical: "study_type"},
 	{canonical: "contains_human_dna"},
 	{canonical: "contaminated_human_dna"},
 	{canonical: "study_visibility"},
-	{canonical: "egadac_accession_number", aliases: []string{"ega_dac_accession_number"}},
+	{canonical: "ega_dac_accession_number", aliases: []string{"egadac_accession_number"}},
 	{canonical: "ega_policy_accession_number"},
 	{canonical: "data_release_timing"},
 }
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run"}
 
+const sampleSyncStudyLimsSubquery = `COALESCE((SELECT study.id_study_lims FROM iseq_flowcell INNER JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp WHERE iseq_flowcell.id_sample_tmp = sample.id_sample_tmp AND study.id_lims = 'SQSCP' LIMIT 1), '')`
+
 func sampleSyncSourceQuery() string {
-	return `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, ` + sampleStudyLimsSubquery + `, last_updated FROM sample WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_sample_tmp`
+	return `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, ` + sampleSyncStudyLimsSubquery + `, last_updated FROM sample WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_sample_tmp`
 }
 
 func flowcellSyncSourceQuery() string {
@@ -705,8 +694,6 @@ func scanSampleSyncRow(rows *sql.Rows) (sampleSyncRow, error) {
 	row.Sample.CommonName = nullStringValue(nullable.commonName)
 	row.Sample.Description = nullStringValue(nullable.description)
 	row.IDStudyLims = nullStringValue(nullable.idStudyLims)
-	row.Sample.IDStudyLims = row.IDStudyLims
-	row.Sample.SangerID = row.Sample.Name
 
 	parsed, err := parseSyncTimeValue(lastUpdated)
 	if err != nil {
@@ -724,14 +711,11 @@ func upsertSampleMirror(ctx context.Context, tx *sql.Tx, dialect string, row sam
 		row.Sample.IDLims,
 		row.Sample.IDSampleLims,
 		row.Sample.UUIDSampleLims,
-		row.Sample.IDStudyLims,
 		row.Sample.Name,
-		row.Sample.SangerID,
 		row.Sample.SangerSampleID,
 		row.Sample.SupplierName,
 		row.Sample.AccessionNumber,
 		row.Sample.DonorID,
-		row.Sample.LibraryType,
 		row.Sample.TaxonID,
 		row.Sample.CommonName,
 		row.Sample.Description,
@@ -750,10 +734,9 @@ func replaceDonorSample(ctx context.Context, tx *sql.Tx, row sampleSyncRow) erro
 	}
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO donor_samples(donor_id, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
+		`INSERT INTO donor_samples(donor_id, id_sample_tmp) VALUES (?, ?)`,
 		row.Sample.DonorID,
 		row.Sample.IDSampleTmp,
-		row.IDStudyLims,
 	); err != nil {
 		return fmt.Errorf("mlwh: insert donor sample row %d: %w", row.Sample.IDSampleTmp, err)
 	}
@@ -797,14 +780,9 @@ func upsertStudyMirror(ctx context.Context, tx *sql.Tx, dialect string, row stud
 		row.Study.StudyTitle,
 		row.Study.FacultySponsor,
 		row.Study.State,
-		row.Study.Abstract,
-		row.Study.Abbreviation,
-		row.Study.Description,
 		row.Study.DataReleaseStrategy,
 		row.Study.DataAccessGroup,
-		row.Study.HMDMCNumber,
 		row.Study.Programme,
-		row.Study.Created,
 		row.Study.ReferenceGenome,
 		row.Study.EthicallyApproved,
 		row.Study.StudyType,

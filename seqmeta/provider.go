@@ -36,7 +36,7 @@ type Provider interface {
 	mlwh.Querier
 	ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveSample(ctx context.Context, raw string) (mlwh.Match, error)
-	ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveRun(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
 	AllStudies(ctx context.Context, limit, offset int) ([]mlwh.Study, error)

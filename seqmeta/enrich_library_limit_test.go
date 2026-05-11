@@ -34,6 +34,15 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+func limitedLibrarySample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
+	return mlwh.Sample{
+		Name:           name,
+		SangerSampleID: sangerSampleID,
+		Studies:        []mlwh.Study{{IDStudyLims: studyID}},
+		Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
+	}
+}
+
 func TestLibraryTypeEnrichmentLimitsPreventsLargePayload(t *testing.T) {
 	convey.Convey("Library type enrichment limits total samples to prevent browser-freezing payloads", t, func() {
 		ctx := context.Background()
@@ -47,12 +56,7 @@ func TestLibraryTypeEnrichmentLimitsPreventsLargePayload(t *testing.T) {
 				studyID := "study_" + string(rune('0'+studyNum))
 				// Use unique sample names across all studies for proper filtering
 				sampleName := studyID + "_sample_" + string(rune('A'+sampleNum))
-				samples = append(samples, mlwh.Sample{
-					IDStudyLims: studyID,
-					SangerID:    sampleName + "_id",
-					Name:        sampleName,
-					LibraryType: "Chromium single cell 3 prime v3",
-				})
+				samples = append(samples, limitedLibrarySample(studyID, sampleName+"_id", sampleName, "Chromium single cell 3 prime v3"))
 				sampleIndex++
 			}
 		}
@@ -116,11 +120,11 @@ func TestStudyEnrichmentIncludesLibraryMetadata(t *testing.T) {
 
 		// Simulate study 6568 with multiple samples across different library types
 		studySamples := []mlwh.Sample{
-			{IDStudyLims: "6568", SangerID: "S1", Name: "Sample1", LibraryType: "Chromium single cell 3 prime v3"},
-			{IDStudyLims: "6568", SangerID: "S2", Name: "Sample2", LibraryType: "Chromium single cell 3 prime v3"},
-			{IDStudyLims: "6568", SangerID: "S3", Name: "Sample3", LibraryType: "Standard"},
-			{IDStudyLims: "6568", SangerID: "S4", Name: "Sample4", LibraryType: "Standard"},
-			{IDStudyLims: "6568", SangerID: "S5", Name: "Sample5", LibraryType: "Standard"},
+			limitedLibrarySample("6568", "S1", "Sample1", "Chromium single cell 3 prime v3"),
+			limitedLibrarySample("6568", "S2", "Sample2", "Chromium single cell 3 prime v3"),
+			limitedLibrarySample("6568", "S3", "Sample3", "Standard"),
+			limitedLibrarySample("6568", "S4", "Sample4", "Standard"),
+			limitedLibrarySample("6568", "S5", "Sample5", "Standard"),
 		}
 
 		provider := &MockProvider{

@@ -119,7 +119,7 @@ func TestAllStudiesWarmCacheIncludesRowInsertedBySync(t *testing.T) {
 			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`)).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(studySyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(time.Time{})).
 			WillReturnRows(sqlmock.NewRows(studySyncSourceColumns).
 				AddRow(studyRowValues(51, "SQSCP", "6566", "study-uuid-51", "Study 51", "EGAS00001005151", t1)...).
@@ -175,7 +175,7 @@ func TestAllStudiesWarmCacheFiltersOutNonSQSCPRows(t *testing.T) {
 		seedStudyMirrorRow(t, cache.DB(), 71, "6566", "study-uuid-71", "Study 71", "EGAS00001007171")
 		seedStudyMirrorRow(t, cache.DB(), 72, "6567", "study-uuid-72", "Study 72", "EGAS00001007272")
 		_, err := cache.DB().Exec(
-			`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			73,
 			"GCLP",
 			"9999",
@@ -185,14 +185,9 @@ func TestAllStudiesWarmCacheFiltersOutNonSQSCPRows(t *testing.T) {
 			"Study title 9999",
 			"Faculty sponsor 9999",
 			"active",
-			"abstract",
-			"abbr",
-			"description",
 			"strategy",
 			"group",
-			"hmdmc",
 			"programme",
-			"2026-05-06",
 			"GRCh38",
 			true,
 			"study-type",

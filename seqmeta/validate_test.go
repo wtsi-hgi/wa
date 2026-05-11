@@ -54,7 +54,7 @@ func TestValidate(t *testing.T) {
 	})
 
 	convey.Convey("sample matches preserve the mlwh sample pointer and canonical identifier", t, func() {
-		sample := &mlwh.Sample{Name: "7607STDY14643771", SangerID: "S1"}
+		sample := &mlwh.Sample{Name: "7607STDY14643771", SangerSampleID: "S1"}
 		provider := &MockProvider{
 			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
 				convey.So(raw, convey.ShouldEqual, "S1")

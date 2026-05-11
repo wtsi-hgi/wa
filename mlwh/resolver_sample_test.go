@@ -193,8 +193,8 @@ func TestResolveSampleRejectsLIMSProviderConstants(t *testing.T) {
 	})
 }
 
-func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTL(t *testing.T) {
-	convey.Convey("Given a warm cache and an upstream miss across every direct step", t, func() {
+func TestResolveSampleWarmCacheMissReturnsNotFoundWithoutNegativeCache(t *testing.T) {
+	convey.Convey("Given a warm cache and a miss across every direct step", t, func() {
 		client, sourceMock, cleanup := newResolverSampleTestClient(t)
 		defer cleanup()
 
@@ -207,12 +207,11 @@ func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTL(t *testing.T) 
 
 		convey.So(errors.Is(firstErr, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(errors.Is(secondErr, ErrNotFound), convey.ShouldBeTrue)
-		convey.So(countRows(t, client.cache.DB(), `SELECT COUNT(*) FROM negative_cache WHERE raw = ?`, raw), convey.ShouldEqual, 1)
 		convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
 }
 
-func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTLForMySQLCache(t *testing.T) {
+func TestResolveSampleWarmCacheMissForMySQLCacheReturnsNotFoundWithoutNegativeCache(t *testing.T) {
 	convey.Convey("Given a warm MySQL cache and a donor miss", t, func() {
 		rwDB, rwMock, err := sqlmock.New()
 		convey.So(err, convey.ShouldBeNil)
@@ -221,43 +220,32 @@ func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTLForMySQLCache(t
 		convey.So(err, convey.ShouldBeNil)
 
 		const raw = "missing-id"
-		cachedAt := time.Now().UTC().Format(time.RFC3339Nano)
-		negativeCacheUpsert := buildUpsertStatement("mysql", "negative_cache", negativeCacheColumns, []string{"raw"})
 		cacheMissRows := sqlmock.NewRows(sampleResolverColumns())
 
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT fetched_at, ttl_seconds FROM negative_cache WHERE raw = ? LIMIT 1`)).
-			WithArgs(raw).
-			WillReturnRows(sqlmock.NewRows([]string{"fetched_at", "ttl_seconds"}))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
-		// Warm-cache direct lookup: text input, so the resolver issues the
-		// four sample_mirror text-step queries before falling through to
-		// the donor_samples join below.
-		for _, query := range []string{
-			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`,
-			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`,
-			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`,
-			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`,
-		} {
-			roMock.ExpectQuery(regexp.QuoteMeta(query)).
+		expectWarmCacheMySQLMiss := func() {
+			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
+				WithArgs(syncTableSample).
+				WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
+			for _, query := range []string{
+				`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`,
+				`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`,
+				`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`,
+				`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`,
+			} {
+				roMock.ExpectQuery(regexp.QuoteMeta(query)).
+					WithArgs(raw).
+					WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+			}
+			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
+				WithArgs(syncTableSample).
+				WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
+			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + sampleMirrorSelectColumns + ` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 1`)).
 				WithArgs(raw).
-				WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+				WillReturnRows(cacheMissRows)
 		}
-		// ensureResolverTableSynced re-checks sync_state before the donor join.
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + sampleMirrorSelectColumns + ` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 1`)).
-			WithArgs(raw).
-			WillReturnRows(cacheMissRows)
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT fetched_at, ttl_seconds FROM negative_cache WHERE raw = ? LIMIT 1`)).
-			WithArgs(raw).
-			WillReturnRows(sqlmock.NewRows([]string{"fetched_at", "ttl_seconds"}).AddRow(cachedAt, sampleNegativeCacheTTLSeconds))
 
-		rwMock.ExpectExec(regexp.QuoteMeta(negativeCacheUpsert)).
-			WithArgs(raw, "not_found", sqlmock.AnyArg(), sampleNegativeCacheTTLSeconds).
-			WillReturnResult(sqlmock.NewResult(1, 1))
+		expectWarmCacheMySQLMiss()
+		expectWarmCacheMySQLMiss()
 
 		client := &Client{cache: &mysqlCache{rwDB: rwDB, roDB: roDB}, cacheReader: roDB}
 
@@ -330,14 +318,11 @@ func sampleResolverColumns() []string {
 		"id_lims",
 		"id_sample_lims",
 		"uuid_sample_lims",
-		"id_study_lims",
 		"name",
-		"sanger_id",
 		"sanger_sample_id",
 		"supplier_name",
 		"accession_number",
 		"donor_id",
-		"library_type",
 		"taxon_id",
 		"common_name",
 		"description",
@@ -345,5 +330,5 @@ func sampleResolverColumns() []string {
 }
 
 func sampleResolverRow(id int64, uuidSampleLims, idSampleLims, name, sangerSampleID, supplierName, accessionNumber, donorID string) []driver.Value {
-	return []driver.Value{id, "SQSCP", idSampleLims, uuidSampleLims, "study-" + idSampleLims, name, name, sangerSampleID, supplierName, accessionNumber, donorID, "", 9606, "human", "description"}
+	return []driver.Value{id, "SQSCP", idSampleLims, uuidSampleLims, name, sangerSampleID, supplierName, accessionNumber, donorID, 9606, "human", "description"}
 }

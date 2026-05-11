@@ -85,13 +85,13 @@ func (a *ClientAdapter) ResolveSample(ctx context.Context, raw string) (mlwh.Mat
 	return provider.ResolveSample(ctx, raw)
 }
 
-func (a *ClientAdapter) ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+func (a *ClientAdapter) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
 	provider, err := a.delegate()
 	if err != nil {
 		return mlwh.Match{}, err
 	}
 
-	return provider.ResolveStudy(ctx, raw, options...)
+	return provider.ResolveStudy(ctx, raw)
 }
 
 func (a *ClientAdapter) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {

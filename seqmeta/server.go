@@ -140,7 +140,7 @@ func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
 	if libraryType != "" {
 		filtered := make([]mlwh.Sample, 0, len(samples))
 		for _, sample := range samples {
-			if sample.LibraryType == libraryType {
+			if sampleHasLibraryType(sample, libraryType) {
 				filtered = append(filtered, sample)
 			}
 		}

@@ -36,6 +36,14 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+func serverStudySample(studyID, name, libraryType string) mlwh.Sample {
+	return mlwh.Sample{
+		Name:      name,
+		Studies:   []mlwh.Study{{IDStudyLims: studyID}},
+		Libraries: []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
+	}
+}
+
 func TestServerEndpoints(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
@@ -69,8 +77,8 @@ func TestServerEndpoints(t *testing.T) {
 			AllSamplesForStudyFunc: func(_ context.Context, studyID string) ([]mlwh.Sample, error) {
 				convey.So(studyID, convey.ShouldEqual, "6568")
 				return []mlwh.Sample{
-					{IDStudyLims: "6568", Name: "S1", LibraryType: "RNA PolyA"},
-					{IDStudyLims: "6568", Name: "S2", LibraryType: "PCR free"},
+					serverStudySample("6568", "S1", "RNA PolyA"),
+					serverStudySample("6568", "S2", "PCR free"),
 				}, nil
 			},
 		}
@@ -84,7 +92,7 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(json.Unmarshal(recorder.Body.Bytes(), &samples), convey.ShouldBeNil)
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].LibraryType, convey.ShouldEqual, "RNA PolyA")
+		convey.So(samples[0].Libraries, convey.ShouldResemble, []mlwh.Library{{PipelineIDLims: "RNA PolyA", IDStudyLims: "6568"}})
 	})
 
 	convey.Convey("study diff endpoint returns added samples", t, func() {

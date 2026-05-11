@@ -23,8 +23,8 @@ introduce the `Library` struct with `PipelineIDLims` and
 No acceptance tests of its own; this item is the type foundation
 that every later item compiles against.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.2: A1 - Schema version bump and OpenCache migration [parallel with 1.1]
 
@@ -43,8 +43,8 @@ update `schema_version`, and emit the single alphabetised stderr
 migration line. Covers all 4 acceptance tests from A1 (test 4
 exercises the MySQL path under the existing MySQL cache gate).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -57,8 +57,8 @@ assert SQLite/MySQL parity for the v2 table set: identical table
 names, column sets, index column-lists, and unique-constraint
 column tuples. Covers all 4 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.4: A3 - Case-insensitive text columns [parallel with 1.3]
 
@@ -72,8 +72,8 @@ proving case-insensitive equality on `sample_mirror.name`,
 `library_samples.pipeline_id_lims` in both backends. Covers all
 4 acceptance tests from A3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

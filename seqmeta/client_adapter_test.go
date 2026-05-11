@@ -62,10 +62,10 @@ func TestClientAdapterFindSamplesByLibraryTypeUsesDirectLookup(t *testing.T) {
 				convey.So(offset, convey.ShouldEqual, 0)
 
 				return []mlwh.Sample{{
-					IDStudyLims: "6568",
-					SangerID:    "S1",
-					Name:        "Sample 1",
-					LibraryType: libraryType,
+					Name:           "Sample 1",
+					SangerSampleID: "S1",
+					Studies:        []mlwh.Study{{IDStudyLims: "6568"}},
+					Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: "6568"}},
 				}}, nil
 			}
 
@@ -73,10 +73,10 @@ func TestClientAdapterFindSamplesByLibraryTypeUsesDirectLookup(t *testing.T) {
 
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(samples, convey.ShouldResemble, []mlwh.Sample{{
-				IDStudyLims: "6568",
-				SangerID:    "S1",
-				Name:        "Sample 1",
-				LibraryType: "Chromium single cell 3 prime v3",
+				Name:           "Sample 1",
+				SangerSampleID: "S1",
+				Studies:        []mlwh.Study{{IDStudyLims: "6568"}},
+				Libraries:      []mlwh.Library{{PipelineIDLims: "Chromium single cell 3 prime v3", IDStudyLims: "6568"}},
 			}})
 		})
 	})

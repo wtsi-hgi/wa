@@ -72,7 +72,7 @@ func TestMLWHInfoHelpRendersConfigurationDetails(t *testing.T) {
 type stubMLWHInfoClient struct {
 	classify       func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveSample  func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveStudy   func(ctx context.Context, raw string, opts ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	resolveStudy   func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveRun     func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveLibrary func(ctx context.Context, raw string) (mlwh.Match, error)
 
@@ -104,9 +104,9 @@ func (s *stubMLWHInfoClient) ResolveSample(ctx context.Context, raw string) (mlw
 	return mlwh.Match{}, errors.New("resolveSample not stubbed")
 }
 
-func (s *stubMLWHInfoClient) ResolveStudy(ctx context.Context, raw string, opts ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+func (s *stubMLWHInfoClient) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
 	if s.resolveStudy != nil {
-		return s.resolveStudy(ctx, raw, opts...)
+		return s.resolveStudy(ctx, raw)
 	}
 
 	return mlwh.Match{}, errors.New("resolveStudy not stubbed")
@@ -212,7 +212,6 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 						IDSampleLims:    "8675309",
 						SangerSampleID:  "DN1234",
 						SupplierName:    "vendor-id-1",
-						IDStudyLims:     "5901",
 						AccessionNumber: "EGAS00001005678",
 					},
 				}, nil
@@ -264,7 +263,7 @@ func TestMLWHInfoCommandJSONOutput(t *testing.T) {
 			librariesForStudy: func(_ context.Context, id string, _, _ int) ([]mlwh.Library, error) {
 				convey.So(id, convey.ShouldEqual, "5901")
 
-				return []mlwh.Library{{PipelineIDLims: "lib-A", SampleCount: 12}}, nil
+				return []mlwh.Library{{PipelineIDLims: "lib-A", IDStudyLims: "5901"}}, nil
 			},
 			samplesForStudy: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
 				return []mlwh.Sample{{Name: "DN1234", IDSampleLims: "8675309"}}, nil

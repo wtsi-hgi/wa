@@ -72,25 +72,22 @@ var studySyncSourceColumns = []string{
 	"study_title",
 	"faculty_sponsor",
 	"state",
-	"abstract",
-	"abbreviation",
-	"description",
 	"data_release_strategy",
 	"data_access_group",
-	"hmdmc_number",
 	"programme",
-	"created",
 	"reference_genome",
 	"ethically_approved",
 	"study_type",
 	"contains_human_dna",
 	"contaminated_human_dna",
 	"study_visibility",
-	"egadac_accession_number",
+	"ega_dac_accession_number",
 	"ega_policy_accession_number",
 	"data_release_timing",
 	"last_updated",
 }
+
+var studySyncSourceQueryForTest = `SELECT ` + studySelectColumns + `, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`
 
 func TestClientSyncSampleColdCachePopulatesMirrorsAndWatermark(t *testing.T) {
 	convey.Convey("Given a cold cache and three SQSCP sample rows", t, func() {
@@ -357,7 +354,7 @@ func TestClientSyncStudyColdCachePopulatesMirrorAndWatermark(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		defer func() { _ = sourceDB.Close() }()
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`)).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(studySyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(time.Time{})).
 			WillReturnRows(sqlmock.NewRows(studySyncSourceColumns).
 				AddRow(studyRowValues(1, "SQSCP", "201", "study-uuid-1", "study-a", "acc-a", t1)...).
@@ -397,7 +394,7 @@ func TestClientSyncStudySkipsNonSQSCPSourceRows(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		defer func() { _ = sourceDB.Close() }()
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`)).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(studySyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(time.Time{})).
 			WillReturnRows(sqlmock.NewRows(studySyncSourceColumns).
 				AddRow(studyRowValues(1, "SQSCP", "201", "study-uuid-1", "study-a", "acc-a", t1)...).
@@ -443,7 +440,7 @@ func TestClientSyncWritesSyncStateAfterCommit(t *testing.T) {
 		cacheMock.ExpectCommit()
 		cacheMock.ExpectExec(`INSERT INTO sync_state`).WithArgs("study", formatSyncTime(t2), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`)).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(studySyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(time.Time{})).
 			WillReturnRows(sqlmock.NewRows(studySyncSourceColumns).
 				AddRow(studyRowValues(1, "SQSCP", "201", "study-uuid-1", "study-a", "acc-a", t1)...).
@@ -545,12 +542,12 @@ func TestResolveSampleColdCacheTriggersSyncAtDonorStep(t *testing.T) {
 					return fmt.Errorf("unexpected sync tables: %v", tables)
 				}
 
-				_, err := tx.ExecContext(ctx, `INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, library_type, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 21, "SQSCP", "121", "sample-uuid-21", "study-21", "SANGER-21", "SANGER-21", "sanger-id-21", "supplier-21", "accession-21", "DONOR-X", "", 9606, "human", "desc-21", formatSyncTime(time.Date(2026, time.May, 6, 13, 0, 0, 0, time.UTC)))
+				_, err := tx.ExecContext(ctx, `INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 21, "SQSCP", "121", "sample-uuid-21", "SANGER-21", "sanger-id-21", "supplier-21", "accession-21", "DONOR-X", 9606, "human", "desc-21", formatSyncTime(time.Date(2026, time.May, 6, 13, 0, 0, 0, time.UTC)))
 				if err != nil {
 					return err
 				}
 
-				_, err = tx.ExecContext(ctx, `INSERT INTO donor_samples(donor_id, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "DONOR-X", 21, "study-21")
+				_, err = tx.ExecContext(ctx, `INSERT INTO donor_samples(donor_id, id_sample_tmp) VALUES (?, ?)`, "DONOR-X", 21)
 				return err
 			},
 		}
@@ -620,19 +617,16 @@ func seedSampleMirrorRow(t *testing.T, db *sql.DB, id int64, name, supplierName,
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, library_type, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id,
 		"SQSCP",
 		formatInt(id+100),
 		"seed-sample-uuid",
-		"",
-		name,
 		name,
 		"seed-sanger",
 		supplierName,
 		"seed-accession",
 		donorID,
-		"",
 		9606,
 		"human",
 		"seed-description",
@@ -646,7 +640,7 @@ func seedSampleMirrorRow(t *testing.T, db *sql.DB, id int64, name, supplierName,
 func seedDonorSampleRow(t *testing.T, db *sql.DB, donorID string, idSampleTmp int64, idStudyLims string) {
 	t.Helper()
 
-	_, err := db.Exec(`INSERT INTO donor_samples(donor_id, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, donorID, idSampleTmp, idStudyLims)
+	_, err := db.Exec(`INSERT INTO donor_samples(donor_id, id_sample_tmp) VALUES (?, ?)`, donorID, idSampleTmp)
 	if err != nil {
 		t.Fatalf("seedDonorSampleRow(): %v", err)
 	}
@@ -671,14 +665,9 @@ func studyRowValues(id int64, idLims, idStudyLims, uuidStudyLims, name, accessio
 		"Study title " + formatInt(id),
 		"Faculty sponsor " + formatInt(id),
 		"active",
-		"abstract",
-		"abbr",
-		"description",
 		"strategy",
 		"group",
-		"hmdmc",
 		"programme",
-		"2026-05-06",
 		"GRCh38",
 		true,
 		"study-type",

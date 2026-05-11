@@ -42,11 +42,11 @@ var (
 	samplesForStudyCacheQuery         = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
 	samplesForStudyParentQuery        = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
 	samplesForStudySourceParentQuery  = `SELECT ` + studyMirrorSelectColumns + ` FROM study WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	samplesForStudySourceQuery        = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForStudySourceQuery        = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	sampleByNameCacheQuery            = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`
-	samplesForRunQuery                = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForRunQuery                = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForRunParentQuery          = `SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`
-	samplesForLibraryTypeSourceQuery  = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForLibraryTypeSourceQuery  = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForLibraryCacheQuery       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
 	samplesForLibraryStudyParentQuery = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
 )
@@ -220,9 +220,9 @@ func TestSamplesForStudyAndLibraryReadThroughWriteBack(t *testing.T) {
 		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForStudySourceQuery)).
 			WithArgs("6568", 2, 1).
 			WillReturnRows(
-				sqlmock.NewRows([]string{"pipeline_id_lims", "id_sample_tmp", "id_lims", "id_sample_lims", "uuid_sample_lims", "id_study_lims", "name", "sanger_id", "sanger_sample_id", "supplier_name", "accession_number", "donor_id", "library_type", "taxon_id", "common_name", "description", "last_updated"}).
-					AddRow("Standard", int64(1), "SQSCP", "501", "sample-uuid-1", "6568", "Alpha", "Alpha", "sanger-id-1", "supplier-1", "accession-1", "donor-1", "Standard", 9606, "human", "description", formatSyncTime(time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))).
-					AddRow("Standard", int64(2), "SQSCP", "502", "sample-uuid-2", "6568", "Beta", "Beta", "sanger-id-2", "supplier-2", "accession-2", "donor-2", "Standard", 9606, "human", "description", formatSyncTime(time.Date(2026, time.May, 6, 17, 1, 0, 0, time.UTC))),
+				sqlmock.NewRows([]string{"pipeline_id_lims", "id_sample_tmp", "id_lims", "id_sample_lims", "uuid_sample_lims", "id_study_lims", "name", "sanger_sample_id", "supplier_name", "accession_number", "donor_id", "taxon_id", "common_name", "description", "last_updated"}).
+					AddRow("Standard", int64(1), "SQSCP", "501", "sample-uuid-1", "6568", "Alpha", "sanger-id-1", "supplier-1", "accession-1", "donor-1", 9606, "human", "description", formatSyncTime(time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))).
+					AddRow("Standard", int64(2), "SQSCP", "502", "sample-uuid-2", "6568", "Beta", "sanger-id-2", "supplier-2", "accession-2", "donor-2", 9606, "human", "description", formatSyncTime(time.Date(2026, time.May, 6, 17, 1, 0, 0, time.UTC))),
 			)
 
 		studySamples, err := client.SamplesForStudy(context.Background(), "6568", 2, 1)
@@ -260,7 +260,7 @@ func TestSamplesForLibraryColdCacheExistingStudyWithoutMatchingLibraryReturnsEmp
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()).AddRow(studyResolverRow(11, "6568", "study-uuid-11", "Study 11", "EGAS00001001111")...))
 		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForLibrarySourceSQL)).
 			WithArgs("Standard", "6568", 2, 1).
-			WillReturnRows(sqlmock.NewRows([]string{"pipeline_id_lims", "id_sample_tmp", "id_lims", "id_sample_lims", "uuid_sample_lims", "id_study_lims", "name", "sanger_id", "sanger_sample_id", "supplier_name", "accession_number", "donor_id", "library_type", "taxon_id", "common_name", "description", "last_updated"}))
+			WillReturnRows(sqlmock.NewRows([]string{"pipeline_id_lims", "id_sample_tmp", "id_lims", "id_sample_lims", "uuid_sample_lims", "id_study_lims", "name", "sanger_sample_id", "supplier_name", "accession_number", "donor_id", "taxon_id", "common_name", "description", "last_updated"}))
 
 		samples, err := client.SamplesForLibrary(context.Background(), "Standard", "6568", 2, 1)
 
@@ -284,12 +284,10 @@ func TestSamplesForLibraryTypeColdCacheReadsThroughWithoutResolverSync(t *testin
 				"uuid_sample_lims",
 				"id_study_lims",
 				"name",
-				"sanger_id",
 				"sanger_sample_id",
 				"supplier_name",
 				"accession_number",
 				"donor_id",
-				"library_type",
 				"taxon_id",
 				"common_name",
 				"description",
@@ -302,12 +300,10 @@ func TestSamplesForLibraryTypeColdCacheReadsThroughWithoutResolverSync(t *testin
 				"sample-uuid-11",
 				"6568",
 				"sample-a",
-				"sample-a",
 				"sanger-id-a",
 				"supplier-a",
 				"accession-a",
 				"donor-a",
-				"Chromium single cell 3 prime v3",
 				9606,
 				"human",
 				"desc-a",
@@ -319,7 +315,7 @@ func TestSamplesForLibraryTypeColdCacheReadsThroughWithoutResolverSync(t *testin
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(samples, convey.ShouldHaveLength, 1)
 		convey.So(samples[0].Name, convey.ShouldEqual, "sample-a")
-		convey.So(samples[0].IDStudyLims, convey.ShouldEqual, "6568")
+		convey.So(samples[0].SangerSampleID, convey.ShouldEqual, "sanger-id-a")
 	})
 }
 
@@ -328,7 +324,7 @@ func TestSamplesForLibraryTypeColdCacheUsesJoinedStudyLimsSourceQuery(t *testing
 		client, sourceMock, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
-		query := `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+		query := `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 
 		sourceMock.ExpectQuery(regexp.QuoteMeta(query)).
 			WithArgs("Chromium single cell 3 prime v3", 100, 0).
@@ -340,12 +336,10 @@ func TestSamplesForLibraryTypeColdCacheUsesJoinedStudyLimsSourceQuery(t *testing
 				"uuid_sample_lims",
 				"id_study_lims",
 				"name",
-				"sanger_id",
 				"sanger_sample_id",
 				"supplier_name",
 				"accession_number",
 				"donor_id",
-				"library_type",
 				"taxon_id",
 				"common_name",
 				"description",
@@ -358,12 +352,10 @@ func TestSamplesForLibraryTypeColdCacheUsesJoinedStudyLimsSourceQuery(t *testing
 				"sample-uuid-11",
 				"6568",
 				"sample-a",
-				"sample-a",
 				"sanger-id-a",
 				"supplier-a",
 				"accession-a",
 				"donor-a",
-				"Chromium single cell 3 prime v3",
 				9606,
 				"human",
 				"desc-a",
@@ -374,7 +366,7 @@ func TestSamplesForLibraryTypeColdCacheUsesJoinedStudyLimsSourceQuery(t *testing
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].IDStudyLims, convey.ShouldEqual, "6568")
+		convey.So(samples[0].UUIDSampleLims, convey.ShouldEqual, "sample-uuid-11")
 	})
 }
 
@@ -529,14 +521,14 @@ func TestLibrariesForStudyReturnsDistinctCountsPerPipeline(t *testing.T) {
 			seedLibrarySample(t, client.cache.DB(), "Bespoke", resolvedID, "6568")
 		}
 
-		seedLibrarySample(t, client.cache.DB(), "Standard", 1, "6568")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 1, "6569")
 
 		libraries, err := client.LibrariesForStudy(context.Background(), "6568", 100, 0)
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(libraries, convey.ShouldResemble, []Library{
-			{PipelineIDLims: "Bespoke", SampleCount: 3},
-			{PipelineIDLims: "Standard", SampleCount: 10},
+			{PipelineIDLims: "Bespoke", IDStudyLims: "6568"},
+			{PipelineIDLims: "Standard", IDStudyLims: "6568"},
 		})
 	})
 }
@@ -700,6 +692,7 @@ func TestStudyForSampleReturnsLinkedStudy(t *testing.T) {
 
 		seedHierarchyStudy(t, client.cache.DB(), 81, "6568")
 		seedHierarchySample(t, client.cache.DB(), 82, "6568", "7607STDY14643771")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 82, "6568")
 
 		study, err := client.StudyForSample(context.Background(), "7607STDY14643771")
 
@@ -893,7 +886,7 @@ func seedHierarchyStudy(t *testing.T, db *sql.DB, idStudyTmp int64, idStudyLims 
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		args...,
 	)
 	if err != nil {

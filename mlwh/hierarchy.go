@@ -41,22 +41,23 @@ const expandIdentifierTTL = 5 * time.Minute
 
 var (
 	samplesForStudyCacheSQL    = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
-	samplesForStudySourceSQL   = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForStudySourceSQL   = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForLibraryTypeCacheSQL  = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
-	samplesForLibraryTypeSourceSQL = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForLibraryTypeSourceSQL = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForLibraryCacheSQL  = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
-	samplesForLibrarySourceSQL = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
-	samplesForRunSourceSQL     = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.name AS sanger_id, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, iseq_flowcell.pipeline_id_lims AS library_type, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForLibrarySourceSQL = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForRunSourceSQL     = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	librariesForStudySQL       = `SELECT pipeline_id_lims, COUNT(DISTINCT id_sample_tmp) FROM library_samples WHERE id_study_lims = ? GROUP BY pipeline_id_lims ORDER BY pipeline_id_lims LIMIT ? OFFSET ?`
 	runsForStudySQL            = `SELECT DISTINCT ipm.id_run FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp WHERE ifc.id_study_tmp = ? ORDER BY ipm.id_run LIMIT ? OFFSET ?`
 	lanesForSampleSQL          = `SELECT DISTINCT ipm.id_run, ipm.position, ipm.tag_index FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp WHERE ifc.id_sample_tmp = ? ORDER BY ipm.id_run, ipm.position, ipm.tag_index LIMIT ? OFFSET ?`
 	irodsPathsForSampleSQL     = `SELECT spi.id_product, spi.collection, spi.data_object FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp INNER JOIN seq_product_irods_locations spi ON spi.id_product = ipm.id_iseq_product WHERE ifc.id_sample_tmp = ? ORDER BY spi.id_product LIMIT ? OFFSET ?`
 	irodsPathsForStudySQL      = `SELECT spi.id_product, spi.collection, spi.data_object FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp INNER JOIN seq_product_irods_locations spi ON spi.id_product = ipm.id_iseq_product WHERE ifc.id_study_tmp = ? ORDER BY spi.id_product LIMIT ? OFFSET ?`
-	studyForSampleSQL          = `SELECT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.abstract, study_mirror.abbreviation, study_mirror.description, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.hmdmc_number, study_mirror.programme, study_mirror.created, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.egadac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM donor_samples INNER JOIN study_mirror ON study_mirror.id_study_lims = donor_samples.id_study_lims WHERE donor_samples.id_sample_tmp = ? AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_tmp LIMIT 1`
+	studyForSampleSQL          = `SELECT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM library_samples INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE library_samples.id_sample_tmp = ? AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_tmp LIMIT 1`
 )
 
 type hierarchyReadThroughRow struct {
 	PipelineIDLims string
+	IDStudyLims    string
 	Sample         Sample
 	LastUpdated    time.Time
 }
@@ -65,14 +66,11 @@ type nullableHierarchySampleFields struct {
 	idLims          sql.NullString
 	idSampleLims    sql.NullString
 	uuidSampleLims  sql.NullString
-	idStudyLims     sql.NullString
 	name            sql.NullString
-	sangerID        sql.NullString
 	sangerSampleID  sql.NullString
 	supplierName    sql.NullString
 	accessionNumber sql.NullString
 	donorID         sql.NullString
-	libraryType     sql.NullString
 	taxonID         sql.NullInt64
 	commonName      sql.NullString
 	description     sql.NullString
@@ -82,14 +80,11 @@ func applyNullableHierarchySampleFields(sample *Sample, nullable *nullableHierar
 	sample.IDLims = nullStringValue(nullable.idLims)
 	sample.IDSampleLims = nullStringValue(nullable.idSampleLims)
 	sample.UUIDSampleLims = nullStringValue(nullable.uuidSampleLims)
-	sample.IDStudyLims = nullStringValue(nullable.idStudyLims)
 	sample.Name = nullStringValue(nullable.name)
-	sample.SangerID = nullStringValue(nullable.sangerID)
 	sample.SangerSampleID = nullStringValue(nullable.sangerSampleID)
 	sample.SupplierName = nullStringValue(nullable.supplierName)
 	sample.AccessionNumber = nullStringValue(nullable.accessionNumber)
 	sample.DonorID = nullStringValue(nullable.donorID)
-	sample.LibraryType = nullStringValue(nullable.libraryType)
 	if nullable.taxonID.Valid {
 		sample.TaxonID = int(nullable.taxonID.Int64)
 	}
@@ -107,14 +102,12 @@ func scanHierarchyReadThroughRow(rows *sql.Rows) (hierarchyReadThroughRow, error
 		&nullable.idLims,
 		&nullable.idSampleLims,
 		&nullable.uuidSampleLims,
-		&nullable.idStudyLims,
+		&row.IDStudyLims,
 		&nullable.name,
-		&nullable.sangerID,
 		&nullable.sangerSampleID,
 		&nullable.supplierName,
 		&nullable.accessionNumber,
 		&nullable.donorID,
-		&nullable.libraryType,
 		&nullable.taxonID,
 		&nullable.commonName,
 		&nullable.description,
@@ -183,16 +176,7 @@ func (c *Client) upsertHierarchyReadThrough(ctx context.Context, studyLimsID str
 	for _, row := range rows {
 		effectiveStudyLimsID := studyLimsID
 		if effectiveStudyLimsID == "" {
-			effectiveStudyLimsID = row.Sample.IDStudyLims
-		}
-		if row.Sample.IDStudyLims == "" {
-			row.Sample.IDStudyLims = effectiveStudyLimsID
-		}
-		if row.Sample.SangerID == "" {
-			row.Sample.SangerID = row.Sample.Name
-		}
-		if row.Sample.LibraryType == "" {
-			row.Sample.LibraryType = row.PipelineIDLims
+			effectiveStudyLimsID = row.IDStudyLims
 		}
 
 		if upsertErr := upsertSampleMirror(ctx, tx, c.cache.Dialect(), sampleSyncRow{Sample: row.Sample, IDStudyLims: effectiveStudyLimsID, LastUpdated: row.LastUpdated}); upsertErr != nil {
@@ -257,14 +241,11 @@ func scanSampleRow(scan func(dest ...any) error) (Sample, error) {
 		&nullable.idLims,
 		&nullable.idSampleLims,
 		&nullable.uuidSampleLims,
-		&nullable.idStudyLims,
 		&nullable.name,
-		&nullable.sangerID,
 		&nullable.sangerSampleID,
 		&nullable.supplierName,
 		&nullable.accessionNumber,
 		&nullable.donorID,
-		&nullable.libraryType,
 		&nullable.taxonID,
 		&nullable.commonName,
 		&nullable.description,
@@ -618,9 +599,11 @@ func (c *Client) LibrariesForStudy(ctx context.Context, studyLimsID string, limi
 	libraries := make([]Library, 0)
 	for rows.Next() {
 		library := Library{}
-		if err = rows.Scan(&library.PipelineIDLims, &library.SampleCount); err != nil {
+		var sampleCount int
+		if err = rows.Scan(&library.PipelineIDLims, &sampleCount); err != nil {
 			return nil, fmt.Errorf("%w: scan libraries for study: %w", ErrUpstreamImpaired, err)
 		}
+		library.IDStudyLims = studyLimsID
 
 		libraries = append(libraries, library)
 	}
@@ -789,40 +772,15 @@ func (c *Client) resolveStudyBySampleID(ctx context.Context, idSampleTmp int64) 
 	}
 
 	study := &Study{}
-	err := db.QueryRowContext(ctx, studyForSampleSQL, idSampleTmp).Scan(
-		&study.IDStudyTmp,
-		&study.IDLims,
-		&study.IDStudyLims,
-		&study.UUIDStudyLims,
-		&study.Name,
-		&study.AccessionNumber,
-		&study.StudyTitle,
-		&study.FacultySponsor,
-		&study.State,
-		&study.Abstract,
-		&study.Abbreviation,
-		&study.Description,
-		&study.DataReleaseStrategy,
-		&study.DataAccessGroup,
-		&study.HMDMCNumber,
-		&study.Programme,
-		&study.Created,
-		&study.ReferenceGenome,
-		&study.EthicallyApproved,
-		&study.StudyType,
-		&study.ContainsHumanDNA,
-		&study.ContaminatedHumanDNA,
-		&study.StudyVisibility,
-		&study.EGADACAccessionNumber,
-		&study.EGAPolicyAccessionNumber,
-		&study.DataReleaseTiming,
-	)
+	targets, apply := studyScanTargets(study)
+	err := db.QueryRowContext(ctx, studyForSampleSQL, idSampleTmp).Scan(targets...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: query study for sample: %w", ErrUpstreamImpaired, err)
 	}
+	apply()
 
 	return study, nil
 }

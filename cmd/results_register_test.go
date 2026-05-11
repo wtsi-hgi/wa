@@ -410,7 +410,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			runFn: func(_ context.Context, raw string) (mlwh.Match, error) {
 				return mlwh.Match{Canonical: raw, Run: &mlwh.Run{IDRun: 12345}}, nil
 			},
-			studyFn: func(_ context.Context, _ string, _ ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+			studyFn: func(_ context.Context, _ string) (mlwh.Match, error) {
 				return mlwh.Match{Canonical: "6568", Study: &mlwh.Study{IDStudyLims: "6568"}}, nil
 			},
 			sampleFn: func(_ context.Context, _ string) (mlwh.Match, error) {
@@ -725,7 +725,7 @@ func mustRegisterCommandJSONBody(t *testing.T, value any) []byte {
 
 type fakeResultsRegisterResolver struct {
 	sampleFn  func(context.Context, string) (mlwh.Match, error)
-	studyFn   func(context.Context, string, ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	studyFn   func(context.Context, string) (mlwh.Match, error)
 	runFn     func(context.Context, string) (mlwh.Match, error)
 	libraryFn func(context.Context, string) (mlwh.Match, error)
 	closeFn   func() error
@@ -739,12 +739,12 @@ func (f *fakeResultsRegisterResolver) ResolveSample(ctx context.Context, raw str
 	return f.sampleFn(ctx, raw)
 }
 
-func (f *fakeResultsRegisterResolver) ResolveStudy(ctx context.Context, raw string, opts ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+func (f *fakeResultsRegisterResolver) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
 	if f.studyFn == nil {
 		return mlwh.Match{}, errors.New("unexpected ResolveStudy call")
 	}
 
-	return f.studyFn(ctx, raw, opts...)
+	return f.studyFn(ctx, raw)
 }
 
 func (f *fakeResultsRegisterResolver) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {

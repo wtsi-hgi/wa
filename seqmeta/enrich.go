@@ -100,15 +100,61 @@ func sampleDetailFor(ctx context.Context, provider Provider, sample mlwh.Sample)
 
 func sampleLookupKey(sample mlwh.Sample) string {
 	switch {
-	case sample.SangerID != "":
-		return sample.SangerID
 	case sample.Name != "":
 		return sample.Name
+	case sample.SangerSampleID != "":
+		return sample.SangerSampleID
 	case sample.IDSampleLims != "":
 		return sample.IDSampleLims
 	default:
 		return sample.AccessionNumber
 	}
+}
+
+func sampleStudyIDs(sample mlwh.Sample) []string {
+	ids := make([]string, 0, len(sample.Studies)+len(sample.Libraries))
+	seen := make(map[string]struct{}, len(sample.Studies)+len(sample.Libraries))
+	add := func(id string) {
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+
+	for _, study := range sample.Studies {
+		add(study.IDStudyLims)
+	}
+	for _, library := range sample.Libraries {
+		add(library.IDStudyLims)
+	}
+
+	return ids
+}
+
+func sampleHasLibraryType(sample mlwh.Sample, libraryType string) bool {
+	for _, library := range sample.Libraries {
+		if library.PipelineIDLims == libraryType {
+			return true
+		}
+	}
+
+	return false
+}
+
+func samplePrimaryLibrary(sample mlwh.Sample) (mlwh.Library, bool) {
+	for _, library := range sample.Libraries {
+		if library.PipelineIDLims == "" {
+			continue
+		}
+
+		return library, true
+	}
+
+	return mlwh.Library{}, false
 }
 
 func buildSampleDetailFromProvider(ctx context.Context, provider Provider, sample mlwh.Sample) (*mlwh.SampleDetail, error) {
@@ -128,10 +174,7 @@ func buildSampleDetailFromProvider(ctx context.Context, provider Provider, sampl
 		paths = nil
 	}
 
-	libraries := make([]mlwh.Library, 0, 1)
-	if sample.LibraryType != "" {
-		libraries = append(libraries, mlwh.Library{PipelineIDLims: sample.LibraryType, SampleCount: 1})
-	}
+	libraries := append([]mlwh.Library(nil), sample.Libraries...)
 
 	return &mlwh.SampleDetail{
 		Sample:     sample,
@@ -176,16 +219,25 @@ func studiesForSamples(ctx context.Context, provider Provider, samples []mlwh.Sa
 	seen := make(map[string]struct{}, len(samples))
 
 	for _, sample := range samples {
-		if sample.IDStudyLims == "" {
-			continue
+		ids := sampleStudyIDs(sample)
+		if len(ids) == 0 && sample.Name != "" {
+			study, err := provider.StudyForSample(ctx, sample.Name)
+			if err != nil {
+				return nil, err
+			}
+			if study != nil {
+				ids = []string{study.IDStudyLims}
+			}
 		}
 
-		if _, exists := seen[sample.IDStudyLims]; exists {
-			continue
-		}
+		for _, studyID := range ids {
+			if _, exists := seen[studyID]; exists {
+				continue
+			}
 
-		seen[sample.IDStudyLims] = struct{}{}
-		studyIDs = append(studyIDs, sample.IDStudyLims)
+			seen[studyID] = struct{}{}
+			studyIDs = append(studyIDs, studyID)
+		}
 	}
 
 	studies := make([]mlwh.Study, 0, len(studyIDs))
@@ -281,11 +333,12 @@ func missingHop(hop string, err error) MissingHop {
 }
 
 func libraryLinkForSample(sample mlwh.Sample) *Library {
-	if sample.LibraryType == "" {
+	library, ok := samplePrimaryLibrary(sample)
+	if !ok {
 		return nil
 	}
 
-	return &Library{LibraryType: sample.LibraryType, IDStudyLims: sample.IDStudyLims}
+	return &Library{LibraryType: library.PipelineIDLims, IDStudyLims: library.IDStudyLims}
 }
 
 func enrichSampleStudy(ctx context.Context, provider Provider, sample mlwh.Sample, result *EnrichmentResult) error {
@@ -702,18 +755,13 @@ func libraryStudyDetails(ctx context.Context, provider Provider, libraryType str
 	studySamplesByID := make(map[string][]mlwh.Sample)
 	orderedStudyIDs := make([]string, 0)
 	for _, sample := range samples {
-		if sample.IDStudyLims == "" {
-			continue
-		}
+		for _, studyID := range sampleStudyIDs(sample) {
+			if _, seen := studySamplesByID[studyID]; !seen {
+				orderedStudyIDs = append(orderedStudyIDs, studyID)
+			}
 
-		if _, seen := studySamplesByID[sample.IDStudyLims]; !seen {
-			orderedStudyIDs = append(orderedStudyIDs, sample.IDStudyLims)
+			studySamplesByID[studyID] = append(studySamplesByID[studyID], sample)
 		}
-
-		studySamplesByID[sample.IDStudyLims] = append(
-			studySamplesByID[sample.IDStudyLims],
-			sample,
-		)
 	}
 
 	cachedStudies, cacheAvailable, err := cachedStudiesByID(ctx, provider, orderedStudyIDs)
@@ -799,17 +847,19 @@ func distinctLibrariesForSamples(samples []mlwh.Sample) []Library {
 	libraries := make([]Library, 0, len(samples))
 
 	for _, sample := range samples {
-		if sample.LibraryType == "" {
-			continue
-		}
+		for _, sampleLibrary := range sample.Libraries {
+			if sampleLibrary.PipelineIDLims == "" {
+				continue
+			}
 
-		library := Library{LibraryType: sample.LibraryType, IDStudyLims: sample.IDStudyLims}
-		if _, exists := seen[library]; exists {
-			continue
-		}
+			library := Library{LibraryType: sampleLibrary.PipelineIDLims, IDStudyLims: sampleLibrary.IDStudyLims}
+			if _, exists := seen[library]; exists {
+				continue
+			}
 
-		seen[library] = struct{}{}
-		libraries = append(libraries, library)
+			seen[library] = struct{}{}
+			libraries = append(libraries, library)
+		}
 	}
 
 	return libraries
@@ -818,7 +868,9 @@ func distinctLibrariesForSamples(samples []mlwh.Sample) []Library {
 func buildStudyDetails(studies []mlwh.Study, samples []mlwh.Sample) []mlwh.StudyDetail {
 	studyMap := make(map[string][]mlwh.Sample)
 	for _, sample := range samples {
-		studyMap[sample.IDStudyLims] = append(studyMap[sample.IDStudyLims], sample)
+		for _, studyID := range sampleStudyIDs(sample) {
+			studyMap[studyID] = append(studyMap[studyID], sample)
+		}
 	}
 
 	studyDetails := make([]mlwh.StudyDetail, 0, len(studies))
@@ -839,18 +891,27 @@ func buildStudyDetail(study mlwh.Study, samples []mlwh.Sample) mlwh.StudyDetail 
 	ordered := make([]string, 0)
 
 	for _, sample := range samples {
-		if _, seen := grouped[sample.LibraryType]; !seen {
-			ordered = append(ordered, sample.LibraryType)
-		}
+		for _, library := range sample.Libraries {
+			if library.PipelineIDLims == "" {
+				continue
+			}
+			if library.IDStudyLims != "" && library.IDStudyLims != study.IDStudyLims {
+				continue
+			}
 
-		grouped[sample.LibraryType] = append(grouped[sample.LibraryType], sample)
+			if _, seen := grouped[library.PipelineIDLims]; !seen {
+				ordered = append(ordered, library.PipelineIDLims)
+			}
+
+			grouped[library.PipelineIDLims] = append(grouped[library.PipelineIDLims], sample)
+		}
 	}
 
 	libraries := make([]mlwh.LibraryDetail, 0, len(grouped))
 	for _, libraryType := range ordered {
 		librarySamples := grouped[libraryType]
 		libraries = append(libraries, mlwh.LibraryDetail{
-			Library: mlwh.Library{PipelineIDLims: libraryType, SampleCount: len(librarySamples)},
+			Library: mlwh.Library{PipelineIDLims: libraryType, IDStudyLims: study.IDStudyLims},
 			Samples: librarySamples,
 		})
 	}

@@ -30,7 +30,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
+	"strconv"
 	"sort"
 	"strings"
 	"sync"
@@ -45,7 +48,7 @@ const (
 	mysqlSyncLockName              = "wa_mlwh_sync"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	CacheSchemaVersion = 1
+	CacheSchemaVersion = 2
 )
 
 var (
@@ -54,7 +57,8 @@ var (
 	// ErrUpstreamImpaired reports that a required upstream cache/database operation failed.
 	ErrUpstreamImpaired = errors.New("mlwh: upstream database impaired")
 
-	sqlOpenFunc = sql.Open
+	sqlOpenFunc                    = sql.Open
+	cacheMigrationStderr io.Writer = os.Stderr
 )
 
 // Cache exposes the opened cache database handle.
@@ -332,268 +336,34 @@ func applySQLiteSchema(ctx context.Context, db *sql.DB) error {
 }
 
 func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
-	needsReset, err := cacheSchemaNeedsReset(ctx, db, dialect)
+	rowCount, version, err := querySchemaVersion(ctx, db)
 	if err != nil {
-		return err
+		if isMissingSchemaVersionError(dialect, err) {
+			if err = applySchema(ctx, db, dialect); err != nil {
+				return err
+			}
+
+			return writeSchemaVersion(ctx, db)
+		}
+
+		return fmt.Errorf("mlwh: query schema version: %w", err)
 	}
-	if needsReset {
-		if err = resetSchema(ctx, db, dialect); err != nil {
+
+	switch {
+	case rowCount == 0:
+		if err = applySchema(ctx, db, dialect); err != nil {
 			return err
 		}
-	}
 
-	if err = ensureSchemaVersion(ctx, db, dialect); err != nil {
-		return err
-	}
-
-	needsReset, err = cacheSchemaNeedsReset(ctx, db, dialect)
-	if err != nil {
-		return err
-	}
-	if !needsReset {
+		return writeSchemaVersion(ctx, db)
+	case rowCount == 1 && version == CacheSchemaVersion:
 		return nil
+	default:
+		return migrateCacheSchema(ctx, db, dialect, version)
 	}
-
-	if err = resetSchema(ctx, db, dialect); err != nil {
-		return err
-	}
-
-	return writeSchemaVersion(ctx, db)
 }
 
-func cacheSchemaNeedsReset(ctx context.Context, db *sql.DB, dialect string) (bool, error) {
-	expectedStatements, err := loadSchema(dialect)
-	if err != nil {
-		return false, err
-	}
-
-	expectedShape, err := parseSchemaShape(expectedStatements)
-	if err != nil {
-		return false, err
-	}
-
-	actualShape, err := inspectCacheSchema(ctx, db, dialect, expectedShape)
-	if err != nil {
-		return false, err
-	}
-
-	return !schemaShapeMatches(expectedShape, actualShape), nil
-}
-
-func inspectCacheSchema(ctx context.Context, db *sql.DB, dialect string, expected schemaShape) (schemaShape, error) {
-	shape := schemaShape{
-		Tables: make(map[string]map[string]string, len(expected.Tables)),
-		Index:  make(map[string][]string, len(expected.Index)),
-	}
-
-	for _, table := range schemaStatementOrder {
-		columns, err := inspectCacheTableColumns(ctx, db, dialect, table)
-		if err != nil {
-			return schemaShape{}, err
-		}
-		shape.Tables[table] = columns
-
-		indexes, err := inspectCacheTableIndexes(ctx, db, dialect, table)
-		if err != nil {
-			return schemaShape{}, err
-		}
-		shape.Index[table] = indexes
-	}
-
-	return shape, nil
-}
-
-func inspectCacheTableColumns(ctx context.Context, db *sql.DB, dialect, table string) (map[string]string, error) {
-	if dialect == "sqlite" {
-		return inspectSQLiteTableColumns(ctx, db, table)
-	}
-
-	return inspectMySQLTableColumns(ctx, db, table)
-}
-
-func inspectCacheTableIndexes(ctx context.Context, db *sql.DB, dialect, table string) ([]string, error) {
-	if dialect == "sqlite" {
-		return inspectSQLiteTableIndexes(ctx, db, table)
-	}
-
-	return inspectMySQLTableIndexes(ctx, db, table)
-}
-
-func inspectSQLiteTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
-	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect sqlite table %s columns: %w", table, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	columns := make(map[string]string)
-	for rows.Next() {
-		var (
-			cid        int
-			name       string
-			typeName   string
-			notNull    int
-			defaultVal any
-			pk         int
-		)
-		if err = rows.Scan(&cid, &name, &typeName, &notNull, &defaultVal, &pk); err != nil {
-			return nil, fmt.Errorf("mlwh: scan sqlite table %s columns: %w", table, err)
-		}
-		columns[name] = normaliseTypeFamily(typeName)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read sqlite table %s columns: %w", table, err)
-	}
-
-	return columns, nil
-}
-
-func inspectSQLiteTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_list(%s)", table))
-	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect sqlite table %s indexes: %w", table, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var indexes []string
-	for rows.Next() {
-		var (
-			seq     int
-			name    string
-			unique  int
-			origin  string
-			partial int
-		)
-		if err = rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
-			return nil, fmt.Errorf("mlwh: scan sqlite table %s indexes: %w", table, err)
-		}
-		if origin != "c" {
-			continue
-		}
-
-		columns, indexErr := inspectSQLiteIndexColumns(ctx, db, name)
-		if indexErr != nil {
-			return nil, indexErr
-		}
-		indexes = append(indexes, strings.Join(columns, ","))
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read sqlite table %s indexes: %w", table, err)
-	}
-
-	sort.Strings(indexes)
-
-	return indexes, nil
-}
-
-func inspectSQLiteIndexColumns(ctx context.Context, db *sql.DB, indexName string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info(%s)", indexName))
-	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect sqlite index %s columns: %w", indexName, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var columns []string
-	for rows.Next() {
-		var seqno, cid int
-		var name string
-		if err = rows.Scan(&seqno, &cid, &name); err != nil {
-			return nil, fmt.Errorf("mlwh: scan sqlite index %s columns: %w", indexName, err)
-		}
-		columns = append(columns, name)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read sqlite index %s columns: %w", indexName, err)
-	}
-
-	return columns, nil
-}
-
-func inspectMySQLTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, table)
-	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect mysql table %s columns: %w", table, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	columns := make(map[string]string)
-	for rows.Next() {
-		var name, typeName string
-		if err = rows.Scan(&name, &typeName); err != nil {
-			return nil, fmt.Errorf("mlwh: scan mysql table %s columns: %w", table, err)
-		}
-		columns[name] = normaliseTypeFamily(typeName)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read mysql table %s columns: %w", table, err)
-	}
-
-	return columns, nil
-}
-
-func inspectMySQLTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table)
-	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect mysql table %s indexes: %w", table, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	grouped := make(map[string][]string)
-	for rows.Next() {
-		var indexName, columnName string
-		if err = rows.Scan(&indexName, &columnName); err != nil {
-			return nil, fmt.Errorf("mlwh: scan mysql table %s indexes: %w", table, err)
-		}
-		if indexName == "PRIMARY" {
-			continue
-		}
-		grouped[indexName] = append(grouped[indexName], columnName)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read mysql table %s indexes: %w", table, err)
-	}
-
-	indexes := make([]string, 0, len(grouped))
-	for _, columns := range grouped {
-		indexes = append(indexes, strings.Join(columns, ","))
-	}
-	sort.Strings(indexes)
-
-	return indexes, nil
-}
-
-func schemaShapeMatches(expected, actual schemaShape) bool {
-	for table, expectedColumns := range expected.Tables {
-		actualColumns, ok := actual.Tables[table]
-		if !ok || len(actualColumns) != len(expectedColumns) {
-			return false
-		}
-		for column, expectedType := range expectedColumns {
-			if actualColumns[column] != expectedType {
-				return false
-			}
-		}
-
-		expectedIndexes := append([]string(nil), expected.Index[table]...)
-		actualIndexes := append([]string(nil), actual.Index[table]...)
-		sort.Strings(expectedIndexes)
-		sort.Strings(actualIndexes)
-		if len(expectedIndexes) != len(actualIndexes) {
-			return false
-		}
-		for idx := range expectedIndexes {
-			if expectedIndexes[idx] != actualIndexes[idx] {
-				return false
-			}
-		}
-	}
-
-	return true
-}
-
-func ensureSchemaVersion(ctx context.Context, db *sql.DB, dialect string) error {
+func querySchemaVersion(ctx context.Context, db *sql.DB) (int, int, error) {
 	var (
 		rowCount int
 		version  int
@@ -603,22 +373,23 @@ func ensureSchemaVersion(ctx context.Context, db *sql.DB, dialect string) error 
 		ctx,
 		"SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version",
 	).Scan(&rowCount, &version)
-	if err != nil {
-		return fmt.Errorf("mlwh: query schema version: %w", err)
-	}
 
-	switch {
-	case rowCount == 1 && version == CacheSchemaVersion:
-		return nil
-	case rowCount == 0:
-		return writeSchemaVersion(ctx, db)
-	default:
-		if err = resetSchema(ctx, db, dialect); err != nil {
-			return err
+	return rowCount, version, err
+}
+
+func isMissingSchemaVersionError(dialect string, err error) bool {
+	if err != nil {
+		if dialect == "sqlite" {
+			return strings.Contains(err.Error(), "no such table: schema_version")
 		}
 
-		return writeSchemaVersion(ctx, db)
+		if dialect == "mysql" {
+			var mysqlErr *mysql.MySQLError
+			return errors.As(err, &mysqlErr) && mysqlErr.Number == 1146
+		}
 	}
+
+	return false
 }
 
 func writeSchemaVersion(ctx context.Context, db *sql.DB) error {
@@ -637,23 +408,131 @@ func writeSchemaVersion(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func resetSchema(ctx context.Context, db *sql.DB, dialect string) error {
-	for idx := len(schemaStatementOrder) - 1; idx >= 0; idx-- {
-		stmt := fmt.Sprintf("DROP TABLE IF EXISTS %s", schemaStatementOrder[idx])
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("mlwh: drop %s cache table %s: %w", dialect, schemaStatementOrder[idx], err)
-		}
+func migrateCacheSchema(ctx context.Context, db *sql.DB, dialect string, fromVersion int) error {
+	if err := dropCacheTables(ctx, db, dialect, cacheMigrationDropTables); err != nil {
+		return err
 	}
 
 	if err := applySchema(ctx, db, dialect); err != nil {
 		return err
 	}
 
+	if err := ensureSyncStateSchema(ctx, db, dialect); err != nil {
+		return err
+	}
+
+	if err := deleteSyncStateRows(ctx, db, cacheMigrationSyncStateTables); err != nil {
+		return err
+	}
+
+	if err := writeSchemaVersion(ctx, db); err != nil {
+		return err
+	}
+
+	return logCacheMigration(fromVersion, CacheSchemaVersion)
+}
+
+func dropCacheTables(ctx context.Context, db *sql.DB, dialect string, tables []string) error {
+	for idx := len(tables) - 1; idx >= 0; idx-- {
+		stmt := fmt.Sprintf("DROP TABLE IF EXISTS %s", tables[idx])
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("mlwh: drop %s cache table %s: %w", dialect, tables[idx], err)
+		}
+	}
+
+	return nil
+}
+
+func ensureSyncStateSchema(ctx context.Context, db *sql.DB, dialect string) error {
+	rows, err := db.QueryContext(ctx, `SELECT * FROM sync_state LIMIT 0`)
+	if err != nil {
+		return fmt.Errorf("mlwh: query sync_state columns: %w", err)
+	}
+
+	columns, err := rows.Columns()
+	closeErr := rows.Close()
+	if err != nil {
+		return fmt.Errorf("mlwh: read sync_state columns: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("mlwh: close sync_state columns: %w", closeErr)
+	}
+
+	available := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		available[column] = struct{}{}
+	}
+
+	missing := make([]string, 0, 2)
+	if _, ok := available["resume_cursor"]; !ok {
+		missing = append(missing, syncStateResumeCursorStatement(dialect))
+	}
+	if _, ok := available["indexes_dropped"]; !ok {
+		missing = append(missing, syncStateIndexesDroppedStatement(dialect))
+	}
+
+	for _, stmt := range missing {
+		if _, err = db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("mlwh: update sync_state schema: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func syncStateResumeCursorStatement(dialect string) string {
+	if dialect == "mysql" {
+		return `ALTER TABLE sync_state ADD COLUMN resume_cursor TEXT NULL`
+	}
+
+	return `ALTER TABLE sync_state ADD COLUMN resume_cursor TEXT`
+}
+
+func syncStateIndexesDroppedStatement(dialect string) string {
+	if dialect == "mysql" {
+		return `ALTER TABLE sync_state ADD COLUMN indexes_dropped INT NOT NULL DEFAULT 0`
+	}
+
+	return `ALTER TABLE sync_state ADD COLUMN indexes_dropped INTEGER NOT NULL DEFAULT 0`
+}
+
+func deleteSyncStateRows(ctx context.Context, db *sql.DB, tables []string) error {
+	if len(tables) == 0 {
+		return nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(tables)), ", ")
+	args := make([]any, len(tables))
+	for index, table := range tables {
+		args[index] = table
+	}
+
+	if _, err := db.ExecContext(ctx, `DELETE FROM sync_state WHERE table_name IN (`+placeholders+`)`, args...); err != nil {
+		return fmt.Errorf("mlwh: clear sync_state rows for recreated tables: %w", err)
+	}
+
+	return nil
+}
+
+func logCacheMigration(fromVersion, toVersion int) error {
+	tables := append([]string(nil), cacheMigrationRecreateTables...)
+	sort.Strings(tables)
+
+	if _, err := fmt.Fprintf(
+		cacheMigrationStderr,
+		"mlwh cache: schema v%d->v%d, recreated tables: [%s]\n",
+		fromVersion,
+		toVersion,
+		strings.Join(tables, ", "),
+	); err != nil {
+		return fmt.Errorf("mlwh: write cache migration log: %w", err)
+	}
+
 	return nil
 }
 
 func applySchema(ctx context.Context, db *sql.DB, dialect string) error {
-	stmts, err := loadSchema(dialect)
+	stmts, err := schemaStatementsForDialect(ctx, db, dialect)
 	if err != nil {
 		return err
 	}
@@ -667,6 +546,69 @@ func applySchema(ctx context.Context, db *sql.DB, dialect string) error {
 	}
 
 	return nil
+}
+
+func schemaStatementsForDialect(ctx context.Context, db *sql.DB, dialect string) ([]string, error) {
+	if dialect != "mysql" {
+		return loadSchema(dialect)
+	}
+
+	collation, err := mySQLSchemaTextCollation(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+
+	return loadSchemaWithMySQLCollation(dialect, collation)
+}
+
+func mySQLSchemaTextCollation(ctx context.Context, db *sql.DB) (string, error) {
+	version, err := mySQLServerVersion(ctx, db)
+	if err != nil {
+		return "", fmt.Errorf("mlwh: query mysql schema collation: %w", err)
+	}
+
+	if strings.Contains(strings.ToLower(version), "mariadb") {
+		return mySQLLegacyTextCollation, nil
+	}
+
+	major, err := mySQLMajorVersion(version)
+	if err != nil {
+		return "", fmt.Errorf("mlwh: parse mysql version %q: %w", version, err)
+	}
+
+	if major < 8 {
+		return mySQLLegacyTextCollation, nil
+	}
+
+	return mySQLPreferredTextCollation, nil
+}
+
+func mySQLServerVersion(ctx context.Context, db *sql.DB) (string, error) {
+	var version string
+
+	err := db.QueryRowContext(ctx, `SELECT VERSION()`).Scan(&version)
+
+	return version, err
+}
+
+func mySQLMajorVersion(version string) (int, error) {
+	trimmed := strings.TrimSpace(version)
+	if trimmed == "" {
+		return 0, errors.New("empty version")
+	}
+
+	majorField, _, _ := strings.Cut(trimmed, ".")
+	majorField = strings.TrimLeft(majorField, "vV")
+	if majorField == "" {
+		return 0, errors.New("missing major version")
+	}
+
+	major, err := strconv.Atoi(majorField)
+	if err != nil {
+		return 0, err
+	}
+
+	return major, nil
 }
 
 func looksLikeMySQLDSN(path string) bool {
