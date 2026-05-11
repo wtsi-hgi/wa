@@ -406,7 +406,7 @@ func (c *Client) cacheSampleExists(ctx context.Context, sangerName string) (bool
 	return queryExists(ctx, db, `SELECT 1 FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, "query sample mirror existence", sangerName)
 }
 
-func (c *Client) findSamplesByQuery(ctx context.Context, query, raw, action, syncTable string) ([]Sample, error) {
+func (c *Client) findSamplesByQuery(ctx context.Context, query, raw, action string, syncTables ...string) ([]Sample, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
@@ -429,7 +429,7 @@ func (c *Client) findSamplesByQuery(ctx context.Context, query, raw, action, syn
 		return nil, err
 	}
 
-	if syncErr := c.requireResolverSyncState(ctx, syncTable); syncErr != nil {
+	if syncErr := c.requireAnySyncState(ctx, syncTables...); syncErr != nil {
 		return nil, syncErr
 	}
 
@@ -458,7 +458,7 @@ func (c *Client) FindSamplesBySupplierName(ctx context.Context, supplierName str
 
 // FindSamplesByLibraryType returns the unique sample matching pipeline_id_lims.
 func (c *Client) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error) {
-	return c.findSamplesByQuery(ctx, findSamplesByLibraryTypeSQL, libraryType, "query samples by library type", syncTableIseqFlowcell)
+	return c.findSamplesByQuery(ctx, findSamplesByLibraryTypeSQL, libraryType, "query samples by library type", syncTableSample, syncTableIseqFlowcell)
 }
 
 // SamplesForStudy returns samples linked to a study.
@@ -485,10 +485,14 @@ func (c *Client) SamplesForStudy(ctx context.Context, studyLimsID string, limit,
 		return nil, err
 	}
 	if studyExists {
+		if err := c.requireAnySyncState(ctx, syncTableSample, syncTableIseqFlowcell); err != nil {
+			return nil, err
+		}
+
 		return []Sample{}, nil
 	}
 
-	if err := c.requireResolverSyncState(ctx, syncTableStudy); err != nil {
+	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {
 		return nil, err
 	}
 
@@ -549,10 +553,14 @@ func (c *Client) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLim
 		return nil, err
 	}
 	if studyExists {
+		if err := c.requireAnySyncState(ctx, syncTableSample, syncTableIseqFlowcell); err != nil {
+			return nil, err
+		}
+
 		return []Sample{}, nil
 	}
 
-	if err := c.requireResolverSyncState(ctx, syncTableStudy); err != nil {
+	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {
 		return nil, err
 	}
 
@@ -578,7 +586,7 @@ func (c *Client) SamplesForLibraryType(ctx context.Context, pipelineIDLims strin
 		return samples, nil
 	}
 
-	if err := c.requireResolverSyncState(ctx, syncTableIseqFlowcell); err != nil {
+	if err := c.requireAnySyncState(ctx, syncTableSample, syncTableIseqFlowcell); err != nil {
 		return nil, err
 	}
 
@@ -589,6 +597,10 @@ func (c *Client) SamplesForLibraryType(ctx context.Context, pipelineIDLims strin
 func (c *Client) LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Library, error) {
 	if _, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID); err != nil {
 		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				return nil, syncErr
+			}
+
 			return nil, ErrNotFound
 		}
 
@@ -620,6 +632,11 @@ func (c *Client) LibrariesForStudy(ctx context.Context, studyLimsID string, limi
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("%w: query libraries for study: %w", ErrUpstreamImpaired, err)
 	}
+	if len(libraries) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableIseqFlowcell); syncErr != nil {
+			return nil, syncErr
+		}
+	}
 
 	return libraries, nil
 }
@@ -631,7 +648,7 @@ func (c *Client) RunsForStudy(ctx context.Context, studyLimsID string, limit, of
 		return nil, err
 	}
 	if !studyExists {
-		if err = c.requireResolverSyncState(ctx, syncTableStudy); err != nil {
+		if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
 			return nil, err
 		}
 
@@ -661,6 +678,11 @@ func (c *Client) RunsForStudy(ctx context.Context, studyLimsID string, limit, of
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("%w: query runs for study: %w", ErrUpstreamImpaired, err)
 	}
+	if len(runs) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableIseqProductMetrics); syncErr != nil {
+			return nil, syncErr
+		}
+	}
 
 	return runs, nil
 }
@@ -670,7 +692,7 @@ func (c *Client) LanesForSample(ctx context.Context, sangerName string, limit, o
 	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			if syncErr := c.requireResolverSyncState(ctx, syncTableSample); syncErr != nil {
+			if syncErr := c.requireAnySyncState(ctx, syncTableSample); syncErr != nil {
 				return nil, syncErr
 			}
 
@@ -703,6 +725,11 @@ func (c *Client) LanesForSample(ctx context.Context, sangerName string, limit, o
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("%w: query lanes for sample: %w", ErrUpstreamImpaired, err)
 	}
+	if len(lanes) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableIseqProductMetrics); syncErr != nil {
+			return nil, syncErr
+		}
+	}
 
 	return lanes, nil
 }
@@ -712,13 +739,27 @@ func (c *Client) IRODSPathsForSample(ctx context.Context, sangerName string, lim
 	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableSample); syncErr != nil {
+				return nil, syncErr
+			}
+
 			return nil, ErrNotFound
 		}
 
 		return nil, err
 	}
 
-	return c.queryIRODSPaths(ctx, irodsPathsForSampleCacheSQL, sample.IDSampleTmp, limit, offset, "query irods paths for sample")
+	paths, err := c.queryIRODSPaths(ctx, irodsPathsForSampleCacheSQL, sample.IDSampleTmp, limit, offset, "query irods paths for sample")
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			return nil, syncErr
+		}
+	}
+
+	return paths, nil
 }
 
 // IRODSPathsForStudy returns iRODS paths for a study.
@@ -726,13 +767,27 @@ func (c *Client) IRODSPathsForStudy(ctx context.Context, studyLimsID string, lim
 	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				return nil, syncErr
+			}
+
 			return nil, ErrNotFound
 		}
 
 		return nil, err
 	}
 
-	return c.queryIRODSPaths(ctx, irodsPathsForStudyCacheSQL, study.IDStudyLims, limit, offset, "query irods paths for study")
+	paths, err := c.queryIRODSPaths(ctx, irodsPathsForStudyCacheSQL, study.IDStudyLims, limit, offset, "query irods paths for study")
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			return nil, syncErr
+		}
+	}
+
+	return paths, nil
 }
 
 // StudiesForSample returns the studies linked to a sample.
@@ -769,10 +824,14 @@ func (c *Client) StudiesForSample(ctx context.Context, sangerName string) ([]Stu
 		return nil, err
 	}
 	if sampleExists {
+		if err := c.requireAnySyncState(ctx, syncTableStudy, syncTableIseqFlowcell); err != nil {
+			return nil, err
+		}
+
 		return nil, ErrNotFound
 	}
 
-	if err = c.requireResolverSyncState(ctx, syncTableSample); err != nil {
+	if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
 		return nil, err
 	}
 

@@ -318,7 +318,7 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 
 	result, err := Validate(r.Context(), s.provider, identifier)
 	if err != nil {
-		if errors.Is(err, ErrUnknownIdentifier) {
+		if errors.Is(err, ErrUnknownIdentifier) || errors.Is(err, mlwh.ErrCacheNeverSynced) {
 			_ = writeError(w, http.StatusNotFound, err.Error())
 
 			return

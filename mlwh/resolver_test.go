@@ -31,7 +31,9 @@ import (
 	"database/sql/driver"
 	"errors"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -365,6 +367,66 @@ func TestResolveStudyColdCacheDoesNotSyncBeforeLookup(t *testing.T) {
 		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(syncCalls, convey.ShouldEqual, 0)
 		convey.So(match, convey.ShouldResemble, Match{})
+	})
+}
+
+func TestResolverReadsNeverInvokeSync(t *testing.T) {
+	convey.Convey("D2.1: Given a never-synced cache and a sync wrapper that records invocations", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		syncCalls := 0
+		client := &Client{
+			cache:       cache,
+			cacheReader: cacheReadDB(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				syncCalls++
+
+				return nil
+			},
+		}
+
+		cases := []struct {
+			name string
+			call func() error
+		}{
+			{name: "ResolveLibrary", call: func() error { _, err := client.ResolveLibrary(context.Background(), "Standard"); return err }},
+			{name: "ResolveSample", call: func() error { _, err := client.ResolveSample(context.Background(), "missing-sample"); return err }},
+			{name: "ResolveStudy", call: func() error { _, err := client.ResolveStudy(context.Background(), "missing-study"); return err }},
+			{name: "ResolveRun", call: func() error { _, err := client.ResolveRun(context.Background(), "12345"); return err }},
+			{name: "ClassifyIdentifier", call: func() error {
+				_, err := client.ClassifyIdentifier(context.Background(), "missing-identifier")
+				return err
+			}},
+		}
+
+		for _, tc := range cases {
+			err := tc.call()
+			convey.So(err, convey.ShouldNotBeNil)
+		}
+
+		convey.Convey("when each resolver-backed read runs once, then none of them invoke Sync", func() {
+			convey.So(syncCalls, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestResolverPackageDoesNotContainRemovedSyncHelpers(t *testing.T) {
+	convey.Convey("D2.2: Given the mlwh package source files", t, func() {
+		entries, err := os.ReadDir(".")
+		convey.So(err, convey.ShouldBeNil)
+
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+
+			text, readErr := os.ReadFile(entry.Name())
+			convey.So(readErr, convey.ShouldBeNil)
+
+			convey.So(string(text), convey.ShouldNotContainSubstring, "ensureResolverTableSynced")
+			convey.So(string(text), convey.ShouldNotContainSubstring, "hasResolverSyncState")
+		}
 	})
 }
 

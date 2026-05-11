@@ -140,15 +140,15 @@ func (c *Client) AllStudies(ctx context.Context, limit, offset int) ([]Study, er
 		return studies, nil
 	}
 
-	warm, err := c.studyCacheWarm(ctx, cacheDB)
-	if err != nil {
-		return nil, err
+	if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+		return []Study{}, err
 	}
-	if warm {
+
+	if synced, syncErr := c.hasSyncState(ctx, syncTableStudy); syncErr == nil && synced {
 		return []Study{}, nil
 	}
 
-	return []Study{}, errors.Join(ErrNotFound, ErrCacheNeverSynced)
+	return []Study{}, ErrNotFound
 }
 
 func (c *Client) queryAllStudiesCache(ctx context.Context, db *sql.DB, limit, offset int) ([]Study, error) {

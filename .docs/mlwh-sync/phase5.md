@@ -25,8 +25,8 @@ endpoints return an empty slice alongside the wrapped error.
 Partially-synced caches behave per the spec's classification
 rules. Covers all 5 acceptance tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.2: D2 - No automatic re-sync from reads [parallel with 5.1]
 
@@ -39,8 +39,8 @@ longer exist) that `ResolveLibrary`, `ResolveSample`,
 `Sync`. Any residual call sites must be removed. Covers both
 acceptance tests from D2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

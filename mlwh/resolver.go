@@ -258,6 +258,12 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 
 	study, err = c.resolveStudyByName(ctx, raw)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				return Match{}, syncErr
+			}
+		}
+
 		return Match{}, err
 	}
 

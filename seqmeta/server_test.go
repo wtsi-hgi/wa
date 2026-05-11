@@ -28,6 +28,7 @@ package seqmeta
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -263,5 +264,25 @@ func TestServerEndpoints(t *testing.T) {
 
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
 		convey.So(recorder.Body.String(), convey.ShouldContainSubstring, mlwh.ErrUpstreamImpaired.Error())
+	})
+
+	convey.Convey("validate endpoint returns 404 with the never-synced cache hint", t, func() {
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "6568")
+
+				return mlwh.Match{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/validate/6568", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var body map[string]string
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
+		convey.So(body["error"], convey.ShouldContainSubstring, mlwh.ErrCacheNeverSynced.Error())
 	})
 }

@@ -106,6 +106,23 @@ func TestResolveSampleNameStepUsesSangerNameQuery(t *testing.T) {
 	})
 }
 
+func TestResolveSampleWarmCacheMissReturnsNotFoundWithoutNeverSynced(t *testing.T) {
+	convey.Convey("Given a fully-synced cache and a missing sample identifier", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 11, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveSample(context.Background(), "missing")
+
+		convey.So(match, convey.ShouldResemble, Match{})
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
+	})
+}
+
 func TestResolveSampleSupplierNameFallback(t *testing.T) {
 	convey.Convey("Given a text identifier that only matches supplier_name in cache", t, func() {
 		client, _, cleanup := newResolverSampleTestClient(t)

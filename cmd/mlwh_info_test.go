@@ -374,10 +374,10 @@ func TestMLWHInfoCommandNotFound(t *testing.T) {
 }
 
 func TestMLWHInfoCommandSurfacesEmptyCacheHint(t *testing.T) {
-	convey.Convey("Given a non-NotFound resolver error (e.g. cache empty / upstream unavailable), when wa mlwh info runs, then the error suggests running wa mlwh sync", t, func() {
+	convey.Convey("Given a never-synced cache error, when wa mlwh info runs, then stderr contains the actionable sync hint", t, func() {
 		stub := &stubMLWHInfoClient{
 			classify: func(_ context.Context, _ string) (mlwh.Match, error) {
-				return mlwh.Match{}, errors.New("mlwh: cache reader not configured")
+				return mlwh.Match{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
 			},
 		}
 
@@ -386,6 +386,7 @@ func TestMLWHInfoCommandSurfacesEmptyCacheHint(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
 
 		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldContainSubstring, mlwh.ErrCacheNeverSynced.Error())
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh sync")
 	})
 }

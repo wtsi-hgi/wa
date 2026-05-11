@@ -2198,39 +2198,76 @@ func rowExists(ctx context.Context, tx *sql.Tx, query string, args ...any) (bool
 }
 
 func (c *Client) requireResolverSyncState(ctx context.Context, table string) error {
-	if table == "" {
-		return fmt.Errorf("mlwh: sync table name must not be empty")
-	}
+	return c.requireAnySyncState(ctx, table)
+}
 
-	warm, err := c.hasSyncState(ctx, table)
+func neverSyncedReadErr() error {
+	return fmt.Errorf("%w: %w", ErrNotFound, ErrCacheNeverSynced)
+}
+
+func (c *Client) requireAnySyncState(ctx context.Context, tables ...string) error {
+	summary, err := c.requiredSyncStateSummary(ctx, tables...)
 	if err != nil {
 		return err
 	}
-	if warm {
-		return nil
+	if summary.allAbsent {
+		return neverSyncedReadErr()
 	}
 
-	return errors.Join(ErrNotFound, ErrCacheNeverSynced)
+	return nil
 }
 
-func (c *Client) hasSyncState(ctx context.Context, table string) (bool, error) {
+type requiredSyncStateSummaryResult struct {
+	allAbsent bool
+}
+
+func (c *Client) requiredSyncStateSummary(ctx context.Context, tables ...string) (requiredSyncStateSummaryResult, error) {
+	if len(tables) == 0 {
+		return requiredSyncStateSummaryResult{}, fmt.Errorf("mlwh: at least one sync table is required")
+	}
+
 	db := c.ReadDB()
 	if db == nil {
 		if c == nil || c.cache == nil {
-			return false, fmt.Errorf("mlwh: cache client not configured")
+			return requiredSyncStateSummaryResult{}, fmt.Errorf("mlwh: cache client not configured")
 		}
 
 		db = c.cache.DB()
 	}
 
-	var found int
-	err := db.QueryRowContext(ctx, `SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`, table).Scan(&found)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("%w: query sync state for %s: %w", ErrUpstreamImpaired, table, err)
+	seen := make(map[string]struct{}, len(tables))
+	summary := requiredSyncStateSummaryResult{allAbsent: true}
+
+	for _, table := range tables {
+		if table == "" {
+			return requiredSyncStateSummaryResult{}, fmt.Errorf("mlwh: sync table name must not be empty")
+		}
+		if _, ok := seen[table]; ok {
+			continue
+		}
+		seen[table] = struct{}{}
+
+		state, err := readSyncStateFromDB(ctx, db, table)
+		if err != nil {
+			return requiredSyncStateSummaryResult{}, fmt.Errorf("%w: query sync state for %s: %w", ErrUpstreamImpaired, table, err)
+		}
+		if state.Exists {
+			summary.allAbsent = false
+		}
 	}
 
-	return true, nil
+	return summary, nil
+}
+
+func (c *Client) hasSyncState(ctx context.Context, table string) (bool, error) {
+	if table == "" {
+		return false, fmt.Errorf("mlwh: sync table name must not be empty")
+	}
+
+	summary, err := c.requiredSyncStateSummary(ctx, table)
+	if err != nil {
+		return false, err
+	}
+
+	return !summary.allAbsent, nil
 }

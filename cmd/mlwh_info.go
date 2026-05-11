@@ -72,6 +72,10 @@ type mlwhInfoClient interface {
 func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag string, jsonOut bool) error {
 	match, err := classifyForInfo(ctx, client, identifier, typeFlag)
 	if err != nil {
+		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+			return fmt.Errorf("resolve %q: %w", identifier, err)
+		}
+
 		if errors.Is(err, mlwh.ErrNotFound) {
 			return fmt.Errorf("no match for identifier %q (run 'wa mlwh sync' if you think the cache is stale)", identifier)
 		}

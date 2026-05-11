@@ -694,6 +694,27 @@ func TestStudiesForSampleColdCacheReturnsErrCacheNeverSynced(t *testing.T) {
 	})
 }
 
+func TestStudiesForSampleReturnsNeverSyncedWhenFanoutTableStateIsAbsent(t *testing.T) {
+	convey.Convey("Given a partially-synced cache with only study sync state", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 101, "6568")
+		seedSyncState(t, client.cache.DB(), syncTableStudy, time.Date(2026, time.May, 11, 16, 0, 0, 0, time.UTC))
+
+		match, err := client.ResolveStudy(context.Background(), "6568")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(match.Study, convey.ShouldNotBeNil)
+		convey.So(match.Study.IDStudyLims, convey.ShouldEqual, "6568")
+
+		studies, err := client.StudiesForSample(context.Background(), "S1")
+
+		convey.So(studies, convey.ShouldBeNil)
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+	})
+}
+
 func TestStudiesForSampleExcludesNonSQSCPStudies(t *testing.T) {
 	convey.Convey("Given a sample linked to SQSCP and non-SQSCP studies", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)

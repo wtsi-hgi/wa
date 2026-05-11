@@ -41,6 +41,8 @@ func Validate(ctx context.Context, provider Provider, identifier string) (*Ident
 	match, err := provider.ClassifyIdentifier(ctx, identifier)
 	if err != nil {
 		switch {
+		case errors.Is(err, mlwh.ErrCacheNeverSynced):
+			return nil, errors.Join(fmtUnknownIdentifier(identifier), err)
 		case errors.Is(err, mlwh.ErrNotFound):
 			return nil, fmtUnknownIdentifier(identifier)
 		case errors.Is(err, mlwh.ErrUnsupportedIdentifier):
