@@ -36,5 +36,5 @@ Update every existing seqmeta / results / cmd test that previously
 asserted single-`IDStudyLims` / `LibraryType` shape so it asserts
 slice contents instead. Covers all 4 acceptance tests from C2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

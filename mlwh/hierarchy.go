@@ -33,6 +33,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -55,7 +56,17 @@ var (
 	irodsPathsForSampleCacheSQL   = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
 	irodsPathsForStudyCacheSQL    = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
 	studiesForSampleCacheSQL      = `SELECT DISTINCT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_lims`
+	qualifiedStudyMirrorSelectSQL = qualifySelectColumns("study_mirror", studyMirrorSelectColumns)
 )
+
+func qualifySelectColumns(prefix, columns string) string {
+	parts := strings.Split(columns, ", ")
+	for index, column := range parts {
+		parts[index] = prefix + "." + column
+	}
+
+	return strings.Join(parts, ", ")
+}
 
 type nullableHierarchySampleFields struct {
 	idLims          sql.NullString
@@ -155,6 +166,116 @@ func scanSampleRow(scan func(dest ...any) error) (Sample, error) {
 	applyNullableHierarchySampleFields(&sample, nullable)
 
 	return sample, nil
+}
+
+func loadSampleFanOut(ctx context.Context, c *Client, sampleIDs []int64) (map[int64][]Library, map[int64][]Study, error) {
+	if len(sampleIDs) == 0 {
+		return map[int64][]Library{}, map[int64][]Study{}, nil
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	uniqueIDs := make([]int64, 0, len(sampleIDs))
+	seenIDs := make(map[int64]struct{}, len(sampleIDs))
+	for _, sampleID := range sampleIDs {
+		if _, seen := seenIDs[sampleID]; seen {
+			continue
+		}
+
+		seenIDs[sampleID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, sampleID)
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(uniqueIDs)), ",")
+	args := make([]any, 0, len(uniqueIDs))
+	for _, sampleID := range uniqueIDs {
+		args = append(args, sampleID)
+	}
+
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT library_samples.id_sample_tmp, library_samples.pipeline_id_lims, `+qualifiedStudyMirrorSelectSQL+`
+		 FROM library_samples
+		 INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims
+		 WHERE study_mirror.id_lims = 'SQSCP' AND library_samples.id_sample_tmp IN (`+placeholders+`)
+		 ORDER BY library_samples.id_sample_tmp, study_mirror.id_study_lims, library_samples.pipeline_id_lims`,
+		args...,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: query sample fan-out: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	librariesBySample := make(map[int64][]Library, len(uniqueIDs))
+	studiesBySample := make(map[int64][]Study, len(uniqueIDs))
+	studySeen := make(map[int64]map[string]struct{}, len(uniqueIDs))
+
+	for rows.Next() {
+		var (
+			sampleID int64
+			library  Library
+		)
+
+		study, scanErr := scanStudyRow(func(dest ...any) error {
+			scanArgs := make([]any, 0, len(dest)+2)
+			scanArgs = append(scanArgs, &sampleID, &library.PipelineIDLims)
+			scanArgs = append(scanArgs, dest...)
+
+			return rows.Scan(scanArgs...)
+		})
+		if scanErr != nil {
+			return nil, nil, fmt.Errorf("%w: query sample fan-out: %w", ErrUpstreamImpaired, scanErr)
+		}
+
+		library.IDStudyLims = study.IDStudyLims
+		librariesBySample[sampleID] = append(librariesBySample[sampleID], library)
+
+		if _, ok := studySeen[sampleID]; !ok {
+			studySeen[sampleID] = make(map[string]struct{})
+		}
+		if _, ok := studySeen[sampleID][study.IDStudyLims]; ok {
+			continue
+		}
+
+		studySeen[sampleID][study.IDStudyLims] = struct{}{}
+		studiesBySample[sampleID] = append(studiesBySample[sampleID], study)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("%w: query sample fan-out: %w", ErrUpstreamImpaired, err)
+	}
+
+	return librariesBySample, studiesBySample, nil
+}
+
+func hydrateSampleFanOut(ctx context.Context, c *Client, samples []Sample) error {
+	if len(samples) == 0 {
+		return nil
+	}
+
+	sampleIDs := make([]int64, 0, len(samples))
+	for _, sample := range samples {
+		sampleIDs = append(sampleIDs, sample.IDSampleTmp)
+	}
+
+	librariesBySample, studiesBySample, err := loadSampleFanOut(ctx, c, sampleIDs)
+	if err != nil {
+		return err
+	}
+
+	for index := range samples {
+		sampleID := samples[index].IDSampleTmp
+		if libraries := librariesBySample[sampleID]; len(libraries) > 0 {
+			samples[index].Libraries = append([]Library(nil), libraries...)
+		}
+		if studies := studiesBySample[sampleID]; len(studies) > 0 {
+			samples[index].Studies = append([]Study(nil), studies...)
+		}
+	}
+
+	return nil
 }
 
 func queryExists(ctx context.Context, querier Querier, query, action string, args ...any) (bool, error) {
@@ -298,6 +419,10 @@ func (c *Client) findSamplesByQuery(ctx context.Context, query, raw, action, syn
 
 	matched, err := sampleMatchResult(raw, samples)
 	if err == nil {
+		if hydrateErr := hydrateSampleFanOut(ctx, c, matched); hydrateErr != nil {
+			return nil, hydrateErr
+		}
+
 		return matched, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -348,6 +473,10 @@ func (c *Client) SamplesForStudy(ctx context.Context, studyLimsID string, limit,
 		return nil, err
 	}
 	if len(samples) > 0 {
+		if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+			return nil, err
+		}
+
 		return samples, nil
 	}
 
@@ -382,6 +511,10 @@ func (c *Client) SamplesForRun(ctx context.Context, idRun string, limit, offset 
 		return nil, err
 	}
 	if len(samples) > 0 {
+		if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+			return nil, err
+		}
+
 		return samples, nil
 	}
 
@@ -404,6 +537,10 @@ func (c *Client) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLim
 		return nil, err
 	}
 	if len(samples) > 0 {
+		if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+			return nil, err
+		}
+
 		return samples, nil
 	}
 
@@ -434,6 +571,10 @@ func (c *Client) SamplesForLibraryType(ctx context.Context, pipelineIDLims strin
 		return nil, err
 	}
 	if len(samples) > 0 {
+		if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+			return nil, err
+		}
+
 		return samples, nil
 	}
 

@@ -769,6 +769,7 @@ func TestFindSamplesByLibraryTypeReturnsCanonicalSampleSlice(t *testing.T) {
 
 		seedSyncState(t, client.cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 11, 14, 2, 0, 0, time.UTC))
 		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 11, 14, 3, 0, 0, time.UTC))
+		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
 		seedHierarchySample(t, client.cache.DB(), 1, "6568", "S1")
 		seedLibrarySample(t, client.cache.DB(), "Standard", 1, "6568")
 
@@ -778,7 +779,31 @@ func TestFindSamplesByLibraryTypeReturnsCanonicalSampleSlice(t *testing.T) {
 		convey.So(samples, convey.ShouldHaveLength, 1)
 		convey.So(samples[0].IDSampleTmp, convey.ShouldEqual, int64(1))
 		convey.So(samples[0].Name, convey.ShouldEqual, "S1")
-		convey.So(samples[0].Libraries, convey.ShouldBeEmpty)
+		convey.So(samples[0].Libraries, convey.ShouldResemble, []Library{{PipelineIDLims: "Standard", IDStudyLims: "6568"}})
+		convey.So(samples[0].Studies, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].Studies[0].IDStudyLims, convey.ShouldEqual, "6568")
+	})
+}
+
+func TestSamplesForStudyHydratesPerPairingSampleFanOut(t *testing.T) {
+	convey.Convey("Given a study sample linked to two library-study pairings", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 81, "6568")
+		seedHierarchyStudy(t, client.cache.DB(), 82, "6569")
+		seedHierarchySample(t, client.cache.DB(), 1, "6568", "S1")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 1, "6568")
+		seedLibrarySample(t, client.cache.DB(), "Chromium", 1, "6569")
+
+		samples, err := client.SamplesForStudy(context.Background(), "6568", 100, 0)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].Libraries, convey.ShouldResemble, []Library{{PipelineIDLims: "Standard", IDStudyLims: "6568"}, {PipelineIDLims: "Chromium", IDStudyLims: "6569"}})
+		convey.So(samples[0].Studies, convey.ShouldHaveLength, 2)
+		convey.So(samples[0].Studies[0].IDStudyLims, convey.ShouldEqual, "6568")
+		convey.So(samples[0].Studies[1].IDStudyLims, convey.ShouldEqual, "6569")
 	})
 }
 

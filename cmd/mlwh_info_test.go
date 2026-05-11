@@ -70,11 +70,14 @@ func TestMLWHInfoHelpRendersConfigurationDetails(t *testing.T) {
 }
 
 type stubMLWHInfoClient struct {
-	classify       func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveSample  func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveStudy   func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveRun     func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveLibrary func(ctx context.Context, raw string) (mlwh.Match, error)
+	classify        func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveSample   func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveStudy    func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveRun      func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveLibrary  func(ctx context.Context, raw string) (mlwh.Match, error)
+	findBySangerID  func(ctx context.Context, sangerID string) ([]mlwh.Sample, error)
+	findByLimsID    func(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error)
+	findByAccession func(ctx context.Context, accession string) ([]mlwh.Sample, error)
 
 	studiesForSample    func(ctx context.Context, name string) ([]mlwh.Study, error)
 	lanesForSample      func(ctx context.Context, name string, limit, offset int) ([]mlwh.Lane, error)
@@ -126,6 +129,30 @@ func (s *stubMLWHInfoClient) ResolveLibrary(ctx context.Context, raw string) (ml
 	}
 
 	return mlwh.Match{}, errors.New("resolveLibrary not stubbed")
+}
+
+func (s *stubMLWHInfoClient) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
+	if s.findBySangerID != nil {
+		return s.findBySangerID(ctx, sangerID)
+	}
+
+	return nil, mlwh.ErrNotFound
+}
+
+func (s *stubMLWHInfoClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
+	if s.findByLimsID != nil {
+		return s.findByLimsID(ctx, idSampleLims)
+	}
+
+	return nil, mlwh.ErrNotFound
+}
+
+func (s *stubMLWHInfoClient) FindSamplesByAccessionNumber(ctx context.Context, accession string) ([]mlwh.Sample, error) {
+	if s.findByAccession != nil {
+		return s.findByAccession(ctx, accession)
+	}
+
+	return nil, mlwh.ErrNotFound
 }
 
 func (s *stubMLWHInfoClient) StudiesForSample(ctx context.Context, name string) ([]mlwh.Study, error) {
@@ -199,7 +226,7 @@ func (s *stubMLWHInfoClient) Close() error {
 }
 
 func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
-	convey.Convey("Given a sample identifier resolves to a sample with a study, when wa mlwh info runs, then stdout contains the sample, study, and lane fields", t, func() {
+	convey.Convey("Given a sample identifier resolves to a sample with two library-study pairings, when wa mlwh info runs, then stdout contains one library line per pairing", t, func() {
 		stub := &stubMLWHInfoClient{
 			classify: func(_ context.Context, raw string) (mlwh.Match, error) {
 				convey.So(raw, convey.ShouldEqual, "DN1234")
@@ -213,6 +240,10 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 						SangerSampleID:  "DN1234",
 						SupplierName:    "vendor-id-1",
 						AccessionNumber: "EGAS00001005678",
+						Libraries: []mlwh.Library{
+							{PipelineIDLims: "Standard", IDStudyLims: "5901"},
+							{PipelineIDLims: "Chromium", IDStudyLims: "5902"},
+						},
 					},
 				}, nil
 			},
@@ -223,6 +254,10 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 					IDStudyLims:     "5901",
 					Name:            "Lung cancer GWAS",
 					AccessionNumber: "EGAS00001005678",
+				}, {
+					IDStudyLims:     "5902",
+					Name:            "Lung cancer scRNA",
+					AccessionNumber: "EGAS00001005679",
 				}}, nil
 			},
 			lanesForSample: func(_ context.Context, _ string, _, _ int) ([]mlwh.Lane, error) {
@@ -240,8 +275,9 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "DN1234")
 		convey.So(output, convey.ShouldContainSubstring, "8675309")
 		convey.So(output, convey.ShouldContainSubstring, "vendor-id-1")
-		convey.So(output, convey.ShouldContainSubstring, "Lung cancer GWAS")
-		convey.So(output, convey.ShouldContainSubstring, "5901")
+		convey.So(strings.Count(output, "library:"), convey.ShouldEqual, 2)
+		convey.So(output, convey.ShouldContainSubstring, "library: Standard / 5901")
+		convey.So(output, convey.ShouldContainSubstring, "library: Chromium / 5902")
 		convey.So(output, convey.ShouldContainSubstring, "49001")
 		convey.So(stub.closed, convey.ShouldBeTrue)
 	})

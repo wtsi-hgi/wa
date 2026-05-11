@@ -49,6 +49,47 @@ func detailGraphSample(studyID, sangerSampleID, name, libraryType string) mlwh.S
 func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 	ctx := context.Background()
 
+	convey.Convey("C2.2: buildSampleDetailFromProvider preserves one library entry per sample pairing", t, func() {
+		sample := mlwh.Sample{
+			Name:           "Sample 1",
+			SangerSampleID: "S1",
+			Libraries: []mlwh.Library{
+				{PipelineIDLims: "Standard", IDStudyLims: "6568"},
+				{PipelineIDLims: "Chromium", IDStudyLims: "6569"},
+			},
+		}
+
+		provider := &MockProvider{
+			LanesForSampleFunc: func(_ context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
+				convey.So(sangerName, convey.ShouldEqual, "Sample 1")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return nil, mlwh.ErrNotFound
+			},
+			IRODSPathsForSampleFunc: func(_ context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
+				convey.So(sangerName, convey.ShouldEqual, "Sample 1")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return nil, mlwh.ErrNotFound
+			},
+		}
+
+		detail, err := buildSampleDetailFromProvider(ctx, provider, sample)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(detail, convey.ShouldNotBeNil)
+		if detail == nil {
+			return
+		}
+
+		convey.So(detail.Libraries, convey.ShouldResemble, []mlwh.Library{
+			{PipelineIDLims: "Standard", IDStudyLims: "6568"},
+			{PipelineIDLims: "Chromium", IDStudyLims: "6569"},
+		})
+	})
+
 	convey.Convey("D3.1: study enrichment emits library_details from mlwh.StudyDetail", t, func() {
 		studyDetail := &mlwh.StudyDetail{
 			Study: mlwh.Study{IDStudyLims: "6568", Name: "Study 6568"},
@@ -114,7 +155,7 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 	convey.Convey("D3.2: sample enrichment emits lanes from mlwh.SampleDetail", t, func() {
 		sampleDetail := &mlwh.SampleDetail{
 			Sample: detailGraphSample("6568", "7607STDY14643771", "Sample 7607STDY14643771", "Standard"),
-			Lanes: []mlwh.Lane{{IDRun: 101, Position: 1, TagIndex: 10}, {IDRun: 101, Position: 2, TagIndex: 11}, {IDRun: 102, Position: 1, TagIndex: 12}},
+			Lanes:  []mlwh.Lane{{IDRun: 101, Position: 1, TagIndex: 10}, {IDRun: 101, Position: 2, TagIndex: 11}, {IDRun: 102, Position: 1, TagIndex: 12}},
 		}
 
 		provider := &MockProvider{
@@ -123,7 +164,7 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 				return []mlwh.Sample{sampleDetail.Sample}, nil
 			},
 			SampleDetailFunc: func(_ context.Context, sangerName string) (*mlwh.SampleDetail, error) {
-				convey.So(sangerName, convey.ShouldEqual, "7607STDY14643771")
+				convey.So(sangerName, convey.ShouldEqual, "Sample 7607STDY14643771")
 				return sampleDetail, nil
 			},
 		}

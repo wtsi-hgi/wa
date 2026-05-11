@@ -838,6 +838,30 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(runKeys, convey.ShouldContain, "run-sample-lane")
 	})
 
+	convey.Convey("C2.3: Given sample fan-out across studies, sample resolver expansion returns both studies' lanes", t, func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /enrich/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("id") != "S1" {
+				w.WriteHeader(http.StatusNotFound)
+
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"graph":{"sample_detail":{"lanes":[{"id_run":"100","lane":"1","tag_index":1},{"id_run":"101","lane":"2","tag_index":2}]}}}`)
+		})
+		seqmeta := httptest.NewServer(mux)
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		samples, runs, lanes, err := resolver.Expand(context.Background(), mlwh.KindSangerSampleName, "S1")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldResemble, []string{"S1"})
+		convey.So(runs, convey.ShouldResemble, []string{"100", "101"})
+		convey.So(lanes, convey.ShouldResemble, []string{"100_1#1", "101_2#2"})
+	})
+
 	convey.Convey("Bug 4: repeated study lookups reuse resolver cache to avoid duplicate upstream requests", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-cache", func(reg *Registration) {

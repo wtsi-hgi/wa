@@ -53,6 +53,9 @@ type mlwhInfoClient interface {
 	ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveRun(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
+	FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error)
+	FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error)
+	FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error)
 
 	StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error)
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
@@ -175,6 +178,13 @@ func writeSampleSection(out io.Writer, sample *mlwh.Sample) {
 	writeKV(out, "  accession_number", sample.AccessionNumber)
 	writeKV(out, "  donor_id", sample.DonorID)
 	writeKV(out, "  common_name", sample.CommonName)
+	for _, library := range sample.Libraries {
+		if strings.TrimSpace(library.PipelineIDLims) == "" || strings.TrimSpace(library.IDStudyLims) == "" {
+			continue
+		}
+
+		_, _ = fmt.Fprintf(out, "  library: %s / %s\n", library.PipelineIDLims, library.IDStudyLims)
+	}
 }
 
 func writeKV(out io.Writer, key, value string) {
@@ -303,9 +313,25 @@ func classifyForInfo(ctx context.Context, client mlwhInfoClient, identifier, typ
 }
 
 func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *infoReport, sample *mlwh.Sample) {
+	if err := refreshSampleFanOut(ctx, client, sample); err != nil && !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("sample fan-out: %v", err))
+	}
+
 	if report.Study == nil {
-		studies, err := client.StudiesForSample(ctx, sample.Name)
-		if err == nil {
+		studies := append([]mlwh.Study(nil), sample.Studies...)
+		if len(studies) == 0 {
+			var err error
+			studies, err = client.StudiesForSample(ctx, sample.Name)
+			if err != nil {
+				if !errors.Is(err, mlwh.ErrNotFound) {
+					report.Warnings = append(report.Warnings, fmt.Sprintf("studies for sample: %v", err))
+				}
+
+				studies = nil
+			}
+		}
+
+		if len(studies) > 0 {
 			switch len(studies) {
 			case 1:
 				report.Study = &studies[0]
@@ -314,8 +340,6 @@ func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *info
 			default:
 				report.Studies = studies
 			}
-		} else if !errors.Is(err, mlwh.ErrNotFound) {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("studies for sample: %v", err))
 		}
 	}
 
@@ -330,6 +354,53 @@ func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *info
 	} else if !errors.Is(err, mlwh.ErrNotFound) {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("irods paths for sample: %v", err))
 	}
+}
+
+func refreshSampleFanOut(ctx context.Context, client mlwhInfoClient, sample *mlwh.Sample) error {
+	if sample == nil {
+		return nil
+	}
+	if len(sample.Libraries) > 0 && len(sample.Studies) > 0 {
+		return nil
+	}
+
+	lookups := []func(context.Context) ([]mlwh.Sample, error){}
+	if strings.TrimSpace(sample.SangerSampleID) != "" {
+		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
+			return client.FindSamplesBySangerID(ctx, sample.SangerSampleID)
+		})
+	}
+	if strings.TrimSpace(sample.IDSampleLims) != "" {
+		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
+			return client.FindSamplesByIDSampleLims(ctx, sample.IDSampleLims)
+		})
+	}
+	if strings.TrimSpace(sample.AccessionNumber) != "" {
+		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
+			return client.FindSamplesByAccessionNumber(ctx, sample.AccessionNumber)
+		})
+	}
+
+	for _, lookup := range lookups {
+		samples, err := lookup(ctx)
+		if err != nil {
+			if errors.Is(err, mlwh.ErrNotFound) {
+				continue
+			}
+
+			return err
+		}
+		if len(samples) == 0 {
+			continue
+		}
+
+		sample.Studies = append([]mlwh.Study(nil), samples[0].Studies...)
+		sample.Libraries = append([]mlwh.Library(nil), samples[0].Libraries...)
+
+		return nil
+	}
+
+	return mlwh.ErrNotFound
 }
 
 func populateStudyInfo(ctx context.Context, client mlwhInfoClient, report *infoReport, studyLimsID string) {

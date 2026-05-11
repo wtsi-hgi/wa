@@ -283,6 +283,32 @@ func TestDiffStudySamples(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(result.Added, convey.ShouldResemble, []mlwh.Sample{{Name: "S1"}, {Name: "S2"}})
 	})
+
+	convey.Convey("C2.4: DiffStudySamples hashes only the queried study pairing for fan-out samples", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
+		sample6568 := mlwh.Sample{
+			Name:      "S1",
+			Studies:   []mlwh.Study{{IDStudyLims: "6568"}, {IDStudyLims: "6569"}},
+			Libraries: []mlwh.Library{{PipelineIDLims: "Standard", IDStudyLims: "6568"}, {PipelineIDLims: "Chromium", IDStudyLims: "6569"}},
+		}
+		sample6569 := mlwh.Sample{
+			Name:      "S1",
+			Studies:   []mlwh.Study{{IDStudyLims: "6568"}, {IDStudyLims: "6569"}},
+			Libraries: []mlwh.Library{{PipelineIDLims: "Standard", IDStudyLims: "6568"}, {PipelineIDLims: "Chromium", IDStudyLims: "6569"}},
+		}
+
+		prepared6568, err := prepareDiffStudySamples(store, "6568", []mlwh.Sample{sample6568})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(prepared6568.Result.Added, convey.ShouldResemble, []mlwh.Sample{{Name: "S1", Studies: []mlwh.Study{{IDStudyLims: "6568"}}, Libraries: []mlwh.Library{{PipelineIDLims: "Standard", IDStudyLims: "6568"}}}})
+		convey.So(prepared6568.Commit(), convey.ShouldBeNil)
+
+		prepared6569, err := prepareDiffStudySamples(store, "6569", []mlwh.Sample{sample6569})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(prepared6569.Result.Added, convey.ShouldResemble, []mlwh.Sample{{Name: "S1", Studies: []mlwh.Study{{IDStudyLims: "6569"}}, Libraries: []mlwh.Library{{PipelineIDLims: "Chromium", IDStudyLims: "6569"}}}})
+	})
 }
 
 func TestDiffSampleFiles(t *testing.T) {
