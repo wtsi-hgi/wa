@@ -1696,6 +1696,138 @@ describe("N1 file browser", () => {
         expect(subfolderToggle?.checked).toBe(false);
     });
 
+    it("keeps preview mode summaries and toggles aligned when selection moves from a parent folder to a subfolder", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/summary.png", "output"),
+            buildFile("/demo/sample-a/notes.txt", "output"),
+            buildFile("/demo/sample-a/lanes/lane-1/plot.png", "output"),
+            buildFile("/demo/sample-a/lanes/lane-1/metrics.tsv", "output"),
+            buildFile("/demo/sample-a/lanes/lane-2/plot.png", "output"),
+            buildFile("/demo/sample-a/lanes/lane-2/metrics.tsv", "output"),
+            buildFile("/demo/sample-a/reports/overview.png", "output"),
+            buildFile("/demo/sample-a/reports/summary.tsv", "output"),
+        ];
+
+        function PreviewSelectionHarness(): ReactNode {
+            const [previewMode, setPreviewMode] = useState<"single" | "grid">(
+                "single",
+            );
+            const [selectedDirectory, setSelectedDirectory] =
+                useState("/demo/sample-a");
+
+            return createElement(FileBrowser, {
+                files,
+                onPreviewModeChange: setPreviewMode,
+                onSelectDirectory: (directoryPath: string) => {
+                    setSelectedDirectory(directoryPath);
+                },
+                onSelectFile: vi.fn(),
+                previewMode,
+                renderGridPreview: (file: FileEntry): ReactNode =>
+                    createElement(
+                        "div",
+                        { "data-subdir-preview-file": file.path },
+                        file.path,
+                    ),
+                renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                    createElement(
+                        "div",
+                        { "data-testid": "single-preview" },
+                        file?.path ?? "none",
+                    ),
+                selectedDirectory,
+                visibleFiles: files.filter(
+                    (file) =>
+                        file.path.startsWith(`${selectedDirectory}/`) &&
+                        !file.path
+                            .slice(selectedDirectory.length + 1)
+                            .includes("/"),
+                ),
+            });
+        }
+
+        await act(async () => {
+            root.render(createElement(PreviewSelectionHarness));
+        });
+
+        const parentControls = () =>
+            container.querySelector(
+                '[data-file-browser-folder-controls="/demo/sample-a"]',
+            ) as HTMLElement | null;
+        const childControls = () =>
+            container.querySelector(
+                '[data-file-browser-folder-controls="/demo/sample-a/lanes"]',
+            ) as HTMLElement | null;
+        const previewModeSummary = (directoryPath: string) =>
+            container.querySelector(
+                `[data-preview-mode-disclosure="${directoryPath}"] summary[aria-label="Preview modes"] .text-xs.text-muted-foreground`,
+            ) as HTMLElement | null;
+        const gridToggle = (directoryPath: string) =>
+            container.querySelector(
+                `[data-file-browser-folder-controls="${directoryPath}"] input[aria-label="1 preview per row"]`,
+            ) as HTMLInputElement | null;
+        const subfolderToggle = (directoryPath: string) =>
+            container.querySelector(
+                `[data-file-browser-folder-controls="${directoryPath}"] input[aria-label="Subfolder previews"]`,
+            ) as HTMLInputElement | null;
+
+        expect(parentControls()).toBeTruthy();
+        expect(gridToggle("/demo/sample-a")?.checked).toBe(false);
+        expect(subfolderToggle("/demo/sample-a")?.checked).toBe(false);
+        expect(previewModeSummary("/demo/sample-a")?.textContent).toBe(
+            "Single preview",
+        );
+
+        await click(
+            parentControls()?.querySelector(
+                'summary[aria-label="Preview modes"]',
+            ) ?? null,
+        );
+        await click(gridToggle("/demo/sample-a"));
+        await click(subfolderToggle("/demo/sample-a"));
+
+        expect(gridToggle("/demo/sample-a")?.checked).toBe(true);
+        expect(subfolderToggle("/demo/sample-a")?.checked).toBe(true);
+        expect(previewModeSummary("/demo/sample-a")?.textContent).toBe(
+            "Grid + subfolders",
+        );
+
+        await click(
+            parentControls()?.querySelector(
+                'summary[aria-label="Preview modes"]',
+            ) ?? null,
+        );
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a/lanes"]',
+            ),
+        );
+
+        expect(childControls()).toBeTruthy();
+        expect(previewModeSummary("/demo/sample-a/lanes")?.textContent).toBe(
+            "Single preview",
+        );
+        expect(gridToggle("/demo/sample-a/lanes")).toBeNull();
+        expect(subfolderToggle("/demo/sample-a/lanes")?.checked).toBe(false);
+        expect(previewModeSummary("/demo/sample-a")?.textContent).toBe(
+            "Grid + subfolders",
+        );
+        expect(gridToggle("/demo/sample-a")).toBeTruthy();
+        expect(gridToggle("/demo/sample-a")?.checked).toBe(true);
+
+        await click(gridToggle("/demo/sample-a"));
+
+        expect(gridToggle("/demo/sample-a")).toBeNull();
+        expect(previewModeSummary("/demo/sample-a")?.textContent).toBe(
+            "Subfolders",
+        );
+        expect(previewModeSummary("/demo/sample-a/lanes")?.textContent).toBe(
+            "Single preview",
+        );
+    });
+
     it("keeps subfolder preview widgets visible while the parent folder stays expanded", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [

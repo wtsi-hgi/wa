@@ -277,12 +277,13 @@ function summarizeSubdirPreviewKinds(
 function summarizePreviewModes(
     previewMode: PreviewMode,
     subdirPreviewEnabled: boolean,
+    showGridToggle: boolean,
 ): string {
-    if (previewMode === "grid" && subdirPreviewEnabled) {
+    if (showGridToggle && previewMode === "grid" && subdirPreviewEnabled) {
         return "Grid + subfolders";
     }
 
-    if (previewMode === "grid") {
+    if (showGridToggle && previewMode === "grid") {
         return "1 per row";
     }
 
@@ -1053,6 +1054,7 @@ export function FileBrowser({
                                 {summarizePreviewModes(
                                     previewMode,
                                     subdirPreviewEnabled,
+                                    showGridToggle,
                                 )}
                             </span>
                             <ChevronDown className="size-4 text-muted-foreground" />
@@ -1415,6 +1417,10 @@ export function FileBrowser({
                 safePage: safeSubdirPreviewPage,
                 visibleSubdirs,
             } = subdirPreviewStateFor(node);
+            const nodePreviewKinds = subdirPreviewKindsFor(node.path);
+            const previewableNodeFiles = node.files.filter((file) =>
+                fileMatchesPreviewKinds(file, nodePreviewKinds),
+            );
             const hasFilePreviewControls =
                 isStructurallyExpanded &&
                 isSelected &&
@@ -1428,7 +1434,11 @@ export function FileBrowser({
                 isStructurallyExpanded &&
                 subdirPreviewAvailable &&
                 Boolean(renderGridPreview);
-            const subdirPreviewKinds = subdirPreviewKindsFor(node.path);
+            const showGridToggle =
+                previewableNodeFiles.length > 1 &&
+                Boolean(renderGridPreview || renderSinglePreview) &&
+                (isSelected || previewMode === "grid");
+            const subdirPreviewKinds = nodePreviewKinds;
             const parentNode = parentPath
                 ? findTreeNodeByPath(directoryTree, parentPath)
                 : undefined;
@@ -1448,8 +1458,7 @@ export function FileBrowser({
                 hasFilePreviewControls,
                 hasSubdirPreviewControls,
                 isSelected,
-                showGridToggle:
-                    hasFilePreviewControls && previewableActiveFiles.length > 1,
+                showGridToggle,
                 safeSubdirPreviewPage,
                 subdirPageCount: subdirPreviewPageCount,
             });

@@ -1087,4 +1087,62 @@ test.describe("File Browser single preview layout", () => {
         await expect(sampleAControls).toBeVisible();
         await expect(lanesControls).toBeVisible();
     });
+
+    test("keeps parent and child preview mode selectors in sync when opening a nested subfolder", async ({
+        page,
+    }) => {
+        await openNamedResultFileBrowser(page, "wtsi/galleries-demo");
+
+        await selectDirectory(page, galleriesDemoSampleAPath);
+
+        const sampleAControls = page.locator(
+            `[data-file-browser-folder-controls="${galleriesDemoSampleAPath}"]`,
+        );
+        const sampleASummary = sampleAControls.locator(
+            'summary[aria-label="Preview modes"]',
+        );
+
+        await expect(sampleAControls).toBeVisible();
+        await openPreviewModes(sampleAControls);
+        await sampleAControls
+            .locator('input[aria-label="1 preview per row"]')
+            .check();
+        await sampleAControls
+            .locator('input[aria-label="Subfolder previews"]')
+            .check();
+        await expect(sampleASummary).toContainText("Grid + subfolders");
+
+        await sampleASummary.click();
+
+        await selectDirectory(page, galleriesDemoSampleALanesPath);
+
+        const lanesControls = page.locator(
+            `[data-file-browser-folder-controls="${galleriesDemoSampleALanesPath}"]`,
+        );
+        const lanesSummary = lanesControls.locator(
+            'summary[aria-label="Preview modes"]',
+        );
+
+        await expect(sampleAControls).toBeVisible();
+        await expect(lanesControls).toBeVisible();
+        await expect(sampleASummary).toContainText("Grid + subfolders");
+        await expect(
+            sampleAControls.locator('input[aria-label="1 preview per row"]'),
+        ).toHaveCount(1);
+        await expect(lanesSummary).toContainText("Single preview");
+        await expect(
+            lanesControls.locator('input[aria-label="1 preview per row"]'),
+        ).toHaveCount(0);
+
+        await openPreviewModes(sampleAControls);
+        await sampleAControls
+            .locator('input[aria-label="1 preview per row"]')
+            .click();
+
+        await expect(sampleASummary).toContainText("Subfolders");
+        await expect(
+            sampleAControls.locator('input[aria-label="1 preview per row"]'),
+        ).toHaveCount(0);
+        await expect(lanesSummary).toContainText("Single preview");
+    });
 });
