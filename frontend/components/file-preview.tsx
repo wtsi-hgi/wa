@@ -345,6 +345,7 @@ function DownloadIconLink({
                 "inline-flex size-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground shadow-[0_8px_24px_-18px_rgba(48,67,98,0.85)] transition hover:border-primary/35 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                 className,
             )}
+            data-preview-download-overlay="true"
             href={href}
         >
             <ArrowDownToLine className="size-4" aria-hidden="true" />
@@ -703,7 +704,7 @@ function LightboxImage({
                     className="absolute inset-0 z-10 cursor-zoom-in rounded-[inherit] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
                     onClick={() => setLightboxOpen(true)}
                 />
-                <span className="relative flex w-full justify-center overflow-hidden rounded-[inherit]">
+                <div className="relative overflow-hidden rounded-[inherit]">
                     <Image
                         alt={`${fileName} preview`}
                         className={cn(
@@ -718,20 +719,25 @@ function LightboxImage({
                         height={thumbnailHeight}
                         sizes={sizes}
                         style={{
+                            height: `${maxHeightPx}px`,
                             maxHeight: `${maxHeightPx}px`,
                             maxWidth: `${thumbnailWidth}px`,
+                            width: "auto",
                         }}
                     />
                     {downloadUrl ? (
                         <DownloadIconLink
-                            className="absolute right-3 top-3 z-20"
+                            className="absolute right-0 top-0 z-20 m-3"
                             href={downloadUrl}
                         />
                     ) : null}
-                    <span className="pointer-events-none absolute bottom-3 left-3 inline-flex size-9 items-center justify-center rounded-full bg-[color:rgba(15,23,42,0.78)] text-white shadow-lg">
+                    <span
+                        className="pointer-events-none absolute bottom-0 left-0 m-3 inline-flex size-9 items-center justify-center rounded-full bg-[color:rgba(15,23,42,0.78)] text-white shadow-lg"
+                        data-preview-enlarge-badge="true"
+                    >
                         <Expand className="size-3.5" aria-hidden="true" />
                     </span>
-                </span>
+                </div>
             </div>
 
             {lightboxOpen ? (
@@ -803,11 +809,10 @@ export const FileImageThumbnail = memo(
 
         return (
             <LightboxImage
-                buttonClassName="group relative inline-flex w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.25rem]"
+                buttonClassName="group relative flex w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.25rem]"
                 downloadUrl={buildDownloadUrl(fullSizeUrl)}
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}
-                imageClassName="w-full"
                 maxHeightPx={height}
                 sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
                 thumbnailHeight={STABLE_THUMBNAIL_HEIGHT}

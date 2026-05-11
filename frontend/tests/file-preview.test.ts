@@ -264,10 +264,10 @@ describe("O1 file preview", () => {
         );
 
         const image = screen.getByAltText("plot.png preview");
-        const wrapper = image.parentElement;
+        const wrapper = image.closest("div.group.relative");
 
         expect(wrapper?.className).toContain("w-full");
-        expect(wrapper?.className).not.toContain("inline-flex");
+        expect(wrapper?.className).toContain("flex");
     });
 
     it("opens the lightbox from the reusable thumbnail with the full-size source", async () => {
@@ -811,9 +811,7 @@ describe("O1 file preview", () => {
         expect(link.className).toContain("absolute");
         expect(surface).not.toBeNull();
         expect(lightboxButton.parentElement).toBe(surface);
-        expect(link.parentElement?.className).toContain(
-            "relative flex w-full justify-center",
-        );
+        expect(link.parentElement).toBe(image.parentElement);
         expect(surface?.contains(image)).toBe(true);
         expect(surface?.contains(lightboxButton)).toBe(true);
         expect(surface?.contains(link)).toBe(true);
@@ -1171,7 +1169,7 @@ describe("O1 file preview", () => {
         expect(link.getAttribute("href")).toContain("download=true");
         expect(link.className).toContain("absolute");
         expect(surface).not.toBeNull();
-        expect(link.parentElement?.parentElement).toBe(surface);
+        expect(link.parentElement).toBe(image.parentElement);
         expect(surface?.contains(image)).toBe(true);
         expect(surface?.contains(link)).toBe(true);
         expect(surface?.className).toContain("cursor-zoom-in");

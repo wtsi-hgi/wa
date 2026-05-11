@@ -691,9 +691,21 @@ test.describe("Q1 critical results flows", () => {
         expect(Math.abs(buttonBox.x - cellBox.x)).toBeLessThanOrEqual(1);
         expect(Math.abs(buttonBox.y - cellBox.y)).toBeLessThanOrEqual(1);
         expect(buttonBox.width).toBeGreaterThanOrEqual(cellBox.width - 2);
-        expect(Math.abs(imageBox.x - buttonBox.x)).toBeLessThanOrEqual(1);
-        expect(Math.abs(imageBox.y - buttonBox.y)).toBeLessThanOrEqual(1);
-        expect(imageBox.width).toBeGreaterThanOrEqual(buttonBox.width - 2);
+        expect(imageBox.x).toBeGreaterThanOrEqual(buttonBox.x);
+        expect(imageBox.y).toBeGreaterThanOrEqual(buttonBox.y);
+        expect(imageBox.x + imageBox.width).toBeLessThanOrEqual(
+            buttonBox.x + buttonBox.width + 1,
+        );
+        expect(imageBox.y + imageBox.height).toBeLessThanOrEqual(
+            buttonBox.y + buttonBox.height + 1,
+        );
+        expect(
+            Math.abs(
+                imageBox.x +
+                    imageBox.width / 2 -
+                    (buttonBox.x + buttonBox.width / 2),
+            ),
+        ).toBeLessThanOrEqual(1);
 
         await thumbnailButton.click();
 

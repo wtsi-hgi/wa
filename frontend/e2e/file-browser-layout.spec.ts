@@ -949,8 +949,11 @@ test.describe("File Browser single preview layout", () => {
                     cardImage?.parentElement ===
                     cardDownloadLink?.parentElement,
                 lightboxControlOverlaysSameShell:
-                    cardButton?.parentElement ===
-                    cardImage?.parentElement?.parentElement,
+                    cardButton?.parentElement?.contains(cardImage ?? null) ===
+                        true &&
+                    cardButton?.parentElement?.contains(
+                        cardDownloadLink ?? null,
+                    ) === true,
             };
         });
 
@@ -971,6 +974,92 @@ test.describe("File Browser single preview layout", () => {
         expect(buttonBBox.width).toBeGreaterThan(140);
         expect(imageBBox.width).toBeGreaterThan(140);
         expect(imageBBox.height).toBeGreaterThan(100);
+    });
+
+    test("keeps the row-preview download overlay inset from the image top-right corner without clipping", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(controls).toBeVisible();
+        await openPreviewModes(controls);
+        await controls.locator('input[aria-label="1 preview per row"]').check();
+
+        const row = page
+            .locator(
+                `[data-file-browser-grid-row="${path.join(rnaseqGalleryPath, "plot-001.png")}"]`,
+            )
+            .first();
+        const preview = row.locator("[data-grid-preview-path]").first();
+        const image = preview
+            .locator('img[alt="plot-001.png preview"]')
+            .first();
+        const downloadLink = preview
+            .locator('[data-preview-download-overlay="true"]')
+            .first();
+        const enlargeBadge = preview
+            .locator('[data-preview-enlarge-badge="true"]')
+            .first();
+
+        await expect(row).toBeVisible();
+        await expect(preview).toBeVisible();
+        await expect(image).toBeVisible();
+        await expect(downloadLink).toBeVisible();
+        await expect(enlargeBadge).toBeVisible();
+
+        const overlayMetrics = await preview.evaluate((element) => {
+            const imageElement = element.querySelector("img");
+            const downloadElement = element.querySelector(
+                '[data-preview-download-overlay="true"]',
+            );
+            const enlargeElement = element.querySelector(
+                '[data-preview-enlarge-badge="true"]',
+            );
+
+            if (
+                !(imageElement instanceof HTMLElement) ||
+                !(downloadElement instanceof HTMLElement) ||
+                !(enlargeElement instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const imageRect = imageElement.getBoundingClientRect();
+            const downloadRect = downloadElement.getBoundingClientRect();
+            const enlargeRect = enlargeElement.getBoundingClientRect();
+
+            return {
+                bottomInset: imageRect.bottom - enlargeRect.bottom,
+                downloadInsideImageBounds:
+                    downloadRect.top >= imageRect.top &&
+                    downloadRect.right <= imageRect.right &&
+                    downloadRect.bottom <= imageRect.bottom,
+                leftInset: enlargeRect.left - imageRect.left,
+                rightInset: imageRect.right - downloadRect.right,
+                topInset: downloadRect.top - imageRect.top,
+            };
+        });
+
+        if (!overlayMetrics) {
+            throw new Error("Missing row preview overlay metrics");
+        }
+
+        expect(overlayMetrics.downloadInsideImageBounds).toBe(true);
+        expect(overlayMetrics.topInset).toBeGreaterThanOrEqual(8);
+        expect(overlayMetrics.rightInset).toBeGreaterThanOrEqual(8);
+        expect(overlayMetrics.topInset).toBeLessThanOrEqual(24);
+        expect(overlayMetrics.rightInset).toBeLessThanOrEqual(24);
+        expect(
+            Math.abs(overlayMetrics.topInset - overlayMetrics.bottomInset),
+        ).toBeLessThanOrEqual(6);
+        expect(
+            Math.abs(overlayMetrics.rightInset - overlayMetrics.leftInset),
+        ).toBeLessThanOrEqual(6);
     });
 
     test("renders subfolder table previews with a single bordered surface", async ({
