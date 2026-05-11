@@ -27,14 +27,16 @@ package mlwh
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +47,7 @@ import (
 
 const (
 	defaultMySQLLockTimeoutSeconds = 30
-	mysqlSyncLockName              = "wa_mlwh_sync"
+	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
 	CacheSchemaVersion = 2
@@ -83,6 +85,8 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mlwh: open sqlite cache: %w", err)
 	}
+	rwDB.SetMaxOpenConns(1)
+	rwDB.SetMaxIdleConns(1)
 
 	if err = rwDB.PingContext(ctx); err != nil {
 		_ = rwDB.Close()
@@ -95,6 +99,13 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 
 		return nil, err
 	}
+	if err = repairDroppedSampleMirrorIndexes(ctx, rwDB, "sqlite"); err != nil {
+		_ = rwDB.Close()
+
+		return nil, err
+	}
+
+	lockDSN := sqliteLockDSN(cfg.Path)
 
 	roDB := rwDB
 	if cfg.Path != ":memory:" {
@@ -113,7 +124,7 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 		}
 	}
 
-	return &sqliteCache{rwDB: rwDB, roDB: roDB}, nil
+	return &sqliteCache{rwDB: rwDB, roDB: roDB, lockDSN: lockDSN}, nil
 }
 
 func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
@@ -134,6 +145,11 @@ func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 	}
 
 	if err = prepareCacheSchema(ctx, rwDB, "mysql"); err != nil {
+		_ = rwDB.Close()
+
+		return nil, err
+	}
+	if err = repairDroppedSampleMirrorIndexes(ctx, rwDB, "mysql"); err != nil {
 		_ = rwDB.Close()
 
 		return nil, err
@@ -160,7 +176,7 @@ func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 		return nil, fmt.Errorf("mlwh: ping mysql read-only cache: %w", err)
 	}
 
-	return &mysqlCache{rwDB: rwDB, roDB: roDB}, nil
+	return &mysqlCache{rwDB: rwDB, roDB: roDB, lockDSN: resolvedDSN}, nil
 }
 
 // CacheConfig describes the cache connection to open.
@@ -197,6 +213,9 @@ type Client struct {
 	expandCache             map[expandIdentifierCacheKey]expandIdentifierCacheEntry
 	now                     func() time.Time
 	syncRunner              func(context.Context, *sql.Tx, []string) error
+	syncReportWriter        io.Writer
+	syncRetryWriter         io.Writer
+	syncRetrySleep          func(context.Context, time.Duration) error
 	mySQLLockTimeoutSeconds int
 }
 
@@ -209,50 +228,34 @@ func (c *Client) ReadDB() *sql.DB {
 	return c.cacheReader
 }
 
+// SetSyncReportWriter configures an optional writer for per-table sync lines.
+func (c *Client) SetSyncReportWriter(writer io.Writer) {
+	if c == nil {
+		return
+	}
+
+	c.syncReportWriter = writer
+}
+
 func (c *Client) acquireSyncLock(ctx context.Context) (func() error, error) {
-	if c.cache.Dialect() != "mysql" {
+	if c == nil || c.cache == nil {
+		return nil, fmt.Errorf("mlwh: cache client not configured")
+	}
+
+	switch cache := c.cache.(type) {
+	case *sqliteCache:
+		return cache.acquireSyncLock(ctx)
+	case *mysqlCache:
+		return cache.acquireSyncLock(ctx)
+	default:
 		return nil, nil
 	}
-
-	timeout := c.mySQLLockTimeoutSeconds
-	if timeout <= 0 {
-		timeout = defaultMySQLLockTimeoutSeconds
-	}
-
-	var gotLock int
-	err := c.cache.DB().QueryRowContext(
-		ctx,
-		"SELECT GET_LOCK('wa_mlwh_sync', ?)",
-		timeout,
-	).Scan(&gotLock)
-	if err != nil {
-		return nil, fmt.Errorf("%w: acquire mysql cache lock: %w", ErrUpstreamImpaired, err)
-	}
-	if gotLock != 1 {
-		return nil, fmt.Errorf("%w: acquire mysql cache lock", ErrUpstreamImpaired)
-	}
-
-	return func() error {
-		var released int
-
-		err := c.cache.DB().QueryRowContext(
-			ctx,
-			"SELECT RELEASE_LOCK('wa_mlwh_sync')",
-		).Scan(&released)
-		if err != nil {
-			return fmt.Errorf("%w: release mysql cache lock: %w", ErrUpstreamImpaired, err)
-		}
-		if released != 1 {
-			return fmt.Errorf("%w: release mysql cache lock", ErrUpstreamImpaired)
-		}
-
-		return nil
-	}, nil
 }
 
 type sqliteCache struct {
-	rwDB *sql.DB
-	roDB *sql.DB
+	rwDB    *sql.DB
+	roDB    *sql.DB
+	lockDSN string
 }
 
 func (c *sqliteCache) DB() *sql.DB {
@@ -283,9 +286,66 @@ func (c *sqliteCache) Close() error {
 	return nil
 }
 
+func (c *sqliteCache) acquireSyncLock(ctx context.Context) (func() error, error) {
+	if c == nil || c.lockDSN == "" {
+		return nil, nil
+	}
+
+	lockDB, err := sqlOpenFunc("sqlite", c.lockDSN)
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: open sqlite sync lock connection: %w", err)
+	}
+	lockDB.SetMaxOpenConns(1)
+	lockDB.SetMaxIdleConns(1)
+
+	lockConn, err := lockDB.Conn(ctx)
+	if err != nil {
+		_ = lockDB.Close()
+
+		return nil, fmt.Errorf("mlwh: acquire sqlite sync lock connection: %w", err)
+	}
+
+	if _, err = lockConn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		_ = lockConn.Close()
+		_ = lockDB.Close()
+		if isSQLiteSyncLockBusy(err) {
+			return nil, ErrSyncAlreadyRunning
+		}
+
+		return nil, fmt.Errorf("mlwh: acquire sqlite sync lock: %w", err)
+	}
+
+	if err = ensureSQLiteSyncLockRow(ctx, lockConn); err != nil {
+		_, _ = lockConn.ExecContext(context.Background(), `ROLLBACK`)
+		_ = lockConn.Close()
+		_ = lockDB.Close()
+
+		return nil, err
+	}
+
+	return func() error {
+		_, rollbackErr := lockConn.ExecContext(context.Background(), `ROLLBACK`)
+		closeConnErr := lockConn.Close()
+		closeDBErr := lockDB.Close()
+		if rollbackErr != nil {
+			return fmt.Errorf("mlwh: release sqlite sync lock: %w", rollbackErr)
+		}
+		if closeConnErr != nil {
+			return fmt.Errorf("mlwh: close sqlite sync lock connection: %w", closeConnErr)
+		}
+		if closeDBErr != nil {
+			return fmt.Errorf("mlwh: close sqlite sync lock database: %w", closeDBErr)
+		}
+
+		return nil
+	}, nil
+}
+
 type mysqlCache struct {
-	rwDB *sql.DB
-	roDB *sql.DB
+	rwDB    *sql.DB
+	roDB    *sql.DB
+	lockDB  *sql.DB
+	lockDSN string
 }
 
 func (c *mysqlCache) DB() *sql.DB {
@@ -301,6 +361,19 @@ func (c *mysqlCache) Dialect() string {
 }
 
 func (c *mysqlCache) Close() error {
+	if c.lockDB != nil && c.lockDB != c.rwDB && c.lockDB != c.roDB {
+		if err := c.lockDB.Close(); err != nil {
+			if c.roDB != nil && c.roDB != c.rwDB {
+				_ = c.roDB.Close()
+			}
+			if c.rwDB != nil {
+				_ = c.rwDB.Close()
+			}
+
+			return err
+		}
+	}
+
 	if c.roDB != nil && c.roDB != c.rwDB {
 		if err := c.roDB.Close(); err != nil {
 			_ = c.rwDB.Close()
@@ -314,6 +387,89 @@ func (c *mysqlCache) Close() error {
 	}
 
 	return nil
+}
+
+func (c *mysqlCache) acquireSyncLock(ctx context.Context) (func() error, error) {
+	if c == nil || c.rwDB == nil {
+		return nil, fmt.Errorf("mlwh: mysql cache not configured")
+	}
+
+	lockDB := c.lockDB
+	if lockDB == nil {
+		lockDB = c.rwDB
+	}
+
+	lockConn, err := lockDB.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: acquire mysql cache lock connection: %w", ErrUpstreamImpaired, err)
+	}
+
+	lockName := mysqlSyncLockName(c.lockDSN)
+	var gotLock int
+	err = lockConn.QueryRowContext(ctx, `SELECT GET_LOCK(?, 0)`, lockName).Scan(&gotLock)
+	if err != nil {
+		_ = lockConn.Close()
+
+		return nil, fmt.Errorf("%w: acquire mysql cache lock: %w", ErrUpstreamImpaired, err)
+	}
+	if gotLock != 1 {
+		_ = lockConn.Close()
+
+		return nil, ErrSyncAlreadyRunning
+	}
+
+	return func() error {
+		var released int
+
+		releaseErr := lockConn.QueryRowContext(context.Background(), `SELECT RELEASE_LOCK(?)`, lockName).Scan(&released)
+		closeErr := lockConn.Close()
+		if releaseErr != nil {
+			return fmt.Errorf("%w: release mysql cache lock: %w", ErrUpstreamImpaired, releaseErr)
+		}
+		if released != 1 {
+			return fmt.Errorf("%w: release mysql cache lock", ErrUpstreamImpaired)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("%w: close mysql cache lock connection: %w", ErrUpstreamImpaired, closeErr)
+		}
+
+		return nil
+	}, nil
+}
+
+func mysqlSyncLockName(dsn string) string {
+	trimmed := strings.TrimSpace(dsn)
+	if parsed, err := mysql.ParseDSN(trimmed); err == nil {
+		trimmed = normalizedMySQLLockScope(parsed)
+	}
+
+	sum := sha1.Sum([]byte(trimmed))
+
+	return mysqlSyncLockNamePrefix + hex.EncodeToString(sum[:])[:16]
+}
+
+func normalizedMySQLLockScope(parsed *mysql.Config) string {
+	if parsed == nil {
+		return ""
+	}
+
+	return parsed.Net + "|" + parsed.Addr + "|" + parsed.DBName
+}
+
+func ensureSQLiteSyncLockRow(ctx context.Context, execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}) error {
+	if _, err := execer.ExecContext(ctx, `INSERT OR IGNORE INTO sync_lock(id) VALUES (1)`); err != nil {
+		return fmt.Errorf("mlwh: seed sqlite sync_lock row: %w", err)
+	}
+
+	return nil
+}
+
+func isSQLiteSyncLockBusy(err error) bool {
+	message := strings.ToLower(err.Error())
+
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "database table is locked")
 }
 
 func mysqlReadOnlyDSN(dsn string) (string, error) {
@@ -548,6 +704,67 @@ func applySchema(ctx context.Context, db *sql.DB, dialect string) error {
 	return nil
 }
 
+func repairDroppedSampleMirrorIndexes(ctx context.Context, db *sql.DB, dialect string) error {
+	var (
+		highWaterRaw   string
+		indexesDropped int
+	)
+
+	err := db.QueryRowContext(
+		ctx,
+		`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`,
+		syncTableSample,
+	).Scan(&highWaterRaw, &indexesDropped)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("mlwh: query sample_mirror dropped-index recovery state: %w", err)
+	}
+	if indexesDropped != 1 {
+		return nil
+	}
+
+	highWater, err := parseSyncTimeString(highWaterRaw)
+	if err != nil {
+		return fmt.Errorf("mlwh: parse sample_mirror dropped-index recovery high_water: %w", err)
+	}
+	if highWater.IsZero() {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mlwh: begin sample_mirror dropped-index recovery: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if dialect == "sqlite" {
+		if _, err = tx.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
+			return fmt.Errorf("mlwh: configure sqlite dropped-index recovery: %w", err)
+		}
+	}
+	if err = createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE sync_state SET indexes_dropped = 0 WHERE table_name = ?`, syncTableSample); err != nil {
+		return fmt.Errorf("mlwh: clear sample_mirror dropped-index recovery flag: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("mlwh: commit sample_mirror dropped-index recovery: %w", err)
+	}
+
+	committed = true
+
+	return nil
+}
+
 func schemaStatementsForDialect(ctx context.Context, db *sql.DB, dialect string) ([]string, error) {
 	if dialect != "mysql" {
 		return loadSchema(dialect)
@@ -633,7 +850,15 @@ func sqliteWritableDSN(path string) string {
 		return path
 	}
 
-	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)", filepath.ToSlash(path))
+	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", filepath.ToSlash(path))
+}
+
+func sqliteLockDSN(path string) string {
+	if path == ":memory:" {
+		return ""
+	}
+
+	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(0)", filepath.ToSlash(path))
 }
 
 func sqliteReadOnlyDSN(path string) string {

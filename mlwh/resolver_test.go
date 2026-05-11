@@ -144,69 +144,20 @@ func TestResolveLibraryReturnsCacheMatchWithoutMLWHQuery(t *testing.T) {
 	})
 }
 
-func TestResolveLibraryColdCacheSyncsBeforeLookup(t *testing.T) {
-	convey.Convey("Given a cold cache and a library row inserted only during sync", t, func() {
+func TestResolveLibraryColdCacheReturnsNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache without a flowcell sync state row", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		syncEntered := make(chan struct{}, 1)
-		releaseSync := make(chan struct{})
-		resultCh := make(chan Match, 1)
-		errCh := make(chan error, 1)
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		client := &Client{
-			cache:       cache,
-			cacheReader: cacheReadDB(cache),
-			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				if len(tables) != 1 || tables[0] != syncTableIseqFlowcell {
-					return errors.New("unexpected sync tables")
-				}
+		match, err := client.ResolveLibrary(context.Background(), "Bespoke")
 
-				_, err := tx.ExecContext(ctx, `INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "Bespoke", 61, "study-61")
-				if err != nil {
-					return err
-				}
-
-				syncEntered <- struct{}{}
-				<-releaseSync
-
-				return nil
-			},
-		}
-
-		go func() {
-			match, err := client.ResolveLibrary(context.Background(), "Bespoke")
-			if err != nil {
-				errCh <- err
-				return
-			}
-
-			resultCh <- match
-		}()
-
-		<-syncEntered
-
-		select {
-		case err := <-errCh:
-			convey.So(err, convey.ShouldBeNil)
-		case <-resultCh:
-			convey.So("resolve returned before sync commit", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
-		}
-
-		close(releaseSync)
-
-		select {
-		case err := <-errCh:
-			convey.So(err, convey.ShouldBeNil)
-		case match := <-resultCh:
-			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
-			convey.So(match.Canonical, convey.ShouldEqual, "Bespoke")
-			convey.So(match.Library, convey.ShouldNotBeNil)
-			convey.So(match.Library.PipelineIDLims, convey.ShouldEqual, "Bespoke")
-		case <-time.After(time.Second):
-			convey.So("resolve did not complete", convey.ShouldEqual, "")
-		}
+		convey.Convey("when ResolveLibrary executes, then it returns the never-synced sentinel instead of syncing", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(match, convey.ShouldResemble, Match{})
+		})
 	})
 }
 
@@ -220,22 +171,19 @@ func TestResolveLibraryReturnsNotFoundOnWarmCacheMiss(t *testing.T) {
 		client := &Client{
 			cache:       cache,
 			cacheReader: cacheReadDB(cache),
-			syncRunner: func(context.Context, *sql.Tx, []string) error {
-				return nil
-			},
 		}
 
 		match, err := client.ResolveLibrary(context.Background(), "Unknown")
 
-		convey.Convey("when ResolveLibrary executes, then it refreshes once and still returns ErrNotFound", func() {
+		convey.Convey("when ResolveLibrary executes, then it returns ErrNotFound without syncing again", func() {
 			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 			convey.So(match, convey.ShouldResemble, Match{})
 		})
 	})
 }
 
-func TestResolveLibraryWarmCacheMissResyncsOnce(t *testing.T) {
-	convey.Convey("Given a warm cache miss where a refresh repopulates the requested library", t, func() {
+func TestResolveLibraryWarmCacheMissDoesNotResync(t *testing.T) {
+	convey.Convey("Given a warm cache miss and a configured sync runner", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -247,38 +195,32 @@ func TestResolveLibraryWarmCacheMissResyncsOnce(t *testing.T) {
 			cacheReader: cacheReadDB(cache),
 			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
 				syncCalls++
-				convey.So(tables, convey.ShouldResemble, []string{syncTableIseqFlowcell})
-
-				_, err := tx.ExecContext(ctx, `INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "Chromium single cell 3 prime v3", 71, "6568")
-				return err
+				return nil
 			},
 		}
 
 		match, err := client.ResolveLibrary(context.Background(), "Chromium single cell 3 prime v3")
 
-		convey.Convey("when ResolveLibrary executes, then it refreshes the flowcell cache once and returns the match", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(syncCalls, convey.ShouldEqual, 1)
-			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
-			convey.So(match.Canonical, convey.ShouldEqual, "Chromium single cell 3 prime v3")
-			convey.So(match.Library, convey.ShouldNotBeNil)
-			convey.So(match.Library.PipelineIDLims, convey.ShouldEqual, "Chromium single cell 3 prime v3")
+		convey.Convey("when ResolveLibrary executes, then it returns ErrNotFound and does not resync", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(syncCalls, convey.ShouldEqual, 0)
+			convey.So(match, convey.ShouldResemble, Match{})
 		})
 	})
 }
 
-func TestResolveLibraryDocCommentMentionsColdCacheGuidance(t *testing.T) {
+func TestResolveLibraryDocCommentDoesNotMentionColdCacheSync(t *testing.T) {
 	convey.Convey("Given the resolver source file", t, func() {
 		resolverPath := "resolver.go"
 
 		content, err := os.ReadFile(resolverPath)
 
-		convey.Convey("when the ResolveLibrary doc comment is read, then it mentions first call and wa mlwh sync", func() {
+		convey.Convey("when the ResolveLibrary doc comment is read, then it does not mention first-call sync guidance", func() {
 			convey.So(err, convey.ShouldBeNil)
 			text := string(content)
 			match := regexp.MustCompile(`(?s)// ResolveLibrary.*?func \(c \*Client\) ResolveLibrary`).FindString(text)
-			convey.So(match, convey.ShouldContainSubstring, "first call")
-			convey.So(match, convey.ShouldContainSubstring, "wa mlwh sync")
+			convey.So(match, convey.ShouldNotContainSubstring, "first call")
+			convey.So(match, convey.ShouldNotContainSubstring, "wa mlwh sync")
 		})
 	})
 }

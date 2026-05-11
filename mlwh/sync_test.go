@@ -29,16 +29,37 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	"github.com/smartystreets/goconvey/convey"
+	modernsqlite "modernc.org/sqlite"
 )
+
+func syncSelectedTablesForTest(ctx context.Context, client *Client, tables ...string) ([]SyncReport, error) {
+	reports := make([]SyncReport, 0, len(tables))
+	for _, table := range tables {
+		report, err := client.syncTable(ctx, table)
+		if err != nil {
+			return nil, err
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
 
 var sampleSyncSourceColumns = []string{
 	"id_sample_tmp",
@@ -53,13 +74,9 @@ var sampleSyncSourceColumns = []string{
 	"taxon_id",
 	"common_name",
 	"description",
-	"id_study_lims",
 	"last_updated",
 }
 
-// sampleSyncSourceQueryForTest mirrors the upstream sync.go SELECT against MLWH and
-// must use the iseq_flowcell-correlated id_study_lims subquery because the
-// real `sample` table has no `id_study_lims` column.
 var sampleSyncSourceQueryForTest = sampleSyncSourceQuery()
 
 var studySyncSourceColumns = []string{
@@ -89,6 +106,484 @@ var studySyncSourceColumns = []string{
 
 var studySyncSourceQueryForTest = `SELECT ` + studySelectColumns + `, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`
 
+type syncStartRecord struct {
+	At          time.Time
+	GoroutineID int64
+}
+
+type syncTestQueryResult struct {
+	rows            [][]driver.Value
+	queryErr        error
+	finalErr        error
+	firstRowDelay   time.Duration
+	blockBeforeRow2 <-chan struct{}
+	afterFirstRow   func()
+	startSink       func(syncStartRecord)
+	querySink       func(string, []driver.NamedValue)
+}
+
+type syncTestSourcePlan struct {
+	columns         []string
+	rows            [][]driver.Value
+	queryErr        error
+	finalErr        error
+	firstRowDelay   time.Duration
+	blockBeforeRow2 <-chan struct{}
+	afterFirstRow   func()
+	startSink       func(syncStartRecord)
+	querySink       func(string, []driver.NamedValue)
+	queryResults    []syncTestQueryResult
+}
+
+type syncTestDriverState struct {
+	mu         sync.Mutex
+	plans      map[string]syncTestSourcePlan
+	queryCount map[string]int
+}
+
+type syncTestDriver struct{}
+type syncTestConn struct{ state *syncTestDriverState }
+type syncTestRows struct {
+	columns []string
+	plan    syncTestQueryResult
+	index   int
+	started bool
+}
+
+var (
+	syncTestDriverOnce sync.Once
+	syncTestDriverMu   sync.Mutex
+	syncTestDriverSeq  int
+	syncTestDrivers    = map[string]*syncTestDriverState{}
+)
+
+func TestClientSyncFiveTableParallelReports(t *testing.T) {
+	convey.Convey("B1.1: Given deterministic rows for each supported table, when Client.Sync runs, then it returns five reports with the inserted counts for each table", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		t1 := time.Date(2026, time.May, 11, 9, 0, 0, 0, time.UTC)
+		t2 := t1.Add(time.Minute)
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows: [][]driver.Value{
+					{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", "study-a", formatSyncTime(t1)},
+					{int64(2), "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", int64(9606), "human", "desc-b", "study-b", formatSyncTime(t2)},
+				},
+			},
+			syncTableStudy: {
+				columns: studySyncSourceColumns,
+				rows: [][]driver.Value{
+					studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", t1),
+				},
+			},
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(t1)}},
+			},
+			syncTableIseqProductMetrics: {
+				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
+				rows:    [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(t2)}},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 5)
+
+		byTable := make(map[string]SyncReport, len(reports))
+		for _, report := range reports {
+			byTable[report.Table] = report
+		}
+
+		convey.So(byTable[syncTableSample].Inserted, convey.ShouldEqual, 2)
+		convey.So(byTable[syncTableStudy].Inserted, convey.ShouldEqual, 1)
+		convey.So(byTable[syncTableIseqFlowcell].Inserted, convey.ShouldEqual, 1)
+		convey.So(byTable[syncTableIseqProductMetrics].Inserted, convey.ShouldEqual, 1)
+		convey.So(byTable[syncTableSeqProductIRODSLocations].Inserted, convey.ShouldEqual, 1)
+
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 2)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 1)
+	})
+}
+
+func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
+	convey.Convey("B1.2: Given one failing table source, when Client.Sync runs, then it returns a joined error and the other four tables still commit", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		t1 := time.Date(2026, time.May, 11, 10, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", "study-a", formatSyncTime(t1)}},
+			},
+			syncTableStudy: {
+				queryErr: fmt.Errorf("forced study failure"),
+			},
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(t1)}},
+			},
+			syncTableIseqProductMetrics: {
+				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
+				rows:    [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(t1)}},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, syncTableStudy)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "forced study failure")
+		convey.So(reports, convey.ShouldHaveLength, 4)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 1)
+	})
+}
+
+func TestClientSyncStartsEachTableWithinOverlapWindow(t *testing.T) {
+	convey.Convey("B1.3: Given an instrumented source, when Client.Sync runs, then each table starts within 100ms and on a distinct goroutine", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		starts := struct {
+			mu      sync.Mutex
+			records map[string]syncStartRecord
+		}{records: make(map[string]syncStartRecord, len(supportedSyncTables))}
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: syncSingleRowSourcePlan(sampleSyncSourceColumns, []driver.Value{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
+				starts.mu.Lock()
+				starts.records[syncTableSample] = record
+				starts.mu.Unlock()
+			}),
+			syncTableStudy: syncSingleRowSourcePlan(studySyncSourceColumns, studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", time.Now().UTC()), func(record syncStartRecord) {
+				starts.mu.Lock()
+				starts.records[syncTableStudy] = record
+				starts.mu.Unlock()
+			}),
+			syncTableIseqFlowcell: syncSingleRowSourcePlan([]string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"}, []driver.Value{"Standard", int64(1), "5001", formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
+				starts.mu.Lock()
+				starts.records[syncTableIseqFlowcell] = record
+				starts.mu.Unlock()
+			}),
+			syncTableIseqProductMetrics: syncSingleRowSourcePlan([]string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"}, []driver.Value{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
+				starts.mu.Lock()
+				starts.records[syncTableIseqProductMetrics] = record
+				starts.mu.Unlock()
+			}),
+			syncTableSeqProductIRODSLocations: syncSingleRowSourcePlan([]string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"}, []driver.Value{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
+				starts.mu.Lock()
+				starts.records[syncTableSeqProductIRODSLocations] = record
+				starts.mu.Unlock()
+			}),
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		_, err := client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+		starts.mu.Lock()
+		defer starts.mu.Unlock()
+		convey.So(starts.records, convey.ShouldHaveLength, 5)
+
+		var first time.Time
+		goroutines := make(map[int64]struct{}, len(starts.records))
+		for _, record := range starts.records {
+			if first.IsZero() || record.At.Before(first) {
+				first = record.At
+			}
+			goroutines[record.GoroutineID] = struct{}{}
+		}
+
+		for _, record := range starts.records {
+			convey.So(record.At.Sub(first) <= 100*time.Millisecond, convey.ShouldBeTrue)
+		}
+		convey.So(goroutines, convey.ShouldHaveLength, 5)
+	})
+}
+
+func TestClientSyncSampleBatchesRowsIntoThreeTransactions(t *testing.T) {
+	convey.Convey("B2.1: Given 2500 sample rows, when sync runs, then it commits exactly three 1000-row batches and reports 2500 inserts", t, func() {
+		cache, commitCounter := openCountingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		rows := sampleSyncRowsForRange(1, 2500, time.Date(2026, time.May, 11, 12, 0, 0, 0, time.UTC), nil)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    rows,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		report, sawRows, err := client.syncTableData(context.Background(), syncTableSample, syncStateRecord{})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sawRows, convey.ShouldBeTrue)
+		convey.So(report.Table, convey.ShouldEqual, syncTableSample)
+		convey.So(report.Inserted, convey.ShouldEqual, 2500)
+		convey.So(report.Updated, convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 2500)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM donor_samples`), convey.ShouldEqual, 2500)
+		convey.So(commitCounter.Count(), convey.ShouldEqual, 3)
+	})
+}
+
+func TestClientSyncSampleReplayCountsRowsAsUpdates(t *testing.T) {
+	convey.Convey("B2.2: Given the same 2500 sample rows replayed, when sync runs again, then it reports 2500 updates and no inserts", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		rows := sampleSyncRowsForRange(1, 2500, time.Date(2026, time.May, 11, 12, 30, 0, 0, time.UTC), nil)
+
+		firstSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    rows,
+			},
+		})
+		defer func() { _ = firstSource.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: firstSource}
+
+		firstReport, sawRows, err := client.syncTableData(context.Background(), syncTableSample, syncStateRecord{})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sawRows, convey.ShouldBeTrue)
+		convey.So(firstReport.Inserted, convey.ShouldEqual, 2500)
+
+		secondSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    rows,
+			},
+		})
+		defer func() { _ = secondSource.Close() }()
+
+		client.syncSource = secondSource
+
+		secondReport, sawRows, err := client.syncTableData(context.Background(), syncTableSample, syncStateRecord{})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sawRows, convey.ShouldBeTrue)
+		convey.So(secondReport.Inserted, convey.ShouldEqual, 0)
+		convey.So(secondReport.Updated, convey.ShouldEqual, 2500)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 2500)
+	})
+}
+
+func TestClientSyncSampleUpsertIsLastWriteWinsWithinBatch(t *testing.T) {
+	convey.Convey("B2.3: Given duplicate sample keys within one batch, when sync runs, then the last row wins", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 13, 0, 0, 0, time.UTC)
+		rows := sampleSyncRowsForRange(1, 250, base, nil)
+		duplicate := sampleSyncRowValues(100, base.Add(100*time.Second), sampleSyncRowOverride{
+			IDSampleLims:   "Y",
+			UUIDSampleLims: "sample-uuid-100-y",
+			Name:           "sample-100-y",
+			DonorID:        "donor-100-y",
+		})
+		rows = append(rows[:100], append([][]driver.Value{duplicate}, rows[100:]...)...)
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    rows,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		_, sawRows, err := client.syncTableData(context.Background(), syncTableSample, syncStateRecord{})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sawRows, convey.ShouldBeTrue)
+
+		var idSampleLims string
+		convey.So(cache.DB().QueryRow(`SELECT id_sample_lims FROM sample_mirror WHERE id_sample_tmp = ?`, 100).Scan(&idSampleLims), convey.ShouldBeNil)
+		convey.So(idSampleLims, convey.ShouldEqual, "Y")
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 250)
+	})
+}
+
+func TestClientSyncLibrarySamplesUpsertIsIdempotentAcrossDuplicateTriples(t *testing.T) {
+	convey.Convey("B2.4: Given duplicate library_samples triples, when sync runs twice, then only one row is stored and the replay does not raise a unique error", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 13, 30, 0, 0, time.UTC)
+		rows := [][]driver.Value{
+			{"Standard", int64(101), "study-101", formatSyncTime(base)},
+			{"Standard", int64(101), "study-101", formatSyncTime(base.Add(time.Second))},
+		}
+
+		firstSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    rows,
+			},
+		})
+		defer func() { _ = firstSource.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: firstSource}
+
+		firstReport, sawRows, err := client.syncTableData(context.Background(), syncTableIseqFlowcell, syncStateRecord{})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sawRows, convey.ShouldBeTrue)
+		convey.So(firstReport.Inserted, convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples WHERE pipeline_id_lims = ? AND id_sample_tmp = ? AND id_study_lims = ?`, "Standard", 101, "study-101"), convey.ShouldEqual, 1)
+
+		secondSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    rows,
+			},
+		})
+		defer func() { _ = secondSource.Close() }()
+
+		client.syncSource = secondSource
+
+		secondReport, sawRows, err := client.syncTableData(context.Background(), syncTableIseqFlowcell, syncStateRecord{})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sawRows, convey.ShouldBeTrue)
+		convey.So(secondReport.Inserted, convey.ShouldEqual, 0)
+		convey.So(secondReport.Updated, convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples WHERE pipeline_id_lims = ? AND id_sample_tmp = ? AND id_study_lims = ?`, "Standard", 101, "study-101"), convey.ShouldEqual, 1)
+	})
+}
+
+func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
+	convey.Convey("B1.6: Given sources that block before row two, when Client.Sync runs, then each table consumes row one before the producer finishes even though the partial batch is not committed yet", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		releaseRow2 := make(chan struct{})
+		firstRowSeen := make(chan string, len(supportedSyncTables))
+		now := formatSyncTime(time.Now().UTC())
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:         sampleSyncSourceColumns,
+				rows:            [][]driver.Value{{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", "study-a", now}, {int64(2), "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", int64(9606), "human", "desc-b", "study-b", now}},
+				blockBeforeRow2: releaseRow2,
+				afterFirstRow:   func() { firstRowSeen <- syncTableSample },
+			},
+			syncTableStudy: {
+				columns:         studySyncSourceColumns,
+				rows:            [][]driver.Value{studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", time.Now().UTC()), studyRowValues(11, "SQSCP", "5002", "study-uuid-2", "study-b", "acc-study-b", time.Now().UTC())},
+				blockBeforeRow2: releaseRow2,
+				afterFirstRow:   func() { firstRowSeen <- syncTableStudy },
+			},
+			syncTableIseqFlowcell: {
+				columns:         []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:            [][]driver.Value{{"Standard", int64(1), "5001", now}, {"Standard", int64(2), "5002", now}},
+				blockBeforeRow2: releaseRow2,
+				afterFirstRow:   func() { firstRowSeen <- syncTableIseqFlowcell },
+			},
+			syncTableIseqProductMetrics: {
+				columns:         []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
+				rows:            [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), now}, {int64(1002), int64(2002), int64(9002), int64(2), int64(1), int64(2), "5002", int64(1), int64(1), int64(1), now}},
+				blockBeforeRow2: releaseRow2,
+				afterFirstRow:   func() { firstRowSeen <- syncTableIseqProductMetrics },
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns:         []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:            [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file-1.cram", int64(1), "5001", now}, {int64(1002), "/seq", "run/2", "/seq/run", "file-2.cram", int64(2), "5002", now}},
+				blockBeforeRow2: releaseRow2,
+				afterFirstRow:   func() { firstRowSeen <- syncTableSeqProductIRODSLocations },
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := client.Sync(context.Background())
+			errCh <- err
+		}()
+
+		seen := make(map[string]struct{}, len(supportedSyncTables))
+		deadline := time.After(2 * time.Second)
+		for len(seen) < len(supportedSyncTables) {
+			select {
+			case table := <-firstRowSeen:
+				seen[table] = struct{}{}
+			case <-deadline:
+				t.Fatal("expected each table to consume its first row before producer release")
+			}
+		}
+
+		select {
+		case err := <-errCh:
+			convey.So(err, convey.ShouldBeNil)
+			convey.So("sync completed before second rows were released", convey.ShouldEqual, "")
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 0)
+
+		close(releaseRow2)
+		convey.So(<-errCh, convey.ShouldBeNil)
+	})
+}
+
+func TestResolveDSNForSyncForcesStreamingSafeOptions(t *testing.T) {
+	convey.Convey("B1.6: Given a source DSN with non-streaming options enabled, when ResolveDSN runs, then it forces explicit streaming-safe driver options", t, func() {
+		resolved, err := ResolveDSN(
+			"mlwh_user@tcp(mlwh-db-ro:3435)/mlwarehouse?interpolateParams=true&multiStatements=true",
+			"secret",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(strings.Contains(resolved, "multiStatements=false"), convey.ShouldBeTrue)
+		convey.So(strings.Contains(resolved, "interpolateParams=false"), convey.ShouldBeTrue)
+		convey.So(strings.Contains(resolved, "interpolateParams=true"), convey.ShouldBeFalse)
+
+		cfg, parseErr := mysql.ParseDSN(resolved)
+		convey.So(parseErr, convey.ShouldBeNil)
+		convey.So(cfg.Passwd, convey.ShouldEqual, "secret")
+		convey.So(cfg.MultiStatements, convey.ShouldBeFalse)
+		convey.So(cfg.InterpolateParams, convey.ShouldBeFalse)
+	})
+}
+
 func TestClientSyncSampleColdCachePopulatesMirrorsAndWatermark(t *testing.T) {
 	convey.Convey("Given a cold cache and three SQSCP sample rows", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -105,13 +600,13 @@ func TestClientSyncSampleColdCachePopulatesMirrorsAndWatermark(t *testing.T) {
 		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(time.Time{})).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
-				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", 9606, "human", "desc-a", "study-a", formatSyncTime(t1)).
-				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", 9606, "human", "desc-b", "study-b", formatSyncTime(t2)).
-				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", "study-c", formatSyncTime(t3)))
+				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", 9606, "human", "desc-a", formatSyncTime(t1)).
+				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", 9606, "human", "desc-b", formatSyncTime(t2)).
+				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", formatSyncTime(t3)))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		reports, err := client.Sync(context.Background(), "sample")
+		reports, err := syncSelectedTablesForTest(context.Background(), client, "sample")
 
 		convey.Convey("when Sync runs, then it mirrors the rows, populates donor_samples and advances the watermark", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -151,12 +646,12 @@ func TestClientSyncSampleColdCacheToleratesNullableTextFields(t *testing.T) {
 		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(time.Time{})).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
-				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", nil, "acc-a", "donor-a", 9606, "human", "desc-a", "study-a", formatSyncTime(timestamp)).
-				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", nil, nil, nil, nil, nil, "study-b", formatSyncTime(timestamp.Add(time.Minute))))
+				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", nil, "acc-a", "donor-a", 9606, "human", "desc-a", formatSyncTime(timestamp)).
+				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", nil, nil, nil, nil, nil, formatSyncTime(timestamp.Add(time.Minute))))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		reports, err := client.Sync(context.Background(), "sample")
+		reports, err := syncSelectedTablesForTest(context.Background(), client, "sample")
 
 		convey.Convey("when Sync runs, then it stores empty strings for NULL text columns instead of failing", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -199,11 +694,11 @@ func TestClientSyncSampleWarmCacheUsesHighWaterFilter(t *testing.T) {
 		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(t2)).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
-				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", "study-c", formatSyncTime(t3)))
+				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", formatSyncTime(t3)))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		reports, err := client.Sync(context.Background(), "sample")
+		reports, err := syncSelectedTablesForTest(context.Background(), client, "sample")
 
 		convey.Convey("when Sync runs, then it queries from the saved high water and upserts only the new row", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -241,12 +736,12 @@ func TestClientSyncSampleRollbackLeavesMirrorAndWatermarkUnchanged(t *testing.T)
 		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(t1)).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
-				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", 9606, "human", "desc-b", "study-b", formatSyncTime(t2)).
-				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", "study-c", formatSyncTime(t3)))
+				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", 9606, "human", "desc-b", formatSyncTime(t2)).
+				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", formatSyncTime(t3)))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		_, err = client.Sync(context.Background(), "sample")
+		_, err = syncSelectedTablesForTest(context.Background(), client, "sample")
 
 		convey.Convey("when the transaction rolls back, then the prior mirror rows and watermark remain unchanged", func() {
 			convey.So(err, convey.ShouldNotBeNil)
@@ -280,7 +775,7 @@ func TestClientSyncIseqFlowcellPopulatesDistinctLibrarySamples(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		reports, err := client.Sync(context.Background(), "iseq_flowcell")
+		reports, err := syncSelectedTablesForTest(context.Background(), client, "iseq_flowcell")
 
 		convey.Convey("when Sync runs, then library_samples stores one row per distinct triple", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -327,7 +822,7 @@ func TestClientSyncIseqFlowcellSkipsNullLibraryTypes(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		reports, err := client.Sync(context.Background(), "iseq_flowcell")
+		reports, err := syncSelectedTablesForTest(context.Background(), client, "iseq_flowcell")
 
 		convey.Convey("when Sync runs, then it skips the NULL library row and still advances the watermark", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -339,6 +834,49 @@ func TestClientSyncIseqFlowcellSkipsNullLibraryTypes(t *testing.T) {
 			convey.So(readSyncHighWater(t, cache.DB(), "iseq_flowcell"), convey.ShouldHappenOnOrBetween, t2, t2)
 			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
+	})
+}
+
+func TestClientSyncConstraintViolationNamesOffendingLibrarySampleRow(t *testing.T) {
+	convey.Convey("B7.4: Given a forced sync batch row with an empty id_study_lims", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		t1 := time.Date(2026, time.May, 11, 20, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    nil,
+			},
+			syncTableStudy: {
+				columns: studySyncSourceColumns,
+				rows:    nil,
+			},
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{"Standard", int64(31), "", formatSyncTime(t1)}},
+			},
+			syncTableIseqProductMetrics: {
+				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
+				rows:    nil,
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    nil,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, syncTableIseqFlowcell)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "(Standard, 31)")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "id_study_lims")
+		convey.So(reports, convey.ShouldHaveLength, 4)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 0)
 	})
 }
 
@@ -362,7 +900,7 @@ func TestClientSyncStudyColdCachePopulatesMirrorAndWatermark(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		reports, err := client.Sync(context.Background(), "study")
+		reports, err := syncSelectedTablesForTest(context.Background(), client, "study")
 
 		convey.Convey("when Sync runs, then it mirrors the study rows and stores the latest watermark", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -402,7 +940,7 @@ func TestClientSyncStudySkipsNonSQSCPSourceRows(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		_, err = client.Sync(context.Background(), "study")
+		_, err = syncSelectedTablesForTest(context.Background(), client, "study")
 
 		convey.Convey("when Sync runs, then only SQSCP rows are written to study_mirror", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -429,16 +967,21 @@ func TestClientSyncWritesSyncStateAfterCommit(t *testing.T) {
 
 		t1 := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 		t2 := t1.Add(10 * time.Minute)
+		cursor := formatSyncTime(t2) + "\t2"
+		bulkArgs := append(studyMirrorArgs(1, "SQSCP", "201", "study-uuid-1", "study-a", "acc-a", t1), studyMirrorArgs(2, "SQSCP", "202", "study-uuid-2", "study-b", "acc-b", t2)...)
 
 		cacheMock.MatchExpectationsInOrder(true)
+		cacheMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).WithArgs("study").WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
 		cacheMock.ExpectBegin()
-		cacheMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water FROM sync_state WHERE table_name = ?`)).WithArgs("study").WillReturnRows(sqlmock.NewRows([]string{"high_water"}))
-		cacheMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM study_mirror WHERE id_study_tmp = ? LIMIT 1`)).WithArgs(int64(1)).WillReturnRows(sqlmock.NewRows([]string{"found"}))
-		cacheMock.ExpectExec(`INSERT INTO study_mirror`).WithArgs(studyMirrorArgs(1, "SQSCP", "201", "study-uuid-1", "study-a", "acc-a", t1)...).WillReturnResult(sqlmock.NewResult(1, 1))
-		cacheMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM study_mirror WHERE id_study_tmp = ? LIMIT 1`)).WithArgs(int64(2)).WillReturnRows(sqlmock.NewRows([]string{"found"}))
-		cacheMock.ExpectExec(`INSERT INTO study_mirror`).WithArgs(studyMirrorArgs(2, "SQSCP", "202", "study-uuid-2", "study-b", "acc-b", t2)...).WillReturnResult(sqlmock.NewResult(1, 1))
+		cacheMock.ExpectExec(regexp.QuoteMeta(`PRAGMA busy_timeout = 5000`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		cacheMock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM study_mirror WHERE id_study_tmp IN (?, ?)`)).WithArgs(int64(1), int64(2)).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+		cacheMock.ExpectExec(`INSERT INTO study_mirror`).WithArgs(bulkArgs...).WillReturnResult(sqlmock.NewResult(1, 2))
+		cacheMock.ExpectExec(`INSERT INTO sync_state`).WithArgs("study", formatSyncTime(t2), sqlmock.AnyArg(), cursor, 0).WillReturnResult(sqlmock.NewResult(1, 1))
 		cacheMock.ExpectCommit()
-		cacheMock.ExpectExec(`INSERT INTO sync_state`).WithArgs("study", formatSyncTime(t2), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+		cacheMock.ExpectBegin()
+		cacheMock.ExpectExec(regexp.QuoteMeta(`PRAGMA busy_timeout = 5000`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		cacheMock.ExpectExec(`INSERT INTO sync_state`).WithArgs("study", formatSyncTime(t2), sqlmock.AnyArg(), nil, 0).WillReturnResult(sqlmock.NewResult(1, 1))
+		cacheMock.ExpectCommit()
 
 		sourceMock.ExpectQuery(regexp.QuoteMeta(studySyncSourceQueryForTest)).
 			WithArgs(formatSyncTime(time.Time{})).
@@ -448,9 +991,9 @@ func TestClientSyncWritesSyncStateAfterCommit(t *testing.T) {
 
 		client := &Client{cache: &sqliteCache{rwDB: cacheDB, roDB: cacheDB}, syncSource: sourceDB}
 
-		_, err = client.Sync(context.Background(), "study")
+		_, err = syncSelectedTablesForTest(context.Background(), client, "study")
 
-		convey.Convey("when Sync succeeds, then commit happens before sync_state is updated", func() {
+		convey.Convey("when Sync succeeds, then each batch writes sync_state in the same transaction and clears the cursor at end-of-stream", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(cacheMock.ExpectationsWereMet(), convey.ShouldBeNil)
 			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
@@ -458,110 +1001,1205 @@ func TestClientSyncWritesSyncStateAfterCommit(t *testing.T) {
 	})
 }
 
-func studyMirrorArgs(id int64, idLims, idStudyLims, uuidStudyLims, name, accession string, lastUpdated time.Time) []driver.Value {
-	return studyRowValues(id, idLims, idStudyLims, uuidStudyLims, name, accession, lastUpdated)
-}
-
-func TestResolveLibraryColdCacheTriggersSyncBeforeLookup(t *testing.T) {
-	convey.Convey("Given a cold cache and a library row materialized only by sync", t, func() {
+func TestClientSyncSampleClearsResumeCursorAtEndOfStream(t *testing.T) {
+	convey.Convey("B3.1: Given 1500 sample rows and a clean end-of-stream", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		syncEntered := make(chan struct{}, 1)
-		releaseSync := make(chan struct{})
-		resultCh := make(chan Match, 1)
-		errCh := make(chan error, 1)
-
-		client := &Client{
-			cache:       cache,
-			cacheReader: cacheReadDB(cache),
-			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				if len(tables) != 1 || tables[0] != syncTableIseqFlowcell {
-					return fmt.Errorf("unexpected sync tables: %v", tables)
-				}
-
-				_, err := tx.ExecContext(ctx, `INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "Standard", 11, "study-a")
-				if err != nil {
-					return err
-				}
-
-				syncEntered <- struct{}{}
-				<-releaseSync
-
-				return nil
+		base := time.Date(2026, time.May, 11, 12, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    sampleSyncRowsForRange(1, 1500, base, nil),
 			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 1500)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableSample), convey.ShouldBeNil)
+		convey.So(readSyncHighWater(t, cache.DB(), syncTableSample), convey.ShouldHappenOnOrBetween, base.Add(1499*time.Second), base.Add(1499*time.Second))
+	})
+}
+
+func TestClientSyncSamplePersistsResumeCursorForLastCommittedBatch(t *testing.T) {
+	convey.Convey("B3.2: Given 1500 sample rows followed by driver.ErrBadConn", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 13, 0, 0, 123456789, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:  sampleSyncSourceColumns,
+				rows:     sampleSyncRowsForRange(1, 1500, base, nil),
+				finalErr: driver.ErrBadConn,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		expectedCursor := formatSyncTime(base.Add(999*time.Second)) + "\t1000"
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, driver.ErrBadConn), convey.ShouldBeTrue)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableSample), convey.ShouldEqual, expectedCursor)
+		convey.So(readSyncHighWater(t, cache.DB(), syncTableSample), convey.ShouldHappenOnOrBetween, base.Add(999*time.Second), base.Add(999*time.Second))
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 1000)
+	})
+}
+
+func TestClientSyncSampleResumesFromStrictKeysetCursor(t *testing.T) {
+	convey.Convey("B3.3: Given a saved sample resume cursor for row 1000", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 14, 0, 0, 987654321, time.UTC)
+		seedRows := sampleSyncRowsForRange(1, 1000, base, nil)
+		for _, row := range seedRows {
+			seedSampleMirrorRow(
+				t,
+				cache.DB(),
+				row[0].(int64),
+				row[4].(string),
+				row[6].(string),
+				row[8].(string),
+				mustParseSyncTime(t, row[12].(string)),
+			)
+			seedDonorSampleRow(t, cache.DB(), row[8].(string), row[0].(int64), "")
 		}
 
-		go func() {
-			match, err := client.ResolveLibrary(context.Background(), "Standard")
-			if err != nil {
-				errCh <- err
-				return
-			}
+		cursorTime := base.Add(999 * time.Second)
+		seedSyncStateWithCursor(t, cache.DB(), syncTableSample, cursorTime, formatSyncTime(cursorTime)+"\t1000")
 
-			resultCh <- match
+		sourceDB, sourceMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = sourceDB.Close() }()
+
+		resumeQuery := sampleSyncSourceQueryFromCursor()
+		sourceMock.ExpectQuery(regexp.QuoteMeta(resumeQuery)).
+			WithArgs(formatSyncTime(cursorTime), formatSyncTime(cursorTime), int64(1000)).
+			WillReturnRows(sampleRowsFromDriverValues(sampleSyncSourceColumns, sampleSyncRowsForRange(1001, 1500, base.Add(1000*time.Second), nil)))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
+
+		reports, runErr := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(runErr, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 500)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 1500)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableSample), convey.ShouldBeNil)
+		convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestClientSyncIseqFlowcellUsesFourColumnResumeCursor(t *testing.T) {
+	convey.Convey("B3.4: Given 2000 iseq_flowcell rows followed by driver.ErrBadConn", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 15, 0, 0, 222333444, time.UTC)
+		rows := flowcellSyncRowsForRange(1, 2000, base)
+		firstSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableIseqFlowcell: {
+				columns:  []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:     rows,
+				finalErr: driver.ErrBadConn,
+			},
+		})
+		defer func() { _ = firstSource.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: firstSource}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqFlowcell)
+
+		expectedTime := base.Add(1999 * time.Second)
+		expectedCursor := formatSyncTime(expectedTime) + "\tpipe-2000\t2000\tstudy-2000"
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, driver.ErrBadConn), convey.ShouldBeTrue)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableIseqFlowcell), convey.ShouldEqual, expectedCursor)
+
+		var capturedQuery string
+		var capturedArgs []driver.NamedValue
+		secondSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    nil,
+				querySink: func(query string, args []driver.NamedValue) {
+					capturedQuery = query
+					capturedArgs = append([]driver.NamedValue(nil), args...)
+				},
+			},
+		})
+		defer func() { _ = secondSource.Close() }()
+
+		client.syncSource = secondSource
+
+		reports, resumeErr := syncSelectedTablesForTest(context.Background(), client, syncTableIseqFlowcell)
+
+		convey.So(resumeErr, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(capturedQuery, convey.ShouldContainSubstring, `(iseq_flowcell.last_updated > ?) OR (iseq_flowcell.last_updated = ? AND (iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp, study.id_study_lims) > (?, ?, ?))`)
+		convey.So(namedValueOrdinals(capturedArgs), convey.ShouldResemble, []any{
+			formatSyncTime(expectedTime),
+			formatSyncTime(expectedTime),
+			"pipe-2000",
+			int64(2000),
+			"study-2000",
+		})
+	})
+}
+
+func TestClientSyncSampleColdLoadSetsIndexesDroppedBeforeFirstBatchSQLite(t *testing.T) {
+	convey.Convey("B4.1: Given an empty SQLite cache and a cold sample sync, when the source blocks after row one, then sample_mirror indexes are dropped and sync_state records indexes_dropped=1 with zero high_water", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		releaseRow2 := make(chan struct{})
+		firstRowSeen := make(chan struct{}, 1)
+		base := time.Date(2026, time.May, 11, 16, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:         sampleSyncSourceColumns,
+				rows:            sampleSyncRowsForRange(1, 2, base, nil),
+				blockBeforeRow2: releaseRow2,
+				afterFirstRow:   func() { firstRowSeen <- struct{}{} },
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+			errCh <- err
 		}()
 
-		<-syncEntered
-
 		select {
-		case err := <-errCh:
-			convey.So(err, convey.ShouldBeNil)
-		case <-resultCh:
-			convey.So("resolve returned before sync commit", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
+		case <-firstRowSeen:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for sample sync to block after the first row")
 		}
 
-		close(releaseSync)
+		statements := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return !strings.HasPrefix(normalizeSQL(statement.Query), "PRAGMA ")
+		})
+		convey.So(statements, convey.ShouldHaveLength, len(sampleMirrorSecondaryIndexes)+1)
+
+		expectedDrops := make([]string, 0, len(sampleMirrorSecondaryIndexes))
+		for _, index := range sampleMirrorSecondaryIndexes {
+			expectedDrops = append(expectedDrops, normalizeSQL(`DROP INDEX IF EXISTS `+index.Name))
+		}
+
+		actualDrops := make([]string, 0, len(sampleMirrorSecondaryIndexes))
+		for _, statement := range statements[:len(sampleMirrorSecondaryIndexes)] {
+			actualDrops = append(actualDrops, normalizeSQL(statement.Query))
+		}
+
+		convey.So(actualDrops, convey.ShouldResemble, expectedDrops)
+		convey.So(normalizeSQL(statements[len(statements)-1].Query), convey.ShouldEqual, normalizeSQL(buildUpsertStatement("sqlite", "sync_state", syncStateColumns, []string{"table_name"})))
+		convey.So(namedValueOrdinals(statements[len(statements)-1].Args[:1]), convey.ShouldResemble, []any{syncTableSample})
+		convey.So(namedValueOrdinals(statements[len(statements)-1].Args[1:2]), convey.ShouldResemble, []any{formatSyncTime(time.Time{})})
+		convey.So(namedValueOrdinals(statements[len(statements)-1].Args[3:4]), convey.ShouldResemble, []any{nil})
+		convey.So(statements[len(statements)-1].Args[4].Value, convey.ShouldEqual, 1)
+		convey.So(namedValueOrdinals(statements[len(statements)-1].Args[2:3])[0], convey.ShouldHaveSameTypeAs, "")
+		convey.So(namedValueOrdinals(statements[len(statements)-1].Args[2:3])[0], convey.ShouldNotEqual, "")
+		convey.So(observer.CommitCount(), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM donor_samples`), convey.ShouldEqual, 0)
+		convey.So(sampleMirrorIndexNames(t, cache.DB(), cache.Dialect()), convey.ShouldHaveLength, 0)
+		state := readSyncStateRow(t, cache.DB(), syncTableSample)
+		convey.So(state.IndexesDropped, convey.ShouldEqual, 1)
+		convey.So(state.HighWater, convey.ShouldEqual, formatSyncTime(time.Time{}))
+
+		close(releaseRow2)
+		convey.So(<-errCh, convey.ShouldBeNil)
+	})
+}
+
+func TestClientSyncSampleColdLoadRecreatesIndexesAfterFinalBatchSQLite(t *testing.T) {
+	convey.Convey("B4.2: Given an empty SQLite cache and a cold sample sync, when sync completes, then the eight sample_mirror indexes are recreated and indexes_dropped is cleared", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 16, 30, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    sampleSyncRowsForRange(1, 2, base, nil),
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(sampleMirrorIndexNames(t, cache.DB(), cache.Dialect()), convey.ShouldResemble, sampleMirrorSecondaryIndexNames())
+		convey.So(readSyncStateRow(t, cache.DB(), syncTableSample).IndexesDropped, convey.ShouldEqual, 0)
+	})
+}
+
+func TestClientSyncSampleIncrementalSyncKeepsIndexesInstalled(t *testing.T) {
+	convey.Convey("B4.3: Given a warm sample cache with non-zero high_water, when incremental sync runs, then sample_mirror indexes are never dropped", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		warmHighWater := time.Date(2026, time.May, 11, 17, 0, 0, 0, time.UTC)
+		seedSyncState(t, cache.DB(), syncTableSample, warmHighWater)
+		observer.Reset()
+
+		releaseRow2 := make(chan struct{})
+		firstRowSeen := make(chan struct{}, 1)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:         sampleSyncSourceColumns,
+				rows:            sampleSyncRowsForRange(1, 2, warmHighWater.Add(time.Second), nil),
+				blockBeforeRow2: releaseRow2,
+				afterFirstRow:   func() { firstRowSeen <- struct{}{} },
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+			errCh <- err
+		}()
 
 		select {
-		case err := <-errCh:
-			convey.So(err, convey.ShouldBeNil)
-		case match := <-resultCh:
-			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
-			convey.So(match.Canonical, convey.ShouldEqual, "Standard")
-			convey.So(match.Library, convey.ShouldNotBeNil)
-			convey.So(match.Library.PipelineIDLims, convey.ShouldEqual, "Standard")
-			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples WHERE pipeline_id_lims = ?`, "Standard"), convey.ShouldEqual, 1)
-		case <-time.After(time.Second):
-			convey.So("resolve did not complete", convey.ShouldEqual, "")
+		case <-firstRowSeen:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for incremental sample sync to block after the first row")
+		}
+
+		convey.So(observer.Statements(), convey.ShouldHaveLength, 0)
+		convey.So(observer.CommitCount(), convey.ShouldEqual, 0)
+		convey.So(sampleMirrorIndexNames(t, cache.DB(), cache.Dialect()), convey.ShouldResemble, sampleMirrorSecondaryIndexNames())
+		convey.So(readSyncStateRow(t, cache.DB(), syncTableSample).IndexesDropped, convey.ShouldEqual, 0)
+
+		close(releaseRow2)
+		convey.So(<-errCh, convey.ShouldBeNil)
+	})
+}
+
+func TestClientSyncNonSampleTablesNeverSetIndexesDropped(t *testing.T) {
+	convey.Convey("B4.5: Given cold syncs for the other four tables, when they complete, then indexes_dropped stays 0 for each table", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 17, 30, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableStudy: {
+				columns: studySyncSourceColumns,
+				rows:    [][]driver.Value{studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", base)},
+			},
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(base.Add(time.Minute))}},
+			},
+			syncTableIseqProductMetrics: {
+				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
+				rows:    [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(base.Add(2 * time.Minute))}},
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(base.Add(3 * time.Minute))}},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		_, err := syncSelectedTablesForTest(
+			context.Background(),
+			client,
+			syncTableStudy,
+			syncTableIseqFlowcell,
+			syncTableIseqProductMetrics,
+			syncTableSeqProductIRODSLocations,
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		for _, table := range []string{syncTableStudy, syncTableIseqFlowcell, syncTableIseqProductMetrics, syncTableSeqProductIRODSLocations} {
+			convey.So(readSyncStateRow(t, cache.DB(), table).IndexesDropped, convey.ShouldEqual, 0)
 		}
 	})
 }
 
-func TestResolveSampleColdCacheTriggersSyncAtDonorStep(t *testing.T) {
-	convey.Convey("Given a cold cache and a donor match materialized only by sync", t, func() {
+func TestClientSyncSampleColdLoadDropsAllSecondaryIndexesMySQL(t *testing.T) {
+	convey.Convey("B4.6: Given a MySQL cache and a cold sample sync blocked after row one, then INFORMATION_SCHEMA reports zero sample_mirror secondary indexes mid-load", t, func() {
+		cfg, skip := loadMySQLCacheConfigForTest(t)
+		if skip != "" {
+			t.Skip(skip)
+		}
+
+		cache := openMySQLCacheForTest(t, cfg)
+		releaseRow2 := make(chan struct{})
+		firstRowSeen := make(chan struct{}, 1)
+		base := time.Date(2026, time.May, 11, 18, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:         sampleSyncSourceColumns,
+				rows:            sampleSyncRowsForRange(1, 2, base, nil),
+				blockBeforeRow2: releaseRow2,
+				afterFirstRow:   func() { firstRowSeen <- struct{}{} },
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+			errCh <- err
+		}()
+
+		select {
+		case <-firstRowSeen:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for MySQL sample sync to block after the first row")
+		}
+
+		convey.So(sampleMirrorIndexColumns(t, cache.DB(), cache.Dialect()), convey.ShouldResemble, map[string][]string{})
+		convey.So(readSyncStateRow(t, cache.DB(), syncTableSample).IndexesDropped, convey.ShouldEqual, 1)
+
+		close(releaseRow2)
+		convey.So(<-errCh, convey.ShouldBeNil)
+	})
+}
+
+func TestClientSyncSampleColdLoadRecreatesIndexesMySQL(t *testing.T) {
+	convey.Convey("B4.7: Given a MySQL cache and a cold sample sync, when sync completes, then exactly eight distinct secondary indexes exist on sample_mirror and indexes_dropped is 0", t, func() {
+		cfg, skip := loadMySQLCacheConfigForTest(t)
+		if skip != "" {
+			t.Skip(skip)
+		}
+
+		cache := openMySQLCacheForTest(t, cfg)
+		base := time.Date(2026, time.May, 11, 18, 30, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    sampleSyncRowsForRange(1, 2, base, nil),
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sampleMirrorIndexColumns(t, cache.DB(), cache.Dialect()), convey.ShouldResemble, sampleMirrorSecondaryIndexColumns())
+		convey.So(readSyncStateRow(t, cache.DB(), syncTableSample).IndexesDropped, convey.ShouldEqual, 0)
+	})
+}
+
+func TestClientSyncSampleReconnectsAfterTransientFault(t *testing.T) {
+	convey.Convey("B5.1: Given 1000 sample rows followed by invalid connection and then 500 more rows on reconnect, when sync runs, then it resumes from the persisted cursor and logs one retry line", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 19, 0, 0, 0, time.UTC)
+		var waits []time.Duration
+		var stderr strings.Builder
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				queryResults: []syncTestQueryResult{
+					{
+						rows:     sampleSyncRowsForRange(1, 1000, base, nil),
+						finalErr: fmt.Errorf("invalid connection"),
+					},
+					{
+						rows: sampleSyncRowsForRange(1001, 1500, base.Add(1000*time.Second), nil),
+					},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+			return nil
+		}}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 1500)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 1500)
+		convey.So(nonEmptyLines(stderr.String()), convey.ShouldHaveLength, 1)
+		convey.So(matchesPattern(nonEmptyLines(stderr.String())[0], `^mlwh sync: sample reconnecting attempt 1/5 after .*invalid connection.*: backoff 1s$`), convey.ShouldBeTrue)
+		convey.So(waits, convey.ShouldResemble, []time.Duration{time.Second})
+	})
+}
+
+func TestClientSyncSampleStopsAfterFiveReconnectAttempts(t *testing.T) {
+	convey.Convey("B5.2: Given a sample source that fails with unexpected EOF on every attempt, when sync runs, then it logs five reconnect lines and returns an error naming sample", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		var waits []time.Duration
+		var stderr strings.Builder
+		results := make([]syncTestQueryResult, 0, 6)
+		for range 6 {
+			results = append(results, syncTestQueryResult{queryErr: io.ErrUnexpectedEOF})
+		}
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:      sampleSyncSourceColumns,
+				queryResults: results,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+			return nil
+		}}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		lines := nonEmptyLines(stderr.String())
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, syncTableSample)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "unexpected EOF")
+		convey.So(lines, convey.ShouldHaveLength, 5)
+		for index, line := range lines {
+			convey.So(matchesPattern(line, fmt.Sprintf(`^mlwh sync: sample reconnecting attempt %d/5 after .*unexpected EOF.*: backoff %s$`, index+1, []string{"1s", "2s", "4s", "8s", "16s"}[index])), convey.ShouldBeTrue)
+		}
+		convey.So(waits, convey.ShouldResemble, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second})
+	})
+}
+
+func TestClientSyncSampleDoesNotRetryNonTransientSourceError(t *testing.T) {
+	convey.Convey("B5.3: Given a sample source syntax error, when sync runs, then it fails without retry output", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		var waits []time.Duration
+		var stderr strings.Builder
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:      sampleSyncSourceColumns,
+				queryResults: []syncTestQueryResult{{queryErr: fmt.Errorf("syntax error")}},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+			return nil
+		}}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "syntax error")
+		convey.So(nonEmptyLines(stderr.String()), convey.ShouldBeEmpty)
+		convey.So(waits, convey.ShouldBeEmpty)
+	})
+}
+
+func TestClientSyncSampleResetsReconnectBudgetAfterSuccessfulResume(t *testing.T) {
+	convey.Convey("Given a sample sync with two separate transient faults split by a successful resumed batch, when sync runs, then each fault starts at attempt 1/5", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 19, 20, 0, 0, time.UTC)
+		var waits []time.Duration
+		var stderr strings.Builder
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				queryResults: []syncTestQueryResult{
+					{
+						rows:     sampleSyncRowsForRange(1, 1000, base, nil),
+						finalErr: fmt.Errorf("invalid connection"),
+					},
+					{
+						rows:     sampleSyncRowsForRange(1001, 2000, base.Add(1000*time.Second), nil),
+						finalErr: io.ErrUnexpectedEOF,
+					},
+					{
+						rows: sampleSyncRowsForRange(2001, 2500, base.Add(2000*time.Second), nil),
+					},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+			return nil
+		}}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		lines := nonEmptyLines(stderr.String())
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 2500)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 2500)
+		convey.So(lines, convey.ShouldHaveLength, 2)
+		convey.So(matchesPattern(lines[0], `^mlwh sync: sample reconnecting attempt 1/5 after .*invalid connection.*: backoff 1s$`), convey.ShouldBeTrue)
+		convey.So(matchesPattern(lines[1], `^mlwh sync: sample reconnecting attempt 1/5 after .*unexpected EOF.*: backoff 1s$`), convey.ShouldBeTrue)
+		convey.So(waits, convey.ShouldResemble, []time.Duration{time.Second, time.Second})
+	})
+}
+
+func TestClientSyncTwoTablesReconnectIndependently(t *testing.T) {
+	convey.Convey("B5.4: Given two tables that each fault once, when Client.Sync runs, then both reconnect once and the overall sync succeeds", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 11, 19, 30, 0, 0, time.UTC)
+		var waits []time.Duration
+		var stderr strings.Builder
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				queryResults: []syncTestQueryResult{
+					{rows: sampleSyncRowsForRange(1, 1000, base, nil), finalErr: fmt.Errorf("invalid connection")},
+					{rows: sampleSyncRowsForRange(1001, 1001, base.Add(1000*time.Second), nil)},
+				},
+			},
+			syncTableStudy: {
+				columns: studySyncSourceColumns,
+				queryResults: []syncTestQueryResult{
+					{rows: [][]driver.Value{studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", base)}, finalErr: fmt.Errorf("unexpected EOF")},
+					{rows: [][]driver.Value{studyRowValues(11, "SQSCP", "5002", "study-uuid-2", "study-b", "acc-study-b", base.Add(time.Second))}},
+				},
+			},
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(base.Add(2 * time.Second))}},
+			},
+			syncTableIseqProductMetrics: {
+				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
+				rows:    [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(base.Add(3 * time.Second))}},
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(base.Add(4 * time.Second))}},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+			return nil
+		}}
+
+		reports, err := client.Sync(context.Background())
+
+		lines := nonEmptyLines(stderr.String())
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 5)
+		convey.So(lines, convey.ShouldHaveLength, 2)
+		convey.So(strings.Join(lines, "\n"), convey.ShouldContainSubstring, "mlwh sync: sample reconnecting attempt 1/5")
+		convey.So(strings.Join(lines, "\n"), convey.ShouldContainSubstring, "mlwh sync: study reconnecting attempt 1/5")
+		convey.So(waits, convey.ShouldResemble, []time.Duration{time.Second, time.Second})
+	})
+}
+
+func studyMirrorArgs(id int64, idLims, idStudyLims, uuidStudyLims, name, accession string, lastUpdated time.Time) []driver.Value {
+	return studyRowValues(id, idLims, idStudyLims, uuidStudyLims, name, accession, lastUpdated)
+}
+
+func TestClientSyncSQLiteWritePragmasAppliedInSpecOrder(t *testing.T) {
+	convey.Convey("B8.1: Given a SQLite cache, when sync starts, then the sync write connection applies the tuned pragmas in spec order", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{
+			cache:       cache,
+			cacheReader: cacheReadDB(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				return nil
+			},
+		}
+
+		_, err := client.Sync(context.Background())
+
+		pragmaStatements := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return strings.HasPrefix(normalizeSQL(statement.Query), "PRAGMA ")
+		})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(pragmaStatements, convey.ShouldNotBeEmpty)
+
+		captured := make([]string, 0, len(pragmaStatements))
+		for _, statement := range pragmaStatements {
+			captured = append(captured, normalizeSQL(statement.Query))
+		}
+
+		convey.So(captured, convey.ShouldContain, normalizeSQL(`PRAGMA synchronous = NORMAL`))
+		convey.So(captured, convey.ShouldContain, normalizeSQL(`PRAGMA cache_size = -200000`))
+		convey.So(captured, convey.ShouldContain, normalizeSQL(`PRAGMA temp_store = MEMORY`))
+
+		start := 0
+		for index, statement := range captured {
+			if statement == normalizeSQL(`PRAGMA synchronous = NORMAL`) {
+				start = index
+				break
+			}
+		}
+
+		convey.So(captured[start:start+3], convey.ShouldResemble, []string{
+			normalizeSQL(`PRAGMA synchronous = NORMAL`),
+			normalizeSQL(`PRAGMA cache_size = -200000`),
+			normalizeSQL(`PRAGMA temp_store = MEMORY`),
+		})
+	})
+}
+
+func TestClientSyncSQLiteWritePragmasRestoreOnError(t *testing.T) {
+	convey.Convey("B8.2: Given a SQLite cache, when sync finishes with an error, then the sync write connection restores the pre-recorded pragma values", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		_, err := cache.DB().Exec(`PRAGMA synchronous = FULL`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`PRAGMA cache_size = -4096`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`PRAGMA temp_store = FILE`)
+		convey.So(err, convey.ShouldBeNil)
+		observer.Reset()
+
+		forcedErr := errors.New("forced sync failure")
+		client := &Client{
+			cache:       cache,
+			cacheReader: cacheReadDB(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				return forcedErr
+			},
+		}
+
+		_, err = client.Sync(context.Background())
+
+		pragmaStatements := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return strings.HasPrefix(normalizeSQL(statement.Query), "PRAGMA ")
+		})
+		convey.So(err, convey.ShouldEqual, forcedErr)
+		convey.So(pragmaStatements, convey.ShouldNotBeEmpty)
+
+		captured := make([]string, 0, len(pragmaStatements))
+		for _, statement := range pragmaStatements {
+			captured = append(captured, normalizeSQL(statement.Query))
+		}
+
+		convey.So(captured[len(captured)-3:], convey.ShouldResemble, []string{
+			normalizeSQL(`PRAGMA synchronous = 2`),
+			normalizeSQL(`PRAGMA cache_size = -4096`),
+			normalizeSQL(`PRAGMA temp_store = 1`),
+		})
+	})
+}
+
+func TestClientSyncSQLiteWritePragmasRestoreAfterCancellation(t *testing.T) {
+	convey.Convey("B8.2: Given a canceled sync context, when sync exits, then the sync write connection still restores the pre-recorded pragma values", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		_, err := cache.DB().Exec(`PRAGMA synchronous = FULL`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`PRAGMA cache_size = -16384`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`PRAGMA temp_store = FILE`)
+		convey.So(err, convey.ShouldBeNil)
+		observer.Reset()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		client := &Client{
+			cache:       cache,
+			cacheReader: cacheReadDB(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				cancel()
+
+				return ctx.Err()
+			},
+		}
+
+		_, err = client.Sync(ctx)
+
+		pragmaStatements := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return strings.HasPrefix(normalizeSQL(statement.Query), "PRAGMA ")
+		})
+		convey.So(err, convey.ShouldEqual, context.Canceled)
+		convey.So(pragmaStatements, convey.ShouldNotBeEmpty)
+
+		captured := make([]string, 0, len(pragmaStatements))
+		for _, statement := range pragmaStatements {
+			captured = append(captured, normalizeSQL(statement.Query))
+		}
+
+		convey.So(captured[len(captured)-3:], convey.ShouldResemble, []string{
+			normalizeSQL(`PRAGMA synchronous = 2`),
+			normalizeSQL(`PRAGMA cache_size = -16384`),
+			normalizeSQL(`PRAGMA temp_store = 1`),
+		})
+	})
+}
+
+func TestClientSyncSQLiteWritePragmasRestoreOnSuccess(t *testing.T) {
+	convey.Convey("B8.2: Given a SQLite cache, when sync finishes successfully, then the sync write connection restores the pre-recorded pragma values", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		_, err := cache.DB().Exec(`PRAGMA synchronous = FULL`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`PRAGMA cache_size = -8192`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`PRAGMA temp_store = FILE`)
+		convey.So(err, convey.ShouldBeNil)
+		observer.Reset()
+
+		client := &Client{
+			cache:       cache,
+			cacheReader: cacheReadDB(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				return nil
+			},
+		}
+
+		_, err = client.Sync(context.Background())
+
+		pragmaStatements := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
+			return strings.HasPrefix(normalizeSQL(statement.Query), "PRAGMA ")
+		})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(pragmaStatements, convey.ShouldNotBeEmpty)
+
+		captured := make([]string, 0, len(pragmaStatements))
+		for _, statement := range pragmaStatements {
+			captured = append(captured, normalizeSQL(statement.Query))
+		}
+
+		convey.So(captured[len(captured)-3:], convey.ShouldResemble, []string{
+			normalizeSQL(`PRAGMA synchronous = 2`),
+			normalizeSQL(`PRAGMA cache_size = -8192`),
+			normalizeSQL(`PRAGMA temp_store = 1`),
+		})
+	})
+}
+
+func TestClientSyncMySQLWritePragmasNoOp(t *testing.T) {
+	convey.Convey("B8.3: Given a MySQL cache, when sync starts, then the sqlite pragma helper is a no-op", t, func() {
+		rwDB, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = rwDB.Close() }()
+
+		mock.MatchExpectationsInOrder(true)
+		lockName := mysqlSyncLockName("")
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT GET_LOCK(?, 0)`)).
+			WithArgs(lockName).
+			WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(1))
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT RELEASE_LOCK(?)`)).
+			WithArgs(lockName).
+			WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+
+		client := &Client{
+			cache: &mysqlCache{rwDB: rwDB, roDB: rwDB},
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				return nil
+			},
+		}
+
+		_, err = client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+type syncStateRow struct {
+	HighWater      string
+	IndexesDropped int
+}
+
+func readSyncStateRow(t *testing.T, db *sql.DB, table string) syncStateRow {
+	t.Helper()
+
+	var state syncStateRow
+	if err := db.QueryRow(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`, table).Scan(&state.HighWater, &state.IndexesDropped); err != nil {
+		t.Fatalf("readSyncStateRow(%s): %v", table, err)
+	}
+
+	return state
+}
+
+func sampleMirrorSecondaryIndexNames() []string {
+	return []string{
+		"sample_mirror_accession_number_idx",
+		"sample_mirror_donor_id_idx",
+		"sample_mirror_id_sample_lims_idx",
+		"sample_mirror_last_updated_idx",
+		"sample_mirror_name_idx",
+		"sample_mirror_sanger_sample_id_idx",
+		"sample_mirror_supplier_name_idx",
+		"sample_mirror_uuid_sample_lims_idx",
+	}
+}
+
+func sampleMirrorSecondaryIndexColumns() map[string][]string {
+	return map[string][]string{
+		"sample_mirror_accession_number_idx": {"accession_number"},
+		"sample_mirror_donor_id_idx":         {"donor_id"},
+		"sample_mirror_id_sample_lims_idx":   {"id_sample_lims"},
+		"sample_mirror_last_updated_idx":     {"last_updated"},
+		"sample_mirror_name_idx":             {"name"},
+		"sample_mirror_sanger_sample_id_idx": {"sanger_sample_id"},
+		"sample_mirror_supplier_name_idx":    {"supplier_name"},
+		"sample_mirror_uuid_sample_lims_idx": {"uuid_sample_lims"},
+	}
+}
+
+func sampleMirrorIndexNames(t *testing.T, db *sql.DB, dialect string) []string {
+	t.Helper()
+
+	query := `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sample_mirror' ORDER BY name`
+	if dialect == "mysql" {
+		query = `SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sample_mirror' AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME`
+	}
+
+	rows, err := db.Query(query)
+	if err != nil {
+		t.Fatalf("sampleMirrorIndexNames query: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	indexes := make([]string, 0, 8)
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			t.Fatalf("sampleMirrorIndexNames scan: %v", err)
+		}
+
+		indexes = append(indexes, name)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("sampleMirrorIndexNames rows: %v", err)
+	}
+
+	return indexes
+}
+
+func sampleMirrorIndexColumns(t *testing.T, db *sql.DB, dialect string) map[string][]string {
+	t.Helper()
+
+	if dialect != "mysql" {
+		indexes := sampleMirrorIndexNames(t, db, dialect)
+		columns := make(map[string][]string, len(indexes))
+		for _, name := range indexes {
+			columns[name] = sampleMirrorSecondaryIndexColumns()[name]
+		}
+
+		return columns
+	}
+
+	rows, err := db.Query(`SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sample_mirror' AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME, SEQ_IN_INDEX`)
+	if err != nil {
+		t.Fatalf("sampleMirrorIndexColumns query: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns := make(map[string][]string, len(sampleMirrorSecondaryIndexes))
+	for rows.Next() {
+		var indexName string
+		var columnName string
+		if err = rows.Scan(&indexName, &columnName); err != nil {
+			t.Fatalf("sampleMirrorIndexColumns scan: %v", err)
+		}
+
+		columns[indexName] = append(columns[indexName], columnName)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("sampleMirrorIndexColumns rows: %v", err)
+	}
+
+	return columns
+}
+
+type recordedSQLStatement struct {
+	Query string
+	Args  []driver.NamedValue
+}
+
+type sqliteSyncSQLObserver struct {
+	mu         sync.Mutex
+	statements []recordedSQLStatement
+	commits    int
+}
+
+func (o *sqliteSyncSQLObserver) Record(query string, args []driver.NamedValue) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	copyArgs := make([]driver.NamedValue, len(args))
+	copy(copyArgs, args)
+	o.statements = append(o.statements, recordedSQLStatement{Query: query, Args: copyArgs})
+}
+
+func (o *sqliteSyncSQLObserver) IncrementCommit() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.commits++
+}
+
+func (o *sqliteSyncSQLObserver) Statements() []recordedSQLStatement {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	statements := make([]recordedSQLStatement, len(o.statements))
+	copy(statements, o.statements)
+
+	return statements
+}
+
+func (o *sqliteSyncSQLObserver) CommitCount() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return o.commits
+}
+
+func (o *sqliteSyncSQLObserver) Reset() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.statements = nil
+	o.commits = 0
+}
+
+type recordingSQLiteDriver struct {
+	base modernsqlite.Driver
+}
+
+type recordingSQLiteConn struct {
+	driver.Conn
+	observer *sqliteSyncSQLObserver
+}
+
+type recordingSQLiteTx struct {
+	driver.Tx
+	observer *sqliteSyncSQLObserver
+}
+
+var (
+	recordingSQLiteDriverOnce  sync.Once
+	recordingSQLiteObserversMu sync.Mutex
+	recordingSQLiteObservers   = map[string]*sqliteSyncSQLObserver{}
+)
+
+func (d *recordingSQLiteDriver) Open(name string) (driver.Conn, error) {
+	conn, err := d.base.Open(name)
+	if err != nil {
+		return nil, err
+	}
+
+	recordingSQLiteObserversMu.Lock()
+	observer := recordingSQLiteObservers[name]
+	recordingSQLiteObserversMu.Unlock()
+
+	return &recordingSQLiteConn{Conn: conn, observer: observer}, nil
+}
+
+func (c *recordingSQLiteConn) Begin() (driver.Tx, error) {
+	tx, err := c.Conn.Begin()
+	if err != nil || c.observer == nil {
+		return tx, err
+	}
+
+	return &recordingSQLiteTx{Tx: tx, observer: c.observer}, nil
+}
+
+func (c *recordingSQLiteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	beginner, ok := c.Conn.(driver.ConnBeginTx)
+	if !ok {
+		return c.Begin()
+	}
+
+	tx, err := beginner.BeginTx(ctx, opts)
+	if err != nil || c.observer == nil {
+		return tx, err
+	}
+
+	return &recordingSQLiteTx{Tx: tx, observer: c.observer}, nil
+}
+
+func (c *recordingSQLiteConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	execer, ok := c.Conn.(driver.ExecerContext)
+	if !ok {
+		return nil, driver.ErrSkip
+	}
+	if c.observer != nil {
+		c.observer.Record(query, args)
+	}
+
+	return execer.ExecContext(ctx, query, args)
+}
+
+func (c *recordingSQLiteConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	queryer, ok := c.Conn.(driver.QueryerContext)
+	if !ok {
+		return nil, driver.ErrSkip
+	}
+
+	return queryer.QueryContext(ctx, query, args)
+}
+
+func (c *recordingSQLiteConn) Ping(ctx context.Context) error {
+	pinger, ok := c.Conn.(driver.Pinger)
+	if !ok {
+		return nil
+	}
+
+	return pinger.Ping(ctx)
+}
+
+func (c *recordingSQLiteConn) CheckNamedValue(value *driver.NamedValue) error {
+	checker, ok := c.Conn.(driver.NamedValueChecker)
+	if !ok {
+		return driver.ErrSkip
+	}
+
+	return checker.CheckNamedValue(value)
+}
+
+func (c *recordingSQLiteConn) ResetSession(ctx context.Context) error {
+	resetter, ok := c.Conn.(driver.SessionResetter)
+	if !ok {
+		return nil
+	}
+
+	return resetter.ResetSession(ctx)
+}
+
+func (c *recordingSQLiteConn) IsValid() bool {
+	validator, ok := c.Conn.(driver.Validator)
+	if !ok {
+		return true
+	}
+
+	return validator.IsValid()
+}
+
+func (tx *recordingSQLiteTx) Commit() error {
+	err := tx.Tx.Commit()
+	if err == nil && tx.observer != nil {
+		tx.observer.IncrementCommit()
+	}
+
+	return err
+}
+
+func openRecordingSQLiteSyncTestCache(t *testing.T) (Cache, *sqliteSyncSQLObserver) {
+	t.Helper()
+
+	recordingSQLiteDriverOnce.Do(func() {
+		sql.Register("wa-sync-recording-sqlite", &recordingSQLiteDriver{})
+	})
+
+	path := filepath.Join(t.TempDir(), "sync-recording.sqlite")
+	rwDSN := sqliteWritableDSN(path)
+	roDSN := sqliteReadOnlyDSN(path)
+	observer := &sqliteSyncSQLObserver{}
+
+	recordingSQLiteObserversMu.Lock()
+	recordingSQLiteObservers[rwDSN] = observer
+	recordingSQLiteObservers[roDSN] = nil
+	recordingSQLiteObserversMu.Unlock()
+
+	originalOpen := sqlOpenFunc
+	sqlOpenFunc = func(driverName, dataSourceName string) (*sql.DB, error) {
+		if driverName == "sqlite" {
+			return sql.Open("wa-sync-recording-sqlite", dataSourceName)
+		}
+
+		return originalOpen(driverName, dataSourceName)
+	}
+	t.Cleanup(func() {
+		sqlOpenFunc = originalOpen
+		recordingSQLiteObserversMu.Lock()
+		delete(recordingSQLiteObservers, rwDSN)
+		delete(recordingSQLiteObservers, roDSN)
+		recordingSQLiteObserversMu.Unlock()
+	})
+
+	cache, err := OpenCache(context.Background(), CacheConfig{Path: path})
+	if err != nil {
+		t.Fatalf("OpenCache(): %v", err)
+	}
+
+	observer.Reset()
+
+	return cache, observer
+}
+
+func normalizeSQL(query string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(query)), " ")
+}
+
+func filterRecordedStatements(statements []recordedSQLStatement, keep func(recordedSQLStatement) bool) []recordedSQLStatement {
+	filtered := make([]recordedSQLStatement, 0, len(statements))
+	for _, statement := range statements {
+		if keep(statement) {
+			filtered = append(filtered, statement)
+		}
+	}
+
+	return filtered
+}
+
+func TestSyncResolverLibraryColdCacheReturnsNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache without flowcell sync state", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveLibrary(context.Background(), "Standard")
+
+		convey.Convey("when ResolveLibrary executes, then it returns the never-synced sentinel instead of syncing", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(match, convey.ShouldResemble, Match{})
+		})
+	})
+}
+
+func TestResolveSampleColdCacheDonorStepReturnsNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache and a donor lookup that reaches the cache-backed donor step", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
 		client := &Client{
 			cache:       cache,
 			cacheReader: cacheReadDB(cache),
-			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				if len(tables) != 1 || tables[0] != syncTableSample {
-					return fmt.Errorf("unexpected sync tables: %v", tables)
-				}
-
-				_, err := tx.ExecContext(ctx, `INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 21, "SQSCP", "121", "sample-uuid-21", "SANGER-21", "sanger-id-21", "supplier-21", "accession-21", "DONOR-X", 9606, "human", "desc-21", formatSyncTime(time.Date(2026, time.May, 6, 13, 0, 0, 0, time.UTC)))
-				if err != nil {
-					return err
-				}
-
-				_, err = tx.ExecContext(ctx, `INSERT INTO donor_samples(donor_id, id_sample_tmp) VALUES (?, ?)`, "DONOR-X", 21)
-				return err
-			},
 		}
 
 		match, err := client.ResolveSample(context.Background(), "DONOR-X")
 
-		convey.Convey("when the donor_id step is reached, then Sync runs first and the canonical Sanger name is returned", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(match.Kind, convey.ShouldEqual, KindDonorID)
-			convey.So(match.Canonical, convey.ShouldEqual, "SANGER-21")
-			convey.So(match.Sample, convey.ShouldNotBeNil)
-			convey.So(match.Sample.Name, convey.ShouldEqual, "SANGER-21")
-			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror WHERE donor_id = ?`, "DONOR-X"), convey.ShouldEqual, 1)
-			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM donor_samples WHERE donor_id = ?`, "DONOR-X"), convey.ShouldEqual, 1)
+		convey.Convey("when the donor_id step is reached, then it returns the never-synced sentinel instead of syncing", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(match, convey.ShouldResemble, Match{})
 		})
 	})
 }
@@ -613,6 +2251,160 @@ func openSQLiteSyncTestCache(t *testing.T) Cache {
 	return cache
 }
 
+type syncCommitCounter struct {
+	mu      sync.Mutex
+	commits int
+}
+
+func (c *syncCommitCounter) Increment() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.commits++
+}
+
+func (c *syncCommitCounter) Count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.commits
+}
+
+func (c *syncCommitCounter) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.commits = 0
+}
+
+var (
+	syncCountingSQLiteDriverOnce sync.Once
+	syncCountingSQLiteCountersMu sync.Mutex
+	syncCountingSQLiteCounters   = map[string]*syncCommitCounter{}
+)
+
+func openCountingSQLiteSyncTestCache(t *testing.T) (Cache, *syncCommitCounter) {
+	t.Helper()
+
+	syncCountingSQLiteDriverOnce.Do(func() {
+		var driver modernsqlite.Driver
+		driver.RegisterConnectionHook(func(conn modernsqlite.ExecQuerierContext, dsn string) error {
+			syncCountingSQLiteCountersMu.Lock()
+			counter := syncCountingSQLiteCounters[dsn]
+			syncCountingSQLiteCountersMu.Unlock()
+			if counter == nil {
+				return nil
+			}
+
+			hooker, ok := conn.(modernsqlite.HookRegisterer)
+			if !ok {
+				return nil
+			}
+
+			hooker.RegisterCommitHook(func() int32 {
+				counter.Increment()
+
+				return 0
+			})
+
+			return nil
+		})
+
+		sql.Register("wa-sync-counting-sqlite", &driver)
+	})
+
+	path := filepath.Join(t.TempDir(), "sync-counting.sqlite")
+	rwDSN := sqliteWritableDSN(path)
+	roDSN := sqliteReadOnlyDSN(path)
+	counter := &syncCommitCounter{}
+
+	syncCountingSQLiteCountersMu.Lock()
+	syncCountingSQLiteCounters[rwDSN] = counter
+	syncCountingSQLiteCounters[roDSN] = nil
+	syncCountingSQLiteCountersMu.Unlock()
+
+	originalOpen := sqlOpenFunc
+	sqlOpenFunc = func(driverName, dataSourceName string) (*sql.DB, error) {
+		if driverName == "sqlite" {
+			return sql.Open("wa-sync-counting-sqlite", dataSourceName)
+		}
+
+		return originalOpen(driverName, dataSourceName)
+	}
+	t.Cleanup(func() {
+		sqlOpenFunc = originalOpen
+		syncCountingSQLiteCountersMu.Lock()
+		delete(syncCountingSQLiteCounters, rwDSN)
+		delete(syncCountingSQLiteCounters, roDSN)
+		syncCountingSQLiteCountersMu.Unlock()
+	})
+
+	cache, err := OpenCache(context.Background(), CacheConfig{Path: path})
+	if err != nil {
+		t.Fatalf("OpenCache(): %v", err)
+	}
+
+	counter.Reset()
+
+	return cache, counter
+}
+
+type sampleSyncRowOverride struct {
+	IDSampleLims   string
+	UUIDSampleLims string
+	Name           string
+	DonorID        string
+}
+
+func sampleSyncRowsForRange(startID, endID int64, base time.Time, overrides map[int64]sampleSyncRowOverride) [][]driver.Value {
+	rows := make([][]driver.Value, 0, endID-startID+1)
+	for id := startID; id <= endID; id++ {
+		override := sampleSyncRowOverride{}
+		if overrides != nil {
+			override = overrides[id]
+		}
+
+		rows = append(rows, sampleSyncRowValues(id, base.Add(time.Duration(id-startID)*time.Second), override))
+	}
+
+	return rows
+}
+
+func sampleSyncRowValues(id int64, lastUpdated time.Time, override sampleSyncRowOverride) []driver.Value {
+	idSampleLims := override.IDSampleLims
+	if idSampleLims == "" {
+		idSampleLims = formatInt(id)
+	}
+	uuidSampleLims := override.UUIDSampleLims
+	if uuidSampleLims == "" {
+		uuidSampleLims = fmt.Sprintf("sample-uuid-%d", id)
+	}
+	name := override.Name
+	if name == "" {
+		name = fmt.Sprintf("sample-%d", id)
+	}
+	donorID := override.DonorID
+	if donorID == "" {
+		donorID = fmt.Sprintf("donor-%d", id)
+	}
+
+	return []driver.Value{
+		id,
+		"SQSCP",
+		idSampleLims,
+		uuidSampleLims,
+		name,
+		fmt.Sprintf("sanger-%d", id),
+		fmt.Sprintf("supplier-%d", id),
+		fmt.Sprintf("acc-%d", id),
+		donorID,
+		int64(9606),
+		"human",
+		fmt.Sprintf("desc-%d", id),
+		formatSyncTime(lastUpdated),
+	}
+}
+
 func seedSampleMirrorRow(t *testing.T, db *sql.DB, id int64, name, supplierName, donorID string, lastUpdated time.Time) {
 	t.Helper()
 
@@ -649,8 +2441,16 @@ func seedDonorSampleRow(t *testing.T, db *sql.DB, donorID string, idSampleTmp in
 func seedSyncState(t *testing.T, db *sql.DB, table string, highWater time.Time) {
 	t.Helper()
 
-	if err := writeSyncState(context.Background(), db, "sqlite", table, highWater); err != nil {
+	if err := writeSyncState(context.Background(), db, "sqlite", table, highWater, nil, false); err != nil {
 		t.Fatalf("seedSyncState(): %v", err)
+	}
+}
+
+func seedSyncStateWithCursor(t *testing.T, db *sql.DB, table string, highWater time.Time, resumeCursor string) {
+	t.Helper()
+
+	if err := writeSyncState(context.Background(), db, "sqlite", table, highWater, &resumeCursor, false); err != nil {
+		t.Fatalf("seedSyncStateWithCursor(): %v", err)
 	}
 }
 
@@ -710,4 +2510,269 @@ func readSyncHighWater(t *testing.T, db *sql.DB, table string) time.Time {
 	}
 
 	return highWater
+}
+
+func readSyncResumeCursor(t *testing.T, db *sql.DB, table string) any {
+	t.Helper()
+
+	var raw sql.NullString
+	if err := db.QueryRow(`SELECT resume_cursor FROM sync_state WHERE table_name = ?`, table).Scan(&raw); err != nil {
+		t.Fatalf("readSyncResumeCursor(%s): %v", table, err)
+	}
+	if !raw.Valid {
+		return nil
+	}
+
+	return raw.String
+}
+
+func mustParseSyncTime(t *testing.T, raw string) time.Time {
+	t.Helper()
+
+	parsed, err := parseSyncTimeString(raw)
+	if err != nil {
+		t.Fatalf("mustParseSyncTime(%s): %v", raw, err)
+	}
+
+	return parsed
+}
+
+func flowcellSyncRowsForRange(startID, endID int64, base time.Time) [][]driver.Value {
+	rows := make([][]driver.Value, 0, endID-startID+1)
+	for id := startID; id <= endID; id++ {
+		rows = append(rows, []driver.Value{
+			fmt.Sprintf("pipe-%d", id),
+			id,
+			fmt.Sprintf("study-%d", id),
+			formatSyncTime(base.Add(time.Duration(id-startID) * time.Second)),
+		})
+	}
+
+	return rows
+}
+
+func sampleRowsFromDriverValues(columns []string, values [][]driver.Value) *sqlmock.Rows {
+	rows := sqlmock.NewRows(columns)
+	for _, row := range values {
+		rows.AddRow(row...)
+	}
+
+	return rows
+}
+
+func namedValueOrdinals(values []driver.NamedValue) []any {
+	args := make([]any, 0, len(values))
+	for _, value := range values {
+		args = append(args, value.Value)
+	}
+
+	return args
+}
+
+func syncSingleRowSourcePlan(columns []string, row []driver.Value, startSink func(syncStartRecord)) syncTestSourcePlan {
+	return syncTestSourcePlan{
+		columns: columns,
+		rows:    [][]driver.Value{row},
+		startSink: func(record syncStartRecord) {
+			if startSink != nil {
+				startSink(record)
+			}
+		},
+	}
+}
+
+func nonEmptyLines(value string) []string {
+	parts := strings.Split(value, "\n")
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+
+		lines = append(lines, trimmed)
+	}
+
+	return lines
+}
+
+func matchesPattern(value, pattern string) bool {
+	matched, err := regexp.MatchString(pattern, value)
+	if err != nil {
+		return false
+	}
+
+	return matched
+}
+
+func openSyncTestSourceDB(t *testing.T, plans map[string]syncTestSourcePlan) *sql.DB {
+	t.Helper()
+
+	syncTestDriverOnce.Do(func() {
+		sql.Register("wa-sync-test-driver", syncTestDriver{})
+	})
+
+	syncTestDriverMu.Lock()
+	syncTestDriverSeq++
+	dsn := fmt.Sprintf("sync-test-%d", syncTestDriverSeq)
+	syncTestDrivers[dsn] = &syncTestDriverState{plans: plans, queryCount: make(map[string]int, len(plans))}
+	syncTestDriverMu.Unlock()
+
+	db, err := sql.Open("wa-sync-test-driver", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open(sync test source): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+		syncTestDriverMu.Lock()
+		delete(syncTestDrivers, dsn)
+		syncTestDriverMu.Unlock()
+	})
+
+	return db
+}
+
+func (syncTestDriver) Open(name string) (driver.Conn, error) {
+	syncTestDriverMu.Lock()
+	defer syncTestDriverMu.Unlock()
+
+	state, ok := syncTestDrivers[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown sync test dsn %q", name)
+	}
+
+	return &syncTestConn{state: state}, nil
+}
+
+func (c *syncTestConn) Prepare(string) (driver.Stmt, error) {
+	return nil, fmt.Errorf("prepare not supported")
+}
+
+func (c *syncTestConn) Close() error {
+	return nil
+}
+
+func (c *syncTestConn) Begin() (driver.Tx, error) {
+	return nil, fmt.Errorf("transactions not supported")
+}
+
+func (c *syncTestConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	table := syncTableForQuery(query)
+	c.state.mu.Lock()
+	plan, ok := c.state.plans[table]
+	queryNumber := c.state.queryCount[table]
+	c.state.queryCount[table] = queryNumber + 1
+	c.state.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("unexpected sync test query for %s: %s", table, query)
+	}
+
+	queryPlan := syncTestQueryResult{
+		rows:            plan.rows,
+		queryErr:        plan.queryErr,
+		finalErr:        plan.finalErr,
+		firstRowDelay:   plan.firstRowDelay,
+		blockBeforeRow2: plan.blockBeforeRow2,
+		afterFirstRow:   plan.afterFirstRow,
+		startSink:       plan.startSink,
+		querySink:       plan.querySink,
+	}
+	if len(plan.queryResults) > 0 {
+		if queryNumber >= len(plan.queryResults) {
+			queryPlan = plan.queryResults[len(plan.queryResults)-1]
+		} else {
+			queryPlan = plan.queryResults[queryNumber]
+		}
+		if len(queryPlan.rows) == 0 {
+			queryPlan.rows = plan.rows
+		}
+		if queryPlan.startSink == nil {
+			queryPlan.startSink = plan.startSink
+		}
+		if queryPlan.querySink == nil {
+			queryPlan.querySink = plan.querySink
+		}
+	}
+	if queryPlan.queryErr != nil {
+		return nil, queryPlan.queryErr
+	}
+	if queryPlan.querySink != nil {
+		queryPlan.querySink(query, args)
+	}
+
+	return &syncTestRows{columns: append([]string(nil), plan.columns...), plan: queryPlan}, nil
+}
+
+func (r *syncTestRows) Columns() []string {
+	return append([]string(nil), r.columns...)
+}
+
+func (r *syncTestRows) Close() error {
+	return nil
+}
+
+func (r *syncTestRows) Next(dest []driver.Value) error {
+	if !r.started {
+		r.started = true
+		if r.plan.firstRowDelay > 0 {
+			time.Sleep(r.plan.firstRowDelay)
+		}
+		if r.plan.startSink != nil {
+			r.plan.startSink(syncStartRecord{At: time.Now(), GoroutineID: currentGoroutineID()})
+		}
+	}
+
+	if r.index >= len(r.plan.rows) {
+		if r.plan.finalErr != nil {
+			return r.plan.finalErr
+		}
+
+		return io.EOF
+	}
+
+	if r.index == 1 && r.plan.blockBeforeRow2 != nil {
+		<-r.plan.blockBeforeRow2
+	}
+
+	row := r.plan.rows[r.index]
+	copy(dest, row)
+	r.index++
+	if r.index == 1 && r.plan.afterFirstRow != nil {
+		r.plan.afterFirstRow()
+	}
+
+	return nil
+}
+
+func syncTableForQuery(query string) string {
+	switch {
+	case strings.Contains(query, " FROM sample "):
+		return syncTableSample
+	case strings.Contains(query, " FROM study "):
+		return syncTableStudy
+	case strings.Contains(query, " FROM iseq_flowcell "):
+		return syncTableIseqFlowcell
+	case strings.Contains(query, " FROM iseq_product_metrics ipm "):
+		return syncTableIseqProductMetrics
+	case strings.Contains(query, " FROM seq_product_irods_locations spi "):
+		return syncTableSeqProductIRODSLocations
+	default:
+		return "unknown"
+	}
+}
+
+func currentGoroutineID() int64 {
+	var buffer [64]byte
+	count := runtime.Stack(buffer[:], false)
+	fields := strings.Fields(strings.TrimPrefix(string(buffer[:count]), "goroutine "))
+	if len(fields) == 0 {
+		return 0
+	}
+
+	id, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0
+	}
+
+	return id
 }

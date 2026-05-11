@@ -172,7 +172,7 @@ func resultsRegisterResolvedCanonical(flagName, value, canonical string) (string
 }
 
 type resultsServeSyncClient interface {
-	Sync(context.Context, ...string) ([]mlwh.SyncReport, error)
+	Sync(context.Context) ([]mlwh.SyncReport, error)
 	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
 	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
 	Close() error
@@ -228,8 +228,8 @@ type resultsServeMLWHRuntime struct {
 	sourceDB *sql.DB
 }
 
-func (r *resultsServeMLWHRuntime) Sync(ctx context.Context, tables ...string) ([]mlwh.SyncReport, error) {
-	return r.client.Sync(ctx, tables...)
+func (r *resultsServeMLWHRuntime) Sync(ctx context.Context) ([]mlwh.SyncReport, error) {
+	return r.client.Sync(ctx)
 }
 
 func (r *resultsServeMLWHRuntime) ExpandIdentifier(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {

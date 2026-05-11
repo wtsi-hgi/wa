@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
@@ -120,7 +121,29 @@ func ResolveDSN(dsn string, password string) (string, error) {
 		parsed.Passwd = password
 	}
 
-	return parsed.FormatDSN(), nil
+	parsed.MultiStatements = false
+	parsed.InterpolateParams = false
+
+	resolved := parsed.FormatDSN()
+	resolved = setMySQLDSNBoolParam(resolved, "multiStatements", false)
+	resolved = setMySQLDSNBoolParam(resolved, "interpolateParams", false)
+
+	return resolved, nil
+}
+
+func setMySQLDSNBoolParam(dsn string, key string, value bool) string {
+	parts := strings.SplitN(dsn, "?", 2)
+	params := url.Values{}
+	if len(parts) == 2 {
+		parsed, err := url.ParseQuery(parts[1])
+		if err == nil {
+			params = parsed
+		}
+	}
+
+	params.Set(key, fmt.Sprintf("%t", value))
+
+	return parts[0] + "?" + params.Encode()
 }
 
 // Close releases the cache and source database handles owned by the client.

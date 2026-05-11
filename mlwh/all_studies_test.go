@@ -127,7 +127,7 @@ func TestAllStudiesWarmCacheIncludesRowInsertedBySync(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
-		_, err = client.Sync(context.Background(), syncTableStudy)
+		_, err = syncSelectedTablesForTest(context.Background(), client, syncTableStudy)
 		convey.So(err, convey.ShouldBeNil)
 
 		studies, err := client.AllStudies(context.Background(), 100, 0)

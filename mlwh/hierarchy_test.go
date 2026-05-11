@@ -41,12 +41,9 @@ import (
 var (
 	samplesForStudyCacheQuery         = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
 	samplesForStudyParentQuery        = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	samplesForStudySourceParentQuery  = `SELECT ` + studyMirrorSelectColumns + ` FROM study WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	samplesForStudySourceQuery        = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, iseq_flowcell.id_study_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.id_study_lims = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	sampleByNameCacheQuery            = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`
 	samplesForRunQuery                = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForRunParentQuery          = `SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`
-	samplesForLibraryTypeSourceQuery  = `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
 	samplesForLibraryCacheQuery       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
 	samplesForLibraryStudyParentQuery = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
 )
@@ -83,10 +80,11 @@ func TestSamplesForStudyWarmCacheUsesJoinOnly(t *testing.T) {
 	})
 }
 
-func TestSamplesForStudyColdCacheMissingParentReturnsErrNotFound(t *testing.T) {
-	convey.Convey("Given a cold cache and no upstream study row", t, func() {
+func TestSamplesForStudyColdCacheReturnsErrCacheNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache with no study sync state", t, func() {
 		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
+		_ = sourceMock
 
 		roMock.ExpectQuery(regexp.QuoteMeta(samplesForStudyCacheQuery)).
 			WithArgs("6568", 100, 0).
@@ -97,13 +95,11 @@ func TestSamplesForStudyColdCacheMissingParentReturnsErrNotFound(t *testing.T) {
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
 			WithArgs(syncTableStudy).
 			WillReturnRows(sqlmock.NewRows([]string{"found"}))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForStudySourceParentQuery)).
-			WithArgs("6568").
-			WillReturnRows(sqlmock.NewRows(studyResolverColumns()))
 
 		samples, err := client.SamplesForStudy(context.Background(), "6568", 100, 0)
 
 		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
 		convey.So(samples, convey.ShouldBeNil)
 	})
 }
@@ -200,50 +196,55 @@ func TestSamplesForLibraryWarmCacheUsesLibrarySamplesJoinOnly(t *testing.T) {
 	})
 }
 
-func TestSamplesForStudyAndLibraryReadThroughWriteBack(t *testing.T) {
-	convey.Convey("Given a cold cache with upstream rows for study and library traversals", t, func() {
-		cache := openSQLiteSyncTestCache(t)
-		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+func TestSamplesForStudyAndLibraryColdCacheReturnErrCacheNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache without study sync state", t, func() {
+		studyClient, studyROMock, studySourceMock, studyCleanup := newMySQLResolverTestClient(t)
+		defer studyCleanup()
+		_ = studySourceMock
 
-		sourceDB, sourceMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() {
-			sourceMock.ExpectClose()
-			convey.So(sourceDB.Close(), convey.ShouldBeNil)
-			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		})
-
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
-
-		studyRows := sqlmock.NewRows(studyResolverColumns()).AddRow(studyResolverRow(11, "6568", "study-uuid-11", "Study 11", "EGAS00001001111")...)
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForStudySourceParentQuery)).WithArgs("6568").WillReturnRows(studyRows)
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForStudySourceQuery)).
+		studyROMock.ExpectQuery(regexp.QuoteMeta(samplesForStudyCacheQuery)).
 			WithArgs("6568", 2, 1).
-			WillReturnRows(
-				sqlmock.NewRows([]string{"pipeline_id_lims", "id_sample_tmp", "id_lims", "id_sample_lims", "uuid_sample_lims", "id_study_lims", "name", "sanger_sample_id", "supplier_name", "accession_number", "donor_id", "taxon_id", "common_name", "description", "last_updated"}).
-					AddRow("Standard", int64(1), "SQSCP", "501", "sample-uuid-1", "6568", "Alpha", "sanger-id-1", "supplier-1", "accession-1", "donor-1", 9606, "human", "description", formatSyncTime(time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))).
-					AddRow("Standard", int64(2), "SQSCP", "502", "sample-uuid-2", "6568", "Beta", "sanger-id-2", "supplier-2", "accession-2", "donor-2", 9606, "human", "description", formatSyncTime(time.Date(2026, time.May, 6, 17, 1, 0, 0, time.UTC))),
-			)
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+		studyROMock.ExpectQuery(regexp.QuoteMeta(samplesForStudyParentQuery)).
+			WithArgs("6568").
+			WillReturnRows(sqlmock.NewRows([]string{"found"}))
+		studyROMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
+			WithArgs(syncTableStudy).
+			WillReturnRows(sqlmock.NewRows([]string{"found"}))
 
-		studySamples, err := client.SamplesForStudy(context.Background(), "6568", 2, 1)
+		studySamples, studyErr := studyClient.SamplesForStudy(context.Background(), "6568", 2, 1)
 
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(studySamples, convey.ShouldHaveLength, 2)
-		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror WHERE id_sample_tmp IN (1, 2)`), convey.ShouldEqual, 2)
-		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples WHERE pipeline_id_lims = ? AND id_study_lims = ?`, "Standard", "6568"), convey.ShouldEqual, 2)
+		convey.So(errors.Is(studyErr, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(studyErr, ErrCacheNeverSynced), convey.ShouldBeTrue)
+		convey.So(studySamples, convey.ShouldBeNil)
 
-		librarySamples, err := client.SamplesForLibrary(context.Background(), "Standard", "6568", 2, 1)
+		libraryClient, libraryROMock, librarySourceMock, libraryCleanup := newMySQLResolverTestClient(t)
+		defer libraryCleanup()
+		_ = librarySourceMock
 
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(librarySamples, convey.ShouldHaveLength, 1)
-		convey.So(librarySamples[0].Name, convey.ShouldEqual, "Beta")
+		libraryROMock.ExpectQuery(regexp.QuoteMeta(samplesForLibraryCacheQuery)).
+			WithArgs("Standard", "6568", 2, 1).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+		libraryROMock.ExpectQuery(regexp.QuoteMeta(samplesForLibraryStudyParentQuery)).
+			WithArgs("6568").
+			WillReturnRows(sqlmock.NewRows([]string{"found"}))
+		libraryROMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
+			WithArgs(syncTableStudy).
+			WillReturnRows(sqlmock.NewRows([]string{"found"}))
+
+		librarySamples, libraryErr := libraryClient.SamplesForLibrary(context.Background(), "Standard", "6568", 2, 1)
+
+		convey.So(errors.Is(libraryErr, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(libraryErr, ErrCacheNeverSynced), convey.ShouldBeTrue)
+		convey.So(librarySamples, convey.ShouldBeNil)
 	})
 }
 
-func TestSamplesForLibraryColdCacheExistingStudyWithoutMatchingLibraryReturnsEmptySlice(t *testing.T) {
-	convey.Convey("Given a cold cache and an upstream study with no samples for the requested library", t, func() {
+func TestSamplesForLibraryColdCacheWithoutSyncReturnsErrCacheNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache and no study sync state for the requested library", t, func() {
 		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
+		_ = sourceMock
 
 		roMock.ExpectQuery(regexp.QuoteMeta(samplesForLibraryCacheQuery)).
 			WithArgs("Standard", "6568", 2, 1).
@@ -255,118 +256,25 @@ func TestSamplesForLibraryColdCacheExistingStudyWithoutMatchingLibraryReturnsEmp
 			WithArgs(syncTableStudy).
 			WillReturnRows(sqlmock.NewRows([]string{"found"}))
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForStudySourceParentQuery)).
-			WithArgs("6568").
-			WillReturnRows(sqlmock.NewRows(studyResolverColumns()).AddRow(studyResolverRow(11, "6568", "study-uuid-11", "Study 11", "EGAS00001001111")...))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForLibrarySourceSQL)).
-			WithArgs("Standard", "6568", 2, 1).
-			WillReturnRows(sqlmock.NewRows([]string{"pipeline_id_lims", "id_sample_tmp", "id_lims", "id_sample_lims", "uuid_sample_lims", "id_study_lims", "name", "sanger_sample_id", "supplier_name", "accession_number", "donor_id", "taxon_id", "common_name", "description", "last_updated"}))
-
 		samples, err := client.SamplesForLibrary(context.Background(), "Standard", "6568", 2, 1)
 
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldResemble, []Sample{})
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+		convey.So(samples, convey.ShouldBeNil)
 	})
 }
 
-func TestSamplesForLibraryTypeColdCacheReadsThroughWithoutResolverSync(t *testing.T) {
-	convey.Convey("Given a cold cache and upstream library-type rows, then SamplesForLibraryType reads through directly without a resolver sync gate", t, func() {
+func TestSamplesForLibraryTypeColdCacheReturnsErrCacheNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache and no flowcell sync state", t, func() {
 		client, sourceMock, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForLibraryTypeSourceQuery)).
-			WithArgs("Chromium single cell 3 prime v3", 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{
-				"pipeline_id_lims",
-				"id_sample_tmp",
-				"id_lims",
-				"id_sample_lims",
-				"uuid_sample_lims",
-				"id_study_lims",
-				"name",
-				"sanger_sample_id",
-				"supplier_name",
-				"accession_number",
-				"donor_id",
-				"taxon_id",
-				"common_name",
-				"description",
-				"last_updated",
-			}).AddRow(
-				"Chromium single cell 3 prime v3",
-				int64(11),
-				"SQSCP",
-				"501",
-				"sample-uuid-11",
-				"6568",
-				"sample-a",
-				"sanger-id-a",
-				"supplier-a",
-				"accession-a",
-				"donor-a",
-				9606,
-				"human",
-				"desc-a",
-				formatSyncTime(time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)),
-			))
+		_ = sourceMock
 
 		samples, err := client.SamplesForLibraryType(context.Background(), "Chromium single cell 3 prime v3", 100, 0)
 
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].Name, convey.ShouldEqual, "sample-a")
-		convey.So(samples[0].SangerSampleID, convey.ShouldEqual, "sanger-id-a")
-	})
-}
-
-func TestSamplesForLibraryTypeColdCacheUsesJoinedStudyLimsSourceQuery(t *testing.T) {
-	convey.Convey("Given a cold cache and a library-type read-through", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
-		defer cleanup()
-
-		query := `SELECT DISTINCT iseq_flowcell.pipeline_id_lims, sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, COALESCE(study.id_study_lims, ''), sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description, sample.last_updated FROM iseq_flowcell LEFT JOIN study ON study.id_study_tmp = iseq_flowcell.id_study_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_flowcell.pipeline_id_lims = ? AND (study.id_lims = 'SQSCP' OR study.id_lims IS NULL) AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(query)).
-			WithArgs("Chromium single cell 3 prime v3", 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{
-				"pipeline_id_lims",
-				"id_sample_tmp",
-				"id_lims",
-				"id_sample_lims",
-				"uuid_sample_lims",
-				"id_study_lims",
-				"name",
-				"sanger_sample_id",
-				"supplier_name",
-				"accession_number",
-				"donor_id",
-				"taxon_id",
-				"common_name",
-				"description",
-				"last_updated",
-			}).AddRow(
-				"Chromium single cell 3 prime v3",
-				int64(11),
-				"SQSCP",
-				"501",
-				"sample-uuid-11",
-				"6568",
-				"sample-a",
-				"sanger-id-a",
-				"supplier-a",
-				"accession-a",
-				"donor-a",
-				9606,
-				"human",
-				"desc-a",
-				formatSyncTime(time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)),
-			))
-
-		samples, err := client.SamplesForLibraryType(context.Background(), "Chromium single cell 3 prime v3", 100, 0)
-
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].UUIDSampleLims, convey.ShouldEqual, "sample-uuid-11")
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+		convey.So(samples, convey.ShouldBeNil)
 	})
 }
 
@@ -839,7 +747,7 @@ func TestExpandIdentifierCacheInvalidatedAfterSyncCommit(t *testing.T) {
 			return err
 		}
 
-		_, err = client.Sync(context.Background(), "sample")
+		_, err = client.Sync(context.Background())
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(syncCalls.Load(), convey.ShouldEqual, 1)
 

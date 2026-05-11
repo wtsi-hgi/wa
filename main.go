@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/joho/godotenv"
 	"github.com/wtsi-hgi/wa/cmd"
@@ -28,7 +31,11 @@ func run(args []string) error {
 		return err
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	command := cmd.NewRootCommand()
+	command.SetContext(ctx)
 	command.SetArgs(rewriteLegacyInspectArgs(filteredArgs))
 
 	return command.Execute()

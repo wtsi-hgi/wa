@@ -30,6 +30,7 @@ import "errors"
 var (
 	ErrNotFound              = errors.New("mlwh: identifier not found")
 	ErrCacheNeverSynced      = errors.New("mlwh: cache has never been synced; run \"wa mlwh sync\" first")
+	ErrSyncAlreadyRunning    = errors.New("mlwh sync: another sync is already running against this cache")
 	ErrAmbiguous             = errors.New("mlwh: identifier matches multiple records")
 	ErrUnsupportedIdentifier = errors.New("mlwh: identifier form not supported")
 )

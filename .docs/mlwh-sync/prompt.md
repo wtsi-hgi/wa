@@ -117,7 +117,7 @@ of pure read time. That is the floor.
 
 Same env, same binary, isolated empty cache file per run, 5-minute cap:
 
-| `wa --env development mlwh sync --tables ...` | Result                                         |
+| Single-table probe                            | Result                                         |
 | --------------------------------------------- | ---------------------------------------------- |
 | `study`                                       | success in 4 s                                 |
 | `iseq_flowcell`                               | killed at 240 s; 0 rows committed; 253 MiB WAL |
@@ -592,10 +592,9 @@ are:
   caller is a read or a write.
 
 The `ResolveLibrary` / `ErrNotFound` retry-via-sync path is removed.
-The `ensureResolverTableSynced` / `hasResolverSyncState` helpers are
-removed. `ExpandIdentifier`, `ResolveLibrary`, the `donor_id` step
-of `ResolveSample`, and every other resolver entry point just read
-the cache.
+Resolver and hierarchy entry points no longer trigger read-time syncs;
+they read the cache and surface `ErrCacheNeverSynced` when the
+required table has no sync state.
 
 ### 5. Performance budget
 

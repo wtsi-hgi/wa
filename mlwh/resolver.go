@@ -138,23 +138,12 @@ func (c *Client) classifyTextIdentifier(ctx context.Context, raw string) (Match,
 }
 
 // ResolveLibrary resolves an exact pipeline_id_lims match from the cache.
-// On the first call against a cold cache, it blocks on a full wa mlwh sync of
-// iseq_flowcell before reading so operators can pre-warm with wa mlwh sync.
 func (c *Client) ResolveLibrary(ctx context.Context, raw string) (Match, error) {
-	if err := c.ensureResolverTableSynced(ctx, syncTableIseqFlowcell); err != nil {
+	if err := c.requireResolverSyncState(ctx, syncTableIseqFlowcell); err != nil {
 		return Match{}, err
 	}
 
-	match, err := c.resolveLibraryFromCache(ctx, raw)
-	if errors.Is(err, ErrNotFound) {
-		if _, syncErr := c.Sync(ctx, syncTableIseqFlowcell); syncErr != nil {
-			return Match{}, syncErr
-		}
-
-		match, err = c.resolveLibraryFromCache(ctx, raw)
-	}
-
-	return match, err
+	return c.resolveLibraryFromCache(ctx, raw)
 }
 
 func (c *Client) resolveLibraryFromCache(ctx context.Context, raw string) (Match, error) {
@@ -225,7 +214,7 @@ func (c *Client) ResolveRun(ctx context.Context, raw string) (Match, error) {
 // ResolveStudy resolves a study from cache-backed indexed lookups.
 func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 	if isUUIDShape(raw) {
-		study, err := c.resolveStudyFromCacheWithWarmup(
+		study, err := c.resolveStudyFromCache(
 			ctx,
 			`SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE uuid_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`,
 			raw,
@@ -238,7 +227,7 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 	}
 
 	if _, err := strconv.Atoi(raw); err == nil {
-		study, resolveErr := c.resolveStudyFromCacheWithWarmup(
+		study, resolveErr := c.resolveStudyFromCache(
 			ctx,
 			`SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`,
 			raw,
@@ -250,7 +239,7 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 		return Match{Kind: KindStudyLimsID, Canonical: study.IDStudyLims, Study: study}, nil
 	}
 
-	study, err := c.resolveStudyFromCacheWithWarmup(
+	study, err := c.resolveStudyFromCache(
 		ctx,
 		`SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`,
 		raw,
@@ -262,7 +251,7 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 		return Match{}, err
 	}
 
-	study, err = c.resolveStudyByNameWithWarmup(ctx, raw)
+	study, err = c.resolveStudyByName(ctx, raw)
 	if err != nil {
 		return Match{}, err
 	}
@@ -339,7 +328,7 @@ func (c *Client) ResolveSample(ctx context.Context, raw string) (Match, error) {
 		}
 	}
 
-	if err := c.ensureResolverTableSynced(ctx, syncTableSample); err != nil {
+	if err := c.requireResolverSyncState(ctx, syncTableSample); err != nil {
 		return Match{}, err
 	}
 
@@ -409,48 +398,6 @@ func (c *Client) resolveSampleDirectFromCache(ctx context.Context, raw string) (
 	}
 
 	return Match{}, ErrNotFound
-}
-
-func (c *Client) resolveStudyFromCacheWithWarmup(ctx context.Context, query, raw string) (*Study, error) {
-	study, err := c.resolveStudyFromCache(ctx, query, raw)
-	if err == nil || !errors.Is(err, ErrNotFound) || c == nil || c.syncSource == nil {
-		return study, err
-	}
-
-	warm, warmErr := c.hasResolverSyncState(ctx, syncTableStudy)
-	if warmErr != nil {
-		return nil, warmErr
-	}
-	if warm {
-		return nil, err
-	}
-
-	if syncErr := c.ensureResolverTableSynced(ctx, syncTableStudy); syncErr != nil {
-		return nil, syncErr
-	}
-
-	return c.resolveStudyFromCache(ctx, query, raw)
-}
-
-func (c *Client) resolveStudyByNameWithWarmup(ctx context.Context, raw string) (*Study, error) {
-	study, err := c.resolveStudyByName(ctx, raw)
-	if err == nil || !errors.Is(err, ErrNotFound) || c == nil || c.syncSource == nil {
-		return study, err
-	}
-
-	warm, warmErr := c.hasResolverSyncState(ctx, syncTableStudy)
-	if warmErr != nil {
-		return nil, warmErr
-	}
-	if warm {
-		return nil, err
-	}
-
-	if syncErr := c.ensureResolverTableSynced(ctx, syncTableStudy); syncErr != nil {
-		return nil, syncErr
-	}
-
-	return c.resolveStudyByName(ctx, raw)
 }
 
 func (c *Client) resolveSampleByUUID(ctx context.Context, raw string) (*Sample, error) {

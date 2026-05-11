@@ -61,7 +61,6 @@ var openSeqmetaClientFunc = func(ctx context.Context, cfg seqmetaMLWHConfig) (se
 		},
 	})
 	if err != nil {
-		return nil, err
 	}
 
 	return &seqmetaMLWHClientAdapter{client: client}, nil
@@ -106,7 +105,7 @@ func resolveSeqmetaMLWHConfig(options *seqmetaOptions, cacheFlagChanged bool) (s
 
 type seqmetaCommandClient interface {
 	seqmeta.Provider
-	Sync(context.Context, ...string) ([]mlwh.SyncReport, error)
+	Sync(context.Context) ([]mlwh.SyncReport, error)
 	Close() error
 }
 
@@ -146,14 +145,14 @@ func startSeqmetaSyncLoop(ctx context.Context, client seqmetaCommandClient, inte
 	go func() {
 		defer ticker.Stop()
 
-		_, _ = client.Sync(ctx, seqmetaSyncTables...)
+		_, _ = client.Sync(ctx)
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C():
-				_, _ = client.Sync(ctx, seqmetaSyncTables...)
+				_, _ = client.Sync(ctx)
 			}
 		}
 	}()
@@ -292,8 +291,8 @@ func (a *seqmetaMLWHClientAdapter) GetSampleFiles(ctx context.Context, sangerNam
 	return a.client.IRODSPathsForSample(ctx, sangerName, seqmetaProviderFetchLimit, 0)
 }
 
-func (a *seqmetaMLWHClientAdapter) Sync(ctx context.Context, tables ...string) ([]mlwh.SyncReport, error) {
-	return a.client.Sync(ctx, tables...)
+func (a *seqmetaMLWHClientAdapter) Sync(ctx context.Context) ([]mlwh.SyncReport, error) {
+	return a.client.Sync(ctx)
 }
 
 func (a *seqmetaMLWHClientAdapter) Close() error {

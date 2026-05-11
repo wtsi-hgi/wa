@@ -31,11 +31,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
-	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -175,6 +176,48 @@ func TestOpenCacheSQLiteCurrentVersionEmitsNoMigrationLine(t *testing.T) {
 	})
 }
 
+func TestOpenCacheSQLiteRepairsDroppedSampleIndexesSilently(t *testing.T) {
+	convey.Convey("B4.4: Given a SQLite cache with sample_mirror indexes missing and sync_state.indexes_dropped=1 plus non-zero high_water, when OpenCache runs again, then it recreates the indexes, clears the flag, and emits no migration line", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(db.Close(), convey.ShouldBeNil) })
+
+		for _, indexName := range sampleMirrorSecondaryIndexNames() {
+			_, err = db.Exec(`DROP INDEX IF EXISTS ` + indexName)
+			convey.So(err, convey.ShouldBeNil)
+		}
+
+		_, err = db.Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?) ON CONFLICT(table_name) DO UPDATE SET high_water = excluded.high_water, last_run = excluded.last_run, resume_cursor = excluded.resume_cursor, indexes_dropped = excluded.indexes_dropped`,
+			syncTableSample,
+			"2026-05-11T19:00:00Z",
+			"2026-05-11T19:00:00Z",
+			nil,
+			1,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		preRepairIndexes := sampleMirrorIndexNames(t, db, "sqlite")
+		convey.So(preRepairIndexes, convey.ShouldHaveLength, 0)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+		})
+
+		convey.So(output, convey.ShouldEqual, "")
+		convey.So(sampleMirrorIndexNames(t, db, "sqlite"), convey.ShouldResemble, sampleMirrorSecondaryIndexNames())
+		convey.So(readSyncStateRow(t, db, syncTableSample).IndexesDropped, convey.ShouldEqual, 0)
+	})
+}
+
 func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 	convey.Convey("Given a MySQL cache backend whose schema_version row is still v1", t, func() {
 		originalOpen := sqlOpenFunc
@@ -252,156 +295,289 @@ func TestOpenCacheSQLiteEnablesWAL(t *testing.T) {
 	})
 }
 
-func TestClientSyncSerializesSQLiteWithMutex(t *testing.T) {
-	convey.Convey("Given a client with a SQLite cache on a single mocked connection", t, func() {
-		rwDB, rwMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		rwDB.SetMaxOpenConns(1)
+func TestClientSyncRejectsConcurrentSQLiteSyncForSameCache(t *testing.T) {
+	convey.Convey("B6.1: Given a SQLite cache and two concurrent syncs against it, when both try to acquire the advisory lock, then the second fails immediately with ErrSyncAlreadyRunning", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
 
-		roDB, roMock, err := sqlmock.New()
+		firstCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
 		convey.So(err, convey.ShouldBeNil)
-		roMock.ExpectClose()
+		convey.Reset(func() { convey.So(firstCache.Close(), convey.ShouldBeNil) })
 
-		releaseFirst := make(chan struct{})
+		secondCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(secondCache.Close(), convey.ShouldBeNil) })
+
 		firstEntered := make(chan struct{}, 1)
 		secondEntered := make(chan struct{}, 1)
-		var enteredCount int32
+		releaseFirst := make(chan struct{})
 
-		rwMock.MatchExpectationsInOrder(true)
-		rwMock.ExpectBegin()
-		rwMock.ExpectCommit()
-		rwMock.ExpectBegin()
-		rwMock.ExpectCommit()
-		rwMock.ExpectClose()
+		firstClient := &Client{
+			cache:       firstCache,
+			cacheReader: readDBFromCache(firstCache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				firstEntered <- struct{}{}
+				<-releaseFirst
 
-		client := &Client{
-			cache:       &sqliteCache{rwDB: rwDB, roDB: roDB},
-			cacheReader: roDB,
-			syncMu:      &sync.Mutex{},
-			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				switch atomic.AddInt32(&enteredCount, 1) {
-				case 1:
-					firstEntered <- struct{}{}
-					<-releaseFirst
-				default:
-					secondEntered <- struct{}{}
-				}
+				return nil
+			},
+		}
+		secondClient := &Client{
+			cache:       secondCache,
+			cacheReader: readDBFromCache(secondCache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				secondEntered <- struct{}{}
 
 				return nil
 			},
 		}
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		var firstErr error
-		var secondErr error
+		firstErrCh := make(chan error, 1)
 		go func() {
-			defer wg.Done()
-			_, firstErr = client.Sync(context.Background(), "sample")
-		}()
-
-		<-firstEntered
-
-		secondDone := make(chan error, 1)
-		go func() {
-			defer wg.Done()
-			_, secondErr = client.Sync(context.Background(), "sample")
-			secondDone <- secondErr
+			_, syncErr := firstClient.Sync(context.Background())
+			firstErrCh <- syncErr
 		}()
 
 		select {
-		case <-secondEntered:
-			convey.So("second sync entered early", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
+		case <-firstEntered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for first sqlite sync to hold the lock")
 		}
 
-		close(releaseFirst)
-		wg.Wait()
+		secondCtx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer cancel()
 
-		convey.Convey("when Sync is called concurrently, then the second transaction starts only after the first commits", func() {
-			convey.So(firstErr, convey.ShouldBeNil)
-			convey.So(<-secondDone, convey.ShouldBeNil)
-			convey.So(secondErr, convey.ShouldBeNil)
-			convey.So(len(secondEntered), convey.ShouldEqual, 1)
-			convey.So(rwDB.Close(), convey.ShouldBeNil)
-			convey.So(roDB.Close(), convey.ShouldBeNil)
-			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
-			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		secondErrCh := make(chan error, 1)
+		go func() {
+			_, syncErr := secondClient.Sync(secondCtx)
+			secondErrCh <- syncErr
+		}()
+
+		var secondErr error
+		select {
+		case secondErr = <-secondErrCh:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for second sqlite sync to fail")
+		}
+
+		convey.So(errors.Is(secondErr, ErrSyncAlreadyRunning), convey.ShouldBeTrue)
+		convey.So(len(secondEntered), convey.ShouldEqual, 0)
+
+		close(releaseFirst)
+		convey.So(<-firstErrCh, convey.ShouldBeNil)
+	})
+}
+
+func TestMySQLSyncLockNameUsesHostAndDatabaseOnly(t *testing.T) {
+	convey.Convey("Given MySQL DSN variants that point at the same host and database", t, func() {
+		lockNames := []string{
+			mysqlSyncLockName("cache_user@tcp(localhost:3306)/wa_mlwh_cache"),
+			mysqlSyncLockName("other_user@tcp(localhost:3306)/wa_mlwh_cache?parseTime=true"),
+			mysqlSyncLockName("third_user@tcp(localhost:3306)/wa_mlwh_cache?multiStatements=true&readTimeout=1s"),
+		}
+
+		convey.Convey("when the sync lock name is derived, then username and query parameters do not change it", func() {
+			convey.So(lockNames[1], convey.ShouldEqual, lockNames[0])
+			convey.So(lockNames[2], convey.ShouldEqual, lockNames[0])
 		})
 	})
 }
 
-func TestClientSyncSerializesMySQLWithGetLock(t *testing.T) {
-	convey.Convey("Given a client with a MySQL cache and ordered GET_LOCK expectations", t, func() {
-		rwDB, rwMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+func TestClientSyncRejectsConcurrentMySQLSyncForSameCache(t *testing.T) {
+	convey.Convey("B6.2: Given a MySQL cache and two concurrent syncs against the same DSN, when both try GET_LOCK with the derived per-cache name, then the second fails immediately with ErrSyncAlreadyRunning", t, func() {
+		const cacheDSN = "cache_user@tcp(localhost:3306)/wa_mlwh_cache"
+		lockName := mysqlSyncLockName(cacheDSN)
+
+		firstRW, firstRWMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		secondRW, secondRWMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		firstLockDB, firstLockMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		secondLockDB, secondLockMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		firstRO, _, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		secondRO, _, err := sqlmock.New()
 		convey.So(err, convey.ShouldBeNil)
 
-		roDB, roMock, err := sqlmock.New()
+		convey.Reset(func() {
+			_ = firstRW.Close()
+			_ = secondRW.Close()
+			_ = firstLockDB.Close()
+			_ = secondLockDB.Close()
+			_ = firstRO.Close()
+			_ = secondRO.Close()
+		})
+
+		firstLockMock.ExpectQuery(regexp.QuoteMeta(`SELECT GET_LOCK(?, 0)`)).WithArgs(lockName).WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(1))
+		firstLockMock.ExpectQuery(regexp.QuoteMeta(`SELECT RELEASE_LOCK(?)`)).WithArgs(lockName).WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+
+		secondLockMock.ExpectQuery(regexp.QuoteMeta(`SELECT GET_LOCK(?, 0)`)).WithArgs(lockName).WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(0))
+
+		firstClient := &Client{
+			cache:       &mysqlCache{rwDB: firstRW, roDB: firstRO, lockDB: firstLockDB, lockDSN: cacheDSN},
+			cacheReader: firstRO,
+		}
+		secondClient := &Client{
+			cache:       &mysqlCache{rwDB: secondRW, roDB: secondRO, lockDB: secondLockDB, lockDSN: cacheDSN},
+			cacheReader: secondRO,
+		}
+
+		firstRelease, err := firstClient.acquireSyncLock(context.Background())
 		convey.So(err, convey.ShouldBeNil)
+		convey.So(firstRelease, convey.ShouldNotBeNil)
 
-		releaseFirst := make(chan struct{})
-		firstLock := make(chan struct{}, 1)
-		secondLock := make(chan struct{}, 1)
-		var enteredCount int32
+		secondRelease, secondErr := secondClient.acquireSyncLock(context.Background())
+		convey.So(secondRelease, convey.ShouldBeNil)
+		convey.So(errors.Is(secondErr, ErrSyncAlreadyRunning), convey.ShouldBeTrue)
 
-		rwMock.MatchExpectationsInOrder(true)
-		rwMock.ExpectQuery("SELECT GET_LOCK\\('wa_mlwh_sync', \\?\\)").WithArgs(defaultMySQLLockTimeoutSeconds).WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(1)).WillDelayFor(5 * time.Millisecond)
-		rwMock.ExpectBegin()
-		rwMock.ExpectCommit()
-		rwMock.ExpectQuery("SELECT RELEASE_LOCK\\('wa_mlwh_sync'\\)").WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1)).WillDelayFor(5 * time.Millisecond)
-		rwMock.ExpectQuery("SELECT GET_LOCK\\('wa_mlwh_sync', \\?\\)").WithArgs(defaultMySQLLockTimeoutSeconds).WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(1)).WillDelayFor(5 * time.Millisecond)
-		rwMock.ExpectBegin()
-		rwMock.ExpectCommit()
-		rwMock.ExpectQuery("SELECT RELEASE_LOCK\\('wa_mlwh_sync'\\)").WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+		convey.So(firstRelease(), convey.ShouldBeNil)
+		convey.So(firstRWMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		convey.So(secondRWMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		convey.So(firstLockMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		convey.So(secondLockMock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
 
-		cache := &mysqlCache{rwDB: rwDB, roDB: roDB}
+func TestSQLiteSyncLockIsReleasedAfterKilledProcess(t *testing.T) {
+	if os.Getenv("WA_TEST_SQLITE_SYNC_LOCK_HELPER") == "1" {
+		cachePath := os.Getenv("WA_TEST_SQLITE_SYNC_LOCK_CACHE")
+		readyPath := os.Getenv("WA_TEST_SQLITE_SYNC_LOCK_READY")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		if err != nil {
+			os.Exit(2)
+		}
+
 		client := &Client{
 			cache:       cache,
-			cacheReader: roDB,
-			syncMu:      &sync.Mutex{},
-			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				switch atomic.AddInt32(&enteredCount, 1) {
-				case 1:
-					firstLock <- struct{}{}
-					<-releaseFirst
-				default:
-					secondLock <- struct{}{}
-				}
+			cacheReader: readDBFromCache(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				_ = os.WriteFile(readyPath, []byte("ready"), 0o600)
+
+				select {}
+			},
+		}
+
+		_, _ = client.Sync(context.Background())
+		os.Exit(3)
+	}
+
+	convey.Convey("B6.3: Given a held SQLite sync lock and a killed lock-holder process, when a new sync starts, then it acquires the lock successfully", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+		readyPath := filepath.Join(t.TempDir(), "ready")
+
+		command := exec.Command(os.Args[0], "-test.run=^TestSQLiteSyncLockIsReleasedAfterKilledProcess$")
+		command.Env = append(
+			os.Environ(),
+			"WA_TEST_SQLITE_SYNC_LOCK_HELPER=1",
+			"WA_TEST_SQLITE_SYNC_LOCK_CACHE="+cachePath,
+			"WA_TEST_SQLITE_SYNC_LOCK_READY="+readyPath,
+		)
+
+		convey.So(command.Start(), convey.ShouldBeNil)
+		convey.Reset(func() {
+			if command.Process != nil {
+				_ = command.Process.Kill()
+				_, _ = command.Process.Wait()
+			}
+		})
+
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, err := os.Stat(readyPath); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("timed out waiting for helper process to hold the sqlite sync lock")
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		convey.So(command.Process.Signal(syscall.SIGKILL), convey.ShouldBeNil)
+		_, _ = command.Process.Wait()
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(cache.Close(), convey.ShouldBeNil) })
+
+		client := &Client{
+			cache:       cache,
+			cacheReader: readDBFromCache(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				return nil
+			},
+		}
+
+		_, err = client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
+func TestResolveSampleSucceedsWhileSQLiteSyncLockIsHeld(t *testing.T) {
+	convey.Convey("B6.4: Given a read-only resolver call while a SQLite sync lock is held, when ResolveSample runs, then it succeeds and does not take the advisory lock", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+		seedCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(writeSyncState(context.Background(), seedCache.DB(), "sqlite", syncTableSample, time.Date(2026, time.May, 11, 20, 0, 0, 0, time.UTC), nil, false), convey.ShouldBeNil)
+		_, err = seedCache.DB().Exec(`INSERT INTO sample_mirror(
+			id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+			sanger_sample_id, supplier_name, accession_number, donor_id,
+			taxon_id, common_name, description, last_updated
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			1, "SQSCP", "101", "sample-uuid-1", "DN1234",
+			"DN1234", "supplier-1", "acc-1", "donor-1",
+			9606, "human", "desc-1", formatSyncTime(time.Date(2026, time.May, 11, 20, 0, 0, 0, time.UTC)),
+		)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(seedCache.Close(), convey.ShouldBeNil)
+
+		lockCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(lockCache.Close(), convey.ShouldBeNil) })
+
+		readCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(readCache.Close(), convey.ShouldBeNil) })
+
+		lockEntered := make(chan struct{}, 1)
+		releaseLock := make(chan struct{})
+		lockClient := &Client{
+			cache:       lockCache,
+			cacheReader: readDBFromCache(lockCache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				lockEntered <- struct{}{}
+				<-releaseLock
 
 				return nil
 			},
 		}
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-
+		errCh := make(chan error, 1)
 		go func() {
-			defer wg.Done()
-			_, _ = client.Sync(context.Background(), "sample")
-		}()
-
-		<-firstLock
-
-		go func() {
-			defer wg.Done()
-			_, _ = client.Sync(context.Background(), "sample")
+			_, syncErr := lockClient.Sync(context.Background())
+			errCh <- syncErr
 		}()
 
 		select {
-		case <-secondLock:
-			convey.So("second mysql sync entered early", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
+		case <-lockEntered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for sqlite sync lock to be acquired")
 		}
 
-		close(releaseFirst)
-		wg.Wait()
+		readClient := &Client{cache: readCache, cacheReader: readDBFromCache(readCache)}
+		match, resolveErr := readClient.ResolveSample(context.Background(), "DN1234")
 
-		convey.Convey("when Sync is called concurrently, then GET_LOCK and RELEASE_LOCK serialize the calls", func() {
-			convey.So(len(secondLock), convey.ShouldEqual, 1)
-			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
-			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		})
+		convey.So(resolveErr, convey.ShouldBeNil)
+		convey.So(match.Kind, convey.ShouldEqual, KindSangerSampleName)
+		convey.So(match.Canonical, convey.ShouldEqual, "DN1234")
+		convey.So(match.Sample, convey.ShouldNotBeNil)
+		convey.So(match.Sample.Name, convey.ShouldEqual, "DN1234")
+
+		close(releaseLock)
+		convey.So(<-errCh, convey.ShouldBeNil)
 	})
 }
 

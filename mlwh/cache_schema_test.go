@@ -434,6 +434,34 @@ func TestSchemaCaseInsensitiveLibraryPipelineIDLimsEquality(t *testing.T) {
 	})
 }
 
+func TestSchemaRejectsEmptyLibrarySampleStudyLims(t *testing.T) {
+	convey.Convey("B7.3: Given a SQLite library_samples insert with an empty study identifier", t, func() {
+		db := openSQLiteSchemaTestDB(t)
+
+		_, err := db.Exec(`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "Standard", 9, "")
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(strings.ToLower(err.Error()), convey.ShouldContainSubstring, "check")
+
+		cfg, skipReason := loadMySQLCacheConfigForTest(t)
+		if skipReason != "" {
+			convey.SkipConvey("Given the same row in MySQL", func() {})
+
+			return
+		}
+
+		cache := openMySQLCacheForTest(t, cfg)
+		_, err = cache.DB().Exec(`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "Standard", 9, "")
+
+		convey.Convey("Given the same row in MySQL", func() {
+			convey.Convey("when inserted, then the CHECK constraint rejects it", func() {
+				convey.So(err, convey.ShouldNotBeNil)
+				convey.So(strings.ToLower(err.Error()), convey.ShouldContainSubstring, "check")
+			})
+		})
+	})
+}
+
 func tableNames(tables map[string]map[string]string) []string {
 	names := slices.Collect(maps.Keys(tables))
 	sort.Strings(names)

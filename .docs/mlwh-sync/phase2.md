@@ -21,8 +21,8 @@ with streaming MLWH connections, accumulate errors via
 per-table stdout lines as each goroutine returns, and remove the
 `--tables` flag. Covers all 8 acceptance tests from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: B2 - Batched idempotent upserts
 
@@ -36,7 +36,8 @@ inserted/updated counters via the pre-upsert
 transaction. Covers all 4 acceptance tests from B2.
 
 - [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.3: B3 - Resume cursor
 
@@ -50,8 +51,8 @@ Includes the explicit 4-column keyset query for `iseq_flowcell` /
 `library_samples`. Covers all 4 acceptance tests from B3. Depends
 on item 2.2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.4: B4 - Cold-load index drop / recreate for sample_mirror
 
@@ -66,8 +67,8 @@ the indexes silently. Confirm the other four tables never enter
 the drop/recreate path. Covers all 7 acceptance tests from B4
 (tests 6 and 7 are MySQL-gated). Depends on items 2.2 and 2.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.5: B5 - Upstream reconnect / retry
 
@@ -81,8 +82,8 @@ per retry matching the spec format. Non-transient errors do not
 retry. Covers all 4 acceptance tests from B5. Depends on item
 2.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 6 (parallel, after item 2.5 is reviewed)
 
@@ -98,8 +99,8 @@ with the spec stderr message, empty stdout. Release on normal
 exit, error, and signal; `wa mlwh info` never takes the lock.
 Covers all 4 acceptance tests from B6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.7: B7 - Source filter tightening [parallel with 2.6, 2.8]
 
@@ -114,8 +115,8 @@ tables in both dialects. Sync goroutine surfaces a constraint
 violation immediately, naming the offending row's PK. Covers all
 4 acceptance tests from B7.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.8: B8 - SQLite write pragmas [parallel with 2.6, 2.7]
 
@@ -127,8 +128,8 @@ spec order, record the pre-existing values, and restore them on
 command exit (success or error). MySQL caches skip the pragma
 helper. Covers all 3 acceptance tests from B8.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

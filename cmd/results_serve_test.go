@@ -76,7 +76,7 @@ type fakeResultsServeSyncClient struct {
 	syncCh    chan struct{}
 }
 
-func (f *fakeResultsServeSyncClient) Sync(context.Context, ...string) ([]mlwh.SyncReport, error) {
+func (f *fakeResultsServeSyncClient) Sync(context.Context) ([]mlwh.SyncReport, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -283,7 +283,7 @@ func TestResultsServeCommand(t *testing.T) {
 		cancel()
 
 		convey.So(<-errCh, convey.ShouldBeNil)
-		convey.So(seenConfig.DSN, convey.ShouldEqual, "mlwh_user:"+secret+"@tcp(mlwh-db-ro:3435)/mlwarehouse")
+		convey.So(seenConfig.DSN, convey.ShouldEqual, "mlwh_user:"+secret+"@tcp(mlwh-db-ro:3435)/mlwarehouse?interpolateParams=false&multiStatements=false")
 		convey.So(seenConfig.CachePath, convey.ShouldEqual, os.Getenv("WA_MLWH_CACHE_PATH"))
 		convey.So(stdout.String(), convey.ShouldNotContainSubstring, secret)
 		convey.So(stderr.String(), convey.ShouldNotContainSubstring, secret)

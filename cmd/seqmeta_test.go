@@ -60,7 +60,7 @@ func setSeqmetaMLWHEnvForTest(t *testing.T) {
 
 type seqmetaTestClient struct {
 	provider  seqmeta.Provider
-	syncFunc  func(context.Context, ...string) ([]mlwh.SyncReport, error)
+	syncFunc  func(context.Context) ([]mlwh.SyncReport, error)
 	closeFunc func() error
 }
 
@@ -156,9 +156,9 @@ func (c *seqmetaTestClient) GetSampleFiles(ctx context.Context, sangerName strin
 	return c.provider.GetSampleFiles(ctx, sangerName)
 }
 
-func (c *seqmetaTestClient) Sync(ctx context.Context, tables ...string) ([]mlwh.SyncReport, error) {
+func (c *seqmetaTestClient) Sync(ctx context.Context) ([]mlwh.SyncReport, error) {
 	if c.syncFunc != nil {
-		return c.syncFunc(ctx, tables...)
+		return c.syncFunc(ctx)
 	}
 
 	return nil, nil
@@ -467,12 +467,12 @@ func TestServeCommand(t *testing.T) {
 	convey.Convey("E2.4: seqmeta serve launches an opt-in sync goroutine", t, func() {
 		setSeqmetaMLWHEnvForTest(t)
 
-		syncCh := make(chan []string, 1)
+		syncCh := make(chan struct{}, 1)
 		openSeqmetaClientFunc = func(_ context.Context, _ seqmetaMLWHConfig) (seqmetaCommandClient, error) {
 			return &seqmetaTestClient{
 				provider: provider,
-				syncFunc: func(_ context.Context, tables ...string) ([]mlwh.SyncReport, error) {
-					syncCh <- append([]string(nil), tables...)
+				syncFunc: func(_ context.Context) ([]mlwh.SyncReport, error) {
+					syncCh <- struct{}{}
 
 					return []mlwh.SyncReport{{Table: "sample"}}, nil
 				},
@@ -502,8 +502,7 @@ func TestServeCommand(t *testing.T) {
 
 		<-addrCh
 		select {
-		case tables := <-syncCh:
-			convey.So(tables, convey.ShouldResemble, []string{"sample", "study", "iseq_flowcell"})
+		case <-syncCh:
 		case <-time.After(500 * time.Millisecond):
 			t.Fatal("expected sync invocation")
 		}

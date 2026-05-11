@@ -53,8 +53,10 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 		seedRealMLWHSampleRow(t, source, 2, "SQSCP", "1002", "uuid-sample-2", "sample-b", "ssid-b", "supplier-b", "acc-sb", "donor-b", 9606, "human", "desc-b", time.Date(2026, time.May, 7, 9, 5, 0, 0, time.UTC))
 		seedRealMLWHStudyRow(t, source, 10, "SQSCP", "5001", "uuid-study-1", "Study One", "acc-st-1", time.Date(2026, time.May, 7, 8, 0, 0, 0, time.UTC))
 		seedRealMLWHFlowcellRow(t, source, 100, "Standard", 1, 10, time.Date(2026, time.May, 7, 9, 10, 0, 0, time.UTC))
-		// sample 2 deliberately has no flowcell entry, so its mirrored
-		// id_study_lims must be the empty string rather than failing the sync.
+		seedRealMLWHProductMetricRow(t, source, 1001, 100, 9001, 1, 1, 1, 1, 1, time.Date(2026, time.May, 7, 9, 15, 0, 0, time.UTC))
+		seedRealMLWHIRODSLocationRow(t, source, 1001, "/seq", "run/1", "/seq/run", "file.cram", time.Date(2026, time.May, 7, 9, 20, 0, 0, time.UTC))
+		// sample 2 deliberately has no flowcell entry, so it produces no
+		// library_samples study mapping while the rest of the sync still succeeds.
 
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -65,7 +67,7 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 
 		convey.Convey("when Sync runs without restricting tables, then every table is synced and the study mapping is stored via library_samples", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(reports, convey.ShouldHaveLength, 3)
+			convey.So(reports, convey.ShouldHaveLength, 5)
 
 			byTable := make(map[string]SyncReport, len(reports))
 			for _, report := range reports {
@@ -74,10 +76,14 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 			convey.So(byTable["sample"].Inserted, convey.ShouldEqual, 2)
 			convey.So(byTable["study"].Inserted, convey.ShouldEqual, 1)
 			convey.So(byTable["iseq_flowcell"].Inserted, convey.ShouldEqual, 1)
+			convey.So(byTable["iseq_product_metrics"].Inserted, convey.ShouldEqual, 1)
+			convey.So(byTable["seq_product_irods_locations"].Inserted, convey.ShouldEqual, 1)
 
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 2)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 1)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 1)
 
 			var studyLimsForSample1 string
 			convey.So(cache.DB().QueryRow(`SELECT id_study_lims FROM library_samples WHERE id_sample_tmp = 1`).Scan(&studyLimsForSample1), convey.ShouldBeNil)
@@ -192,6 +198,51 @@ func TestUpstreamSampleResolverAgainstRealMLWHSchema(t *testing.T) {
 	})
 }
 
+func TestClientSyncIseqFlowcellRealSourceSkipsNonSQSCPStudyRows(t *testing.T) {
+	convey.Convey("B7.1: Given a real-source iseq_flowcell row linked to a non-SQSCP study", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		seedRealMLWHStudyRow(t, source, 20, "GCLP", "6001", "uuid-study-20", "Non SQSCP Study", "acc-st-20", time.Date(2026, time.May, 7, 8, 0, 0, 0, time.UTC))
+		seedRealMLWHFlowcellRow(t, source, 200, "Standard", 21, 20, time.Date(2026, time.May, 7, 9, 0, 0, 0, time.UTC))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqFlowcell)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+		convey.So(reports[0].Updated, convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 0)
+	})
+}
+
+func TestClientSyncProductTablesRealSourceSkipRowsWithoutSQSCPStudy(t *testing.T) {
+	convey.Convey("B7.2: Given real-source product rows linked through a non-SQSCP study", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		seedRealMLWHStudyRow(t, source, 30, "GCLP", "7001", "uuid-study-30", "Non SQSCP Study", "acc-st-30", time.Date(2026, time.May, 7, 8, 5, 0, 0, time.UTC))
+		seedRealMLWHFlowcellRow(t, source, 300, "Standard", 31, 30, time.Date(2026, time.May, 7, 9, 5, 0, 0, time.UTC))
+		seedRealMLWHProductMetricRow(t, source, 3001, 300, 9001, 1, 1, 1, 1, 1, time.Date(2026, time.May, 7, 9, 10, 0, 0, time.UTC))
+		seedRealMLWHIRODSLocationRow(t, source, 3001, "/seq", "run/3001", "/seq/run/3001", "3001.cram", time.Date(2026, time.May, 7, 9, 15, 0, 0, time.UTC))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics, syncTableSeqProductIRODSLocations)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 2)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 0)
+		convey.So(reports[1].Inserted, convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 0)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 0)
+	})
+}
+
 func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -258,6 +309,27 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		last_updated         TEXT NOT NULL
 	)`)
 
+	mustExec(t, db, `CREATE TABLE iseq_product_metrics (
+		id_iseq_product      INTEGER PRIMARY KEY,
+		id_iseq_flowcell_tmp INTEGER NOT NULL,
+		id_run               INTEGER NOT NULL,
+		position             INTEGER NOT NULL,
+		tag_index            INTEGER NOT NULL,
+		qc                   INTEGER NOT NULL,
+		qc_lib               INTEGER NOT NULL,
+		qc_seq               INTEGER NOT NULL,
+		last_updated         TEXT NOT NULL
+	)`)
+
+	mustExec(t, db, `CREATE TABLE seq_product_irods_locations (
+		id_iseq_product          INTEGER PRIMARY KEY,
+		irods_root_collection    TEXT NOT NULL,
+		irods_data_relative_path TEXT NOT NULL,
+		irods_collection         TEXT NOT NULL,
+		irods_file_name          TEXT NOT NULL,
+		last_updated             TEXT NOT NULL
+	)`)
+
 	return db
 }
 
@@ -294,6 +366,43 @@ func seedRealMLWHFlowcellRow(t *testing.T, db *sql.DB, idTmp int64, pipelineIDLi
 	)
 	if err != nil {
 		t.Fatalf("seedRealMLWHFlowcellRow: %v", err)
+	}
+}
+
+func seedRealMLWHProductMetricRow(t *testing.T, db *sql.DB, idProduct int64, idFlowcellTmp int64, idRun, position, tagIndex, qc, qcLib, qcSeq int, lastUpdated time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO iseq_product_metrics(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		idProduct,
+		idFlowcellTmp,
+		idRun,
+		position,
+		tagIndex,
+		qc,
+		qcLib,
+		qcSeq,
+		formatSyncTime(lastUpdated),
+	)
+	if err != nil {
+		t.Fatalf("seedRealMLWHProductMetricRow: %v", err)
+	}
+}
+
+func seedRealMLWHIRODSLocationRow(t *testing.T, db *sql.DB, idProduct int64, rootCollection, relativePath, collection, fileName string, lastUpdated time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO seq_product_irods_locations(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		idProduct,
+		rootCollection,
+		relativePath,
+		collection,
+		fileName,
+		formatSyncTime(lastUpdated),
+	)
+	if err != nil {
+		t.Fatalf("seedRealMLWHIRODSLocationRow: %v", err)
 	}
 }
 
