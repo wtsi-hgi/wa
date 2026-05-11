@@ -332,6 +332,7 @@ FRONTEND_LOG="$LOG_DIR/frontend.log"
 FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $frontend_port}"
 SEQMETA_CMD="${WA_RUN_DEV_SEQMETA_CMD:-}"
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
+SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-480}"
 
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$results_port/results/stats}"
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-http://127.0.0.1:$frontend_port/api/health}"
@@ -344,6 +345,16 @@ fi
 
 if (( FRONTEND_HEALTH_MAX_ATTEMPTS < 1 )); then
   printf 'frontend health max attempts must be at least 1\n' >&2
+  exit 1
+fi
+
+if [[ ! "$SEQMETA_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
+  printf 'seqmeta health max attempts must be an integer\n' >&2
+  exit 1
+fi
+
+if (( SEQMETA_HEALTH_MAX_ATTEMPTS < 1 )); then
+  printf 'seqmeta health max attempts must be at least 1\n' >&2
   exit 1
 fi
 
@@ -404,12 +415,51 @@ on_exit() {
 trap on_signal INT TERM
 trap on_exit EXIT
 
+print_service_log_tail() {
+  local log_path="$1"
+
+  if [[ -z "$log_path" ]]; then
+    return
+  fi
+
+  if [[ ! -e "$log_path" ]]; then
+    printf 'Log file %s does not exist yet.\n' "$log_path" >&2
+
+    return
+  fi
+
+  if [[ ! -s "$log_path" ]]; then
+    printf 'Log file %s is empty.\n' "$log_path" >&2
+
+    return
+  fi
+
+  printf 'Last 40 lines from %s:\n' "$log_path" >&2
+  tail -n 40 "$log_path" >&2 || true
+}
+
+print_service_wait_diagnostics() {
+  local label="$1"
+  local pid="$2"
+  local log_path="$3"
+
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    printf '%s process status:\n' "$label" >&2
+    ps -p "$pid" -o pid=,etime=,stat=,pcpu=,pmem=,cmd= >&2 || true
+  fi
+
+  print_service_log_tail "$log_path"
+}
+
 wait_for_http() {
   local label="$1"
   local url="$2"
   local mode="$3"
   local max_attempts="${4:-120}"
+  local pid="${5:-}"
+  local log_path="${6:-}"
   local attempt=0
+  local exit_status
 
   while (( attempt < max_attempts )); do
     if [[ "$mode" == "strict" ]]; then
@@ -422,11 +472,26 @@ wait_for_http() {
       fi
     fi
 
+    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+      if wait "$pid"; then
+        exit_status=0
+      else
+        exit_status=$?
+      fi
+
+      printf '%s exited before becoming ready at %s (exit=%s).\n' "$label" "$url" "$exit_status" >&2
+      print_service_wait_diagnostics "$label" "$pid" "$log_path"
+
+      return 1
+    fi
+
     attempt=$((attempt + 1))
     sleep 0.25
   done
 
   printf 'Timed out waiting for %s at %s\n' "$label" "$url" >&2
+  print_service_wait_diagnostics "$label" "$pid" "$log_path"
+
   return 1
 }
 
@@ -561,7 +626,7 @@ else
   PIDS+=("$!")
   RESULTS_STARTED=1
 
-  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict"
+  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict" 120 "$!" "$RESULTS_LOG"
 fi
 
 seed_fixtures=0
@@ -591,7 +656,12 @@ if [[ -n "$SEQMETA_CMD" ]]; then
       >>"$SEQMETA_LOG" 2>&1 &
     PIDS+=("$!")
     SEQMETA_STARTED=1
-    wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
+    printf 'Waiting for seqmeta studies readiness at %s' "$SEQMETA_HEALTH_URL"
+    if [[ -n "$MLWH_CACHE_PATH" ]]; then
+      printf ' (MLWH cache: %s; a cold cache can take a while on first run)' "$MLWH_CACHE_PATH"
+    fi
+    printf '\n'
+    wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
 elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
   export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
@@ -608,7 +678,12 @@ elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
     "${BIN_PATH}" "${seqmeta_args[@]}" >"$SEQMETA_LOG" 2>&1 &
     PIDS+=("$!")
     SEQMETA_STARTED=1
-    wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict"
+    printf 'Waiting for seqmeta studies readiness at %s' "$SEQMETA_HEALTH_URL"
+    if [[ -n "$MLWH_CACHE_PATH" ]]; then
+      printf ' (MLWH cache: %s; a cold cache can take a while on first run)' "$MLWH_CACHE_PATH"
+    fi
+    printf '\n'
+    wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
 else
 	printf 'seqmeta server skipped because no explicit command or MLWH DSN is set\n' >"$SEQMETA_LOG"
@@ -630,7 +705,7 @@ else
   FRONTEND_PID="$!"
   FRONTEND_STARTED=1
 
-  wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS"
+  wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS" "$FRONTEND_PID" "$FRONTEND_LOG"
 fi
 
 printf 'Development environment is ready.\n'

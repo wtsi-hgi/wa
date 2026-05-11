@@ -283,6 +283,38 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "Operation timed out")
 	})
 
+	convey.Convey("run-dev.sh surfaces seqmeta log output when seqmeta exits before becoming ready", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{
+			"--mode", "dev",
+			"--frontend-port", fmt.Sprintf("%d", frontendPort),
+			"--results-port", fmt.Sprintf("%d", resultsPort),
+			"--seqmeta-port", fmt.Sprintf("%d", seqmetaPort),
+		}, map[string]string{
+			"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results.db"),
+			"WA_MLWH_DSN":                           "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse",
+			"WA_MLWH_CACHE_PATH":                    filepath.Join(t.TempDir(), "mlwh-cache.sqlite"),
+			"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('seqmeta boot failed: source db unavailable'); process.exit(23)"`,
+			"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+			"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+			"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+			"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+			"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+			"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+		}, []string{"WA_ENV"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout, convey.ShouldContainSubstring, "Starting seqmeta server")
+		convey.So(stderr, convey.ShouldContainSubstring, "seqmeta server exited before becoming ready")
+		convey.So(stderr, convey.ShouldContainSubstring, "exit=23")
+		convey.So(stderr, convey.ShouldContainSubstring, "seqmeta boot failed: source db unavailable")
+		convey.So(stderr, convey.ShouldContainSubstring, "logs/seqmeta.log")
+	})
+
 	convey.Convey("run-dev.sh waits for seqmeta studies readiness before starting the frontend by default", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
@@ -364,6 +396,7 @@ exec %q "$@"
 
 		loggedURL := waitForRunDevStepsForTest(t, curlLogPath, 1)
 		convey.So(loggedURL, convey.ShouldResemble, []string{fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort)})
+		convey.So(waitForRunDevStdoutForTest(t, process, "Waiting for seqmeta studies readiness at"), convey.ShouldBeTrue)
 
 		convey.So(runDevPathExistsWithinForTest(snapshotPath, 1400*time.Millisecond), convey.ShouldBeFalse)
 
