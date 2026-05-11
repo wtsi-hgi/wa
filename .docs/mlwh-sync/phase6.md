@@ -30,5 +30,5 @@ Skips cleanly with `MLWH_SYNC_PERF_TEST not set` when the gate is
 unset and `WA_MLWH_DSN not set` when the DSN is missing. Covers
 all 3 acceptance tests from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

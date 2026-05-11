@@ -220,6 +220,7 @@ type SyncReport struct {
 	Table     string
 	Inserted  int
 	Updated   int
+	Duration  time.Duration
 	HighWater time.Time
 }
 
@@ -747,38 +748,42 @@ func (c *Client) runSyncRunner(ctx context.Context, tables []string) (reports []
 	return nil, nil
 }
 
-func (c *Client) syncTable(ctx context.Context, table string) (SyncReport, error) {
-	total := SyncReport{Table: table}
+func (c *Client) syncTable(ctx context.Context, table string) (report SyncReport, err error) {
+	report = SyncReport{Table: table}
+	started := time.Now()
+	defer func() {
+		report.Duration = time.Since(started)
+	}()
 	retryCount := 0
 
 	for {
 		state, err := readSyncStateFromDB(ctx, c.cache.DB(), table)
 		if err != nil {
-			return total, err
+			return report, err
 		}
 
-		report, _, err := c.syncTableData(ctx, table, state)
-		total = mergeSyncReport(total, report)
+		next, _, err := c.syncTableData(ctx, table, state)
+		report = mergeSyncReport(report, next)
 		if err == nil {
 			c.clearExpandIdentifierCache()
 
-			return total, nil
+			return report, nil
 		}
 		if !isTransientSyncSourceError(err) {
-			return total, err
+			return report, err
 		}
-		if syncReportCommittedProgress(report) {
+		if syncReportCommittedProgress(next) {
 			retryCount = 0
 		}
 		if retryCount == maxSyncReconnectAttempts {
-			return total, fmt.Errorf("mlwh: sync %s: %w", table, err)
+			return report, fmt.Errorf("mlwh: sync %s: %w", table, err)
 		}
 
 		retryCount++
 		backoff := syncReconnectBackoff(retryCount)
 		c.emitSyncRetry(table, retryCount, err, backoff)
 		if sleepErr := c.sleepSyncRetry(ctx, backoff); sleepErr != nil {
-			return total, fmt.Errorf("mlwh: sync %s: %w", table, sleepErr)
+			return report, fmt.Errorf("mlwh: sync %s: %w", table, sleepErr)
 		}
 	}
 }
@@ -797,6 +802,7 @@ func mergeSyncReport(total, next SyncReport) SyncReport {
 	}
 	total.Inserted += next.Inserted
 	total.Updated += next.Updated
+	total.Duration += next.Duration
 	if next.HighWater.After(total.HighWater) {
 		total.HighWater = next.HighWater
 	}

@@ -220,6 +220,33 @@ func TestClientSyncFiveTableParallelReports(t *testing.T) {
 	})
 }
 
+func TestClientSyncReportsPerTableDuration(t *testing.T) {
+	convey.Convey("E1 helper: Given a delayed sample source, when sync runs, then the returned report includes the per-table elapsed duration", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		delay := 25 * time.Millisecond
+		now := formatSyncTime(time.Now().UTC())
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:       sampleSyncSourceColumns,
+				rows:          [][]driver.Value{{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", now}},
+				firstRowDelay: delay,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Table, convey.ShouldEqual, syncTableSample)
+		convey.So(reports[0].Duration, convey.ShouldBeGreaterThanOrEqualTo, delay)
+	})
+}
+
 func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
 	convey.Convey("B1.2: Given one failing table source, when Client.Sync runs, then it returns a joined error and the other four tables still commit", t, func() {
 		cache := openSQLiteSyncTestCache(t)
