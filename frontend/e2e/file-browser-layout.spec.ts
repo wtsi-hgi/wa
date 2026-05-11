@@ -101,18 +101,68 @@ async function openPreviewModes(controls: Locator) {
         .locator('summary[aria-label="Preview modes"]')
         .first();
 
+    await setDisclosureOpen(summary, true, "Missing preview modes disclosure");
+}
+
+async function openFileTypes(controls: Locator) {
+    const summary = controls
+        .locator('summary[aria-label="File types"]')
+        .first();
+
+    await setDisclosureOpen(summary, true, "Missing file types disclosure");
+}
+
+async function setDisclosureOpen(
+    summary: Locator,
+    shouldBeOpen: boolean,
+    missingDisclosureMessage: string,
+) {
     await expect(summary).toBeVisible();
-    await summary.evaluate((element) => {
-        const details = element.closest("details");
+    await summary
+        .evaluate((element, desiredOpenState: boolean) => {
+            const details = element.closest("details");
 
-        if (!(details instanceof HTMLDetailsElement)) {
-            throw new Error("Missing preview modes disclosure");
-        }
+            if (!(details instanceof HTMLDetailsElement)) {
+                throw new Error("__MISSING_DISCLOSURE__");
+            }
 
-        if (!details.open) {
-            (element as HTMLElement).click();
-        }
-    });
+            if (details.open !== desiredOpenState) {
+                (element as HTMLElement).click();
+            }
+        }, shouldBeOpen)
+        .catch((error: Error) => {
+            throw new Error(
+                error.message.includes("__MISSING_DISCLOSURE__")
+                    ? missingDisclosureMessage
+                    : error.message,
+            );
+        });
+}
+
+function backgroundAlpha(backgroundColor: string): number {
+    const alphaMatch = backgroundColor.match(/\/[\s]*([0-9]*\.?[0-9]+)\)$/);
+
+    if (alphaMatch) {
+        return Number.parseFloat(alphaMatch[1] ?? "1");
+    }
+
+    const rgbaMatch = backgroundColor.match(
+        /^rgba?\([^,]+,[^,]+,[^,]+(?:,[\s]*([0-9]*\.?[0-9]+))?\)$/,
+    );
+
+    if (rgbaMatch) {
+        return rgbaMatch[1] ? Number.parseFloat(rgbaMatch[1]) : 1;
+    }
+
+    return 1;
+}
+
+async function expectOpaqueBackground(locator: Locator) {
+    const backgroundColor = await locator.evaluate(
+        (element) => window.getComputedStyle(element).backgroundColor,
+    );
+
+    expect(backgroundAlpha(backgroundColor)).toBe(1);
 }
 
 async function openFirstSinglePreview(page: Page, directoryPath: string) {
@@ -899,8 +949,11 @@ test.describe("File Browser single preview layout", () => {
                     cardImage?.parentElement ===
                     cardDownloadLink?.parentElement,
                 lightboxControlOverlaysSameShell:
-                    cardButton?.parentElement ===
-                    cardImage?.parentElement?.parentElement,
+                    cardButton?.parentElement?.contains(cardImage ?? null) ===
+                        true &&
+                    cardButton?.parentElement?.contains(
+                        cardDownloadLink ?? null,
+                    ) === true,
             };
         });
 
@@ -921,6 +974,92 @@ test.describe("File Browser single preview layout", () => {
         expect(buttonBBox.width).toBeGreaterThan(140);
         expect(imageBBox.width).toBeGreaterThan(140);
         expect(imageBBox.height).toBeGreaterThan(100);
+    });
+
+    test("keeps the row-preview download overlay inset from the image top-right corner without clipping", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(controls).toBeVisible();
+        await openPreviewModes(controls);
+        await controls.locator('input[aria-label="1 preview per row"]').check();
+
+        const row = page
+            .locator(
+                `[data-file-browser-grid-row="${path.join(rnaseqGalleryPath, "plot-001.png")}"]`,
+            )
+            .first();
+        const preview = row.locator("[data-grid-preview-path]").first();
+        const image = preview
+            .locator('img[alt="plot-001.png preview"]')
+            .first();
+        const downloadLink = preview
+            .locator('[data-preview-download-overlay="true"]')
+            .first();
+        const enlargeBadge = preview
+            .locator('[data-preview-enlarge-badge="true"]')
+            .first();
+
+        await expect(row).toBeVisible();
+        await expect(preview).toBeVisible();
+        await expect(image).toBeVisible();
+        await expect(downloadLink).toBeVisible();
+        await expect(enlargeBadge).toBeVisible();
+
+        const overlayMetrics = await preview.evaluate((element) => {
+            const imageElement = element.querySelector("img");
+            const downloadElement = element.querySelector(
+                '[data-preview-download-overlay="true"]',
+            );
+            const enlargeElement = element.querySelector(
+                '[data-preview-enlarge-badge="true"]',
+            );
+
+            if (
+                !(imageElement instanceof HTMLElement) ||
+                !(downloadElement instanceof HTMLElement) ||
+                !(enlargeElement instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const imageRect = imageElement.getBoundingClientRect();
+            const downloadRect = downloadElement.getBoundingClientRect();
+            const enlargeRect = enlargeElement.getBoundingClientRect();
+
+            return {
+                bottomInset: imageRect.bottom - enlargeRect.bottom,
+                downloadInsideImageBounds:
+                    downloadRect.top >= imageRect.top &&
+                    downloadRect.right <= imageRect.right &&
+                    downloadRect.bottom <= imageRect.bottom,
+                leftInset: enlargeRect.left - imageRect.left,
+                rightInset: imageRect.right - downloadRect.right,
+                topInset: downloadRect.top - imageRect.top,
+            };
+        });
+
+        if (!overlayMetrics) {
+            throw new Error("Missing row preview overlay metrics");
+        }
+
+        expect(overlayMetrics.downloadInsideImageBounds).toBe(true);
+        expect(overlayMetrics.topInset).toBeGreaterThanOrEqual(8);
+        expect(overlayMetrics.rightInset).toBeGreaterThanOrEqual(8);
+        expect(overlayMetrics.topInset).toBeLessThanOrEqual(24);
+        expect(overlayMetrics.rightInset).toBeLessThanOrEqual(24);
+        expect(
+            Math.abs(overlayMetrics.topInset - overlayMetrics.bottomInset),
+        ).toBeLessThanOrEqual(6);
+        expect(
+            Math.abs(overlayMetrics.rightInset - overlayMetrics.leftInset),
+        ).toBeLessThanOrEqual(6);
     });
 
     test("renders subfolder table previews with a single bordered surface", async ({
@@ -1146,5 +1285,49 @@ test.describe("File Browser single preview layout", () => {
             sampleAControls.locator('input[aria-label="1 preview per row"]'),
         ).toHaveCount(0);
         await expect(lanesSummary).toContainText("Single preview");
+    });
+
+    test("renders solid backgrounds for preview mode and file type menus", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqRootPath}"]`,
+        );
+
+        if ((await controls.count()) === 0) {
+            await page
+                .locator(`[data-directory-path="${rnaseqRootPath}"]`)
+                .click();
+        }
+
+        await expect(controls).toBeVisible();
+        const previewSummary = controls.locator(
+            'summary[aria-label="Preview modes"]',
+        );
+        const previewMenu = page.locator(
+            `[data-preview-modes-menu="${rnaseqRootPath}"]`,
+        );
+
+        await expectOpaqueBackground(previewSummary);
+        await expectOpaqueBackground(previewMenu);
+
+        await setDisclosureOpen(
+            previewSummary,
+            false,
+            "Missing preview modes disclosure",
+        );
+
+        const fileTypesSummary = controls.locator(
+            'summary[aria-label="File types"]',
+        );
+        const fileTypesMenu = page.locator(
+            `[data-subdir-preview-kinds="${rnaseqRootPath}"]`,
+        );
+
+        await openFileTypes(controls);
+        await expectOpaqueBackground(fileTypesSummary);
+        await expectOpaqueBackground(fileTypesMenu);
     });
 });
