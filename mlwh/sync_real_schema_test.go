@@ -93,10 +93,10 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 	})
 }
 
-// TestAllStudiesAgainstRealMLWHSchema verifies that the cold-cache study list
+// TestAllStudiesAgainstRealMLWHSchema verifies that the synced-cache study list
 // path tolerates the current upstream study column spelling used by MLWH.
 func TestAllStudiesAgainstRealMLWHSchema(t *testing.T) {
-	convey.Convey("Given a cold cache and an upstream database with the current MLWH study schema", t, func() {
+	convey.Convey("Given a synced cache and an upstream database with the current MLWH study schema", t, func() {
 		source := openRealMLWHSchemaSource(t)
 		seedRealMLWHStudyRow(t, source, 10, "SQSCP", "5001", "uuid-study-1", "Study One", "acc-st-1", time.Date(2026, time.May, 7, 8, 0, 0, 0, time.UTC))
 
@@ -104,10 +104,12 @@ func TestAllStudiesAgainstRealMLWHSchema(t *testing.T) {
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableStudy)
+		convey.So(err, convey.ShouldBeNil)
 
 		studies, err := client.AllStudies(context.Background(), 100, 0)
 
-		convey.Convey("when AllStudies runs, then it returns the study and read-through populates study_mirror", func() {
+		convey.Convey("when AllStudies runs, then it returns the synced study from study_mirror", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(studies, convey.ShouldHaveLength, 1)
 			convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "5001")
@@ -118,7 +120,7 @@ func TestAllStudiesAgainstRealMLWHSchema(t *testing.T) {
 }
 
 func TestAllStudiesAgainstRealMLWHSchemaAllowsNullStudyStrings(t *testing.T) {
-	convey.Convey("Given a cold cache and an upstream study row with nullable text fields", t, func() {
+	convey.Convey("Given a synced cache and an upstream study row with nullable text fields", t, func() {
 		source := openRealMLWHSchemaSource(t)
 		_, err := source.Exec(
 			`INSERT INTO study(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -156,10 +158,12 @@ func TestAllStudiesAgainstRealMLWHSchemaAllowsNullStudyStrings(t *testing.T) {
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		_, err = syncSelectedTablesForTest(context.Background(), client, syncTableStudy)
+		convey.So(err, convey.ShouldBeNil)
 
 		studies, err := client.AllStudies(context.Background(), 100, 0)
 
-		convey.Convey("when AllStudies runs, then nullable upstream strings are normalized to empty strings", func() {
+		convey.Convey("when AllStudies runs, then nullable upstream strings are normalized to empty strings after sync", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(studies, convey.ShouldHaveLength, 1)
 			convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "5002")
@@ -170,11 +174,11 @@ func TestAllStudiesAgainstRealMLWHSchemaAllowsNullStudyStrings(t *testing.T) {
 	})
 }
 
-// TestUpstreamSampleResolverAgainstRealMLWHSchema verifies that the cold-cache
-// resolver path that queries `FROM sample` directly works against the real
-// MLWH schema, where `sample` has no `id_study_lims` column.
-func TestUpstreamSampleResolverAgainstRealMLWHSchema(t *testing.T) {
-	convey.Convey("Given a cold cache and an upstream with the real MLWH schema", t, func() {
+// TestSampleResolverAgainstRealMLWHSchema verifies that syncing sample_mirror
+// from the real MLWH schema supports later cache-only resolution, even though
+// the upstream `sample` table has no `id_study_lims` column.
+func TestSampleResolverAgainstRealMLWHSchema(t *testing.T) {
+	convey.Convey("Given a synced cache and an upstream with the real MLWH schema", t, func() {
 		source := openRealMLWHSchemaSource(t)
 		seedRealMLWHSampleRow(t, source, 5, "SQSCP", "5005", "b7daafb8-c59f-11ee-8fba-024224dd57f4", "name-5", "ssid-5", "supplier-5", "acc-5", "donor-5", 9606, "human", "desc-5", time.Date(2026, time.May, 7, 10, 0, 0, 0, time.UTC))
 		seedRealMLWHStudyRow(t, source, 99, "SQSCP", "9999", "uuid-study-99", "Study Ninety Nine", "acc-st-99", time.Date(2026, time.May, 7, 8, 30, 0, 0, time.UTC))
@@ -184,10 +188,12 @@ func TestUpstreamSampleResolverAgainstRealMLWHSchema(t *testing.T) {
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+		convey.So(err, convey.ShouldBeNil)
 
 		match, err := client.ResolveSample(context.Background(), "b7daafb8-c59f-11ee-8fba-024224dd57f4")
 
-		convey.Convey("when ResolveSample runs against the upstream, then it returns the sample without relying on a removed sample.id_study_lims column", func() {
+		convey.Convey("when ResolveSample runs against the synced cache, then it returns the sample without relying on a removed sample.id_study_lims column", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(match.Kind, convey.ShouldEqual, KindSampleUUID)
 			convey.So(match.Sample, convey.ShouldNotBeNil)

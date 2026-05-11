@@ -179,17 +179,6 @@ type seqmetaMLWHClientAdapter struct {
 	client *mlwh.Client
 }
 
-type seqmetaLibraryLookup interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
-	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
-}
-
-type seqmetaDirectLibraryLookup interface {
-	seqmetaLibraryLookup
-	SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error)
-}
-
 func (a *seqmetaMLWHClientAdapter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	if a == nil || a.client == nil || a.client.ReadDB() == nil {
 		return nil, errors.New("seqmeta: mlwh client cache reader is not configured")
@@ -240,11 +229,11 @@ func (a *seqmetaMLWHClientAdapter) AllSamplesForStudy(ctx context.Context, study
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
-	return a.findSingleSample(ctx, sangerID)
+	return a.client.FindSamplesBySangerID(ctx, sangerID)
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
-	return a.findSingleSample(ctx, idSampleLims)
+	return a.client.FindSamplesByIDSampleLims(ctx, idSampleLims)
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error) {
@@ -252,7 +241,7 @@ func (a *seqmetaMLWHClientAdapter) FindSamplesByRunID(ctx context.Context, idRun
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error) {
-	return findSamplesByLibraryType(ctx, a, libraryType, seqmeta.MaxLibrarySamples)
+	return a.client.FindSamplesByLibraryType(ctx, libraryType)
 }
 
 func (a *seqmetaMLWHClientAdapter) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
@@ -260,7 +249,7 @@ func (a *seqmetaMLWHClientAdapter) SamplesForLibraryType(ctx context.Context, pi
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
-	return a.findSingleSample(ctx, accessionNumber)
+	return a.client.FindSamplesByAccessionNumber(ctx, accessionNumber)
 }
 
 func (a *seqmetaMLWHClientAdapter) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error) {
@@ -275,8 +264,8 @@ func (a *seqmetaMLWHClientAdapter) LibrariesForStudy(ctx context.Context, studyL
 	return a.client.LibrariesForStudy(ctx, studyLimsID, limit, offset)
 }
 
-func (a *seqmetaMLWHClientAdapter) StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error) {
-	return a.client.StudyForSample(ctx, sangerName)
+func (a *seqmetaMLWHClientAdapter) StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error) {
+	return a.client.StudiesForSample(ctx, sangerName)
 }
 
 func (a *seqmetaMLWHClientAdapter) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
@@ -297,84 +286,6 @@ func (a *seqmetaMLWHClientAdapter) Sync(ctx context.Context) ([]mlwh.SyncReport,
 
 func (a *seqmetaMLWHClientAdapter) Close() error {
 	return a.client.Close()
-}
-
-func (a *seqmetaMLWHClientAdapter) findSingleSample(ctx context.Context, raw string) ([]mlwh.Sample, error) {
-	match, err := a.client.ResolveSample(ctx, raw)
-	if err != nil {
-		return nil, err
-	}
-	if match.Sample == nil {
-		return []mlwh.Sample{}, nil
-	}
-
-	return []mlwh.Sample{*match.Sample}, nil
-}
-
-func findSamplesByLibraryType(ctx context.Context, lookup seqmetaLibraryLookup, libraryType string, limit int) ([]mlwh.Sample, error) {
-	if lookup == nil {
-		return nil, errors.New("seqmeta: library lookup requires an adapter")
-	}
-
-	match, err := lookup.ResolveLibrary(ctx, libraryType)
-	if err != nil {
-		if errors.Is(err, mlwh.ErrNotFound) {
-			return []mlwh.Sample{}, nil
-		}
-
-		return nil, err
-	}
-
-	canonical := libraryType
-	if match.Canonical != "" {
-		canonical = match.Canonical
-	}
-
-	if directLookup, ok := lookup.(seqmetaDirectLibraryLookup); ok {
-		samples, directErr := directLookup.SamplesForLibraryType(ctx, canonical, limit, 0)
-		if directErr != nil {
-			return nil, directErr
-		}
-
-		if len(samples) > 0 {
-			return samples, nil
-		}
-	}
-
-	rows, err := lookup.QueryContext(
-		ctx,
-		`SELECT DISTINCT id_study_lims FROM library_samples WHERE pipeline_id_lims = ? ORDER BY id_study_lims`,
-		canonical,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	studyLimsIDs := make([]string, 0)
-	for rows.Next() {
-		var studyLimsID string
-		if err = rows.Scan(&studyLimsID); err != nil {
-			return nil, err
-		}
-
-		studyLimsIDs = append(studyLimsIDs, studyLimsID)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-
-	samples := make([]mlwh.Sample, 0)
-	for _, studyLimsID := range studyLimsIDs {
-		studySamples, studyErr := lookup.SamplesForLibrary(ctx, canonical, studyLimsID, limit, 0)
-		if studyErr != nil {
-			return nil, studyErr
-		}
-
-		samples = append(samples, studySamples...)
-	}
-
-	return samples, nil
 }
 
 type seqmetaOptions struct {

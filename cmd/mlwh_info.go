@@ -54,7 +54,7 @@ type mlwhInfoClient interface {
 	ResolveRun(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
 
-	StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error)
+	StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error)
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
 	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error)
 	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
@@ -145,6 +145,7 @@ func writeInfoReportText(out io.Writer, report infoReport) {
 	if report.Study != nil {
 		writeStudySection(out, report.Study)
 	}
+	writeStudiesSection(out, report.Studies)
 
 	if report.Run != nil {
 		_, _ = fmt.Fprintf(out, "\nRun:\n  id_run: %d\n", report.Run.IDRun)
@@ -193,6 +194,24 @@ func writeStudySection(out io.Writer, study *mlwh.Study) {
 	writeKV(out, "  study_title", study.StudyTitle)
 	writeKV(out, "  faculty_sponsor", study.FacultySponsor)
 	writeKV(out, "  programme", study.Programme)
+}
+
+func writeStudiesSection(out io.Writer, studies []mlwh.Study) {
+	if len(studies) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nStudies (%d):\n", len(studies))
+	for _, study := range studies {
+		_, _ = fmt.Fprintf(out, "  id_study_lims=%s", study.IDStudyLims)
+		if strings.TrimSpace(study.Name) != "" {
+			_, _ = fmt.Fprintf(out, " name=%s", study.Name)
+		}
+		if strings.TrimSpace(study.AccessionNumber) != "" {
+			_, _ = fmt.Fprintf(out, " accession_number=%s", study.AccessionNumber)
+		}
+		_, _ = fmt.Fprintln(out)
+	}
 }
 
 func writeLanesSection(out io.Writer, lanes []mlwh.Lane) {
@@ -285,11 +304,18 @@ func classifyForInfo(ctx context.Context, client mlwhInfoClient, identifier, typ
 
 func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *infoReport, sample *mlwh.Sample) {
 	if report.Study == nil {
-		study, err := client.StudyForSample(ctx, sample.Name)
+		studies, err := client.StudiesForSample(ctx, sample.Name)
 		if err == nil {
-			report.Study = study
+			switch len(studies) {
+			case 1:
+				report.Study = &studies[0]
+			case 0:
+				// Nothing to add.
+			default:
+				report.Studies = studies
+			}
 		} else if !errors.Is(err, mlwh.ErrNotFound) {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("study for sample: %v", err))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("studies for sample: %v", err))
 		}
 	}
 
@@ -335,6 +361,7 @@ type infoReport struct {
 	Study      *mlwh.Study      `json:"study,omitempty"`
 	Run        *mlwh.Run        `json:"run,omitempty"`
 	Library    *mlwh.Library    `json:"library,omitempty"`
+	Studies    []mlwh.Study     `json:"studies,omitempty"`
 	Lanes      []mlwh.Lane      `json:"lanes,omitempty"`
 	Libraries  []mlwh.Library   `json:"libraries,omitempty"`
 	Runs       []mlwh.Run       `json:"runs,omitempty"`

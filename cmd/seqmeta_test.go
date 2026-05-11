@@ -140,8 +140,8 @@ func (c *seqmetaTestClient) LibrariesForStudy(ctx context.Context, studyLimsID s
 	return c.provider.LibrariesForStudy(ctx, studyLimsID, limit, offset)
 }
 
-func (c *seqmetaTestClient) StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error) {
-	return c.provider.StudyForSample(ctx, sangerName)
+func (c *seqmetaTestClient) StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error) {
+	return c.provider.StudiesForSample(ctx, sangerName)
 }
 
 func (c *seqmetaTestClient) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
@@ -532,7 +532,7 @@ type seqmetaMockProvider struct {
 	samplesForLibraryTypeFunc     func(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error)
 	samplesForLibraryFunc         func(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 	librariesForStudyFunc         func(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
-	studyForSampleFunc            func(ctx context.Context, sangerName string) (*mlwh.Study, error)
+	studiesForSampleFunc          func(ctx context.Context, sangerName string) ([]mlwh.Study, error)
 	lanesForSampleFunc            func(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
 	irodsPathsForSampleFunc       func(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error)
 	getSampleFilesFunc            func(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error)
@@ -690,9 +690,9 @@ func (m *seqmetaMockProvider) LibrariesForStudy(ctx context.Context, studyLimsID
 	return nil, nil
 }
 
-func (m *seqmetaMockProvider) StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error) {
-	if m != nil && m.studyForSampleFunc != nil {
-		return m.studyForSampleFunc(ctx, sangerName)
+func (m *seqmetaMockProvider) StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error) {
+	if m != nil && m.studiesForSampleFunc != nil {
+		return m.studiesForSampleFunc(ctx, sangerName)
 	}
 
 	return nil, nil
@@ -746,166 +746,203 @@ func TestSeqmetaServeHelpFlags(t *testing.T) {
 	})
 }
 
-type seqmetaLibraryLookupStub struct {
-	db                 *sql.DB
-	resolveLibraryFunc func(context.Context, string) (mlwh.Match, error)
-	samplesForLibraryType func(context.Context, string, int, int) ([]mlwh.Sample, error)
-	samplesForLibrary  func(context.Context, string, string, int, int) ([]mlwh.Sample, error)
+type seqmetaAdapterSourceStub struct{}
+
+func (seqmetaAdapterSourceStub) QueryContext(_ context.Context, _ string, _ ...any) (*sql.Rows, error) {
+	return nil, errors.New("unexpected source query")
 }
 
-func (s *seqmetaLibraryLookupStub) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return s.db.QueryContext(ctx, query, args...)
-}
+func openSeqmetaAdapterForTest(t *testing.T) (*seqmetaMLWHClientAdapter, *sql.DB) {
+	t.Helper()
 
-func (s *seqmetaLibraryLookupStub) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
-	if s.resolveLibraryFunc != nil {
-		return s.resolveLibraryFunc(ctx, raw)
+	cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
+	client, err := mlwh.Open(context.Background(), mlwh.Config{
+		Cache:  mlwh.CacheConfig{Path: cachePath},
+		Source: seqmetaAdapterSourceStub{},
+	})
+	if err != nil {
+		t.Fatalf("mlwh.Open(): %v", err)
 	}
+	t.Cleanup(func() { _ = client.Close() })
 
-	return mlwh.Match{}, nil
-}
-
-func (s *seqmetaLibraryLookupStub) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
-	if s.samplesForLibrary != nil {
-		return s.samplesForLibrary(ctx, pipelineIDLims, studyLimsID, limit, offset)
-	}
-
-	return nil, nil
-}
-
-func (s *seqmetaLibraryLookupStub) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
-	if s.samplesForLibraryType != nil {
-		return s.samplesForLibraryType(ctx, pipelineIDLims, limit, offset)
-	}
-
-	return nil, nil
-}
-
-func TestFindSamplesByLibraryTypeUsesCachedStudyIDs(t *testing.T) {
-	ctx := context.Background()
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite", cachePath)
 	if err != nil {
 		t.Fatalf("sql.Open(): %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	t.Cleanup(func() { _ = db.Close() })
 
-	_, err = db.Exec(`CREATE TABLE library_samples (pipeline_id_lims TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL)`)
+	return &seqmetaMLWHClientAdapter{client: client}, db
+}
+
+func seedSeqmetaSyncState(t *testing.T, db *sql.DB, tableName string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, NULL, 0)`,
+		tableName,
+		"2026-05-11T00:00:00Z",
+		"2026-05-11T00:00:00Z",
+	)
 	if err != nil {
-		t.Fatalf("create library_samples: %v", err)
+		t.Fatalf("insert sync_state %s: %v", tableName, err)
 	}
+}
 
-	for _, args := range [][]any{
-		{"Chromium single cell 3 prime v3", 1, "6568"},
-		{"Chromium single cell 3 prime v3", 2, "7777"},
-		{"Chromium single cell 3 prime v3", 3, "6568"},
-	} {
-		if _, err = db.Exec(
-			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
-			args...,
-		); err != nil {
-			t.Fatalf("seed library_samples: %v", err)
-		}
-	}
+func seedSeqmetaSample(t *testing.T, db *sql.DB, sample mlwh.Sample) {
+	t.Helper()
 
-	calledStudies := make([]string, 0, 2)
-	lookup := &seqmetaLibraryLookupStub{
-		db: db,
-		resolveLibraryFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
-			return mlwh.Match{Kind: mlwh.KindLibraryType, Canonical: raw}, nil
-		},
-		samplesForLibrary: func(_ context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
-			calledStudies = append(calledStudies, studyLimsID)
-			if pipelineIDLims != "Chromium single cell 3 prime v3" {
-				t.Fatalf("unexpected pipeline_id_lims: %s", pipelineIDLims)
-			}
-			if limit != seqmeta.MaxLibrarySamples {
-				t.Fatalf("unexpected limit: %d", limit)
-			}
-			if offset != 0 {
-				t.Fatalf("unexpected offset: %d", offset)
-			}
-
-				return []mlwh.Sample{{
-					Name:           "Sample " + studyLimsID,
-					SangerSampleID: "S" + studyLimsID,
-					Studies:        []mlwh.Study{{IDStudyLims: studyLimsID}},
-					Libraries:      []mlwh.Library{{PipelineIDLims: pipelineIDLims, IDStudyLims: studyLimsID}},
-				}}, nil
-		},
-	}
-
-	samples, err := findSamplesByLibraryType(ctx, lookup, "Chromium single cell 3 prime v3", seqmeta.MaxLibrarySamples)
+	_, err := db.Exec(
+		`INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sample.IDSampleTmp,
+		sample.IDLims,
+		sample.IDSampleLims,
+		sample.UUIDSampleLims,
+		sample.Name,
+		sample.SangerSampleID,
+		sample.SupplierName,
+		sample.AccessionNumber,
+		sample.DonorID,
+		sample.TaxonID,
+		sample.CommonName,
+		sample.Description,
+		"2026-05-11T00:00:00Z",
+	)
 	if err != nil {
-		t.Fatalf("findSamplesByLibraryType(): %v", err)
+		t.Fatalf("insert sample_mirror %d: %v", sample.IDSampleTmp, err)
 	}
+}
 
-	convey.Convey("library sample lookup uses cached study ids instead of enumerating all studies", t, func() {
-		convey.So(calledStudies, convey.ShouldResemble, []string{"6568", "7777"})
-		convey.So(samples, convey.ShouldHaveLength, 2)
-		convey.So(samples[0].Libraries, convey.ShouldResemble, []mlwh.Library{{PipelineIDLims: "Chromium single cell 3 prime v3", IDStudyLims: "6568"}})
-		convey.So(samples[1].Libraries, convey.ShouldResemble, []mlwh.Library{{PipelineIDLims: "Chromium single cell 3 prime v3", IDStudyLims: "7777"}})
+func seedSeqmetaLibrarySample(t *testing.T, db *sql.DB, pipelineIDLims string, idSampleTmp int64, studyLimsID string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
+		pipelineIDLims,
+		idSampleTmp,
+		studyLimsID,
+	)
+	if err != nil {
+		t.Fatalf("insert library_samples %s/%d/%s: %v", pipelineIDLims, idSampleTmp, studyLimsID, err)
+	}
+}
+
+func TestSeqmetaMLWHClientAdapterFindSamplesBySangerIDForwardsDirectly(t *testing.T) {
+	adapter, db := openSeqmetaAdapterForTest(t)
+	seedSeqmetaSyncState(t, db, "sample")
+	seedSeqmetaSample(t, db, mlwh.Sample{
+		IDSampleTmp:     1,
+		IDLims:          "SQSCP",
+		IDSampleLims:    "777",
+		UUIDSampleLims:  "00000000-0000-0000-0000-000000000001",
+		Name:            "SANGER-1",
+		SangerSampleID:  "12345",
+		SupplierName:    "SUP-1",
+		AccessionNumber: "ACC-1",
+		DonorID:         "DONOR-1",
+		TaxonID:         9606,
+		CommonName:      "human",
+		Description:     "sample",
+	})
+
+	convey.Convey("FindSamplesBySangerID forwards to the dedicated mlwh finder", t, func() {
+		samples, err := adapter.FindSamplesBySangerID(context.Background(), "12345")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].Name, convey.ShouldEqual, "SANGER-1")
+		convey.So(samples[0].SangerSampleID, convey.ShouldEqual, "12345")
 	})
 }
 
-func TestFindSamplesByLibraryTypeFallsBackWhenDirectLookupReturnsEmpty(t *testing.T) {
-	ctx := context.Background()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("sql.Open(): %v", err)
-	}
-	defer func() { _ = db.Close() }()
+func TestSeqmetaMLWHClientAdapterFindSamplesByIDSampleLimsForwardsDirectly(t *testing.T) {
+	adapter, db := openSeqmetaAdapterForTest(t)
+	seedSeqmetaSyncState(t, db, "sample")
+	seedSeqmetaSample(t, db, mlwh.Sample{
+		IDSampleTmp:     2,
+		IDLims:          "SQSCP",
+		IDSampleLims:    "SAMPLE-LIMS-2",
+		UUIDSampleLims:  "00000000-0000-0000-0000-000000000002",
+		Name:            "SANGER-2",
+		SangerSampleID:  "SS2",
+		SupplierName:    "SUP-2",
+		AccessionNumber: "ACC-2",
+		DonorID:         "DONOR-2",
+		TaxonID:         9606,
+		CommonName:      "human",
+		Description:     "sample",
+	})
 
-	_, err = db.Exec(`CREATE TABLE library_samples (pipeline_id_lims TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL)`)
-	if err != nil {
-		t.Fatalf("create library_samples: %v", err)
-	}
+	convey.Convey("FindSamplesByIDSampleLims forwards to the dedicated mlwh finder", t, func() {
+		samples, err := adapter.FindSamplesByIDSampleLims(context.Background(), "SAMPLE-LIMS-2")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].IDSampleLims, convey.ShouldEqual, "SAMPLE-LIMS-2")
+	})
+}
 
-	for _, args := range [][]any{
-		{"Chromium single cell 3 prime v3", 1, "6568"},
-		{"Chromium single cell 3 prime v3", 2, "7777"},
-	} {
-		if _, err = db.Exec(
-			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
-			args...,
-		); err != nil {
-			t.Fatalf("seed library_samples: %v", err)
-		}
-	}
+func TestSeqmetaMLWHClientAdapterFindSamplesByAccessionNumberForwardsDirectly(t *testing.T) {
+	adapter, db := openSeqmetaAdapterForTest(t)
+	seedSeqmetaSyncState(t, db, "sample")
+	seedSeqmetaSample(t, db, mlwh.Sample{
+		IDSampleTmp:     3,
+		IDLims:          "SQSCP",
+		IDSampleLims:    "888",
+		UUIDSampleLims:  "00000000-0000-0000-0000-000000000003",
+		Name:            "SANGER-3",
+		SangerSampleID:  "SS3",
+		SupplierName:    "SUP-3",
+		AccessionNumber: "2001",
+		DonorID:         "DONOR-3",
+		TaxonID:         9606,
+		CommonName:      "human",
+		Description:     "sample",
+	})
 
-	calledStudies := make([]string, 0, 2)
-	lookup := &seqmetaLibraryLookupStub{
-		db: db,
-		resolveLibraryFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
-			return mlwh.Match{Kind: mlwh.KindLibraryType, Canonical: raw}, nil
-		},
-		samplesForLibraryType: func(_ context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
-			if pipelineIDLims != "Chromium single cell 3 prime v3" {
-				t.Fatalf("unexpected pipeline_id_lims: %s", pipelineIDLims)
-			}
+	convey.Convey("FindSamplesByAccessionNumber forwards to the dedicated mlwh finder", t, func() {
+		samples, err := adapter.FindSamplesByAccessionNumber(context.Background(), "2001")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].AccessionNumber, convey.ShouldEqual, "2001")
+	})
+}
 
-			return []mlwh.Sample{}, nil
-		},
-		samplesForLibrary: func(_ context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
-			calledStudies = append(calledStudies, studyLimsID)
+func TestSeqmetaMLWHClientAdapterFindSamplesByLibraryTypeForwardsDirectly(t *testing.T) {
+	adapter, db := openSeqmetaAdapterForTest(t)
+	seedSeqmetaSyncState(t, db, "iseq_flowcell")
+	seedSeqmetaSample(t, db, mlwh.Sample{
+		IDSampleTmp:     4,
+		IDLims:          "SQSCP",
+		IDSampleLims:    "444",
+		UUIDSampleLims:  "00000000-0000-0000-0000-000000000004",
+		Name:            "SANGER-4",
+		SangerSampleID:  "SS4",
+		SupplierName:    "SUP-4",
+		AccessionNumber: "ACC-4",
+		DonorID:         "DONOR-4",
+		TaxonID:         9606,
+		CommonName:      "human",
+		Description:     "sample",
+	})
+	seedSeqmetaSample(t, db, mlwh.Sample{
+		IDSampleTmp:     5,
+		IDLims:          "SQSCP",
+		IDSampleLims:    "555",
+		UUIDSampleLims:  "00000000-0000-0000-0000-000000000005",
+		Name:            "SANGER-5",
+		SangerSampleID:  "SS5",
+		SupplierName:    "SUP-5",
+		AccessionNumber: "ACC-5",
+		DonorID:         "DONOR-5",
+		TaxonID:         9606,
+		CommonName:      "human",
+		Description:     "sample",
+	})
+	seedSeqmetaLibrarySample(t, db, "LIBTYPE-1", 4, "6568")
+	seedSeqmetaLibrarySample(t, db, "LIBTYPE-1", 5, "7777")
 
-			return []mlwh.Sample{{
-					Name:           "Sample " + studyLimsID,
-					SangerSampleID: "S" + studyLimsID,
-					Studies:        []mlwh.Study{{IDStudyLims: studyLimsID}},
-					Libraries:      []mlwh.Library{{PipelineIDLims: pipelineIDLims, IDStudyLims: studyLimsID}},
-			}}, nil
-		},
-	}
-
-	samples, err := findSamplesByLibraryType(ctx, lookup, "Chromium single cell 3 prime v3", seqmeta.MaxLibrarySamples)
-	if err != nil {
-		t.Fatalf("findSamplesByLibraryType(): %v", err)
-	}
-
-	convey.Convey("library sample lookup falls back to cached study ids when the direct lookup returns empty", t, func() {
-		convey.So(calledStudies, convey.ShouldResemble, []string{"6568", "7777"})
-		convey.So(samples, convey.ShouldHaveLength, 2)
-		convey.So(samples[0].Studies, convey.ShouldResemble, []mlwh.Study{{IDStudyLims: "6568"}})
-		convey.So(samples[1].Studies, convey.ShouldResemble, []mlwh.Study{{IDStudyLims: "7777"}})
+	convey.Convey("FindSamplesByLibraryType forwards to the dedicated mlwh finder", t, func() {
+		samples, err := adapter.FindSamplesByLibraryType(context.Background(), "LIBTYPE-1")
+		convey.So(samples, convey.ShouldBeNil)
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, mlwh.ErrAmbiguous), convey.ShouldBeTrue)
 	})
 }

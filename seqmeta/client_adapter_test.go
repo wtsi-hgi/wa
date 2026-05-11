@@ -50,16 +50,11 @@ func TestClientAdapterFindSamplesByLibraryTypeUsesDirectLookup(t *testing.T) {
 		adapter := NewClientAdapter(provider)
 
 		convey.Convey("when finding samples by library type, then it uses the provider's direct library-type lookup", func() {
-			provider.AllStudiesFunc = func(_ context.Context, _, _ int) ([]mlwh.Study, error) {
-				return nil, errors.New("unexpected AllStudies call")
+			provider.SamplesForLibraryTypeFunc = func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
+				return nil, errors.New("unexpected SamplesForLibraryType call")
 			}
-			provider.SamplesForLibraryFunc = func(_ context.Context, _, _ string, _, _ int) ([]mlwh.Sample, error) {
-				return nil, errors.New("unexpected SamplesForLibrary call")
-			}
-			provider.SamplesForLibraryTypeFunc = func(_ context.Context, libraryType string, limit, offset int) ([]mlwh.Sample, error) {
+			provider.FindSamplesByLibraryTypeFn = func(_ context.Context, libraryType string) ([]mlwh.Sample, error) {
 				convey.So(libraryType, convey.ShouldEqual, "Chromium single cell 3 prime v3")
-				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
-				convey.So(offset, convey.ShouldEqual, 0)
 
 				return []mlwh.Sample{{
 					Name:           "Sample 1",
@@ -77,6 +72,93 @@ func TestClientAdapterFindSamplesByLibraryTypeUsesDirectLookup(t *testing.T) {
 				SangerSampleID: "S1",
 				Studies:        []mlwh.Study{{IDStudyLims: "6568"}},
 				Libraries:      []mlwh.Library{{PipelineIDLims: "Chromium single cell 3 prime v3", IDStudyLims: "6568"}},
+			}})
+		})
+	})
+}
+
+func TestClientAdapterFindSamplesBySangerIDUsesDirectLookup(t *testing.T) {
+	convey.Convey("Given a client adapter wrapping a provider", t, func() {
+		provider := &MockProvider{}
+		adapter := NewClientAdapter(provider)
+
+		convey.Convey("when finding samples by Sanger ID, then it uses the provider's direct Sanger ID lookup", func() {
+			provider.ResolveSampleFunc = func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{}, errors.New("unexpected ResolveSample call: " + raw)
+			}
+			provider.FindSamplesBySangerIDFn = func(_ context.Context, sangerID string) ([]mlwh.Sample, error) {
+				convey.So(sangerID, convey.ShouldEqual, "SANGER123")
+
+				return []mlwh.Sample{{
+					SangerSampleID: sangerID,
+					Name:           "sample-by-sanger-id",
+				}}, nil
+			}
+
+			samples, err := adapter.FindSamplesBySangerID(context.Background(), "SANGER123")
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldResemble, []mlwh.Sample{{
+				SangerSampleID: "SANGER123",
+				Name:           "sample-by-sanger-id",
+			}})
+		})
+	})
+}
+
+func TestClientAdapterFindSamplesByIDSampleLimsUsesDirectLookup(t *testing.T) {
+	convey.Convey("Given a client adapter wrapping a provider", t, func() {
+		provider := &MockProvider{}
+		adapter := NewClientAdapter(provider)
+
+		convey.Convey("when finding samples by id_sample_lims, then it uses the provider's direct id_sample_lims lookup", func() {
+			provider.ResolveSampleFunc = func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{}, errors.New("unexpected ResolveSample call: " + raw)
+			}
+			provider.FindSamplesByIDSampleLimsFn = func(_ context.Context, idSampleLims string) ([]mlwh.Sample, error) {
+				convey.So(idSampleLims, convey.ShouldEqual, "12345")
+
+				return []mlwh.Sample{{
+					IDSampleLims: idSampleLims,
+					Name:         "sample-by-id-sample-lims",
+				}}, nil
+			}
+
+			samples, err := adapter.FindSamplesByIDSampleLims(context.Background(), "12345")
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldResemble, []mlwh.Sample{{
+				IDSampleLims: "12345",
+				Name:         "sample-by-id-sample-lims",
+			}})
+		})
+	})
+}
+
+func TestClientAdapterFindSamplesByAccessionNumberUsesDirectLookup(t *testing.T) {
+	convey.Convey("Given a client adapter wrapping a provider", t, func() {
+		provider := &MockProvider{}
+		adapter := NewClientAdapter(provider)
+
+		convey.Convey("when finding samples by accession number, then it uses the provider's direct accession lookup", func() {
+			provider.ResolveSampleFunc = func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{}, errors.New("unexpected ResolveSample call: " + raw)
+			}
+			provider.FindSamplesByAccessionNumberFn = func(_ context.Context, accessionNumber string) ([]mlwh.Sample, error) {
+				convey.So(accessionNumber, convey.ShouldEqual, "ACC123")
+
+				return []mlwh.Sample{{
+					AccessionNumber: accessionNumber,
+					Name:            "sample-by-accession",
+				}}, nil
+			}
+
+			samples, err := adapter.FindSamplesByAccessionNumber(context.Background(), "ACC123")
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldResemble, []mlwh.Sample{{
+				AccessionNumber: "ACC123",
+				Name:            "sample-by-accession",
 			}})
 		})
 	})

@@ -2202,7 +2202,7 @@ func (c *Client) requireResolverSyncState(ctx context.Context, table string) err
 		return fmt.Errorf("mlwh: sync table name must not be empty")
 	}
 
-	warm, err := c.hasResolverSyncState(ctx, table)
+	warm, err := c.hasSyncState(ctx, table)
 	if err != nil {
 		return err
 	}
@@ -2213,7 +2213,7 @@ func (c *Client) requireResolverSyncState(ctx context.Context, table string) err
 	return errors.Join(ErrNotFound, ErrCacheNeverSynced)
 }
 
-func (c *Client) hasResolverSyncState(ctx context.Context, table string) (bool, error) {
+func (c *Client) hasSyncState(ctx context.Context, table string) (bool, error) {
 	db := c.ReadDB()
 	if db == nil {
 		if c == nil || c.cache == nil {

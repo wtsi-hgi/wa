@@ -40,16 +40,21 @@ import (
 const expandIdentifierTTL = 5 * time.Minute
 
 var (
-	samplesForStudyCacheSQL       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
-	samplesForLibraryTypeCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
-	samplesForLibraryCacheSQL     = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
-	samplesForRunSourceSQL        = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
+	samplesForStudyCacheSQL       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	samplesForLibraryTypeCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	samplesForLibraryCacheSQL     = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	samplesForRunCacheSQL         = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
+	findSamplesBySangerIDSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
+	findSamplesByIDSampleLimsSQL  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
+	findSamplesByAccessionSQL     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
+	findSamplesBySupplierSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
+	findSamplesByLibraryTypeSQL   = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
 	librariesForStudySQL          = `SELECT pipeline_id_lims, COUNT(DISTINCT id_sample_tmp) FROM library_samples WHERE id_study_lims = ? GROUP BY pipeline_id_lims ORDER BY pipeline_id_lims LIMIT ? OFFSET ?`
-	runsForStudySQL               = `SELECT DISTINCT ipm.id_run FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp WHERE ifc.id_study_tmp = ? ORDER BY ipm.id_run LIMIT ? OFFSET ?`
-	lanesForSampleSQL             = `SELECT DISTINCT ipm.id_run, ipm.position, ipm.tag_index FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp WHERE ifc.id_sample_tmp = ? ORDER BY ipm.id_run, ipm.position, ipm.tag_index LIMIT ? OFFSET ?`
-	irodsPathsForSampleSQL        = `SELECT spi.id_product, spi.collection, spi.data_object FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp INNER JOIN seq_product_irods_locations spi ON spi.id_product = ipm.id_iseq_product WHERE ifc.id_sample_tmp = ? ORDER BY spi.id_product LIMIT ? OFFSET ?`
-	irodsPathsForStudySQL         = `SELECT spi.id_product, spi.collection, spi.data_object FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp INNER JOIN seq_product_irods_locations spi ON spi.id_product = ipm.id_iseq_product WHERE ifc.id_study_tmp = ? ORDER BY spi.id_product LIMIT ? OFFSET ?`
-	studyForSampleSQL             = `SELECT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM library_samples INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE library_samples.id_sample_tmp = ? AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_tmp LIMIT 1`
+	runsForStudyCacheSQL          = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_study_lims = ? ORDER BY id_run LIMIT ? OFFSET ?`
+	lanesForSampleCacheSQL        = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
+	irodsPathsForSampleCacheSQL   = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
+	irodsPathsForStudyCacheSQL    = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
+	studiesForSampleCacheSQL      = `SELECT DISTINCT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_lims`
 )
 
 type nullableHierarchySampleFields struct {
@@ -105,6 +110,29 @@ func querySamples(ctx context.Context, querier Querier, query, action string, ar
 	return samples, nil
 }
 
+func querySampleMatches(ctx context.Context, querier Querier, query, action string, args ...any) ([]Sample, error) {
+	rows, err := querier.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	samples := make([]Sample, 0, 2)
+	for rows.Next() {
+		sample, scanErr := scanSampleRow(rows.Scan)
+		if scanErr != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, scanErr)
+		}
+
+		samples = append(samples, sample)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
+	}
+
+	return samples, nil
+}
+
 func scanSampleRow(scan func(dest ...any) error) (Sample, error) {
 	sample := Sample{}
 	nullable := &nullableHierarchySampleFields{}
@@ -145,6 +173,17 @@ func queryExists(ctx context.Context, querier Querier, query, action string, arg
 	}
 
 	return true, nil
+}
+
+func sampleMatchResult(raw string, samples []Sample) ([]Sample, error) {
+	switch len(samples) {
+	case 0:
+		return nil, ErrNotFound
+	case 1:
+		return samples, nil
+	default:
+		return nil, fmt.Errorf("%w: %q ambiguous between %d and %d", ErrAmbiguous, raw, samples[0].IDSampleTmp, samples[1].IDSampleTmp)
+	}
 }
 
 func addSampleRunTags(ctx context.Context, client *Client, taggedIDSet map[TaggedID]struct{}, samples []Sample) error {
@@ -237,6 +276,66 @@ func (c *Client) cacheStudyExists(ctx context.Context, studyLimsID string) (bool
 	return queryExists(ctx, db, `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, "query study mirror existence", studyLimsID)
 }
 
+func (c *Client) cacheSampleExists(ctx context.Context, sangerName string) (bool, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return false, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	return queryExists(ctx, db, `SELECT 1 FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, "query sample mirror existence", sangerName)
+}
+
+func (c *Client) findSamplesByQuery(ctx context.Context, query, raw, action, syncTable string) ([]Sample, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	samples, err := querySampleMatches(ctx, db, query, action, raw)
+	if err != nil {
+		return nil, err
+	}
+
+	matched, err := sampleMatchResult(raw, samples)
+	if err == nil {
+		return matched, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+
+	if syncErr := c.requireResolverSyncState(ctx, syncTable); syncErr != nil {
+		return nil, syncErr
+	}
+
+	return nil, ErrNotFound
+}
+
+// FindSamplesBySangerID returns the unique sample matching sanger_sample_id.
+func (c *Client) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]Sample, error) {
+	return c.findSamplesByQuery(ctx, findSamplesBySangerIDSQL, sangerID, "query samples by sanger sample id", syncTableSample)
+}
+
+// FindSamplesByIDSampleLims returns the unique sample matching id_sample_lims.
+func (c *Client) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]Sample, error) {
+	return c.findSamplesByQuery(ctx, findSamplesByIDSampleLimsSQL, idSampleLims, "query samples by id_sample_lims", syncTableSample)
+}
+
+// FindSamplesByAccessionNumber returns the unique sample matching accession_number.
+func (c *Client) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]Sample, error) {
+	return c.findSamplesByQuery(ctx, findSamplesByAccessionSQL, accessionNumber, "query samples by accession number", syncTableSample)
+}
+
+// FindSamplesBySupplierName returns the unique sample matching supplier_name.
+func (c *Client) FindSamplesBySupplierName(ctx context.Context, supplierName string) ([]Sample, error) {
+	return c.findSamplesByQuery(ctx, findSamplesBySupplierSQL, supplierName, "query samples by supplier name", syncTableSample)
+}
+
+// FindSamplesByLibraryType returns the unique sample matching pipeline_id_lims.
+func (c *Client) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error) {
+	return c.findSamplesByQuery(ctx, findSamplesByLibraryTypeSQL, libraryType, "query samples by library type", syncTableIseqFlowcell)
+}
+
 // SamplesForStudy returns samples linked to a study.
 func (c *Client) SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Sample, error) {
 	cacheDB := c.readCacheDB()
@@ -273,11 +372,12 @@ func (c *Client) SamplesForRun(ctx context.Context, idRun string, limit, offset 
 	if err != nil {
 		return nil, ErrUnsupportedIdentifier
 	}
-	if c == nil || c.syncSource == nil {
-		return nil, fmt.Errorf("mlwh: sync source not configured")
+	cacheDB := c.readCacheDB()
+	if cacheDB == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	samples, err := querySamples(ctx, c.syncSource, samplesForRunSourceSQL, "query run samples source", runID, limit, offset)
+	samples, err := querySamples(ctx, cacheDB, samplesForRunCacheSQL, "query run samples cache", runID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -285,15 +385,11 @@ func (c *Client) SamplesForRun(ctx context.Context, idRun string, limit, offset 
 		return samples, nil
 	}
 
-	runExists, err := queryExists(ctx, c.syncSource, `SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`, "query run existence", runID)
-	if err != nil {
+	if err = c.requireResolverSyncState(ctx, syncTableIseqProductMetrics); err != nil {
 		return nil, err
 	}
-	if !runExists {
-		return nil, ErrNotFound
-	}
 
-	return []Sample{}, nil
+	return nil, ErrNotFound
 }
 
 // SamplesForLibrary returns study-scoped samples linked to a library type.
@@ -389,19 +485,24 @@ func (c *Client) LibrariesForStudy(ctx context.Context, studyLimsID string, limi
 
 // RunsForStudy returns runs for a study.
 func (c *Client) RunsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Run, error) {
-	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
+	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, ErrNotFound
-		}
-
 		return nil, err
 	}
-	if c == nil || c.syncSource == nil {
-		return nil, fmt.Errorf("mlwh: sync source not configured")
+	if !studyExists {
+		if err = c.requireResolverSyncState(ctx, syncTableStudy); err != nil {
+			return nil, err
+		}
+
+		return nil, ErrNotFound
 	}
 
-	rows, err := c.syncSource.QueryContext(ctx, runsForStudySQL, study.IDStudyTmp, limit, offset)
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, runsForStudyCacheSQL, studyLimsID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query runs for study: %w", ErrUpstreamImpaired, err)
 	}
@@ -428,16 +529,22 @@ func (c *Client) LanesForSample(ctx context.Context, sangerName string, limit, o
 	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireResolverSyncState(ctx, syncTableSample); syncErr != nil {
+				return nil, syncErr
+			}
+
 			return nil, ErrNotFound
 		}
 
 		return nil, err
 	}
-	if c == nil || c.syncSource == nil {
-		return nil, fmt.Errorf("mlwh: sync source not configured")
+
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	rows, err := c.syncSource.QueryContext(ctx, lanesForSampleSQL, sample.IDSampleTmp, limit, offset)
+	rows, err := db.QueryContext(ctx, lanesForSampleCacheSQL, sample.IDSampleTmp, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query lanes for sample: %w", ErrUpstreamImpaired, err)
 	}
@@ -470,7 +577,7 @@ func (c *Client) IRODSPathsForSample(ctx context.Context, sangerName string, lim
 		return nil, err
 	}
 
-	return c.queryIRODSPaths(ctx, irodsPathsForSampleSQL, sample.IDSampleTmp, limit, offset, "query irods paths for sample")
+	return c.queryIRODSPaths(ctx, irodsPathsForSampleCacheSQL, sample.IDSampleTmp, limit, offset, "query irods paths for sample")
 }
 
 // IRODSPathsForStudy returns iRODS paths for a study.
@@ -484,38 +591,60 @@ func (c *Client) IRODSPathsForStudy(ctx context.Context, studyLimsID string, lim
 		return nil, err
 	}
 
-	return c.queryIRODSPaths(ctx, irodsPathsForStudySQL, study.IDStudyTmp, limit, offset, "query irods paths for study")
+	return c.queryIRODSPaths(ctx, irodsPathsForStudyCacheSQL, study.IDStudyLims, limit, offset, "query irods paths for study")
 }
 
-// StudyForSample returns the study linked to a sample.
-func (c *Client) StudyForSample(ctx context.Context, sangerName string) (*Study, error) {
-	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
+// StudiesForSample returns the studies linked to a sample.
+func (c *Client) StudiesForSample(ctx context.Context, sangerName string) ([]Study, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, studiesForSampleCacheSQL, sangerName)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, ErrNotFound
+		return nil, fmt.Errorf("%w: query studies for sample: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	studies := make([]Study, 0)
+	for rows.Next() {
+		study, scanErr := scanStudyRow(rows.Scan)
+		if scanErr != nil {
+			return nil, fmt.Errorf("%w: query studies for sample: %w", ErrUpstreamImpaired, scanErr)
 		}
 
+		studies = append(studies, study)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query studies for sample: %w", ErrUpstreamImpaired, err)
+	}
+	if len(studies) > 0 {
+		return studies, nil
+	}
+
+	sampleExists, err := c.cacheSampleExists(ctx, sangerName)
+	if err != nil {
+		return nil, err
+	}
+	if sampleExists {
+		return nil, ErrNotFound
+	}
+
+	if err = c.requireResolverSyncState(ctx, syncTableSample); err != nil {
 		return nil, err
 	}
 
-	study, err := c.resolveStudyBySampleID(ctx, sample.IDSampleTmp)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, ErrNotFound
-		}
-
-		return nil, err
-	}
-
-	return study, nil
+	return nil, ErrNotFound
 }
 
 func (c *Client) queryIRODSPaths(ctx context.Context, query string, parent any, limit, offset int, action string) ([]IRODSPath, error) {
-	if c == nil || c.syncSource == nil {
-		return nil, fmt.Errorf("mlwh: sync source not configured")
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	rows, err := c.syncSource.QueryContext(ctx, query, parent, limit, offset)
+	rows, err := db.QueryContext(ctx, query, parent, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 	}
@@ -536,26 +665,6 @@ func (c *Client) queryIRODSPaths(ctx context.Context, query string, parent any, 
 	}
 
 	return paths, nil
-}
-
-func (c *Client) resolveStudyBySampleID(ctx context.Context, idSampleTmp int64) (*Study, error) {
-	db := c.readCacheDB()
-	if db == nil {
-		return nil, fmt.Errorf("mlwh: cache reader not configured")
-	}
-
-	study := &Study{}
-	targets, apply := studyScanTargets(study)
-	err := db.QueryRowContext(ctx, studyForSampleSQL, idSampleTmp).Scan(targets...)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%w: query study for sample: %w", ErrUpstreamImpaired, err)
-	}
-	apply()
-
-	return study, nil
 }
 
 // ExpandIdentifier expands a canonical identifier into related identifiers used by results queries.

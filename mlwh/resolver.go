@@ -171,21 +171,22 @@ func (c *Client) resolveLibraryFromCache(ctx context.Context, raw string) (Match
 	return Match{Kind: KindLibraryType, Canonical: pipelineIDLims, Library: library}, nil
 }
 
-// ResolveRun resolves a numeric run identifier by checking for a matching
-// iseq_product_metrics row in MLWH.
+// ResolveRun resolves a numeric run identifier from the cache-backed
+// iseq_product_metrics_mirror table.
 func (c *Client) ResolveRun(ctx context.Context, raw string) (Match, error) {
 	runID, err := strconv.Atoi(raw)
 	if err != nil {
 		return Match{}, ErrUnsupportedIdentifier
 	}
 
-	if c == nil || c.syncSource == nil {
-		return Match{}, fmt.Errorf("mlwh: sync source not configured")
+	db := c.readCacheDB()
+	if db == nil {
+		return Match{}, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	rows, err := c.syncSource.QueryContext(
+	rows, err := db.QueryContext(
 		ctx,
-		`SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`,
+		`SELECT id_run FROM iseq_product_metrics_mirror WHERE id_run = ? LIMIT 1`,
 		runID,
 	)
 	if err != nil {
@@ -196,6 +197,10 @@ func (c *Client) ResolveRun(ctx context.Context, raw string) (Match, error) {
 	if !rows.Next() {
 		if err = rows.Err(); err != nil {
 			return Match{}, fmt.Errorf("%w: query run metrics: %w", ErrUpstreamImpaired, err)
+		}
+
+		if err = c.requireResolverSyncState(ctx, syncTableIseqProductMetrics); err != nil {
+			return Match{}, err
 		}
 
 		return Match{}, ErrNotFound
@@ -239,9 +244,9 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 		return Match{Kind: KindStudyLimsID, Canonical: study.IDStudyLims, Study: study}, nil
 	}
 
-	study, err := c.resolveStudyFromCache(
+	study, err := c.resolveAmbiguousStudyFromCache(
 		ctx,
-		`SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`,
+		`SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`,
 		raw,
 	)
 	if err == nil {
@@ -257,260 +262,6 @@ func (c *Client) ResolveStudy(ctx context.Context, raw string) (Match, error) {
 	}
 
 	return Match{Kind: KindStudyName, Canonical: study.IDStudyLims, Study: study}, nil
-}
-
-// ResolveSample resolves a sample from cache-backed indexed lookups.
-func (c *Client) ResolveSample(ctx context.Context, raw string) (Match, error) {
-	if isRejectedLIMSProviderConstant(raw) {
-		return Match{}, fmt.Errorf("%w: %q looks like a LIMS provider constant", ErrUnsupportedIdentifier, raw)
-	}
-
-	sampleCacheWarm, err := c.sampleResolverCacheWarm(ctx)
-	if err != nil {
-		return Match{}, err
-	}
-
-	if sampleCacheWarm {
-		match, resolveErr := c.resolveSampleDirectFromCache(ctx, raw)
-		if resolveErr == nil {
-			return match, nil
-		}
-		if !errors.Is(resolveErr, ErrNotFound) {
-			return Match{}, resolveErr
-		}
-	}
-
-	if !sampleCacheWarm && c != nil && c.syncSource != nil && isUUIDShape(raw) {
-		sample, resolveErr := c.resolveSampleFromUpstream(ctx, `SELECT `+sampleSelectColumns+` FROM sample WHERE uuid_sample_lims = ? LIMIT 1`, raw)
-		if resolveErr == nil {
-			return Match{Kind: KindSampleUUID, Canonical: sample.Name, Sample: sample}, nil
-		}
-		if !errors.Is(resolveErr, ErrNotFound) {
-			return Match{}, resolveErr
-		}
-	} else if !sampleCacheWarm && c != nil && c.syncSource != nil {
-		if _, atoiErr := strconv.Atoi(raw); atoiErr == nil {
-			sample, resolveErr := c.resolveSampleFromUpstream(ctx, `SELECT `+sampleSelectColumns+` FROM sample WHERE uuid_sample_lims = ? LIMIT 1`, raw)
-			if resolveErr == nil {
-				return Match{Kind: KindSampleUUID, Canonical: sample.Name, Sample: sample}, nil
-			}
-			if !errors.Is(resolveErr, ErrNotFound) {
-				return Match{}, resolveErr
-			}
-
-			sample, resolveErr = c.resolveSampleFromUpstream(ctx, `SELECT `+sampleSelectColumns+` FROM sample WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, raw)
-			if resolveErr == nil {
-				return Match{Kind: KindSampleLimsID, Canonical: sample.Name, Sample: sample}, nil
-			}
-			if !errors.Is(resolveErr, ErrNotFound) {
-				return Match{}, resolveErr
-			}
-		} else {
-			steps := []struct {
-				kind  IdentifierKind
-				query string
-			}{
-				{kind: KindSangerSampleName, query: `SELECT ` + sampleSelectColumns + ` FROM sample WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`},
-				{kind: KindSangerSampleID, query: `SELECT ` + sampleSelectColumns + ` FROM sample WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`},
-				{kind: KindSupplierName, query: `SELECT ` + sampleSelectColumns + ` FROM sample WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`},
-				{kind: KindSampleAccession, query: `SELECT ` + sampleSelectColumns + ` FROM sample WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`},
-			}
-
-			for _, step := range steps {
-				sample, resolveErr := c.resolveSampleFromUpstream(ctx, step.query, raw)
-				if resolveErr == nil {
-					return Match{Kind: step.kind, Canonical: sample.Name, Sample: sample}, nil
-				}
-				if !errors.Is(resolveErr, ErrNotFound) {
-					return Match{}, resolveErr
-				}
-			}
-		}
-	}
-
-	if err := c.requireResolverSyncState(ctx, syncTableSample); err != nil {
-		return Match{}, err
-	}
-
-	sample, err := c.resolveSampleFromCache(
-		ctx,
-		`SELECT `+sampleMirrorSelectColumns+` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 1`,
-		raw,
-	)
-	if err != nil {
-		return Match{}, err
-	}
-
-	return Match{Kind: KindDonorID, Canonical: sample.Name, Sample: sample}, nil
-}
-
-func (c *Client) resolveSampleDirectFromCache(ctx context.Context, raw string) (Match, error) {
-	if isUUIDShape(raw) {
-		sample, err := c.resolveSampleFromCache(
-			ctx,
-			`SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE uuid_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`,
-			raw,
-		)
-		if err == nil {
-			return Match{Kind: KindSampleUUID, Canonical: sample.Name, Sample: sample}, nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return Match{}, err
-		}
-
-		return Match{}, ErrNotFound
-	}
-
-	if _, atoiErr := strconv.Atoi(raw); atoiErr == nil {
-		sample, err := c.resolveSampleFromCache(
-			ctx,
-			`SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`,
-			raw,
-		)
-		if err == nil {
-			return Match{Kind: KindSampleLimsID, Canonical: sample.Name, Sample: sample}, nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return Match{}, err
-		}
-
-		return Match{}, ErrNotFound
-	}
-
-	steps := []struct {
-		kind  IdentifierKind
-		query string
-	}{
-		{kind: KindSangerSampleName, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`},
-		{kind: KindSangerSampleID, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`},
-		{kind: KindSupplierName, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`},
-		{kind: KindSampleAccession, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`},
-	}
-
-	for _, step := range steps {
-		sample, err := c.resolveSampleFromCache(ctx, step.query, raw)
-		if err == nil {
-			return Match{Kind: step.kind, Canonical: sample.Name, Sample: sample}, nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return Match{}, err
-		}
-	}
-
-	return Match{}, ErrNotFound
-}
-
-func (c *Client) resolveSampleByUUID(ctx context.Context, raw string) (*Sample, error) {
-	warm, err := c.sampleResolverCacheWarm(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if warm {
-		match, resolveErr := c.resolveSampleDirectFromCache(ctx, raw)
-		if resolveErr != nil {
-			return nil, resolveErr
-		}
-
-		return match.Sample, nil
-	}
-
-	return c.resolveSampleFromUpstream(ctx, `SELECT `+sampleSelectColumns+` FROM sample WHERE uuid_sample_lims = ? LIMIT 1`, raw)
-}
-
-func (c *Client) resolveSampleByLimsID(ctx context.Context, raw string) (*Sample, error) {
-	warm, err := c.sampleResolverCacheWarm(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if warm {
-		match, resolveErr := c.resolveSampleDirectFromCache(ctx, raw)
-		if resolveErr != nil {
-			return nil, resolveErr
-		}
-
-		return match.Sample, nil
-	}
-
-	return c.resolveSampleFromUpstream(ctx, `SELECT `+sampleSelectColumns+` FROM sample WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, raw)
-}
-
-func (c *Client) sampleResolverCacheWarm(ctx context.Context) (bool, error) {
-	if c == nil || c.cache == nil {
-		return false, nil
-	}
-
-	return c.hasResolverSyncState(ctx, syncTableSample)
-}
-
-func (c *Client) resolveSampleFromUpstream(ctx context.Context, query, raw string) (*Sample, error) {
-	if c == nil || c.syncSource == nil {
-		return nil, fmt.Errorf("mlwh: sync source not configured")
-	}
-
-	rows, err := c.syncSource.QueryContext(ctx, query, raw)
-	if err != nil {
-		return nil, fmt.Errorf("%w: query sample source: %w", ErrUpstreamImpaired, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	if !rows.Next() {
-		if err = rows.Err(); err != nil {
-			return nil, fmt.Errorf("%w: query sample source: %w", ErrUpstreamImpaired, err)
-		}
-
-		return nil, ErrNotFound
-	}
-
-	sample := &Sample{}
-	if err = rows.Scan(
-		&sample.IDSampleTmp,
-		&sample.IDLims,
-		&sample.IDSampleLims,
-		&sample.UUIDSampleLims,
-		&sample.Name,
-		&sample.SangerSampleID,
-		&sample.SupplierName,
-		&sample.AccessionNumber,
-		&sample.DonorID,
-		&sample.TaxonID,
-		&sample.CommonName,
-		&sample.Description,
-	); err != nil {
-		return nil, fmt.Errorf("%w: scan sample source: %w", ErrUpstreamImpaired, err)
-	}
-
-	return sample, nil
-}
-
-func (c *Client) resolveSampleFromCache(ctx context.Context, query, raw string) (*Sample, error) {
-	db := c.readCacheDB()
-	if db == nil {
-		return nil, fmt.Errorf("mlwh: cache reader not configured")
-	}
-
-	sample := &Sample{}
-	err := db.QueryRowContext(ctx, query, raw).Scan(
-		&sample.IDSampleTmp,
-		&sample.IDLims,
-		&sample.IDSampleLims,
-		&sample.UUIDSampleLims,
-		&sample.Name,
-		&sample.SangerSampleID,
-		&sample.SupplierName,
-		&sample.AccessionNumber,
-		&sample.DonorID,
-		&sample.TaxonID,
-		&sample.CommonName,
-		&sample.Description,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%w: query sample cache: %w", ErrUpstreamImpaired, err)
-	}
-
-	return sample, nil
 }
 
 func (c *Client) resolveStudyFromCache(ctx context.Context, query, raw string) (*Study, error) {
@@ -533,13 +284,29 @@ func (c *Client) resolveStudyFromCache(ctx context.Context, query, raw string) (
 	return study, nil
 }
 
-func (c *Client) resolveStudyByName(ctx context.Context, raw string) (*Study, error) {
+func (c *Client) resolveAmbiguousStudyFromCache(ctx context.Context, query, raw string) (*Study, error) {
+	studies, err := c.queryStudiesFromCache(ctx, query, raw)
+	if err != nil {
+		return nil, err
+	}
+
+	switch len(studies) {
+	case 0:
+		return nil, ErrNotFound
+	case 1:
+		return studies[0], nil
+	default:
+		return nil, fmt.Errorf("%w: %q matches studies %s and %s", ErrAmbiguous, raw, studies[0].IDStudyLims, studies[1].IDStudyLims)
+	}
+}
+
+func (c *Client) queryStudiesFromCache(ctx context.Context, query, raw string) ([]*Study, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	rows, err := db.QueryContext(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`, raw)
+	rows, err := db.QueryContext(ctx, query, raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query study cache: %w", ErrUpstreamImpaired, err)
 	}
@@ -560,12 +327,9 @@ func (c *Client) resolveStudyByName(ctx context.Context, raw string) (*Study, er
 		return nil, fmt.Errorf("%w: query study cache: %w", ErrUpstreamImpaired, err)
 	}
 
-	switch len(studies) {
-	case 0:
-		return nil, ErrNotFound
-	case 1:
-		return studies[0], nil
-	default:
-		return nil, fmt.Errorf("%w: studies %s and %s", ErrAmbiguous, studies[0].IDStudyLims, studies[1].IDStudyLims)
-	}
+	return studies, nil
+}
+
+func (c *Client) resolveStudyByName(ctx context.Context, raw string) (*Study, error) {
+	return c.resolveAmbiguousStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`, raw)
 }

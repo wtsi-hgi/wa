@@ -22,8 +22,8 @@ remaining `negative_cache` / `enrich_cache` reads and writes.
 Covers all 3 acceptance tests from C6. This item is the
 foundation other phase-3 items build on; it should land first.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: C1 - StudiesForSample replaces StudyForSample
 
@@ -36,8 +36,8 @@ filter by `sample_mirror.name`, order by
 `study_mirror.id_study_lims`. Covers all 4 acceptance tests from
 C1. Depends on item 3.1 (live-MLWH paths must be gone first).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 3 (parallel, after item 3.2 is reviewed)
 
@@ -52,8 +52,8 @@ Implement `FindSamplesBySangerID`, `FindSamplesByIDSampleLims`,
 1-element slice, `ErrAmbiguous` (mentioning both candidate PKs),
 or `ErrNotFound`. Covers all 4 acceptance tests from C3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.4: C4 - Resolver ambiguity rules [parallel with 3.3, 3.5, 3.6]
 
@@ -70,8 +70,8 @@ cross-column cascade in `ResolveSample` surfaces ambiguity with
 both PKs and the raw input. Covers all 6 acceptance tests from
 C4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.5: C5 - Deterministic pagination [parallel with 3.3, 3.4, 3.6]
 
@@ -82,8 +82,8 @@ Append `, sample_mirror.id_sample_tmp` to every
 (`SamplesForStudy`, `SamplesForLibrary`, `SamplesForLibraryType`).
 Covers both acceptance tests from C5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.6: C7 - No mid-read cache writes [parallel with 3.3, 3.4, 3.5]
 
@@ -95,8 +95,8 @@ the build/grep guard proving `upsertHierarchyReadThrough` no
 longer exists in the package. Covers both acceptance tests from
 C7. Depends on item 3.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all

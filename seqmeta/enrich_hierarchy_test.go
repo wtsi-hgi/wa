@@ -103,8 +103,8 @@ func TestEnrichmentHierarchy(t *testing.T) {
 			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
 				return samples, nil
 			},
-			StudyForSampleFunc: func(_ context.Context, _ string) (*mlwh.Study, error) {
-				return study, nil
+			StudiesForSampleFunc: func(_ context.Context, _ string) ([]mlwh.Study, error) {
+				return []mlwh.Study{*study}, nil
 			},
 		}
 
@@ -117,7 +117,14 @@ func TestEnrichmentHierarchy(t *testing.T) {
 		}
 
 		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
-		convey.So(result.Graph.Sample, convey.ShouldResemble, &samples[0])
+		convey.So(result.Graph.Sample, convey.ShouldNotBeNil)
+		if result.Graph.Sample == nil {
+			return
+		}
+
+		convey.So(result.Graph.Sample.SangerSampleID, convey.ShouldEqual, "S1")
+		convey.So(result.Graph.Sample.Name, convey.ShouldEqual, "Sample 1")
+		convey.So(result.Graph.Sample.Studies, convey.ShouldResemble, []mlwh.Study{*study})
 		convey.So(result.Graph.Study, convey.ShouldResemble, study)
 		convey.So(result.Graph.SampleDetail, convey.ShouldNotBeNil)
 		if result.Graph.SampleDetail == nil {
@@ -126,8 +133,47 @@ func TestEnrichmentHierarchy(t *testing.T) {
 
 		convey.So(result.Graph.SampleDetail.Sample.SangerSampleID, convey.ShouldEqual, "S1")
 		convey.So(result.Graph.SampleDetail.Sample.Name, convey.ShouldEqual, "Sample 1")
-		convey.So(result.Graph.SampleDetail.Sample, convey.ShouldResemble, samples[0])
+		convey.So(result.Graph.SampleDetail.Sample.Studies, convey.ShouldResemble, []mlwh.Study{*study})
 		convey.So(result.Graph.SampleDetail.Lanes, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("H2.1/C1: sample enrichment preserves all linked studies from StudiesForSample", t, func() {
+		study1 := mlwh.Study{IDStudyLims: "6568", Name: "Study 1"}
+		study2 := mlwh.Study{IDStudyLims: "6569", Name: "Study 2"}
+		samples := []mlwh.Sample{{SangerSampleID: "S1", Name: "Sample 1"}}
+
+		provider := &MockProvider{
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				return samples, nil
+			},
+			StudiesForSampleFunc: func(_ context.Context, _ string) ([]mlwh.Study, error) {
+				return []mlwh.Study{study1, study2}, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "S1")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Graph.Study, convey.ShouldBeNil)
+		convey.So(result.Graph.Studies, convey.ShouldResemble, []mlwh.Study{study1, study2})
+		convey.So(result.Graph.Sample, convey.ShouldNotBeNil)
+		if result.Graph.Sample == nil {
+			return
+		}
+
+		convey.So(result.Graph.Sample.Studies, convey.ShouldResemble, []mlwh.Study{study1, study2})
+		convey.So(result.Graph.SampleDetail, convey.ShouldNotBeNil)
+		if result.Graph.SampleDetail == nil {
+			return
+		}
+
+		convey.So(result.Graph.SampleDetail.Study, convey.ShouldBeNil)
+		convey.So(result.Graph.SampleDetail.Sample.Studies, convey.ShouldResemble, []mlwh.Study{study1, study2})
 	})
 
 	convey.Convey("H3: run enrichment groups samples into StudyDetails", t, func() {

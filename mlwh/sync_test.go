@@ -1942,6 +1942,7 @@ type recordedSQLStatement struct {
 
 type sqliteSyncSQLObserver struct {
 	mu         sync.Mutex
+	begins     int
 	statements []recordedSQLStatement
 	commits    int
 }
@@ -1962,6 +1963,13 @@ func (o *sqliteSyncSQLObserver) IncrementCommit() {
 	o.commits++
 }
 
+func (o *sqliteSyncSQLObserver) IncrementBegin() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.begins++
+}
+
 func (o *sqliteSyncSQLObserver) Statements() []recordedSQLStatement {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -1979,10 +1987,18 @@ func (o *sqliteSyncSQLObserver) CommitCount() int {
 	return o.commits
 }
 
+func (o *sqliteSyncSQLObserver) BeginCount() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return o.begins
+}
+
 func (o *sqliteSyncSQLObserver) Reset() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
+	o.begins = 0
 	o.statements = nil
 	o.commits = 0
 }
@@ -2025,6 +2041,7 @@ func (c *recordingSQLiteConn) Begin() (driver.Tx, error) {
 	if err != nil || c.observer == nil {
 		return tx, err
 	}
+	c.observer.IncrementBegin()
 
 	return &recordingSQLiteTx{Tx: tx, observer: c.observer}, nil
 }
@@ -2039,6 +2056,7 @@ func (c *recordingSQLiteConn) BeginTx(ctx context.Context, opts driver.TxOptions
 	if err != nil || c.observer == nil {
 		return tx, err
 	}
+	c.observer.IncrementBegin()
 
 	return &recordingSQLiteTx{Tx: tx, observer: c.observer}, nil
 }

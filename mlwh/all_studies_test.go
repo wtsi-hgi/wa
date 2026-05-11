@@ -27,6 +27,7 @@ package mlwh
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -67,8 +68,8 @@ func TestAllStudiesWarmCacheReturnsOrderedStudiesWithoutMLWHQuery(t *testing.T) 
 	})
 }
 
-func TestAllStudiesColdCacheReadThroughDoesNotAdvanceWatermark(t *testing.T) {
-	convey.Convey("Given a cold cache and an MLWH source returning two studies", t, func() {
+func TestAllStudiesColdCacheReturnsNeverSyncedWithoutReadThrough(t *testing.T) {
+	convey.Convey("Given a cold cache and a configured sync source", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -79,25 +80,15 @@ func TestAllStudiesColdCacheReadThroughDoesNotAdvanceWatermark(t *testing.T) {
 			convey.So(sourceDB.Close(), convey.ShouldBeNil)
 			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
-
-		t1 := time.Date(2026, time.May, 6, 17, 10, 0, 0, time.UTC)
-		t2 := t1.Add(10 * time.Minute)
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT `+studySelectColumns+`, last_updated FROM study WHERE id_lims = 'SQSCP' ORDER BY id_study_lims LIMIT ? OFFSET ?`)).
-			WithArgs(100, 0).
-			WillReturnRows(sqlmock.NewRows(studySyncSourceColumns).
-				AddRow(studyRowValues(41, "SQSCP", "6566", "study-uuid-41", "Study 41", "EGAS00001004141", t1)...).
-				AddRow(studyRowValues(42, "SQSCP", "6567", "study-uuid-42", "Study 42", "EGAS00001004242", t2)...))
-
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
 		studies, err := client.AllStudies(context.Background(), 100, 0)
 
-		convey.Convey("when AllStudies runs, then it reads through into study_mirror without writing sync_state", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(studies, convey.ShouldHaveLength, 2)
-			convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "6566")
-			convey.So(studies[1].IDStudyLims, convey.ShouldEqual, "6567")
-			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 2)
+		convey.Convey("when AllStudies runs, then it returns the never-synced sentinel and leaves study_mirror untouched", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(studies, convey.ShouldResemble, []Study{})
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 0)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sync_state WHERE table_name = ?`, syncTableStudy), convey.ShouldEqual, 0)
 		})
 	})
@@ -215,8 +206,8 @@ func TestAllStudiesWarmCacheFiltersOutNonSQSCPRows(t *testing.T) {
 	})
 }
 
-func TestAllStudiesColdCacheSecondCallHitsStudyMirrorOnly(t *testing.T) {
-	convey.Convey("Given a cold cache and a first read-through call", t, func() {
+func TestAllStudiesColdCacheRepeatedCallsStayNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache and repeated AllStudies calls", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -227,27 +218,20 @@ func TestAllStudiesColdCacheSecondCallHitsStudyMirrorOnly(t *testing.T) {
 			convey.So(sourceDB.Close(), convey.ShouldBeNil)
 			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
-
-		t1 := time.Date(2026, time.May, 6, 18, 10, 0, 0, time.UTC)
-		t2 := t1.Add(10 * time.Minute)
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT `+studySelectColumns+`, last_updated FROM study WHERE id_lims = 'SQSCP' ORDER BY id_study_lims LIMIT ? OFFSET ?`)).
-			WithArgs(100, 0).
-			WillReturnRows(sqlmock.NewRows(studySyncSourceColumns).
-				AddRow(studyRowValues(81, "SQSCP", "6566", "study-uuid-81", "Study 81", "EGAS00001008181", t1)...).
-				AddRow(studyRowValues(82, "SQSCP", "6567", "study-uuid-82", "Study 82", "EGAS00001008282", t2)...))
-
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
 		first, err := client.AllStudies(context.Background(), 100, 0)
-		convey.So(err, convey.ShouldBeNil)
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
 
 		second, err := client.AllStudies(context.Background(), 100, 0)
 
-		convey.Convey("when AllStudies repeats, then the second call is served from study_mirror without a second MLWH query", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(first, convey.ShouldHaveLength, 2)
+		convey.Convey("when AllStudies repeats, then both calls stay cache-only and never populate study_mirror", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(first, convey.ShouldResemble, []Study{})
 			convey.So(second, convey.ShouldResemble, first)
-			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 2)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 0)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sync_state WHERE table_name = ?`, syncTableStudy), convey.ShouldEqual, 0)
 		})
 	})

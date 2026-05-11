@@ -76,7 +76,7 @@ type stubMLWHInfoClient struct {
 	resolveRun     func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveLibrary func(ctx context.Context, raw string) (mlwh.Match, error)
 
-	studyForSample      func(ctx context.Context, name string) (*mlwh.Study, error)
+	studiesForSample    func(ctx context.Context, name string) ([]mlwh.Study, error)
 	lanesForSample      func(ctx context.Context, name string, limit, offset int) ([]mlwh.Lane, error)
 	irodsPathsForSample func(ctx context.Context, name string, limit, offset int) ([]mlwh.IRODSPath, error)
 	librariesForStudy   func(ctx context.Context, id string, limit, offset int) ([]mlwh.Library, error)
@@ -128,9 +128,9 @@ func (s *stubMLWHInfoClient) ResolveLibrary(ctx context.Context, raw string) (ml
 	return mlwh.Match{}, errors.New("resolveLibrary not stubbed")
 }
 
-func (s *stubMLWHInfoClient) StudyForSample(ctx context.Context, name string) (*mlwh.Study, error) {
-	if s.studyForSample != nil {
-		return s.studyForSample(ctx, name)
+func (s *stubMLWHInfoClient) StudiesForSample(ctx context.Context, name string) ([]mlwh.Study, error) {
+	if s.studiesForSample != nil {
+		return s.studiesForSample(ctx, name)
 	}
 
 	return nil, mlwh.ErrNotFound
@@ -216,14 +216,14 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 					},
 				}, nil
 			},
-			studyForSample: func(_ context.Context, name string) (*mlwh.Study, error) {
+			studiesForSample: func(_ context.Context, name string) ([]mlwh.Study, error) {
 				convey.So(name, convey.ShouldEqual, "DN1234")
 
-				return &mlwh.Study{
+				return []mlwh.Study{{
 					IDStudyLims:     "5901",
 					Name:            "Lung cancer GWAS",
 					AccessionNumber: "EGAS00001005678",
-				}, nil
+				}}, nil
 			},
 			lanesForSample: func(_ context.Context, _ string, _, _ int) ([]mlwh.Lane, error) {
 				return []mlwh.Lane{{IDRun: 49001, Position: 2, TagIndex: 7}}, nil

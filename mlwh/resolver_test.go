@@ -62,19 +62,12 @@ func TestResolveRunRejectsNonNumericWithoutSQL(t *testing.T) {
 
 func TestResolveRunReturnsCanonicalRunIDForMetricsMatch(t *testing.T) {
 	convey.Convey("Given a numeric run identifier present in iseq_product_metrics", t, func() {
-		sourceDB, sourceMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() {
-			convey.So(sourceDB.Close(), convey.ShouldBeNil)
-			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		})
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 15, 0, 0, 0, time.UTC))
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 1001, 1, 12345, 1, 0, "6568")
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`)).
-			WithArgs(12345).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run"}).AddRow(12345))
-		sourceMock.ExpectClose()
-
-		client := &Client{syncSource: sourceDB}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
 		match, err := client.ResolveRun(context.Background(), "12345")
 
@@ -90,19 +83,11 @@ func TestResolveRunReturnsCanonicalRunIDForMetricsMatch(t *testing.T) {
 
 func TestResolveRunReturnsNotFoundWhenMetricsRowMissing(t *testing.T) {
 	convey.Convey("Given a numeric run identifier absent from iseq_product_metrics", t, func() {
-		sourceDB, sourceMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() {
-			convey.So(sourceDB.Close(), convey.ShouldBeNil)
-			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		})
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 15, 1, 0, 0, time.UTC))
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`)).
-			WithArgs(12345).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run"}))
-		sourceMock.ExpectClose()
-
-		client := &Client{syncSource: sourceDB}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
 		match, err := client.ResolveRun(context.Background(), "12345")
 
@@ -283,6 +268,25 @@ func TestResolveStudyAccessionFallback(t *testing.T) {
 	})
 }
 
+func TestResolveStudyAccessionReturnsAmbiguousForTwoMatches(t *testing.T) {
+	convey.Convey("Given a study accession shared by exactly two studies", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedStudyMirrorRow(t, cache.DB(), 18, "6518", "study-uuid-18", "Study 18", "EGAS00001001818")
+		seedStudyMirrorRow(t, cache.DB(), 19, "6519", "study-uuid-19", "Study 19", "EGAS00001001818")
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveStudy(context.Background(), "EGAS00001001818")
+
+		convey.So(errors.Is(err, ErrAmbiguous), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "6518")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "6519")
+		convey.So(match, convey.ShouldResemble, Match{})
+	})
+}
+
 func TestResolveStudyNameReturnsAmbiguousForTwoMatches(t *testing.T) {
 	convey.Convey("Given a study name shared by exactly two studies", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -340,94 +344,27 @@ func TestResolveStudyNameIsCaseInsensitiveByDefault(t *testing.T) {
 	})
 }
 
-func TestResolveStudyColdCacheSyncsBeforeLookup(t *testing.T) {
-	convey.Convey("Given a cold cache and a study row inserted only during sync", t, func() {
+func TestResolveStudyColdCacheDoesNotSyncBeforeLookup(t *testing.T) {
+	convey.Convey("Given a cold cache and a configured sync runner", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		syncEntered := make(chan struct{}, 1)
-		releaseSync := make(chan struct{})
-		resultCh := make(chan Match, 1)
-		errCh := make(chan error, 1)
+		syncCalls := 0
 
 		client := &Client{
 			cache:       cache,
 			cacheReader: cacheReadDB(cache),
-			syncSource:  cache.DB(),
 			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				if len(tables) != 1 || tables[0] != syncTableStudy {
-					return errors.New("unexpected sync tables")
-				}
-
-				if upsertErr := upsertStudyMirror(ctx, tx, "sqlite", studySyncRow{
-					Study: Study{
-						IDStudyTmp:               19,
-						IDLims:                   "SQSCP",
-						IDStudyLims:              "6519",
-						UUIDStudyLims:            "study-uuid-19",
-						Name:                     "Study 19",
-						AccessionNumber:          "EGAS00001001919",
-						StudyTitle:               "Study title 19",
-						FacultySponsor:           "Faculty sponsor 19",
-						State:                    "active",
-						DataReleaseStrategy:      "strategy",
-						DataAccessGroup:          "group",
-						Programme:                "programme",
-						ReferenceGenome:          "GRCh38",
-						EthicallyApproved:        true,
-						StudyType:                "study-type",
-						ContainsHumanDNA:         false,
-						ContaminatedHumanDNA:     false,
-						StudyVisibility:          "public",
-						EGADACAccessionNumber:    "EGAD0001",
-						EGAPolicyAccessionNumber: "EGAP0001",
-						DataReleaseTiming:        "immediate",
-					},
-					LastUpdated: time.Date(2026, time.May, 6, 16, 5, 0, 0, time.UTC),
-				}); upsertErr != nil {
-					return upsertErr
-				}
-
-				syncEntered <- struct{}{}
-				<-releaseSync
-
+				syncCalls++
 				return nil
 			},
 		}
 
-		go func() {
-			match, err := client.ResolveStudy(context.Background(), "6519")
-			if err != nil {
-				errCh <- err
-				return
-			}
+		match, err := client.ResolveStudy(context.Background(), "6519")
 
-			resultCh <- match
-		}()
-
-		<-syncEntered
-
-		select {
-		case err := <-errCh:
-			convey.So(err, convey.ShouldBeNil)
-		case <-resultCh:
-			convey.So("resolve returned before sync commit", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
-		}
-
-		close(releaseSync)
-
-		select {
-		case err := <-errCh:
-			convey.So(err, convey.ShouldBeNil)
-		case match := <-resultCh:
-			convey.So(match.Kind, convey.ShouldEqual, KindStudyLimsID)
-			convey.So(match.Canonical, convey.ShouldEqual, "6519")
-			convey.So(match.Study, convey.ShouldNotBeNil)
-			convey.So(match.Study.IDStudyLims, convey.ShouldEqual, "6519")
-		case <-time.After(time.Second):
-			convey.So("resolve did not complete", convey.ShouldEqual, "")
-		}
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(syncCalls, convey.ShouldEqual, 0)
+		convey.So(match, convey.ShouldResemble, Match{})
 	})
 }
 
@@ -466,20 +403,14 @@ func seedStudyMirrorRow(t *testing.T, db *sql.DB, id int64, idStudyLims, uuidStu
 
 func TestClassifyIdentifierUUIDDispatchesOnlyUUIDResolvers(t *testing.T) {
 	convey.Convey("Given a UUID-shaped identifier that misses study and matches sample", t, func() {
-		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
+		client, roMock, _, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
 
 		const raw = "b7daafb8-c59f-11ee-8fba-024224dd57f4"
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE uuid_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableStudy).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleUUIDQuery)).
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleUUIDQuery)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).AddRow(sampleResolverRow(21, raw, "9521", "SANGER-UUID", "sanger-id-21", "supplier-21", "accession-21", "donor-21")...))
 
@@ -495,23 +426,17 @@ func TestClassifyIdentifierUUIDDispatchesOnlyUUIDResolvers(t *testing.T) {
 
 func TestClassifyIdentifierIntegerDispatchesStudyThenSampleThenRun(t *testing.T) {
 	convey.Convey("Given a pure-integer identifier whose run step is the first hit", t, func() {
-		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
+		client, roMock, _, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
 
 		const raw = "12345"
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableStudy).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleLimsIDQuery)).
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleLimsIDQuery)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_run FROM iseq_product_metrics_mirror WHERE id_run = ? LIMIT 1`)).
 			WithArgs(12345).
 			WillReturnRows(sqlmock.NewRows([]string{"id_run"}).AddRow(12345))
 
@@ -531,7 +456,7 @@ func TestClassifyIdentifierTextStopsAtStudyAccessionHit(t *testing.T) {
 		defer cleanup()
 
 		const raw = "EGAS00001005445"
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()).AddRow(studyResolverRow(31, "7031", "study-uuid-31", "Study 31", raw)...))
 
@@ -564,7 +489,7 @@ func TestClassifyIdentifierTextPrefersStudyOverDonorID(t *testing.T) {
 		client.syncSource = nil
 
 		const raw = "Shared Identifier"
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()))
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).

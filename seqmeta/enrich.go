@@ -221,12 +221,12 @@ func studiesForSamples(ctx context.Context, provider Provider, samples []mlwh.Sa
 	for _, sample := range samples {
 		ids := sampleStudyIDs(sample)
 		if len(ids) == 0 && sample.Name != "" {
-			study, err := provider.StudyForSample(ctx, sample.Name)
+			studies, err := provider.StudiesForSample(ctx, sample.Name)
 			if err != nil {
 				return nil, err
 			}
-			if study != nil {
-				ids = []string{study.IDStudyLims}
+			for _, study := range studies {
+				ids = append(ids, study.IDStudyLims)
 			}
 		}
 
@@ -346,7 +346,7 @@ func enrichSampleStudy(ctx context.Context, provider Provider, sample mlwh.Sampl
 		return nil
 	}
 
-	study, err := provider.StudyForSample(ctx, sample.Name)
+	studies, err := provider.StudiesForSample(ctx, sample.Name)
 	if err != nil {
 		if isContextError(err) {
 			return err
@@ -357,10 +357,26 @@ func enrichSampleStudy(ctx context.Context, provider Provider, sample mlwh.Sampl
 
 		return nil
 	}
+	if len(studies) == 0 {
+		return nil
+	}
 
-	result.Graph.Study = study
+	if result.Graph.Sample != nil {
+		result.Graph.Sample.Studies = append([]mlwh.Study(nil), studies...)
+	}
 	if result.Graph.SampleDetail != nil {
-		result.Graph.SampleDetail.Study = study
+		result.Graph.SampleDetail.Sample.Studies = append([]mlwh.Study(nil), studies...)
+	}
+	result.Graph.Studies = append([]mlwh.Study(nil), studies...)
+
+	if len(studies) != 1 {
+		return nil
+	}
+
+	study := studies[0]
+	result.Graph.Study = &study
+	if result.Graph.SampleDetail != nil {
+		result.Graph.SampleDetail.Study = &study
 	}
 
 	return nil
@@ -727,8 +743,8 @@ func cachedStudiesByID(ctx context.Context, provider Provider, studyIDs []string
 	studies := make(map[string]mlwh.Study, len(studyIDs))
 	for rows.Next() {
 		var (
-			studyID string
-			name sql.NullString
+			studyID   string
+			name      sql.NullString
 			accession sql.NullString
 		)
 
@@ -781,19 +797,19 @@ func libraryStudyDetails(ctx context.Context, provider Provider, libraryType str
 				study = mlwh.Study{IDStudyLims: studyID, IDLims: "SQSCP"}
 				missingStudyMetadata = true
 			} else {
-			resolvedStudy, getErr := provider.GetStudy(ctx, studyID)
-			if getErr != nil {
-				if isClientError(getErr) {
+				resolvedStudy, getErr := provider.GetStudy(ctx, studyID)
+				if getErr != nil {
+					if isClientError(getErr) {
+						continue
+					}
+
+					return nil, nil, getErr
+				}
+				if resolvedStudy == nil {
 					continue
 				}
 
-				return nil, nil, getErr
-			}
-			if resolvedStudy == nil {
-				continue
-			}
-
-			study = *resolvedStudy
+				study = *resolvedStudy
 			}
 		}
 

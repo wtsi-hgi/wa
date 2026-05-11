@@ -29,8 +29,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
-	"sync/atomic"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,27 +42,25 @@ import (
 )
 
 var (
-	samplesForStudyCacheQuery         = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
+	samplesForStudyCacheQuery         = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForStudyParentQuery        = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
 	sampleByNameCacheQuery            = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`
-	samplesForRunQuery                = `SELECT DISTINCT sample.id_sample_tmp, sample.id_lims, sample.id_sample_lims, sample.uuid_sample_lims, sample.name, sample.sanger_sample_id, sample.supplier_name, sample.accession_number, sample.donor_id, sample.taxon_id, sample.common_name, sample.description FROM iseq_product_metrics INNER JOIN iseq_flowcell ON iseq_flowcell.id_iseq_flowcell_tmp = iseq_product_metrics.id_iseq_flowcell_tmp INNER JOIN sample ON sample.id_sample_tmp = iseq_flowcell.id_sample_tmp WHERE iseq_product_metrics.id_run = ? AND sample.id_lims = 'SQSCP' ORDER BY sample.name LIMIT ? OFFSET ?`
-	samplesForRunParentQuery          = `SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`
-	samplesForLibraryCacheQuery       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
+	samplesForRunQuery                = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
+	samplesForLibraryCacheQuery       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForLibraryStudyParentQuery = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
 )
 
 const (
-	runsForStudyQuery        = `SELECT DISTINCT ipm.id_run FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp WHERE ifc.id_study_tmp = ? ORDER BY ipm.id_run LIMIT ? OFFSET ?`
-	lanesForSampleQuery      = `SELECT DISTINCT ipm.id_run, ipm.position, ipm.tag_index FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp WHERE ifc.id_sample_tmp = ? ORDER BY ipm.id_run, ipm.position, ipm.tag_index LIMIT ? OFFSET ?`
-	irodsPathsForSampleQuery = `SELECT spi.id_product, spi.collection, spi.data_object FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp INNER JOIN seq_product_irods_locations spi ON spi.id_product = ipm.id_iseq_product WHERE ifc.id_sample_tmp = ? ORDER BY spi.id_product LIMIT ? OFFSET ?`
-	irodsPathsForStudyQuery  = `SELECT spi.id_product, spi.collection, spi.data_object FROM iseq_flowcell ifc INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_flowcell_tmp = ifc.id_iseq_flowcell_tmp INNER JOIN seq_product_irods_locations spi ON spi.id_product = ipm.id_iseq_product WHERE ifc.id_study_tmp = ? ORDER BY spi.id_product LIMIT ? OFFSET ?`
+	runsForStudyQuery        = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_study_lims = ? ORDER BY id_run LIMIT ? OFFSET ?`
+	lanesForSampleQuery      = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
+	irodsPathsForSampleQuery = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
+	irodsPathsForStudyQuery  = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
 )
 
 func TestSamplesForStudyWarmCacheUsesJoinOnly(t *testing.T) {
 	convey.Convey("Given a warm cache for a study with three linked samples", t, func() {
-		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
+		client, roMock, _, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
-		_ = sourceMock
 
 		roMock.ExpectQuery(regexp.QuoteMeta(samplesForStudyCacheQuery)).
 			WithArgs("6568", 100, 0).
@@ -133,16 +134,14 @@ func TestSamplesForStudyWarmCacheReturnsEmptySliceWhenStudyHasNoChildren(t *test
 
 func TestSamplesForRunUsesDistinctMetricsJoin(t *testing.T) {
 	convey.Convey("Given a run present in iseq_product_metrics", t, func() {
-		client, sourceMock, cleanup := newResolverSampleTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForRunQuery)).
-			WithArgs(12345, 100, 0).
-			WillReturnRows(
-				sqlmock.NewRows(sampleResolverColumns()).
-					AddRow(sampleResolverRow(1, "sample-uuid-1", "501", "Alpha", "sanger-id-1", "supplier-1", "accession-1", "donor-1")...).
-					AddRow(sampleResolverRow(2, "sample-uuid-2", "502", "Beta", "sanger-id-2", "supplier-2", "accession-2", "donor-2")...),
-			)
+		seedSyncState(t, client.cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 12, 30, 0, 0, time.UTC))
+		seedHierarchySample(t, client.cache.DB(), 1, "6568", "Alpha")
+		seedHierarchySample(t, client.cache.DB(), 2, "6568", "Beta")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 1001, 1, 12345, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 1002, 2, 12345, 2, 0, "6568")
 
 		samples, err := client.SamplesForRun(context.Background(), "12345", 100, 0)
 
@@ -155,16 +154,16 @@ func TestSamplesForRunUsesDistinctMetricsJoin(t *testing.T) {
 
 func TestSamplesForRunHonoursLimitOffset(t *testing.T) {
 	convey.Convey("Given a five-row run source queried with limit and offset", t, func() {
-		client, sourceMock, cleanup := newResolverSampleTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForRunQuery)).
-			WithArgs(12345, 2, 1).
-			WillReturnRows(
-				sqlmock.NewRows(sampleResolverColumns()).
-					AddRow(sampleResolverRow(2, "sample-uuid-2", "502", "Beta", "sanger-id-2", "supplier-2", "accession-2", "donor-2")...).
-					AddRow(sampleResolverRow(3, "sample-uuid-3", "503", "Gamma", "sanger-id-3", "supplier-3", "accession-3", "donor-3")...),
-			)
+		seedSyncState(t, client.cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 12, 31, 0, 0, time.UTC))
+		seedHierarchySample(t, client.cache.DB(), 1, "6568", "Alpha")
+		seedHierarchySample(t, client.cache.DB(), 2, "6568", "Beta")
+		seedHierarchySample(t, client.cache.DB(), 3, "6568", "Gamma")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 1101, 1, 12345, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 1102, 2, 12345, 2, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 1103, 3, 12345, 3, 0, "6568")
 
 		samples, err := client.SamplesForRun(context.Background(), "12345", 2, 1)
 
@@ -266,9 +265,8 @@ func TestSamplesForLibraryColdCacheWithoutSyncReturnsErrCacheNeverSynced(t *test
 
 func TestSamplesForLibraryTypeColdCacheReturnsErrCacheNeverSynced(t *testing.T) {
 	convey.Convey("Given a cold cache and no flowcell sync state", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
-		_ = sourceMock
 
 		samples, err := client.SamplesForLibraryType(context.Background(), "Chromium single cell 3 prime v3", 100, 0)
 
@@ -292,10 +290,9 @@ func TestSamplesForMethodsMissingParentsReturnErrNotFound(t *testing.T) {
 		convey.So(studySamples, convey.ShouldBeNil)
 		convey.So(studySourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 
-		runClient, runSourceMock, runCleanup := newResolverSampleTestClient(t)
+		runClient, _, runCleanup := newHierarchyTestClient(t)
 		defer runCleanup()
-		runSourceMock.ExpectQuery(regexp.QuoteMeta(samplesForRunQuery)).WithArgs(12345, 100, 0).WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-		runSourceMock.ExpectQuery(regexp.QuoteMeta(samplesForRunParentQuery)).WithArgs(12345).WillReturnRows(sqlmock.NewRows([]string{"id_run"}))
+		seedSyncState(t, runClient.cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 12, 32, 0, 0, time.UTC))
 
 		runSamples, runErr := runClient.SamplesForRun(context.Background(), "12345", 100, 0)
 
@@ -329,15 +326,13 @@ func TestSamplesForMethodsKnownParentsWithoutChildrenReturnEmptySlices(t *testin
 		convey.So(studyErr, convey.ShouldBeNil)
 		convey.So(studySamples, convey.ShouldHaveLength, 0)
 
-		runClient, runSourceMock, runCleanup := newResolverSampleTestClient(t)
+		runClient, _, runCleanup := newHierarchyTestClient(t)
 		defer runCleanup()
-		runSourceMock.ExpectQuery(regexp.QuoteMeta(samplesForRunQuery)).WithArgs(12345, 100, 0).WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-		runSourceMock.ExpectQuery(regexp.QuoteMeta(samplesForRunParentQuery)).WithArgs(12345).WillReturnRows(sqlmock.NewRows([]string{"id_run"}).AddRow(12345))
 
 		runSamples, runErr := runClient.SamplesForRun(context.Background(), "12345", 100, 0)
 
-		convey.So(runErr, convey.ShouldBeNil)
-		convey.So(runSamples, convey.ShouldHaveLength, 0)
+		convey.So(errors.Is(runErr, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(runSamples, convey.ShouldBeNil)
 
 		libraryCache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(libraryCache.Close(), convey.ShouldBeNil) }()
@@ -354,7 +349,7 @@ func TestSamplesForMethodsKnownParentsWithoutChildrenReturnEmptySlices(t *testin
 
 func TestExpandIdentifierStudyUsesAtMostFourQueries(t *testing.T) {
 	convey.Convey("Given a study with one sample and one lane", t, func() {
-		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
+		client, roMock, _, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
 
 		start := time.Now()
@@ -367,7 +362,7 @@ func TestExpandIdentifierStudyUsesAtMostFourQueries(t *testing.T) {
 			WithArgs("A").
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
 				AddRow(sampleResolverRow(1, "sample-uuid-1", "501", "A", "sanger-id-1", "supplier-1", "accession-1", "donor-1")...))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
+		roMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
 			WithArgs(int64(1), 1000, 0).
 			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(100, 1, 0))
 
@@ -386,7 +381,7 @@ func TestExpandIdentifierStudyUsesAtMostFourQueries(t *testing.T) {
 
 func TestExpandIdentifierCachesResultsForTTL(t *testing.T) {
 	convey.Convey("Given a cached expand result within the TTL", t, func() {
-		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
+		client, roMock, _, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
 
 		roMock.ExpectQuery(regexp.QuoteMeta(samplesForStudyCacheQuery)).
@@ -397,7 +392,7 @@ func TestExpandIdentifierCachesResultsForTTL(t *testing.T) {
 			WithArgs("A").
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
 				AddRow(sampleResolverRow(1, "sample-uuid-1", "501", "A", "sanger-id-1", "supplier-1", "accession-1", "donor-1")...))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
+		roMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
 			WithArgs(int64(1), 1000, 0).
 			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(100, 1, 0))
 
@@ -443,14 +438,12 @@ func TestLibrariesForStudyReturnsDistinctCountsPerPipeline(t *testing.T) {
 
 func TestRunsForStudyReturnsDistinctRunIDs(t *testing.T) {
 	convey.Convey("Given a cached study with metrics rows spanning two runs", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(runsForStudyQuery)).
-			WithArgs(int64(1), 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run"}).AddRow(100).AddRow(101))
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 2001, 11, 100, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 2002, 12, 101, 1, 0, "6568")
 
 		runs, err := client.RunsForStudy(context.Background(), "6568", 100, 0)
 
@@ -461,17 +454,13 @@ func TestRunsForStudyReturnsDistinctRunIDs(t *testing.T) {
 
 func TestLanesForSampleReturnsOrderedLaneTriples(t *testing.T) {
 	convey.Convey("Given a cached sample with three product-metrics rows", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchySample(t, client.cache.DB(), 21, "6568", "7607STDY14643771")
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(21), 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).
-				AddRow(100, 1, 0).
-				AddRow(100, 2, 0).
-				AddRow(101, 1, 5))
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 3001, 21, 100, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 3002, 21, 100, 2, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 3003, 21, 101, 1, 5, "6568")
 
 		lanes, err := client.LanesForSample(context.Background(), "7607STDY14643771", 100, 0)
 
@@ -482,23 +471,19 @@ func TestLanesForSampleReturnsOrderedLaneTriples(t *testing.T) {
 
 func TestIRODSPathsForSampleReturnsJoinedPaths(t *testing.T) {
 	convey.Convey("Given a cached sample with two seq_product_irods_locations rows", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchySample(t, client.cache.DB(), 31, "6568", "7607STDY14643771")
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(irodsPathsForSampleQuery)).
-			WithArgs(int64(31), 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_product", "collection", "data_object"}).
-				AddRow("1234_1#1", "/seq/1234", "1234_1#1.cram").
-				AddRow("1234_1#2", "/seq/1234", "1234_1#2.cram"))
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), 4001, "/seq/1234", "1234_1#1.cram", 31, "6568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), 4002, "/seq/1234", "1234_1#2.cram", 31, "6568")
 
 		paths, err := client.IRODSPathsForSample(context.Background(), "7607STDY14643771", 100, 0)
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "1234_1#1", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram"},
-			{IDProduct: "1234_1#2", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram"},
+			{IDProduct: "4001", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram"},
+			{IDProduct: "4002", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram"},
 		})
 	})
 }
@@ -513,43 +498,30 @@ func TestHierarchyMethodsReturnErrNotFoundForMissingParents(t *testing.T) {
 		lanes, lanesErr := client.LanesForSample(context.Background(), "7607STDY14643771", 100, 0)
 		samplePaths, samplePathsErr := client.IRODSPathsForSample(context.Background(), "7607STDY14643771", 100, 0)
 		studyPaths, studyPathsErr := client.IRODSPathsForStudy(context.Background(), "6568", 100, 0)
-		study, studyErr := client.StudyForSample(context.Background(), "7607STDY14643771")
+		studies, studiesErr := client.StudiesForSample(context.Background(), "7607STDY14643771")
 
 		convey.So(errors.Is(librariesErr, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(errors.Is(runsErr, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(errors.Is(lanesErr, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(errors.Is(samplePathsErr, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(errors.Is(studyPathsErr, ErrNotFound), convey.ShouldBeTrue)
-		convey.So(errors.Is(studyErr, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(studiesErr, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(libraries, convey.ShouldBeNil)
 		convey.So(runs, convey.ShouldBeNil)
 		convey.So(lanes, convey.ShouldBeNil)
 		convey.So(samplePaths, convey.ShouldBeNil)
 		convey.So(studyPaths, convey.ShouldBeNil)
-		convey.So(study, convey.ShouldBeNil)
+		convey.So(studies, convey.ShouldBeNil)
 	})
 }
 
 func TestHierarchyMethodsReturnEmptySlicesForParentsWithoutChildren(t *testing.T) {
 	convey.Convey("Given existing study and sample parents without child rows", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
 		seedHierarchySample(t, client.cache.DB(), 41, "6568", "7607STDY14643771")
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(runsForStudyQuery)).
-			WithArgs(int64(1), 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run"}))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(41), 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(irodsPathsForSampleQuery)).
-			WithArgs(int64(41), 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_product", "collection", "data_object"}))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(irodsPathsForStudyQuery)).
-			WithArgs(int64(1), 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_product", "collection", "data_object"}))
 
 		libraries, librariesErr := client.LibrariesForStudy(context.Background(), "6568", 100, 0)
 		runs, runsErr := client.RunsForStudy(context.Background(), "6568", 100, 0)
@@ -572,47 +544,273 @@ func TestHierarchyMethodsReturnEmptySlicesForParentsWithoutChildren(t *testing.T
 
 func TestIRODSPathsForStudyReturnsJoinedPaths(t *testing.T) {
 	convey.Convey("Given a cached study with two seq_product_irods_locations rows", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchyStudy(t, client.cache.DB(), 71, "6568")
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(irodsPathsForStudyQuery)).
-			WithArgs(int64(71), 100, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_product", "collection", "data_object"}).
-				AddRow("5678_1#1", "/seq/5678", "5678_1#1.cram").
-				AddRow("5678_1#2", "/seq/5678", "5678_1#2.cram"))
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), 5001, "/seq/5678", "5678_1#1.cram", 91, "6568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), 5002, "/seq/5678", "5678_1#2.cram", 92, "6568")
 
 		paths, err := client.IRODSPathsForStudy(context.Background(), "6568", 100, 0)
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "5678_1#1", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram"},
-			{IDProduct: "5678_1#2", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram"},
+			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram"},
+			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram"},
 		})
 	})
 }
 
-func TestStudyForSampleReturnsLinkedStudy(t *testing.T) {
-	convey.Convey("Given a cached sample linked to a cached study", t, func() {
+func TestHierarchyReadsNeverOpenWriteTransactions(t *testing.T) {
+	convey.Convey("C7.1: Given 10 concurrent hierarchy reads against a populated cache, when they run in parallel, then each succeeds without opening a write transaction", t, func() {
+		cache, observer := openRecordingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 11, 21, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 11, 21, 1, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 11, 21, 2, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableSeqProductIRODSLocations, time.Date(2026, time.May, 11, 21, 3, 0, 0, time.UTC))
+
+		seedHierarchyStudy(t, cache.DB(), 1, "6568")
+		seedHierarchySample(t, cache.DB(), 1, "6568", "S1")
+		seedLibrarySample(t, cache.DB(), "Standard", 1, "6568")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 1001, 1, 12345, 1, 0, "6568")
+		seedIRODSLocationMirrorRow(t, cache.DB(), 1001, "/seq/1234", "1234_1#1.cram", 1, "6568")
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+		observer.Reset()
+
+		reads := []func(context.Context) error{
+			func(ctx context.Context) error { _, err := client.SamplesForStudy(ctx, "6568", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.LibrariesForStudy(ctx, "6568", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.RunsForStudy(ctx, "6568", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.LanesForSample(ctx, "S1", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.IRODSPathsForSample(ctx, "S1", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.SamplesForStudy(ctx, "6568", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.LibrariesForStudy(ctx, "6568", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.RunsForStudy(ctx, "6568", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.LanesForSample(ctx, "S1", 100, 0); return err },
+			func(ctx context.Context) error { _, err := client.IRODSPathsForSample(ctx, "S1", 100, 0); return err },
+		}
+
+		start := make(chan struct{})
+		errCh := make(chan error, len(reads))
+		var wg sync.WaitGroup
+
+		for _, read := range reads {
+			wg.Add(1)
+			go func(runRead func(context.Context) error) {
+				defer wg.Done()
+				<-start
+				errCh <- runRead(context.Background())
+			}(read)
+		}
+
+		close(start)
+		wg.Wait()
+		close(errCh)
+
+		errorCount := 0
+		for err := range errCh {
+			if err != nil {
+				errorCount++
+			}
+		}
+
+		convey.So(errorCount, convey.ShouldEqual, 0)
+		convey.So(observer.BeginCount(), convey.ShouldEqual, 0)
+		convey.So(observer.CommitCount(), convey.ShouldEqual, 0)
+	})
+}
+
+func TestHierarchyPackageDoesNotContainUpsertHierarchyReadThrough(t *testing.T) {
+	convey.Convey("C7.2: Given the removed hierarchy read-through helper, when the package sources are scanned, then the symbol is absent", t, func() {
+		entries, err := os.ReadDir(".")
+		convey.So(err, convey.ShouldBeNil)
+
+		removedSymbol := "upsertHierarchy" + "ReadThrough"
+		matches := 0
+
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
+				continue
+			}
+
+			contents, readErr := os.ReadFile(entry.Name())
+			convey.So(readErr, convey.ShouldBeNil)
+			if regexp.MustCompile(regexp.QuoteMeta(removedSymbol)).Find(contents) != nil {
+				matches++
+			}
+		}
+
+		convey.So(matches, convey.ShouldEqual, 0)
+	})
+}
+
+func TestStudiesForSampleReturnsOrderedStudyFanout(t *testing.T) {
+	convey.Convey("Given a cached sample linked to two studies", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
+		seedHierarchyStudy(t, client.cache.DB(), 82, "6569")
 		seedHierarchyStudy(t, client.cache.DB(), 81, "6568")
-		seedHierarchySample(t, client.cache.DB(), 82, "6568", "7607STDY14643771")
-		seedLibrarySample(t, client.cache.DB(), "Standard", 82, "6568")
+		seedHierarchySample(t, client.cache.DB(), 1, "6568", "S1")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 1, "6568")
+		seedLibrarySample(t, client.cache.DB(), "Chromium", 1, "6569")
 
-		study, err := client.StudyForSample(context.Background(), "7607STDY14643771")
+		studies, err := client.StudiesForSample(context.Background(), "S1")
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(study, convey.ShouldNotBeNil)
-		convey.So(study.IDStudyLims, convey.ShouldEqual, "6568")
+		convey.So(studies, convey.ShouldHaveLength, 2)
+		convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "6568")
+		convey.So(studies[1].IDStudyLims, convey.ShouldEqual, "6569")
+	})
+}
+
+func TestStudiesForSampleReturnsErrNotFoundWhenSampleHasNoStudyLinks(t *testing.T) {
+	convey.Convey("Given a cached sample with no library_samples rows", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchySample(t, client.cache.DB(), 2, "6568", "S2")
+
+		studies, err := client.StudiesForSample(context.Background(), "S2")
+
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(studies, convey.ShouldBeNil)
+	})
+}
+
+func TestStudiesForSampleColdCacheReturnsErrCacheNeverSynced(t *testing.T) {
+	convey.Convey("Given a never-synced cache", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		studies, err := client.StudiesForSample(context.Background(), "S1")
+
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+		convey.So(studies, convey.ShouldBeNil)
+	})
+}
+
+func TestStudiesForSampleExcludesNonSQSCPStudies(t *testing.T) {
+	convey.Convey("Given a sample linked to SQSCP and non-SQSCP studies", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 91, "6568")
+		_, err := client.cache.DB().Exec(`INSERT INTO study_mirror (
+			id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title,
+			faculty_sponsor, state, data_release_strategy, data_access_group, programme,
+			reference_genome, ethically_approved, study_type, contains_human_dna,
+			contaminated_human_dna, study_visibility, ega_dac_accession_number,
+			ega_policy_accession_number, data_release_timing, last_updated
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			92, "CANSAMPLE", "9999", "study-uuid-92", "Other Study", "EGAS00001000092", "Other study title",
+			"Faculty Sponsor", "active", "open", "group", "programme", "GRCh38", 1,
+			"genomic sequencing", 0, 0, "open", "EGAC00001000092", "EGAP00001000092", "immediate",
+			time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC),
+		)
+		convey.So(err, convey.ShouldBeNil)
+		seedHierarchySample(t, client.cache.DB(), 3, "6568", "S3")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 3, "6568")
+		seedLibrarySample(t, client.cache.DB(), "Chromium", 3, "9999")
+
+		studies, err := client.StudiesForSample(context.Background(), "S3")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(studies, convey.ShouldHaveLength, 1)
+		convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "6568")
+	})
+}
+
+func TestFindSamplesByAccessionNumberReturnsErrAmbiguousWithBothCandidatePKs(t *testing.T) {
+	convey.Convey("Given two cached samples sharing an accession number", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 11, 14, 0, 0, 0, time.UTC))
+		seedHierarchySample(t, client.cache.DB(), 11, "6568", "S1")
+		seedHierarchySample(t, client.cache.DB(), 22, "6568", "S2")
+		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET accession_number = ? WHERE id_sample_tmp IN (?, ?)`, "DUP", 11, 22)
+		convey.So(err, convey.ShouldBeNil)
+
+		samples, err := client.FindSamplesByAccessionNumber(context.Background(), "DUP")
+
+		convey.So(samples, convey.ShouldBeNil)
+		convey.So(errors.Is(err, ErrAmbiguous), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "11")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "22")
+	})
+}
+
+func TestFindSamplesBySangerIDQueriesOnlySangerSampleIDColumn(t *testing.T) {
+	convey.Convey("Given a cache where only accession_number matches the raw string", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 11, 14, 1, 0, 0, time.UTC))
+		seedHierarchySample(t, client.cache.DB(), 33, "6568", "S3")
+		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET accession_number = ?, sanger_sample_id = ? WHERE id_sample_tmp = ?`, "DUP", "different", 33)
+		convey.So(err, convey.ShouldBeNil)
+
+		samples, err := client.FindSamplesBySangerID(context.Background(), "DUP")
+
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(samples, convey.ShouldBeNil)
+	})
+}
+
+func TestFindSamplesByLibraryTypeReturnsCanonicalSampleSlice(t *testing.T) {
+	convey.Convey("Given a cache with one sample linked to a library type", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedSyncState(t, client.cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 11, 14, 2, 0, 0, time.UTC))
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 11, 14, 3, 0, 0, time.UTC))
+		seedHierarchySample(t, client.cache.DB(), 1, "6568", "S1")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 1, "6568")
+
+		samples, err := client.FindSamplesByLibraryType(context.Background(), "Standard")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].IDSampleTmp, convey.ShouldEqual, int64(1))
+		convey.So(samples[0].Name, convey.ShouldEqual, "S1")
+		convey.So(samples[0].Libraries, convey.ShouldBeEmpty)
+	})
+}
+
+func TestFindSamplesByMethodsColdCacheReturnErrCacheNeverSynced(t *testing.T) {
+	convey.Convey("Given a never-synced cache", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		lookups := []struct {
+			name string
+			find func(context.Context) ([]Sample, error)
+		}{
+			{name: "sanger id", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesBySangerID(ctx, "S1") }},
+			{name: "sample lims id", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesByIDSampleLims(ctx, "123") }},
+			{name: "accession", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesByAccessionNumber(ctx, "ACC") }},
+			{name: "supplier", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesBySupplierName(ctx, "SUP") }},
+			{name: "library type", find: func(ctx context.Context) ([]Sample, error) { return client.FindSamplesByLibraryType(ctx, "Standard") }},
+		}
+
+		for _, lookup := range lookups {
+			samples, err := lookup.find(context.Background())
+
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(samples, convey.ShouldBeNil)
+		}
 	})
 }
 
 func TestExpandIdentifierStudyReturnsSortedTaggedIDs(t *testing.T) {
 	convey.Convey("Given a study with two samples and three distinct lanes", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
@@ -621,12 +819,9 @@ func TestExpandIdentifierStudyReturnsSortedTaggedIDs(t *testing.T) {
 		seedLibrarySample(t, client.cache.DB(), "Standard", 11, "6568")
 		seedLibrarySample(t, client.cache.DB(), "Standard", 12, "6568")
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(12), 1000, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(101, 1, 0).AddRow(100, 2, 0))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(11), 1000, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(100, 1, 0))
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 6001, 12, 101, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 6002, 12, 100, 2, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 6003, 11, 100, 1, 0, "6568")
 
 		taggedIDs, err := client.ExpandIdentifier(context.Background(), KindStudyLimsID, "6568")
 
@@ -641,9 +836,44 @@ func TestExpandIdentifierStudyReturnsSortedTaggedIDs(t *testing.T) {
 	})
 }
 
+func TestSamplesForStudyPaginationIsDeterministicForTiedNames(t *testing.T) {
+	convey.Convey("Given two study samples sharing the same name", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
+		seedHierarchySample(t, client.cache.DB(), 11, "6568", "NAME")
+		seedHierarchySample(t, client.cache.DB(), 12, "6568", "NAME")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 11, "6568")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 12, "6568")
+
+		firstPage, firstErr := client.SamplesForStudy(context.Background(), "6568", 1, 0)
+		secondPage, secondErr := client.SamplesForStudy(context.Background(), "6568", 1, 1)
+
+		convey.So(firstErr, convey.ShouldBeNil)
+		convey.So(secondErr, convey.ShouldBeNil)
+		convey.So(firstPage, convey.ShouldHaveLength, 1)
+		convey.So(secondPage, convey.ShouldHaveLength, 1)
+		convey.So(firstPage[0].Name, convey.ShouldEqual, "NAME")
+		convey.So(secondPage[0].Name, convey.ShouldEqual, "NAME")
+		convey.So(firstPage[0].IDSampleTmp, convey.ShouldEqual, int64(11))
+		convey.So(secondPage[0].IDSampleTmp, convey.ShouldEqual, int64(12))
+	})
+}
+
+func TestSamplePaginationQueriesOrderByNameThenPrimaryKey(t *testing.T) {
+	convey.Convey("Given the paginated sample hierarchy queries", t, func() {
+		orderBySuffix := "ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?"
+
+		convey.So(strings.Contains(samplesForStudyCacheSQL, orderBySuffix), convey.ShouldBeTrue)
+		convey.So(strings.Contains(samplesForLibraryCacheSQL, orderBySuffix), convey.ShouldBeTrue)
+		convey.So(strings.Contains(samplesForLibraryTypeCacheSQL, orderBySuffix), convey.ShouldBeTrue)
+	})
+}
+
 func TestExpandIdentifierLibraryReturnsOriginalSamplesAndRuns(t *testing.T) {
 	convey.Convey("Given a synced library spanning two studies", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
@@ -654,12 +884,9 @@ func TestExpandIdentifierLibraryReturnsOriginalSamplesAndRuns(t *testing.T) {
 		seedLibrarySample(t, client.cache.DB(), "Standard", 22, "7777")
 		seedSyncState(t, client.cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 18, 30, 0, 0, time.UTC))
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(22), 1000, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(100, 1, 0))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(21), 1000, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(101, 1, 0).AddRow(100, 2, 0))
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 7001, 22, 100, 1, 0, "7777")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 7002, 21, 101, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 7003, 21, 100, 2, 0, "6568")
 
 		taggedIDs, err := client.ExpandIdentifier(context.Background(), KindLibraryType, "Standard")
 
@@ -676,14 +903,14 @@ func TestExpandIdentifierLibraryReturnsOriginalSamplesAndRuns(t *testing.T) {
 
 func TestExpandIdentifierSampleReturnsOriginalAndDistinctRuns(t *testing.T) {
 	convey.Convey("Given a sample with duplicate lanes on one run", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchySample(t, client.cache.DB(), 31, "6568", "A")
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(31), 1000, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(101, 1, 0).AddRow(100, 1, 0).AddRow(100, 2, 0))
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 8001, 31, 101, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 8002, 31, 100, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 8003, 31, 100, 2, 0, "6568")
 
 		taggedIDs, err := client.ExpandIdentifier(context.Background(), KindSangerSampleName, "A")
 
@@ -698,15 +925,14 @@ func TestExpandIdentifierSampleReturnsOriginalAndDistinctRuns(t *testing.T) {
 
 func TestExpandIdentifierRunReturnsOriginalAndDistinctSamples(t *testing.T) {
 	convey.Convey("Given a run with duplicate product metrics for a sample", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(samplesForRunQuery)).
-			WithArgs(100, 1000, 0).
-			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
-				AddRow(sampleResolverRow(1, "sample-uuid-1", "501", "B", "sanger-id-1", "supplier-1", "accession-1", "donor-1")...).
-				AddRow(sampleResolverRow(2, "sample-uuid-2", "502", "A", "sanger-id-2", "supplier-2", "accession-2", "donor-2")...).
-				AddRow(sampleResolverRow(2, "sample-uuid-2", "502", "A", "sanger-id-2", "supplier-2", "accession-2", "donor-2")...))
+		seedSyncState(t, client.cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 12, 33, 0, 0, time.UTC))
+		seedHierarchySample(t, client.cache.DB(), 1, "6568", "B")
+		seedHierarchySample(t, client.cache.DB(), 2, "6568", "A")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 9001, 1, 100, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 9002, 2, 100, 1, 0, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 9003, 2, 100, 2, 0, "6568")
 
 		taggedIDs, err := client.ExpandIdentifier(context.Background(), KindRunID, "100")
 
@@ -721,16 +947,14 @@ func TestExpandIdentifierRunReturnsOriginalAndDistinctSamples(t *testing.T) {
 
 func TestExpandIdentifierCacheInvalidatedAfterSyncCommit(t *testing.T) {
 	convey.Convey("Given a cached expand result and a successful sync commit", t, func() {
-		client, sourceMock, cleanup := newHierarchyTestClient(t)
+		client, _, cleanup := newHierarchyTestClient(t)
 		defer cleanup()
 
 		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
 		seedHierarchySample(t, client.cache.DB(), 1, "6568", "A")
 		seedLibrarySample(t, client.cache.DB(), "Standard", 1, "6568")
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(1), 1000, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(100, 1, 0))
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 10001, 1, 100, 1, 0, "6568")
 
 		first, err := client.ExpandIdentifier(context.Background(), KindStudyLimsID, "6568")
 		convey.So(err, convey.ShouldBeNil)
@@ -740,20 +964,9 @@ func TestExpandIdentifierCacheInvalidatedAfterSyncCommit(t *testing.T) {
 			{Kind: KindRunID, Canonical: "100"},
 		})
 
-		var syncCalls atomic.Int32
-		client.syncRunner = func(ctx context.Context, tx *sql.Tx, tables []string) error {
-			syncCalls.Add(1)
-			_, err := tx.ExecContext(ctx, `INSERT INTO sync_state(table_name, high_water, last_run) VALUES (?, ?, ?)`, "sample", formatSyncTime(time.Date(2026, time.May, 6, 19, 0, 0, 0, time.UTC)), formatSyncTime(time.Date(2026, time.May, 6, 19, 0, 0, 0, time.UTC)))
-			return err
-		}
+		client.clearExpandIdentifierCache()
 
-		_, err = client.Sync(context.Background())
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(syncCalls.Load(), convey.ShouldEqual, 1)
-
-		sourceMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleQuery)).
-			WithArgs(int64(1), 1000, 0).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run", "position", "tag_index"}).AddRow(100, 1, 0))
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 10002, 1, 100, 1, 0, "6568")
 
 		second, err := client.ExpandIdentifier(context.Background(), KindStudyLimsID, "6568")
 
@@ -815,5 +1028,46 @@ func seedLibrarySample(t *testing.T, db *sql.DB, pipelineIDLims string, idSample
 	_, err := db.Exec(`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, pipelineIDLims, idSampleTmp, idStudyLims)
 	if err != nil {
 		t.Fatalf("seedLibrarySample(): %v", err)
+	}
+}
+
+func seedIseqProductMetricsMirrorRow(t *testing.T, db *sql.DB, idIseqProduct, idSampleTmp int64, idRun, position, tagIndex int, idStudyLims string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO iseq_product_metrics_mirror(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		idIseqProduct,
+		idSampleTmp,
+		idRun,
+		position,
+		tagIndex,
+		idSampleTmp,
+		idStudyLims,
+		1,
+		1,
+		1,
+		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+	)
+	if err != nil {
+		t.Fatalf("seedIseqProductMetricsMirrorRow(): %v", err)
+	}
+}
+
+func seedIRODSLocationMirrorRow(t *testing.T, db *sql.DB, idIseqProduct int64, collection, fileName string, idSampleTmp int64, idStudyLims string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		idIseqProduct,
+		"/seq",
+		fileName,
+		collection,
+		fileName,
+		idSampleTmp,
+		idStudyLims,
+		formatSyncTime(time.Date(2026, time.May, 6, 12, 11, 0, 0, time.UTC)),
+	)
+	if err != nil {
+		t.Fatalf("seedIRODSLocationMirrorRow(): %v", err)
 	}
 }
