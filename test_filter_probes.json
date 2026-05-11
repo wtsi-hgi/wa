@@ -1,0 +1,3 @@
+{"Time":"2026-04-27T11:07:10.66216242+01:00","Action":"start","Package":"github.com/wtsi-hgi/wa/saga"}
+{"Time":"2026-04-27T11:07:10.665824286+01:00","Action":"run","Package":"github.com/wtsi-hgi/wa/saga","Test":"TestFilterProbes"}
+{"Time":"2026-04-27T11:07:10.665857063+01:00","Action":"output","Package":"github.com/wtsi-hgi/wa/saga","Test":"TestFilterProbes","Output":"=== RUN   TestFilterProbes\n"}

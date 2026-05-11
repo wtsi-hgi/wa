@@ -27,6 +27,7 @@ package seqmeta
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -43,6 +44,21 @@ CREATE TABLE IF NOT EXISTS watermarks (
 	PRIMARY KEY (query_key, entry_id)
 );`
 
+const createEnrichCacheTableSQL = `
+CREATE TABLE IF NOT EXISTS enrich_cache (
+	identifier  TEXT    NOT NULL PRIMARY KEY,
+	type        TEXT    NOT NULL,
+	body        BLOB    NOT NULL,
+	fetched_at  TEXT    NOT NULL,
+	ttl_seconds INTEGER NOT NULL,
+	negative    INTEGER NOT NULL DEFAULT 0,
+	partial     INTEGER NOT NULL DEFAULT 0
+);`
+
+const createEnrichCacheFetchedAtIndexSQL = `
+CREATE INDEX IF NOT EXISTS enrich_cache_fetched_at_idx
+	ON enrich_cache(fetched_at);`
+
 // OpenStore opens a SQLite store and creates the schema on demand.
 func OpenStore(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -50,13 +66,50 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
 	}
 
-	if _, err := db.Exec(createWatermarksTableSQL); err != nil {
+	tx, err := db.Begin()
+	if err != nil {
+		_ = db.Close()
+
+		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
+	}
+
+	if _, err := tx.Exec(createWatermarksTableSQL); err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+
+		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
+	}
+
+	if _, err := tx.Exec(createEnrichCacheTableSQL); err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+
+		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
+	}
+
+	if _, err := tx.Exec(createEnrichCacheFetchedAtIndexSQL); err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+
+		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
+	}
+
+	if err := tx.Commit(); err != nil {
 		_ = db.Close()
 
 		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
 	}
 
 	return &Store{db: db}, nil
+}
+
+func enrichStudyIDBodyPattern(queryID string) (string, error) {
+	encodedQueryID, err := json.Marshal(queryID)
+	if err != nil {
+		return "", err
+	}
+
+	return `%"id_study_lims":` + string(encodedQueryID) + `%`, nil
 }
 
 // Close releases the underlying database handle.
@@ -187,4 +240,159 @@ func (s *Store) SaveEntries(queryKey string, entries map[string]StoredEntry) err
 	}
 
 	return nil
+}
+
+// LoadEnrichCache returns one raw enrich cache row by identifier.
+// Callers are responsible for checking whether the row is still fresh.
+func (s *Store) LoadEnrichCache(identifier string) (*enrichCacheEntry, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: store is closed", errStoreOperation)
+	}
+
+	var entry *enrichCacheEntry
+
+	err := s.WithLock(func() error {
+		loaded, err := s.loadEnrichCache(identifier)
+		if err != nil {
+			return err
+		}
+
+		entry = loaded
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
+func (s *Store) loadEnrichCache(identifier string) (*enrichCacheEntry, error) {
+	row := s.db.QueryRow(`
+		SELECT identifier, type, body, fetched_at, ttl_seconds, negative, partial
+		FROM enrich_cache
+		WHERE identifier = ?
+	`, identifier)
+
+	var (
+		entry     enrichCacheEntry
+		fetchedAt string
+		negative  int
+		partial   int
+		ttl       int64
+	)
+
+	err := row.Scan(&entry.Identifier, &entry.Type, &entry.Body, &fetchedAt, &ttl, &negative, &partial)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, err
+		}
+
+		return nil, fmt.Errorf("%w: %w", errStoreOperation, err)
+	}
+
+	entry.FetchedAt, err = time.Parse(time.RFC3339Nano, fetchedAt)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errStoreOperation, err)
+	}
+
+	entry.TTL = time.Duration(ttl)
+	entry.Negative = negative == 1
+	entry.Partial = partial == 1
+
+	return &entry, nil
+}
+
+// SaveEnrichCache upserts one raw enrich cache row.
+func (s *Store) SaveEnrichCache(entry enrichCacheEntry) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("%w: store is closed", errStoreOperation)
+	}
+
+	return s.WithLock(func() error {
+		return s.saveEnrichCache(entry)
+	})
+}
+
+func (s *Store) saveEnrichCache(entry enrichCacheEntry) error {
+	negative := 0
+	if entry.Negative {
+		negative = 1
+	}
+
+	partial := 0
+	if entry.Partial {
+		partial = 1
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO enrich_cache(identifier, type, body, fetched_at, ttl_seconds, negative, partial)
+		VALUES(?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(identifier) DO UPDATE SET
+			type = excluded.type,
+			body = excluded.body,
+			fetched_at = excluded.fetched_at,
+			ttl_seconds = excluded.ttl_seconds,
+			negative = excluded.negative,
+			partial = excluded.partial
+	`, entry.Identifier, entry.Type, entry.Body, entry.FetchedAt.UTC().Format(time.RFC3339Nano), int64(entry.TTL), negative, partial)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errStoreOperation, err)
+	}
+
+	return nil
+}
+
+// DeleteEnrichCache removes one enrich cache row by identifier.
+func (s *Store) DeleteEnrichCache(identifier string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("%w: store is closed", errStoreOperation)
+	}
+
+	return s.WithLock(func() error {
+		return s.deleteEnrichCache(identifier)
+	})
+}
+
+func (s *Store) deleteEnrichCache(identifier string) error {
+	if _, err := s.db.Exec(`DELETE FROM enrich_cache WHERE identifier = ?`, identifier); err != nil {
+		return fmt.Errorf("%w: %w", errStoreOperation, err)
+	}
+
+	return nil
+}
+
+// InvalidateEnrichFor removes enrich cache rows affected by a diff mutation.
+func (s *Store) InvalidateEnrichFor(queryKind, queryID string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("%w: store is closed", errStoreOperation)
+	}
+
+	return s.WithLock(func() error {
+		return s.invalidateEnrichFor(queryKind, queryID)
+	})
+}
+
+func (s *Store) invalidateEnrichFor(queryKind, queryID string) error {
+	switch queryKind {
+	case "study_samples":
+		studyIDBodyPattern, err := enrichStudyIDBodyPattern(queryID)
+		if err != nil {
+			return fmt.Errorf("%w: %w", errStoreOperation, err)
+		}
+
+		if _, err := s.db.Exec(`
+			DELETE FROM enrich_cache
+			WHERE (identifier = ? AND type IN (?, ?)) OR CAST(body AS TEXT) LIKE ?
+		`, queryID, IdentifierStudyID, IdentifierStudyAccession, studyIDBodyPattern); err != nil {
+			return fmt.Errorf("%w: %w", errStoreOperation, err)
+		}
+
+		return nil
+	case "sample_files":
+		return s.deleteEnrichCache(queryID)
+	default:
+		return nil
+	}
 }

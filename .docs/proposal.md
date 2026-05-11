@@ -137,15 +137,15 @@ and submits it to **watchtower** (or directly to **jobrun**) for processing.
 
 ## Recommended Build Order
 
-| Phase | Sub-product | Rationale |
-|-------|-------------|-----------|
-| 1 | **results** | Immediate need; zero external dependencies; instantly useful |
-| 2 | **saga** | Library dependency for seqmeta; wraps the SAGA API |
-| 3 | **seqmeta** | Foundation for automation; builds on saga for MLWH/iRODS data |
-| 4 | **notify** | Small scope, quick to build, needed by later products |
-| 5 | **jobrun** | Required before watchtower; independently useful |
-| 6 | **watchtower** | Core automation — needs seqmeta + jobrun |
-| 7 | **samplepicker** | Manual curation workflow; needs seqmeta |
+| Phase | Sub-product      | Rationale                                                     |
+| ----- | ---------------- | ------------------------------------------------------------- |
+| 1     | **results**      | Immediate need; zero external dependencies; instantly useful  |
+| 2     | **saga**         | Library dependency for seqmeta; wraps the SAGA API            |
+| 3     | **seqmeta**      | Foundation for automation; builds on saga for MLWH/iRODS data |
+| 4     | **notify**       | Small scope, quick to build, needed by later products         |
+| 5     | **jobrun**       | Required before watchtower; independently useful              |
+| 6     | **watchtower**   | Core automation — needs seqmeta + jobrun                      |
+| 7     | **samplepicker** | Manual curation workflow; needs seqmeta                       |
 
 Each phase delivers working software. Phases 1–2 can proceed in parallel if
 resources allow.
@@ -156,25 +156,25 @@ resources allow.
 
 ### Backend & CLI
 
-| Concern | Choice | Rationale |
-|---------|--------|----------|
-| Language | Go | Consistent with wr; single language for all backend logic |
-| CLI | Cobra | De-facto Go CLI framework |
-| HTTP routing | chi | Lightweight, idiomatic |
-| Database | SQLite + MySQL | SQLite for tests and local dev; shared MySQL instance for production (no self-hosted DB — uses institutional infrastructure) |
-| Job submission | wr Go client library | Native integration with LSF |
-| Testing | GoConvey + interface mocks | BDD-style tests; all external deps behind interfaces |
-| Email | net/smtp | Standard SMTP to institutional relay |
+| Concern        | Choice                     | Rationale                                                                                                                    |
+| -------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Language       | Go                         | Consistent with wr; single language for all backend logic                                                                    |
+| CLI            | Cobra                      | De-facto Go CLI framework                                                                                                    |
+| HTTP routing   | chi                        | Lightweight, idiomatic                                                                                                       |
+| Database       | SQLite + MySQL             | SQLite for tests and local dev; shared MySQL instance for production (no self-hosted DB — uses institutional infrastructure) |
+| Job submission | wr Go client library       | Native integration with LSF                                                                                                  |
+| Testing        | GoConvey + interface mocks | BDD-style tests; all external deps behind interfaces                                                                         |
+| Email          | net/smtp                   | Standard SMTP to institutional relay                                                                                         |
 
 ### Web UI
 
-| Concern | Choice | Rationale |
-|---------|--------|----------|
-| Framework | Next.js (App Router) + React | Server Actions call the Go API server-to-server; backend URLs never exposed to browser |
-| Components | shadcn/ui | Accessible, composable primitives (tables, forms, dialogs, comboboxes) with no custom design work |
-| Styling | Tailwind CSS v4 | Utility-first CSS with `@theme` design tokens; dark mode and responsive layout for free |
-| Contracts | Zod | Validates Go API responses on the frontend; catches regressions at the boundary |
-| Testing | Vitest | Unit tests for contracts and component logic; no browser required |
+| Concern    | Choice                       | Rationale                                                                                         |
+| ---------- | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| Framework  | Next.js (App Router) + React | Server Actions call the Go API server-to-server; backend URLs never exposed to browser            |
+| Components | shadcn/ui                    | Accessible, composable primitives (tables, forms, dialogs, comboboxes) with no custom design work |
+| Styling    | Tailwind CSS v4              | Utility-first CSS with `@theme` design tokens; dark mode and responsive layout for free           |
+| Contracts  | Zod                          | Validates Go API responses on the frontend; catches regressions at the boundary                   |
+| Testing    | Vitest                       | Unit tests for contracts and component logic; no browser required                                 |
 
 Each sub-product with a web UI follows the same pattern: the Go backend exposes
 a JSON API via chi, and a Next.js frontend consumes it through Server Actions.

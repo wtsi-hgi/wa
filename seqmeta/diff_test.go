@@ -31,7 +31,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 type diffTestItem struct {
@@ -221,10 +221,12 @@ func TestDiffStudySamples(t *testing.T) {
 		convey.Reset(func() { _ = store.Close() })
 
 		provider := &MockProvider{
-			AllSamplesForStudyFunc: func(_ context.Context, studyID string) ([]saga.MLWHSample, error) {
+			SamplesForStudyFunc: func(_ context.Context, studyID string, limit, offset int) ([]mlwh.Sample, error) {
 				convey.So(studyID, convey.ShouldEqual, "100")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
 
-				return []saga.MLWHSample{{SangerID: "S1"}, {SangerID: "S2"}}, nil
+				return []mlwh.Sample{{Name: "S1"}, {Name: "S2"}}, nil
 			},
 		}
 
@@ -237,7 +239,7 @@ func TestDiffStudySamples(t *testing.T) {
 		entriesBefore, err := store.LoadEntries("study_samples:100")
 		convey.So(err, convey.ShouldBeNil)
 
-		provider.AllSamplesForStudyFunc = func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
+		provider.SamplesForStudyFunc = func(_ context.Context, _ string, _ int, _ int) ([]mlwh.Sample, error) {
 			return nil, errors.New("boom")
 		}
 
@@ -248,15 +250,38 @@ func TestDiffStudySamples(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(entriesAfter, convey.ShouldResemble, entriesBefore)
 
-		provider.AllSamplesForStudyFunc = func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-			return []saga.MLWHSample{{SangerID: "S1"}, {SangerID: "S2"}, {SangerID: "S3"}}, nil
+		provider.SamplesForStudyFunc = func(_ context.Context, _ string, _ int, _ int) ([]mlwh.Sample, error) {
+			return []mlwh.Sample{{Name: "S1"}, {Name: "S2"}, {Name: "S3"}}, nil
 		}
 
 		result, err = DiffStudySamples(ctx, provider, store, "100")
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Added, convey.ShouldResemble, []saga.MLWHSample{{SangerID: "S3"}})
+		convey.So(result.Added, convey.ShouldResemble, []mlwh.Sample{{Name: "S3"}})
 		convey.So(result.Modified, convey.ShouldBeEmpty)
 		convey.So(result.Removed, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("D4/C4: DiffStudySamples uses cache-backed SamplesForStudy", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
+		provider := &MockProvider{
+			SamplesForStudyFunc: func(_ context.Context, studyID string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(studyID, convey.ShouldEqual, "6568")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return []mlwh.Sample{{Name: "S1"}, {Name: "S2"}}, nil
+			},
+			AllSamplesForStudyFunc: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				return nil, errors.New("unexpected AllSamplesForStudy call")
+			},
+		}
+
+		result, err := DiffStudySamples(ctx, provider, store, "6568")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Added, convey.ShouldResemble, []mlwh.Sample{{Name: "S1"}, {Name: "S2"}})
 	})
 }
 
@@ -269,10 +294,12 @@ func TestDiffSampleFiles(t *testing.T) {
 		convey.Reset(func() { _ = store.Close() })
 
 		provider := &MockProvider{
-			GetSampleFilesFunc: func(_ context.Context, sangerID string) ([]saga.IRODSFile, error) {
+			IRODSPathsForSampleFunc: func(_ context.Context, sangerID string, limit, offset int) ([]mlwh.IRODSPath, error) {
 				convey.So(sangerID, convey.ShouldEqual, "SANG1")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
 
-				return []saga.IRODSFile{{Collection: "/a"}}, nil
+				return []mlwh.IRODSPath{{Collection: "/a", DataObject: "a.bam", IRODSPath: "/a/a.bam"}}, nil
 			},
 		}
 
@@ -283,7 +310,7 @@ func TestDiffSampleFiles(t *testing.T) {
 		entriesBefore, err := store.LoadEntries("sample_files:SANG1")
 		convey.So(err, convey.ShouldBeNil)
 
-		provider.GetSampleFilesFunc = func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
+		provider.IRODSPathsForSampleFunc = func(_ context.Context, _ string, _ int, _ int) ([]mlwh.IRODSPath, error) {
 			return nil, errors.New("boom")
 		}
 
@@ -294,65 +321,65 @@ func TestDiffSampleFiles(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(entriesAfter, convey.ShouldResemble, entriesBefore)
 
-		provider.GetSampleFilesFunc = func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
-			return []saga.IRODSFile{{Collection: "/a"}, {Collection: "/b"}}, nil
+		provider.IRODSPathsForSampleFunc = func(_ context.Context, _ string, _ int, _ int) ([]mlwh.IRODSPath, error) {
+			return []mlwh.IRODSPath{{Collection: "/a", DataObject: "a.bam", IRODSPath: "/a/a.bam"}, {Collection: "/b", DataObject: "b.bam", IRODSPath: "/b/b.bam"}}, nil
 		}
 		_, err = DiffSampleFiles(ctx, provider, store, "SANG1")
 		convey.So(err, convey.ShouldBeNil)
 
-		provider.GetSampleFilesFunc = func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
-			return []saga.IRODSFile{{Collection: "/a"}}, nil
+		provider.IRODSPathsForSampleFunc = func(_ context.Context, _ string, _ int, _ int) ([]mlwh.IRODSPath, error) {
+			return []mlwh.IRODSPath{{Collection: "/a", DataObject: "a.bam", IRODSPath: "/a/a.bam"}}, nil
 		}
 		result, err = DiffSampleFiles(ctx, provider, store, "SANG1")
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Removed, convey.ShouldResemble, []string{"/b"})
+		convey.So(result.Removed, convey.ShouldResemble, []string{"/b/b.bam"})
 	})
 
-	convey.Convey("DiffSampleFiles distinguishes files sharing a collection when IDs differ", t, func() {
+	convey.Convey("D4/C5: DiffSampleFiles uses cache-backed IRODSPathsForSample", t, func() {
 		store, err := OpenStore(":memory:")
 		convey.So(err, convey.ShouldBeNil)
 		convey.Reset(func() { _ = store.Close() })
 
 		provider := &MockProvider{
-			GetSampleFilesFunc: func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
-				return []saga.IRODSFile{{ID: 1, Collection: "/shared"}, {ID: 2, Collection: "/shared"}}, nil
+			IRODSPathsForSampleFunc: func(_ context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
+				convey.So(sangerName, convey.ShouldEqual, "7607STDY14643771")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return []mlwh.IRODSPath{{IDProduct: "id-product-1", Collection: "/a", DataObject: "a.cram", IRODSPath: "/a/a.cram"}}, nil
+			},
+			GetSampleFilesFunc: func(_ context.Context, _ string) ([]mlwh.IRODSPath, error) {
+				return nil, errors.New("unexpected GetSampleFiles call")
 			},
 		}
 
-		_, err = DiffSampleFiles(ctx, provider, store, "SANG1")
+		result, err := DiffSampleFiles(ctx, provider, store, "7607STDY14643771")
 		convey.So(err, convey.ShouldBeNil)
-
-		provider.GetSampleFilesFunc = func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
-			return []saga.IRODSFile{{ID: 2, Collection: "/shared"}}, nil
-		}
-
-		result, err := DiffSampleFiles(ctx, provider, store, "SANG1")
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Removed, convey.ShouldResemble, []string{"1"})
+		convey.So(result.Added, convey.ShouldResemble, []mlwh.IRODSPath{{IDProduct: "id-product-1", Collection: "/a", DataObject: "a.cram", IRODSPath: "/a/a.cram"}})
 	})
 
-	convey.Convey("DiffSampleFiles keeps numeric file IDs distinct from numeric collection names", t, func() {
+	convey.Convey("D4/C6: DiffSampleFiles keys removals by id_product", t, func() {
 		store, err := OpenStore(":memory:")
 		convey.So(err, convey.ShouldBeNil)
 		convey.Reset(func() { _ = store.Close() })
 
 		provider := &MockProvider{
-			GetSampleFilesFunc: func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
-				return []saga.IRODSFile{{ID: 123, Collection: "/files/123"}, {Collection: "123"}}, nil
+			IRODSPathsForSampleFunc: func(_ context.Context, _ string, _ int, _ int) ([]mlwh.IRODSPath, error) {
+				return []mlwh.IRODSPath{{IDProduct: "old-product", Collection: "/a", DataObject: "a.cram", IRODSPath: "/a/a.cram"}}, nil
 			},
 		}
 
-		_, err = DiffSampleFiles(ctx, provider, store, "SANG1")
+		_, err = DiffSampleFiles(ctx, provider, store, "7607STDY14643771")
 		convey.So(err, convey.ShouldBeNil)
 
-		provider.GetSampleFilesFunc = func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
-			return []saga.IRODSFile{{Collection: "123"}}, nil
+		provider.IRODSPathsForSampleFunc = func(_ context.Context, _ string, _ int, _ int) ([]mlwh.IRODSPath, error) {
+			return []mlwh.IRODSPath{{IDProduct: "new-product", Collection: "/a", DataObject: "a.cram", IRODSPath: "/a/a.cram"}}, nil
 		}
 
-		result, err := DiffSampleFiles(ctx, provider, store, "SANG1")
+		result, err := DiffSampleFiles(ctx, provider, store, "7607STDY14643771")
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Added, convey.ShouldBeEmpty)
+		convey.So(result.Added, convey.ShouldResemble, []mlwh.IRODSPath{{IDProduct: "new-product", Collection: "/a", DataObject: "a.cram", IRODSPath: "/a/a.cram"}})
 		convey.So(result.Modified, convey.ShouldBeEmpty)
-		convey.So(result.Removed, convey.ShouldResemble, []string{"123"})
+		convey.So(result.Removed, convey.ShouldResemble, []string{"old-product"})
 	})
 }

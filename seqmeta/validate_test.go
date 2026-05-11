@@ -31,137 +31,102 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 func TestValidate(t *testing.T) {
 	ctx := context.Background()
 
-	convey.Convey("D1: study identifiers are validated", t, func() {
+	convey.Convey("study matches are converted into IdentifierResult values", t, func() {
 		provider := &MockProvider{
-			GetStudyFunc: func(_ context.Context, studyID string) (*saga.Study, error) {
-				if studyID == "6568" {
-					return &saga.Study{Name: "HCA"}, nil
-				}
-
-				return nil, saga.ErrNotFound
-			},
-			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) {
-				return []saga.Study{{AccessionNumber: "ERP001", Name: "Study"}}, nil
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "6568")
+				study := &mlwh.Study{IDStudyLims: "6568", Name: "HCA"}
+				return mlwh.Match{Kind: mlwh.KindStudyLimsID, Canonical: "6568", Study: study}, nil
 			},
 		}
 
 		result, err := Validate(ctx, provider, "6568")
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Type, convey.ShouldEqual, IdentifierStudyID)
-		convey.So(result.Object.(*saga.Study).Name, convey.ShouldEqual, "HCA")
-
-		provider.GetStudyFunc = func(_ context.Context, _ string) (*saga.Study, error) {
-			return nil, saga.ErrNotFound
-		}
-		result, err = Validate(ctx, provider, "ERP001")
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Type, convey.ShouldEqual, IdentifierStudyAccession)
-		convey.So(result.Object.(saga.Study).AccessionNumber, convey.ShouldEqual, "ERP001")
+		convey.So(result.Identifier, convey.ShouldEqual, "6568")
+		convey.So(result.Type, convey.ShouldEqual, IdentifierStudyLimsID)
+		convey.So(result.Object, convey.ShouldResemble, mlwh.Study{IDStudyLims: "6568", Name: "HCA"})
 	})
 
-	convey.Convey("D2-D4: sample, project, and unknown identifiers are validated in priority order", t, func() {
-		allSamplesCalls := 0
+	convey.Convey("sample matches preserve the mlwh sample pointer and canonical identifier", t, func() {
+		sample := &mlwh.Sample{Name: "7607STDY14643771", SangerID: "S1"}
 		provider := &MockProvider{
-			GetStudyFunc: func(_ context.Context, identifier string) (*saga.Study, error) {
-				if identifier == "6568" {
-					return &saga.Study{IDStudyLims: "6568"}, nil
-				}
-
-				return nil, saga.ErrNotFound
-			},
-			AllStudiesFunc: func(_ context.Context) ([]saga.Study, error) { return nil, nil },
-			AllSamplesFunc: func(_ context.Context) ([]saga.MLWHSample, error) {
-				allSamplesCalls++
-
-				return []saga.MLWHSample{
-					{SangerID: "SANG123"},
-					{IDSampleLims: "LIMS456"},
-					{AccessionNumber: "SAM789"},
-					{IDRun: 12345},
-					{LibraryType: "Chromium single cell"},
-					{SangerID: "6568"},
-				}, nil
-			},
-			ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) {
-				return []saga.Project{{Name: "MyProject"}}, nil
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "S1")
+				return mlwh.Match{Kind: mlwh.KindSangerSampleName, Canonical: sample.Name, Sample: sample}, nil
 			},
 		}
 
-		result, err := Validate(ctx, provider, "SANG123")
+		result, err := Validate(ctx, provider, "S1")
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
+		convey.So(result.Identifier, convey.ShouldEqual, sample.Name)
+		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleName)
+		convey.So(result.Object, convey.ShouldResemble, sample)
+	})
 
-		result, err = Validate(ctx, provider, "LIMS456")
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Type, convey.ShouldEqual, IdentifierSampleLimsID)
+	convey.Convey("run matches preserve the mlwh run pointer and canonical identifier", t, func() {
+		run := &mlwh.Run{IDRun: 12345}
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "12345")
+				return mlwh.Match{Kind: mlwh.KindRunID, Canonical: "12345", Run: run}, nil
+			},
+		}
 
-		result, err = Validate(ctx, provider, "SAM789")
+		result, err := Validate(ctx, provider, "12345")
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Type, convey.ShouldEqual, IdentifierSampleAccession)
-
-		result, err = Validate(ctx, provider, "12345")
-		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Identifier, convey.ShouldEqual, "12345")
 		convey.So(result.Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(result.Object, convey.ShouldResemble, run)
+	})
 
-		result, err = Validate(ctx, provider, "Chromium single cell")
+	convey.Convey("library matches preserve the mlwh library pointer and canonical identifier", t, func() {
+		library := &mlwh.Library{PipelineIDLims: "Standard"}
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "Standard")
+				return mlwh.Match{Kind: mlwh.KindLibraryType, Canonical: "Standard", Library: library}, nil
+			},
+		}
+
+		result, err := Validate(ctx, provider, "Standard")
 		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Identifier, convey.ShouldEqual, "Standard")
 		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(result.Object, convey.ShouldResemble, library)
+	})
 
-		result, err = Validate(ctx, provider, "6568")
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Type, convey.ShouldEqual, IdentifierStudyID)
-		convey.So(allSamplesCalls, convey.ShouldEqual, 5)
+	convey.Convey("unsupported identifiers preserve the underlying mlwh error and raw value", t, func() {
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(context.Context, string) (mlwh.Match, error) {
+				return mlwh.Match{}, errors.Join(mlwh.ErrUnsupportedIdentifier, errors.New("SQSCP"))
+			},
+		}
 
-		provider.GetStudyFunc = func(_ context.Context, _ string) (*saga.Study, error) { return nil, saga.ErrNotFound }
-		result, err = Validate(ctx, provider, "MyProject")
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(result.Type, convey.ShouldEqual, IdentifierProjectName)
+		_, err := Validate(ctx, provider, "SQSCP")
+		convey.So(errors.Is(err, mlwh.ErrUnsupportedIdentifier), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "SQSCP")
+	})
 
-		_, err = Validate(ctx, provider, "xyz")
-		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeTrue)
+	convey.Convey("mlwh.ErrNotFound is translated into ErrUnknownIdentifier", t, func() {
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(context.Context, string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+		}
 
-		_, err = Validate(ctx, provider, "")
+		_, err := Validate(ctx, provider, "unknown")
 		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeTrue)
 	})
 
-	convey.Convey("D5: upstream errors propagate immediately", t, func() {
+	convey.Convey("empty identifiers are rejected before provider calls", t, func() {
 		provider := &MockProvider{}
-
-		provider.GetStudyFunc = func(_ context.Context, _ string) (*saga.Study, error) {
-			return nil, errors.New("connection refused")
-		}
-		_, err := Validate(ctx, provider, "6568")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "connection refused")
-		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeFalse)
-
-		provider.GetStudyFunc = func(_ context.Context, _ string) (*saga.Study, error) {
-			return nil, saga.ErrNotFound
-		}
-		provider.AllStudiesFunc = func(_ context.Context) ([]saga.Study, error) {
-			return nil, errors.New("502 bad gateway")
-		}
-		_, err = Validate(ctx, provider, "ERP001")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "502 bad gateway")
-
-		provider.AllStudiesFunc = func(_ context.Context) ([]saga.Study, error) { return nil, nil }
-		provider.AllSamplesFunc = func(_ context.Context) ([]saga.MLWHSample, error) {
-			return nil, errors.New("unauthorized")
-		}
-		_, err = Validate(ctx, provider, "SANG123")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "unauthorized")
-		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeFalse)
-
-		provider.AllSamplesFunc = func(_ context.Context) ([]saga.MLWHSample, error) { return nil, nil }
-		provider.ListProjectsFunc = func(_ context.Context) ([]saga.Project, error) {
-			return nil, errors.New("timeout")
-		}
-		_, err = Validate(ctx, provider, "MyProject")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "timeout")
+		_, err := Validate(ctx, provider, "")
+		convey.So(errors.Is(err, ErrUnknownIdentifier), convey.ShouldBeTrue)
 	})
 }

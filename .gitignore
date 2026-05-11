@@ -17,6 +17,12 @@ coverage.*
 *.coverprofile
 profile.cov
 
+# Keep required results-web fixture artefacts tracked even though their
+# filenames match generic test-output ignore patterns.
+!.docs/results-web/fixtures/files/rnaseq/alignment/star/sample-a/Log.final.out
+!.docs/results-web/fixtures/files/rnaseq/alignment/star/sample-b/Log.final.out
+!.docs/results-web/fixtures/files/sarek/reports/html/cohort/coverage.html
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
@@ -24,8 +30,37 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# env files: keep the tracked scenario defaults, ignore local overrides and
+# any shared private dotenv files.
 .env
+.env.local
+.env.*.local
+# The `*.test` rule above (for Go test binaries) would otherwise match
+# .env.test; re-include it so the committed test env file is tracked.
+!.env.test
+
+# Generated local SQLite state
+seqmeta.db
+
+# Local scratch and generated artifacts
+.tmp/
+
+# Frontend build and package manager artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/next-env.d.ts
+frontend/test-results/
+frontend/playwright-report/
+frontend/.pnpm-store/
+frontend/*.tsbuildinfo
+frontend/pnpm-debug.log*
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.env*.local
+frontend/.vercel/
+
+logs/*
 
 # Editor/IDE
 # .idea/

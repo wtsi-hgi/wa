@@ -28,233 +28,232 @@ package seqmeta
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-type failingResponseWriter struct {
-	header http.Header
-	code   int
-	err    error
-}
-
-func (w *failingResponseWriter) Header() http.Header {
-	if w.header == nil {
-		w.header = http.Header{}
-	}
-
-	return w.header
-}
-
-func (w *failingResponseWriter) WriteHeader(statusCode int) {
-	w.code = statusCode
-}
-
-func (w *failingResponseWriter) Write(_ []byte) (int, error) {
-	return 0, w.err
-}
-
-func TestServerStudyDiffEndpoint(t *testing.T) {
+func TestServerEndpoints(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
 	defer func() { _ = store.Close() }()
 
-	samples := []saga.MLWHSample{{SangerID: "S1"}, {SangerID: "S2"}}
-	provider := &MockProvider{
-		AllSamplesForStudyFunc: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-			return samples, nil
-		},
-	}
-	server := NewServer(provider, store)
-
-	convey.Convey("E1: study diff endpoint returns JSON changes", t, func() {
-		request := httptest.NewRequest(http.MethodGet, "/diff/study/100", nil)
-		recorder := httptest.NewRecorder()
-
-		server.Handler().ServeHTTP(recorder, request)
-
-		var result DiffResult[saga.MLWHSample]
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(recorder.Header().Get("Content-Type"), convey.ShouldContainSubstring, "application/json")
-		convey.So(result.Added, convey.ShouldHaveLength, 2)
-		convey.So(result.Modified, convey.ShouldBeEmpty)
-		convey.So(result.Removed, convey.ShouldBeEmpty)
-
-		recorder = httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
-		convey.So(result.Added, convey.ShouldBeEmpty)
-		convey.So(result.Modified, convey.ShouldBeEmpty)
-		convey.So(result.Removed, convey.ShouldBeEmpty)
-
-		provider.AllSamplesForStudyFunc = func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-			return nil, errors.New("upstream failed")
+	convey.Convey("list studies endpoint uses the mlwh-backed provider surface", t, func() {
+		provider := &MockProvider{
+			AllStudiesFunc: func(_ context.Context, limit, offset int) ([]mlwh.Study, error) {
+				convey.So(limit, convey.ShouldBeGreaterThan, 0)
+				convey.So(offset, convey.ShouldEqual, 0)
+				return []mlwh.Study{{IDStudyLims: "6568", Name: "Study 6568"}}, nil
+			},
 		}
-		recorder = httptest.NewRecorder()
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/studies", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var studies []mlwh.Study
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &studies), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(studies, convey.ShouldHaveLength, 1)
+		convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "6568")
+	})
+
+	convey.Convey("study samples endpoint can filter by library_type", t, func() {
+		provider := &MockProvider{
+			AllSamplesForStudyFunc: func(_ context.Context, studyID string) ([]mlwh.Sample, error) {
+				convey.So(studyID, convey.ShouldEqual, "6568")
+				return []mlwh.Sample{
+					{IDStudyLims: "6568", Name: "S1", LibraryType: "RNA PolyA"},
+					{IDStudyLims: "6568", Name: "S2", LibraryType: "PCR free"},
+				}, nil
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/study/6568/samples?library_type=RNA+PolyA", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var samples []mlwh.Sample
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &samples), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].LibraryType, convey.ShouldEqual, "RNA PolyA")
+	})
+
+	convey.Convey("study diff endpoint returns added samples", t, func() {
+		provider := &MockProvider{
+			SamplesForStudyFunc: func(_ context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(studyLimsID, convey.ShouldEqual, "6568")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+				return []mlwh.Sample{{Name: "S1"}, {Name: "S2"}}, nil
+			},
+			AllSamplesForStudyFunc: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				return nil, mlwh.ErrUpstreamImpaired
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/diff/study/6568", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var diff DiffResult[mlwh.Sample]
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &diff), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(diff.Added, convey.ShouldHaveLength, 2)
+		convey.So(diff.Removed, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("D4/C1-C3: study diff all routes through AllStudies and preserves tombstones", t, func() {
+		poll := 0
+		provider := &MockProvider{
+			AllStudiesFunc: func(_ context.Context, limit, offset int) ([]mlwh.Study, error) {
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				poll++
+				switch poll {
+				case 1:
+					return []mlwh.Study{{IDStudyLims: "6568", Name: "Study One"}, {IDStudyLims: "7777", Name: "Study Two"}}, nil
+				case 2:
+					return []mlwh.Study{{IDStudyLims: "6568", Name: "Study One Updated"}, {IDStudyLims: "7777", Name: "Study Two"}}, nil
+				default:
+					return []mlwh.Study{{IDStudyLims: "7777", Name: "Study Two"}}, nil
+				}
+			},
+			SamplesForStudyFunc: func(_ context.Context, _ string, _ int, _ int) ([]mlwh.Sample, error) {
+				return nil, mlwh.ErrUpstreamImpaired
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/diff/study/all", nil)
+
+		firstRecorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(firstRecorder, request)
+		var firstDiff DiffResult[mlwh.Study]
+		convey.So(json.Unmarshal(firstRecorder.Body.Bytes(), &firstDiff), convey.ShouldBeNil)
+		convey.So(firstRecorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(firstDiff.Added, convey.ShouldHaveLength, 2)
+		convey.So(firstDiff.Modified, convey.ShouldBeEmpty)
+		convey.So(firstDiff.Removed, convey.ShouldBeEmpty)
+
+		secondRecorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(secondRecorder, request)
+		var secondDiff DiffResult[mlwh.Study]
+		convey.So(json.Unmarshal(secondRecorder.Body.Bytes(), &secondDiff), convey.ShouldBeNil)
+		convey.So(secondRecorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(secondDiff.Added, convey.ShouldBeEmpty)
+		convey.So(secondDiff.Modified, convey.ShouldResemble, []mlwh.Study{{IDStudyLims: "6568", Name: "Study One Updated"}})
+		convey.So(secondDiff.Removed, convey.ShouldBeEmpty)
+
+		thirdRecorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(thirdRecorder, request)
+		var thirdDiff DiffResult[mlwh.Study]
+		convey.So(json.Unmarshal(thirdRecorder.Body.Bytes(), &thirdDiff), convey.ShouldBeNil)
+		convey.So(thirdRecorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(thirdDiff.Added, convey.ShouldBeEmpty)
+		convey.So(thirdDiff.Modified, convey.ShouldBeEmpty)
+		convey.So(thirdDiff.Removed, convey.ShouldResemble, []string{"6568"})
+
+		entries, err := store.LoadEntries("studies:all")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(entries["6568"].Tombstone, convey.ShouldBeTrue)
+	})
+
+	convey.Convey("sample diff endpoint returns added irods paths", t, func() {
+		provider := &MockProvider{
+			IRODSPathsForSampleFunc: func(_ context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
+				convey.So(sangerName, convey.ShouldEqual, "S1")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+				return []mlwh.IRODSPath{{IDProduct: "product-1", Collection: "/a", DataObject: "a.cram", IRODSPath: "/a/a.cram"}}, nil
+			},
+			GetSampleFilesFunc: func(_ context.Context, _ string) ([]mlwh.IRODSPath, error) {
+				return nil, mlwh.ErrUpstreamImpaired
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/diff/sample/S1", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var diff DiffResult[mlwh.IRODSPath]
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &diff), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(diff.Added, convey.ShouldHaveLength, 1)
+		convey.So(diff.Added[0].IDProduct, convey.ShouldEqual, "product-1")
+		convey.So(diff.Added[0].IRODSPath, convey.ShouldEqual, "/a/a.cram")
+		convey.So(recorder.Body.String(), convey.ShouldNotContainSubstring, "checksum")
+		convey.So(recorder.Body.String(), convey.ShouldNotContainSubstring, "avu")
+		convey.So(recorder.Body.String(), convey.ShouldNotContainSubstring, "size")
+	})
+
+	convey.Convey("D4/C7: sample diff returns 404 when the sample is missing", t, func() {
+		provider := &MockProvider{
+			IRODSPathsForSampleFunc: func(_ context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
+				convey.So(sangerName, convey.ShouldEqual, "missing")
+				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
+				convey.So(offset, convey.ShouldEqual, 0)
+				return nil, mlwh.ErrNotFound
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/diff/sample/missing", nil)
+		recorder := httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, request)
 
 		var body map[string]string
 		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
-		convey.So(body, convey.ShouldContainKey, "error")
-	})
-}
-
-func TestServerSampleDiffEndpoint(t *testing.T) {
-	store, err := OpenStore(":memory:")
-	if err != nil {
-		t.Fatalf("OpenStore: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	files := []saga.IRODSFile{{Collection: "/one"}}
-	provider := &MockProvider{
-		GetSampleFilesFunc: func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
-			return files, nil
-		},
-	}
-	server := NewServer(provider, store)
-
-	convey.Convey("E2: sample diff endpoint returns JSON changes", t, func() {
-		request := httptest.NewRequest(http.MethodGet, "/diff/sample/ABC", nil)
-		recorder := httptest.NewRecorder()
-
-		server.Handler().ServeHTTP(recorder, request)
-
-		var result DiffResult[saga.IRODSFile]
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(result.Added, convey.ShouldHaveLength, 1)
-		convey.So(result.Added[0].Collection, convey.ShouldEqual, "/one")
-
-		files = []saga.IRODSFile{{Collection: "/one"}, {Collection: "/two"}}
-		recorder = httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
-		convey.So(result.Added, convey.ShouldHaveLength, 1)
-		convey.So(result.Added[0].Collection, convey.ShouldEqual, "/two")
-
-		provider.GetSampleFilesFunc = func(_ context.Context, _ string) ([]saga.IRODSFile, error) {
-			return nil, saga.ErrNotFound
-		}
-		recorder = httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
+		convey.So(body["error"], convey.ShouldContainSubstring, "missing")
 	})
-}
 
-func TestServerValidateEndpoint(t *testing.T) {
-	store, err := OpenStore(":memory:")
-	if err != nil {
-		t.Fatalf("OpenStore: %v", err)
-	}
-	defer func() { _ = store.Close() }()
+	convey.Convey("validate endpoint uses ClassifyIdentifier", t, func() {
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "6568")
+				study := &mlwh.Study{IDStudyLims: "6568"}
+				return mlwh.Match{Kind: mlwh.KindStudyLimsID, Canonical: "6568", Study: study}, nil
+			},
+		}
+		server := NewServer(provider, store)
 
-	received := ""
-	provider := &MockProvider{
-		GetStudyFunc: func(_ context.Context, identifier string) (*saga.Study, error) {
-			received = identifier
-			if identifier == "6568" || identifier == "foo/bar" {
-				return &saga.Study{IDStudyLims: identifier}, nil
-			}
-
-			return nil, saga.ErrNotFound
-		},
-		AllStudiesFunc:   func(_ context.Context) ([]saga.Study, error) { return nil, nil },
-		AllSamplesFunc:   func(_ context.Context) ([]saga.MLWHSample, error) { return nil, nil },
-		ListProjectsFunc: func(_ context.Context) ([]saga.Project, error) { return nil, nil },
-	}
-	server := NewServer(provider, store)
-
-	convey.Convey("E3: validate endpoint classifies identifiers", t, func() {
 		request := httptest.NewRequest(http.MethodGet, "/validate/6568", nil)
 		recorder := httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, request)
 
-		var result IdentifierResult
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(result.Type, convey.ShouldEqual, IdentifierStudyID)
-
-		recorder = httptest.NewRecorder()
-		request = httptest.NewRequest(http.MethodGet, "/validate/xyz", nil)
-		server.Handler().ServeHTTP(recorder, request)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
-
-		recorder = httptest.NewRecorder()
-		request = httptest.NewRequest(http.MethodGet, "/validate/foo%2Fbar", nil)
-		server.Handler().ServeHTTP(recorder, request)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(received, convey.ShouldEqual, "foo/bar")
-	})
-}
-
-func TestServerErrorResponses(t *testing.T) {
-	store, err := OpenStore(":memory:")
-	if err != nil {
-		t.Fatalf("OpenStore: %v", err)
-	}
-	provider := &MockProvider{
-		AllSamplesForStudyFunc: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-			return []saga.MLWHSample{{SangerID: "S1"}}, nil
-		},
-	}
-	server := NewServer(provider, store)
-
-	convey.Convey("E4: error responses are consistent JSON", t, func() {
-		recorder := httptest.NewRecorder()
-		provider.AllSamplesForStudyFunc = func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-			return nil, errors.New("bad gateway")
-		}
-		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/diff/study/100", nil))
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
-		convey.So(recorder.Header().Get("Content-Type"), convey.ShouldContainSubstring, "application/json")
-
-		var body map[string]string
+		var body map[string]any
 		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
-		convey.So(body, convey.ShouldContainKey, "error")
-
-		convey.So(store.Close(), convey.ShouldBeNil)
-		recorder = httptest.NewRecorder()
-		provider.AllSamplesForStudyFunc = func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-			return []saga.MLWHSample{{SangerID: "S1"}}, nil
-		}
-		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/diff/study/100", nil))
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusInternalServerError)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(body["type"], convey.ShouldEqual, string(IdentifierStudyLimsID))
+		convey.So(body["identifier"], convey.ShouldEqual, "6568")
 	})
-}
 
-func TestServerWriteFailureDoesNotAdvanceWatermark(t *testing.T) {
-	store, err := OpenStore(":memory:")
-	if err != nil {
-		t.Fatalf("OpenStore: %v", err)
-	}
-	defer func() { _ = store.Close() }()
+	convey.Convey("validate endpoint maps upstream impairment to bad gateway", t, func() {
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "6568")
+				return mlwh.Match{}, mlwh.ErrUpstreamImpaired
+			},
+		}
+		server := NewServer(provider, store)
 
-	provider := &MockProvider{
-		AllSamplesForStudyFunc: func(_ context.Context, _ string) ([]saga.MLWHSample, error) {
-			return []saga.MLWHSample{{SangerID: "S1"}, {SangerID: "S2"}}, nil
-		},
-	}
-	server := NewServer(provider, store)
-
-	convey.Convey("HTTP diff does not advance the watermark when writing the response fails", t, func() {
-		writer := &failingResponseWriter{err: errors.New("client disconnected")}
-		server.Handler().ServeHTTP(writer, httptest.NewRequest(http.MethodGet, "/diff/study/100", nil))
-
+		request := httptest.NewRequest(http.MethodGet, "/validate/6568", nil)
 		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/diff/study/100", nil))
+		server.Handler().ServeHTTP(recorder, request)
 
-		var result DiffResult[saga.MLWHSample]
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
-		convey.So(result.Added, convey.ShouldHaveLength, 2)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
+		convey.So(recorder.Body.String(), convey.ShouldContainSubstring, mlwh.ErrUpstreamImpaired.Error())
 	})
 }

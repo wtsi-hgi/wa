@@ -27,48 +27,238 @@ package seqmeta
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"strconv"
 
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-// ClientAdapter wraps saga.Client to satisfy SAGAProvider.
+var _ Provider = (*ClientAdapter)(nil)
+
+var errClientAdapterUnconfigured = errors.New("seqmeta: client adapter requires a seqmeta.Provider")
+
+// ClientAdapter wraps a Provider implementation.
 type ClientAdapter struct {
-	client *saga.Client
+	provider Provider
 }
 
-var _ SAGAProvider = (*ClientAdapter)(nil)
+// NewClientAdapter creates a Provider adapter when the given value already implements Provider.
+func NewClientAdapter(client any) *ClientAdapter {
+	provider, _ := client.(Provider)
 
-// NewClientAdapter creates a SAGAProvider backed by a saga.Client.
-func NewClientAdapter(client *saga.Client) *ClientAdapter {
-	return &ClientAdapter{client: client}
+	return &ClientAdapter{provider: provider}
 }
 
-// GetStudy delegates to the MLWH client.
-func (a *ClientAdapter) GetStudy(ctx context.Context, studyID string) (*saga.Study, error) {
-	return a.client.MLWH().GetStudy(ctx, studyID)
+func (a *ClientAdapter) delegate() (Provider, error) {
+	if a == nil || a.provider == nil {
+		return nil, errClientAdapterUnconfigured
+	}
+
+	return a.provider, nil
 }
 
-// AllStudies delegates to the MLWH client.
-func (a *ClientAdapter) AllStudies(ctx context.Context) ([]saga.Study, error) {
-	return a.client.MLWH().AllStudies(ctx)
+func (a *ClientAdapter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.QueryContext(ctx, query, args...)
 }
 
-// AllSamples delegates to the MLWH client.
-func (a *ClientAdapter) AllSamples(ctx context.Context) ([]saga.MLWHSample, error) {
-	return a.client.MLWH().AllSamples(ctx)
+func (a *ClientAdapter) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return provider.ClassifyIdentifier(ctx, raw)
 }
 
-// AllSamplesForStudy delegates to the MLWH client.
-func (a *ClientAdapter) AllSamplesForStudy(ctx context.Context, studyID string) ([]saga.MLWHSample, error) {
-	return a.client.MLWH().AllSamplesForStudy(ctx, studyID)
+func (a *ClientAdapter) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return provider.ResolveSample(ctx, raw)
 }
 
-// GetSampleFiles delegates to the iRODS client.
-func (a *ClientAdapter) GetSampleFiles(ctx context.Context, sangerID string) ([]saga.IRODSFile, error) {
-	return a.client.IRODS().GetSampleFiles(ctx, sangerID)
+func (a *ClientAdapter) ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return provider.ResolveStudy(ctx, raw, options...)
 }
 
-// ListProjects delegates to the projects client.
-func (a *ClientAdapter) ListProjects(ctx context.Context) ([]saga.Project, error) {
-	return a.client.Projects().List(ctx)
+func (a *ClientAdapter) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return provider.ResolveRun(ctx, raw)
+}
+
+func (a *ClientAdapter) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return provider.ResolveLibrary(ctx, raw)
+}
+
+func (a *ClientAdapter) AllStudies(ctx context.Context, limit, offset int) ([]mlwh.Study, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.AllStudies(ctx, limit, offset)
+}
+
+func (a *ClientAdapter) GetStudy(ctx context.Context, identifier string) (*mlwh.Study, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return getStudy(ctx, provider, identifier)
+}
+
+func (a *ClientAdapter) SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.SamplesForStudy(ctx, studyLimsID, limit, offset)
+}
+
+func (a *ClientAdapter) AllSamplesForStudy(ctx context.Context, studyLimsID string) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return listStudySamples(ctx, provider, studyLimsID)
+}
+
+func (a *ClientAdapter) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	match, err := provider.ResolveSample(ctx, sangerID)
+	if err != nil {
+		return nil, err
+	}
+	if match.Sample == nil {
+		return []mlwh.Sample{}, nil
+	}
+
+	return []mlwh.Sample{*match.Sample}, nil
+}
+
+func (a *ClientAdapter) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
+	return a.FindSamplesBySangerID(ctx, idSampleLims)
+}
+
+func (a *ClientAdapter) FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.SamplesForRun(ctx, strconv.Itoa(idRun), providerFetchLimit, 0)
+}
+
+func (a *ClientAdapter) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.SamplesForLibraryType(ctx, libraryType, providerFetchLimit, 0)
+}
+
+func (a *ClientAdapter) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.SamplesForLibraryType(ctx, pipelineIDLims, limit, offset)
+}
+
+func (a *ClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
+	return a.FindSamplesBySangerID(ctx, accessionNumber)
+}
+
+func (a *ClientAdapter) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.SamplesForRun(ctx, idRun, limit, offset)
+}
+
+func (a *ClientAdapter) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.SamplesForLibrary(ctx, pipelineIDLims, studyLimsID, limit, offset)
+}
+
+func (a *ClientAdapter) LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.LibrariesForStudy(ctx, studyLimsID, limit, offset)
+}
+
+func (a *ClientAdapter) StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.StudyForSample(ctx, sangerName)
+}
+
+func (a *ClientAdapter) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.LanesForSample(ctx, sangerName, limit, offset)
+}
+
+func (a *ClientAdapter) IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.IRODSPathsForSample(ctx, sangerName, limit, offset)
+}
+
+func (a *ClientAdapter) GetSampleFiles(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return listSampleFiles(ctx, provider, sangerName)
 }

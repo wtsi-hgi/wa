@@ -28,79 +28,50 @@ package seqmeta
 import (
 	"context"
 	"errors"
-	"strconv"
 
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-// Validate classifies a sequencing identifier by querying SAGA in priority order.
-func Validate(ctx context.Context, provider SAGAProvider, identifier string) (*IdentifierResult, error) {
+// Validate classifies a sequencing identifier via the MLWH resolver surface.
+func Validate(ctx context.Context, provider Provider, identifier string) (*IdentifierResult, error) {
 	if identifier == "" {
 		return nil, ErrUnknownIdentifier
 	}
 
-	study, err := provider.GetStudy(ctx, identifier)
-	if err == nil && study != nil {
-		return &IdentifierResult{Identifier: identifier, Type: IdentifierStudyID, Object: study}, nil
-	}
-	if err != nil && !errors.Is(err, saga.ErrNotFound) {
-		return nil, err
-	}
-
-	studies, err := provider.AllStudies(ctx)
+	match, err := provider.ClassifyIdentifier(ctx, identifier)
 	if err != nil {
-		return nil, err
-	}
-	for _, candidate := range studies {
-		if candidate.AccessionNumber == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierStudyAccession, Object: candidate}, nil
+		switch {
+		case errors.Is(err, mlwh.ErrNotFound):
+			return nil, fmtUnknownIdentifier(identifier)
+		case errors.Is(err, mlwh.ErrUnsupportedIdentifier):
+			return nil, err
+		default:
+			return nil, err
 		}
 	}
 
-	samples, err := provider.AllSamples(ctx)
-	if err != nil {
-		return nil, err
-	}
+	return &IdentifierResult{
+		Identifier: match.Canonical,
+		Type:       IdentifierType(match.Kind),
+		Object:     matchObject(match),
+	}, nil
+}
 
-	for _, candidate := range samples {
-		if candidate.SangerID == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierSangerSampleID, Object: candidate}, nil
-		}
-	}
-	for _, candidate := range samples {
-		if candidate.IDSampleLims == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleLimsID, Object: candidate}, nil
-		}
-	}
-	for _, candidate := range samples {
-		if candidate.AccessionNumber == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierSampleAccession, Object: candidate}, nil
-		}
-	}
+func fmtUnknownIdentifier(identifier string) error {
+	return errors.Join(ErrUnknownIdentifier, errors.New(identifier))
+}
 
-	if runID, convErr := strconv.Atoi(identifier); convErr == nil {
-		for _, candidate := range samples {
-			if candidate.IDRun == runID {
-				return &IdentifierResult{Identifier: identifier, Type: IdentifierRunID, Object: candidate}, nil
-			}
-		}
+func matchObject(match mlwh.Match) any {
+	switch {
+	case match.Sample != nil:
+		return match.Sample
+	case match.Study != nil:
+		return *match.Study
+	case match.Run != nil:
+		return match.Run
+	case match.Library != nil:
+		return match.Library
+	default:
+		return nil
 	}
-
-	for _, candidate := range samples {
-		if candidate.LibraryType == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierLibraryType, Object: candidate}, nil
-		}
-	}
-
-	projects, err := provider.ListProjects(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, candidate := range projects {
-		if candidate.Name == identifier {
-			return &IdentifierResult{Identifier: identifier, Type: IdentifierProjectName, Object: candidate}, nil
-		}
-	}
-
-	return nil, ErrUnknownIdentifier
 }

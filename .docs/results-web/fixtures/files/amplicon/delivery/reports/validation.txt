@@ -1,0 +1,3 @@
+Validation summary
+- 2 samples processed
+- 1 flagged for repeat review

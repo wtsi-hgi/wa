@@ -26,48 +26,48 @@
 package seqmeta
 
 import (
-	"context"
-	"errors"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/wtsi-hgi/wa/saga"
 )
 
-func TestMockProviderGetStudy(t *testing.T) {
-	convey.Convey("Given a MockProvider implementing SAGAProvider that returns a study for 6568", t, func() {
-		provider := &MockProvider{
-			GetStudyFunc: func(_ context.Context, studyID string) (*saga.Study, error) {
-				convey.So(studyID, convey.ShouldEqual, "6568")
+func TestSeqmetaSourceHasNoRemovedImports(t *testing.T) {
+	convey.Convey("D1: seqmeta source carries no removed upstream imports after the provider swap", t, func() {
+		_, thisFile, _, ok := runtime.Caller(0)
+		convey.So(ok, convey.ShouldBeTrue)
 
-				return &saga.Study{IDStudyLims: "6568", Name: "Study 6568"}, nil
-			},
+		dir := filepath.Dir(thisFile)
+		entries, err := os.ReadDir(dir)
+		convey.So(err, convey.ShouldBeNil)
+
+		fset := token.NewFileSet()
+		offenders := make([]string, 0)
+		targetImport := "\"github.com/wtsi-hgi/wa/" + "s" + "aga\""
+
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+				continue
+			}
+
+			path := filepath.Join(dir, entry.Name())
+			file, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+			convey.So(parseErr, convey.ShouldBeNil)
+
+			for _, imported := range file.Imports {
+				if imported.Path == nil || imported.Path.Value != targetImport {
+					continue
+				}
+
+				offenders = append(offenders, filepath.Base(path))
+			}
 		}
 
-		study, err := provider.GetStudy(context.Background(), "6568")
-
-		convey.Convey("when GetStudy is called, then the study is returned with no error", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(study, convey.ShouldNotBeNil)
-			convey.So(study.IDStudyLims, convey.ShouldEqual, "6568")
-			convey.So(study.Name, convey.ShouldEqual, "Study 6568")
-		})
-	})
-}
-
-func TestMockProviderGetStudyNotFound(t *testing.T) {
-	convey.Convey("Given a MockProvider configured to return saga.ErrNotFound for GetStudy", t, func() {
-		provider := &MockProvider{
-			GetStudyFunc: func(_ context.Context, _ string) (*saga.Study, error) {
-				return nil, saga.ErrNotFound
-			},
-		}
-
-		study, err := provider.GetStudy(context.Background(), "6568")
-
-		convey.Convey("when GetStudy is called, then errors.Is reports saga.ErrNotFound", func() {
-			convey.So(study, convey.ShouldBeNil)
-			convey.So(errors.Is(err, saga.ErrNotFound), convey.ShouldBeTrue)
-		})
+		convey.So(offenders, convey.ShouldBeEmpty)
 	})
 }

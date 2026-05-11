@@ -1,0 +1,4 @@
+sample_id,metric,value,status
+SANG5993,total_reads,52100431,pass
+SANG5993,aligned_reads,49881234,pass
+SANG5993,duplication_rate,0.12,review

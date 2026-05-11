@@ -30,6 +30,54 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/wtsi-hgi/wa/mlwh"
+)
+
+var (
+	ErrUnknownIdentifier = errors.New("seqmeta: unknown identifier")
+	ErrAllHopsFailed     = errors.New("seqmeta: all enrichment hops failed")
+	ErrStoreOpen         = errors.New("seqmeta: failed to open store")
+	errStoreOperation    = errors.New("seqmeta: store operation failed")
+)
+
+const (
+	HopClassify  = "classify"
+	HopStudy     = "study"
+	HopSamples   = "samples"
+	HopLibraries = "libraries"
+	HopStudies   = "studies"
+)
+
+const (
+	ReasonUpstreamError    = "upstream_error"
+	ReasonNotFound         = "not_found"
+	ReasonSamplesTruncated = "samples_truncated"
+)
+
+const MaxLibrarySamples = mlwh.MaxSamplesPerHop
+
+// MaxLibraryTypeSamples limits the total samples returned for library type
+// enrichment across all studies to prevent browser-freezing payloads. This is
+// lower than MaxLibrarySamples to account for library types spanning many studies.
+const MaxLibraryTypeSamples = 200
+
+const (
+	IdentifierStudyID IdentifierType = IdentifierStudyLimsID
+
+	IdentifierStudyLimsID      IdentifierType = "study_lims_id"
+	IdentifierStudyAccession   IdentifierType = "study_accession"
+	IdentifierStudyUUID        IdentifierType = "study_uuid"
+	IdentifierStudyName        IdentifierType = "study_name"
+	IdentifierSangerSampleName IdentifierType = "sanger_sample_name"
+	IdentifierSangerSampleID   IdentifierType = "sanger_sample_id"
+	IdentifierSampleLimsID     IdentifierType = "sample_lims_id"
+	IdentifierSampleUUID       IdentifierType = "sample_uuid"
+	IdentifierSampleAccession  IdentifierType = "sample_accession"
+	IdentifierSupplierName     IdentifierType = "supplier_name"
+	IdentifierDonorID          IdentifierType = "donor_id"
+	IdentifierRunID            IdentifierType = "run_id"
+	IdentifierLibraryType      IdentifierType = "library_type"
 )
 
 // Store persists seqmeta watermark state in SQLite.
@@ -45,6 +93,16 @@ type StoredEntry struct {
 	UpdatedAt time.Time
 }
 
+type enrichCacheEntry struct {
+	Identifier string
+	Type       IdentifierType
+	Body       []byte
+	FetchedAt  time.Time
+	TTL        time.Duration
+	Negative   bool
+	Partial    bool
+}
+
 // DiffResult holds the result of a diff poll.
 type DiffResult[T any] struct {
 	Added    []T      `json:"added"`
@@ -53,18 +111,7 @@ type DiffResult[T any] struct {
 }
 
 // IdentifierType classifies a sequencing identifier.
-type IdentifierType string
-
-const (
-	IdentifierStudyID         IdentifierType = "study_id"
-	IdentifierStudyAccession  IdentifierType = "study_accession"
-	IdentifierSangerSampleID  IdentifierType = "sanger_sample_id"
-	IdentifierSampleLimsID    IdentifierType = "sample_lims_id"
-	IdentifierSampleAccession IdentifierType = "sample_accession"
-	IdentifierRunID           IdentifierType = "run_id"
-	IdentifierLibraryType     IdentifierType = "library_type"
-	IdentifierProjectName     IdentifierType = "project_name"
-)
+type IdentifierType = mlwh.IdentifierKind
 
 // IdentifierResult is returned by Validate.
 type IdentifierResult struct {
@@ -73,8 +120,52 @@ type IdentifierResult struct {
 	Object     any            `json:"object"`
 }
 
-var (
-	ErrUnknownIdentifier = errors.New("seqmeta: unknown identifier")
-	ErrStoreOpen         = errors.New("seqmeta: failed to open store")
-	errStoreOperation    = errors.New("seqmeta: store operation failed")
-)
+// Library is a (library_type, id_study_lims) tuple scoped to a study.
+type Library struct {
+	LibraryType string `json:"library_type"`
+	IDStudyLims string `json:"id_study_lims"`
+}
+
+// EnrichmentGraph is the flat graph envelope returned under "graph".
+type EnrichmentGraph struct {
+	Study     *mlwh.Study   `json:"study,omitempty"`
+	Studies   []mlwh.Study  `json:"studies,omitempty"`
+	Sample    *mlwh.Sample  `json:"sample,omitempty"`
+	Samples   []mlwh.Sample `json:"samples,omitempty"`
+	Library   *Library      `json:"library,omitempty"`
+	Libraries []Library     `json:"libraries,omitempty"`
+
+	// Hierarchical structures
+	StudyDetail  *mlwh.StudyDetail  `json:"study_detail,omitempty"`
+	StudyDetails []mlwh.StudyDetail `json:"study_details,omitempty"`
+	SampleDetail *mlwh.SampleDetail `json:"sample_detail,omitempty"`
+}
+
+// MissingHop records a hop that failed or was truncated.
+type MissingHop struct {
+	Hop    string `json:"hop"`
+	Reason string `json:"reason"`
+	Status int    `json:"status"`
+}
+
+// EnrichmentResult is the /enrich/{identifier} response body.
+type EnrichmentResult struct {
+	Identifier string          `json:"identifier"`
+	Type       IdentifierType  `json:"type"`
+	Graph      EnrichmentGraph `json:"graph"`
+	Partial    bool            `json:"partial"`
+	Missing    []MissingHop    `json:"missing,omitempty"`
+}
+
+type enrichError struct {
+	err     error
+	missing []MissingHop
+}
+
+func (e *enrichError) Error() string {
+	return e.err.Error()
+}
+
+func (e *enrichError) Unwrap() error {
+	return e.err
+}

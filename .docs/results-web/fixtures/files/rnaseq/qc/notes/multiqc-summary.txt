@@ -1,0 +1,4 @@
+MultiQC summary
+- Alignment rates are above expected thresholds.
+- Sample A shows mild 3' bias for follow-up.
+- Sample B passed all duplication and insert size checks.

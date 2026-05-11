@@ -28,15 +28,55 @@ package seqmeta
 import (
 	"context"
 
-	"github.com/wtsi-hgi/wa/saga"
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-// SAGAProvider is the mockable subset of saga.Client used by seqmeta.
-type SAGAProvider interface {
-	GetStudy(ctx context.Context, studyID string) (*saga.Study, error)
-	AllStudies(ctx context.Context) ([]saga.Study, error)
-	AllSamples(ctx context.Context) ([]saga.MLWHSample, error)
-	AllSamplesForStudy(ctx context.Context, studyID string) ([]saga.MLWHSample, error)
-	GetSampleFiles(ctx context.Context, sangerID string) ([]saga.IRODSFile, error)
-	ListProjects(ctx context.Context) ([]saga.Project, error)
+// Provider is the mockable MLWH-backed query surface used by seqmeta.
+type Provider interface {
+	mlwh.Querier
+	ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error)
+	ResolveSample(ctx context.Context, raw string) (mlwh.Match, error)
+	ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveRun(ctx context.Context, raw string) (mlwh.Match, error)
+	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
+	AllStudies(ctx context.Context, limit, offset int) ([]mlwh.Study, error)
+	GetStudy(ctx context.Context, identifier string) (*mlwh.Study, error)
+	SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
+	AllSamplesForStudy(ctx context.Context, studyLimsID string) ([]mlwh.Sample, error)
+	FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error)
+	FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error)
+	FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error)
+	FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error)
+	FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error)
+	SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error)
+	SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error)
+	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
+	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
+	StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error)
+	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
+	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error)
+	GetSampleFiles(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error)
+}
+
+const providerFetchLimit = 1_000_000
+
+func getStudy(ctx context.Context, provider Provider, identifier string) (*mlwh.Study, error) {
+	match, err := provider.ResolveStudy(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+
+	return match.Study, nil
+}
+
+func listAllStudies(ctx context.Context, provider Provider) ([]mlwh.Study, error) {
+	return provider.AllStudies(ctx, providerFetchLimit, 0)
+}
+
+func listStudySamples(ctx context.Context, provider Provider, studyID string) ([]mlwh.Sample, error) {
+	return provider.SamplesForStudy(ctx, studyID, providerFetchLimit, 0)
+}
+
+func listSampleFiles(ctx context.Context, provider Provider, sangerName string) ([]mlwh.IRODSPath, error) {
+	return provider.IRODSPathsForSample(ctx, sangerName, providerFetchLimit, 0)
 }

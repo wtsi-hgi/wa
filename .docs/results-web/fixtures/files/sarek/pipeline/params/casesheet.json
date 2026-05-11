@@ -1,0 +1,5 @@
+{
+  "pair_id": "tumour_pair",
+  "reference": "GRCh38",
+  "tools": ["manta", "strelka"]
+}

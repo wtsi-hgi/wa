@@ -1,0 +1,3 @@
+workflow {
+  amplicon_consensus()
+}
