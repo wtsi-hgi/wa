@@ -559,6 +559,19 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 	}
 
 	flattened := flattenStudyDetailSamples(studyDetails)
+
+	// If total samples across multiple studies exceed the reasonable limit for frontend,
+	// truncate to prevent browser-freezing payloads. Single-study results are allowed
+	// to use the per-study limit (MaxLibrarySamples).
+	fetchTruncated := false
+	if len(studyDetails) > 1 && len(flattened) > MaxLibraryTypeSamples {
+		fetchTruncated = true
+		flattened = flattened[:MaxLibraryTypeSamples]
+
+		// Rebuild study details with truncated samples
+		studyDetails = rebuildStudyDetailsFromSamples(studyDetails, flattened)
+	}
+
 	studies := make([]mlwh.Study, 0, len(studyDetails))
 	for _, detail := range studyDetails {
 		studies = append(studies, detail.Study)
@@ -574,10 +587,57 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 			StudyDetails: studyDetails,
 		},
 		Missing: missing,
-		Partial: len(missing) > 0,
+		Partial: len(missing) > 0 || fetchTruncated,
+	}
+
+	if fetchTruncated {
+		result.Missing = append(result.Missing, MissingHop{
+			Hop:    HopClassify,
+			Reason: ReasonSamplesTruncated,
+			Status: http.StatusOK,
+		})
 	}
 
 	return result, true, nil, nil
+}
+
+func rebuildStudyDetailsFromSamples(original []mlwh.StudyDetail, samples []mlwh.Sample) []mlwh.StudyDetail {
+	sampleSet := make(map[string]struct{}, len(samples))
+	for _, sample := range samples {
+		sampleSet[sample.Name] = struct{}{}
+	}
+
+	result := make([]mlwh.StudyDetail, 0, len(original))
+	for _, detail := range original {
+		filteredLibraries := make([]mlwh.LibraryDetail, 0, len(detail.Libraries))
+		hasAnySamples := false
+
+		for _, lib := range detail.Libraries {
+			filteredSamples := make([]mlwh.Sample, 0, len(lib.Samples))
+			for _, sample := range lib.Samples {
+				if _, keep := sampleSet[sample.Name]; keep {
+					filteredSamples = append(filteredSamples, sample)
+				}
+			}
+
+			if len(filteredSamples) > 0 {
+				hasAnySamples = true
+				filteredLibraries = append(filteredLibraries, mlwh.LibraryDetail{
+					Library: lib.Library,
+					Samples: filteredSamples,
+				})
+			}
+		}
+
+		if hasAnySamples {
+			result = append(result, mlwh.StudyDetail{
+				Study:     detail.Study,
+				Libraries: filteredLibraries,
+			})
+		}
+	}
+
+	return result
 }
 
 func looksLikeLibraryType(identifier string) bool {

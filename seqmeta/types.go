@@ -57,6 +57,11 @@ const (
 
 const MaxLibrarySamples = mlwh.MaxSamplesPerHop
 
+// MaxLibraryTypeSamples limits the total samples returned for library type
+// enrichment across all studies to prevent browser-freezing payloads. This is
+// lower than MaxLibrarySamples to account for library types spanning many studies.
+const MaxLibraryTypeSamples = 200
+
 const (
 	IdentifierStudyID IdentifierType = IdentifierStudyLimsID
 
