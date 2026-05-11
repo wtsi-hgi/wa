@@ -1716,7 +1716,7 @@ export function FileBrowser({
                         >
                             <div
                                 aria-hidden="true"
-                                className="pointer-events-none absolute left-1.5 top-0 h-4 w-5 border-b border-l border-primary/25"
+                                className="pointer-events-none absolute left-1.5 top-0 h-0 w-0"
                             />
                             <div
                                 aria-hidden="true"

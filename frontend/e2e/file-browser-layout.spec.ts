@@ -26,11 +26,12 @@ type GroupedShellVisualMetrics = {
         y: number;
     } | null;
     connectorElbow: {
-        borderBottomLeftRadius: string;
         borderBottomStyle: string;
         borderBottomWidth: number;
         borderLeftStyle: string;
         borderLeftWidth: number;
+        height: number;
+        width: number;
     } | null;
     connectorRail: {
         backgroundImage: string;
@@ -290,13 +291,15 @@ async function measureGroupedShellVisuals(
             }
 
             const styles = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
 
             return {
-                borderBottomLeftRadius: styles.borderBottomLeftRadius,
                 borderBottomStyle: styles.borderBottomStyle,
                 borderBottomWidth: Number.parseFloat(styles.borderBottomWidth),
                 borderLeftStyle: styles.borderLeftStyle,
                 borderLeftWidth: Number.parseFloat(styles.borderLeftWidth),
+                height: rect.height,
+                width: rect.width,
             };
         }
 
@@ -619,11 +622,10 @@ test.describe("File Browser single preview layout", () => {
         expect(metrics.shellSurface.borderStyle).not.toBe("none");
         expect(metrics.shellSurface.backgroundImage).not.toBe("none");
 
-        expect(metrics.connectorElbow.borderLeftWidth).toBeGreaterThan(0);
-        expect(metrics.connectorElbow.borderBottomWidth).toBeGreaterThan(0);
-        expect(metrics.connectorElbow.borderLeftStyle).not.toBe("none");
-        expect(metrics.connectorElbow.borderBottomStyle).not.toBe("none");
-        expect(metrics.connectorElbow.borderBottomLeftRadius).toBe("0px");
+        expect(metrics.connectorElbow.borderLeftWidth).toBe(0);
+        expect(metrics.connectorElbow.borderBottomWidth).toBe(0);
+        expect(metrics.connectorElbow.width).toBe(0);
+        expect(metrics.connectorElbow.height).toBe(0);
 
         expect(metrics.connectorRail.width).toBeLessThanOrEqual(2);
         expect(metrics.connectorRail.height).toBeGreaterThan(24);

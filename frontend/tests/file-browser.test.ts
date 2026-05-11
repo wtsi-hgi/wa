@@ -276,6 +276,42 @@ describe("N1 file browser", () => {
         expect(alphaContent?.contains(betaGroup ?? null)).toBe(false);
     });
 
+    it("does not render a leftover bottom-left corner elbow under grouped folder shells", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/results/root/alpha/summary.txt", "output"),
+                        buildFile("/results/root/alpha/sub/plot.png", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const alphaContent = container.querySelector(
+            '[data-directory-group-content="/results/root/alpha"]',
+        ) as HTMLElement | null;
+
+        expect(alphaContent).toBeTruthy();
+
+        const decorativeChildren = Array.from(
+            alphaContent?.children ?? [],
+        ).filter(
+            (element) =>
+                element instanceof HTMLElement &&
+                element.getAttribute("aria-hidden") === "true",
+        ) as HTMLElement[];
+
+        expect(decorativeChildren).toHaveLength(2);
+        expect(decorativeChildren[0]?.className).not.toContain("border-b");
+        expect(decorativeChildren[0]?.className).not.toContain("border-l");
+        expect(decorativeChildren[1]?.className).toContain("w-px");
+    });
+
     it("renders grid previews beside the current page of file rows", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
