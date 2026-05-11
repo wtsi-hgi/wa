@@ -101,18 +101,68 @@ async function openPreviewModes(controls: Locator) {
         .locator('summary[aria-label="Preview modes"]')
         .first();
 
+    await setDisclosureOpen(summary, true, "Missing preview modes disclosure");
+}
+
+async function openFileTypes(controls: Locator) {
+    const summary = controls
+        .locator('summary[aria-label="File types"]')
+        .first();
+
+    await setDisclosureOpen(summary, true, "Missing file types disclosure");
+}
+
+async function setDisclosureOpen(
+    summary: Locator,
+    shouldBeOpen: boolean,
+    missingDisclosureMessage: string,
+) {
     await expect(summary).toBeVisible();
-    await summary.evaluate((element) => {
-        const details = element.closest("details");
+    await summary
+        .evaluate((element, desiredOpenState: boolean) => {
+            const details = element.closest("details");
 
-        if (!(details instanceof HTMLDetailsElement)) {
-            throw new Error("Missing preview modes disclosure");
-        }
+            if (!(details instanceof HTMLDetailsElement)) {
+                throw new Error("__MISSING_DISCLOSURE__");
+            }
 
-        if (!details.open) {
-            (element as HTMLElement).click();
-        }
-    });
+            if (details.open !== desiredOpenState) {
+                (element as HTMLElement).click();
+            }
+        }, shouldBeOpen)
+        .catch((error: Error) => {
+            throw new Error(
+                error.message.includes("__MISSING_DISCLOSURE__")
+                    ? missingDisclosureMessage
+                    : error.message,
+            );
+        });
+}
+
+function backgroundAlpha(backgroundColor: string): number {
+    const alphaMatch = backgroundColor.match(/\/[\s]*([0-9]*\.?[0-9]+)\)$/);
+
+    if (alphaMatch) {
+        return Number.parseFloat(alphaMatch[1] ?? "1");
+    }
+
+    const rgbaMatch = backgroundColor.match(
+        /^rgba?\([^,]+,[^,]+,[^,]+(?:,[\s]*([0-9]*\.?[0-9]+))?\)$/,
+    );
+
+    if (rgbaMatch) {
+        return rgbaMatch[1] ? Number.parseFloat(rgbaMatch[1]) : 1;
+    }
+
+    return 1;
+}
+
+async function expectOpaqueBackground(locator: Locator) {
+    const backgroundColor = await locator.evaluate(
+        (element) => window.getComputedStyle(element).backgroundColor,
+    );
+
+    expect(backgroundAlpha(backgroundColor)).toBe(1);
 }
 
 async function openFirstSinglePreview(page: Page, directoryPath: string) {
@@ -1146,5 +1196,49 @@ test.describe("File Browser single preview layout", () => {
             sampleAControls.locator('input[aria-label="1 preview per row"]'),
         ).toHaveCount(0);
         await expect(lanesSummary).toContainText("Single preview");
+    });
+
+    test("renders solid backgrounds for preview mode and file type menus", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqRootPath}"]`,
+        );
+
+        if ((await controls.count()) === 0) {
+            await page
+                .locator(`[data-directory-path="${rnaseqRootPath}"]`)
+                .click();
+        }
+
+        await expect(controls).toBeVisible();
+        const previewSummary = controls.locator(
+            'summary[aria-label="Preview modes"]',
+        );
+        const previewMenu = page.locator(
+            `[data-preview-modes-menu="${rnaseqRootPath}"]`,
+        );
+
+        await expectOpaqueBackground(previewSummary);
+        await expectOpaqueBackground(previewMenu);
+
+        await setDisclosureOpen(
+            previewSummary,
+            false,
+            "Missing preview modes disclosure",
+        );
+
+        const fileTypesSummary = controls.locator(
+            'summary[aria-label="File types"]',
+        );
+        const fileTypesMenu = page.locator(
+            `[data-subdir-preview-kinds="${rnaseqRootPath}"]`,
+        );
+
+        await openFileTypes(controls);
+        await expectOpaqueBackground(fileTypesSummary);
+        await expectOpaqueBackground(fileTypesMenu);
     });
 });

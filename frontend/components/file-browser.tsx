@@ -1035,7 +1035,7 @@ export function FileBrowser({
                     >
                         <summary
                             aria-label="Preview modes"
-                            className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden"
+                            className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden"
                             onClick={(event) => {
                                 event.preventDefault();
                                 setOpenPreviewModeDisclosurePath((current) =>
@@ -1060,7 +1060,7 @@ export function FileBrowser({
                             <ChevronDown className="size-4 text-muted-foreground" />
                         </summary>
                         <div
-                            className="absolute left-0 z-20 mt-2 min-w-56 rounded-[1.25rem] border border-border/70 bg-background/95 p-3 shadow-lg"
+                            className="absolute left-0 z-20 mt-2 min-w-56 rounded-[1.25rem] border border-border/70 bg-[var(--popover)] p-3 shadow-lg"
                             data-preview-modes-menu={directoryPath}
                         >
                             <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
@@ -1147,7 +1147,7 @@ export function FileBrowser({
                         >
                             <summary
                                 aria-label="File types"
-                                className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground marker:hidden"
+                                className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden"
                                 onClick={(event) => {
                                     event.preventDefault();
                                     setOpenSubdirPreviewKindDisclosurePath(
@@ -1171,7 +1171,7 @@ export function FileBrowser({
                                 <ChevronDown className="size-4 text-muted-foreground" />
                             </summary>
                             <div
-                                className="absolute right-0 z-20 mt-2 min-w-52 rounded-[1.25rem] border border-border/70 bg-background/95 p-3 shadow-lg"
+                                className="absolute right-0 z-20 mt-2 min-w-52 rounded-[1.25rem] border border-border/70 bg-[var(--popover)] p-3 shadow-lg"
                                 data-subdir-preview-kinds={directoryPath}
                             >
                                 <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
