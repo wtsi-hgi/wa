@@ -57,20 +57,20 @@ and write the result back" sentence in `.docs/mlwh/prompt.md`.
 ### Packages and files
 
 - `mlwh/` - cache, sync engine, resolver, hierarchy reads.
-  - `cache.go` - cache open / close, dialect dispatch, advisory lock.
-  - `cache_schema.go` + `cache_schema/{sqlite,mysql}/*.sql` -
-    embedded DDL, parity test.
-  - `sync.go` - per-table sync goroutines, batching, retry,
-    resume, index drop/recreate.
-  - `resolver.go`, `resolver_sample.go`, `resolver_reject.go` -
-    identifier resolution (cache-only).
-  - `hierarchy.go` - cache-only hierarchy reads.
-  - `all_studies.go` - cache-only `AllStudies`.
-  - `types.go`, `mlwh.go` - public types and sentinels.
+    - `cache.go` - cache open / close, dialect dispatch, advisory lock.
+    - `cache_schema.go` + `cache_schema/{sqlite,mysql}/*.sql` -
+      embedded DDL, parity test.
+    - `sync.go` - per-table sync goroutines, batching, retry,
+      resume, index drop/recreate.
+    - `resolver.go`, `resolver_sample.go`, `resolver_reject.go` -
+      identifier resolution (cache-only).
+    - `hierarchy.go` - cache-only hierarchy reads.
+    - `all_studies.go` - cache-only `AllStudies`.
+    - `types.go`, `mlwh.go` - public types and sentinels.
 - `cmd/mlwh.go`, `cmd/mlwh_info.go` - CLI.
 - `seqmeta/{enrich,diff,validate,client_adapter,provider,server}.go`
-  - consumers updated for fan-out, `StudiesForSample`,
-  `FindSamplesBy*` shape changes.
+    - consumers updated for fan-out, `StudiesForSample`,
+      `FindSamplesBy*` shape changes.
 - `results/{server,mlwh_search_resolver}.go` - search expansion
   fans out per (sample, study) pairing.
 
@@ -193,31 +193,31 @@ bulk load):
 
 `study_mirror`:
 
-| Column                       | Consumers                                       |
-| ---------------------------- | ----------------------------------------------- |
-| id_study_tmp                 | PK; JOIN target for `runsForStudy`.             |
-| id_lims                      | SQSCP filter.                                   |
-| id_study_lims                | Canonical study key; every                      |
-|                              | StudiesForSample / library_samples join.        |
-| uuid_study_lims              | `ResolveStudy` UUID step.                       |
-| name                         | `ResolveStudy` name step, enrichment.           |
-| accession_number             | `ResolveStudy` accession step.                  |
-| study_title                  | Enrichment payload.                             |
-| faculty_sponsor              | Enrichment payload.                             |
-| state                        | Enrichment payload.                             |
-| data_access_group            | Enrichment payload.                             |
-| programme                    | Enrichment payload.                             |
-| reference_genome             | Enrichment payload.                             |
-| ethically_approved           | Enrichment payload.                             |
-| study_type                   | Enrichment payload.                             |
-| contains_human_dna           | Enrichment payload.                             |
-| contaminated_human_dna       | Enrichment payload.                             |
-| study_visibility             | Enrichment payload.                             |
-| ega_dac_accession_number     | Enrichment payload.                             |
-| ega_policy_accession_number  | Enrichment payload.                             |
-| data_release_strategy        | Enrichment payload.                             |
-| data_release_timing          | Enrichment payload.                             |
-| last_updated                 | Watermark advancement.                          |
+| Column                      | Consumers                                |
+| --------------------------- | ---------------------------------------- |
+| id_study_tmp                | PK; JOIN target for `runsForStudy`.      |
+| id_lims                     | SQSCP filter.                            |
+| id_study_lims               | Canonical study key; every               |
+|                             | StudiesForSample / library_samples join. |
+| uuid_study_lims             | `ResolveStudy` UUID step.                |
+| name                        | `ResolveStudy` name step, enrichment.    |
+| accession_number            | `ResolveStudy` accession step.           |
+| study_title                 | Enrichment payload.                      |
+| faculty_sponsor             | Enrichment payload.                      |
+| state                       | Enrichment payload.                      |
+| data_access_group           | Enrichment payload.                      |
+| programme                   | Enrichment payload.                      |
+| reference_genome            | Enrichment payload.                      |
+| ethically_approved          | Enrichment payload.                      |
+| study_type                  | Enrichment payload.                      |
+| contains_human_dna          | Enrichment payload.                      |
+| contaminated_human_dna      | Enrichment payload.                      |
+| study_visibility            | Enrichment payload.                      |
+| ega_dac_accession_number    | Enrichment payload.                      |
+| ega_policy_accession_number | Enrichment payload.                      |
+| data_release_strategy       | Enrichment payload.                      |
+| data_release_timing         | Enrichment payload.                      |
+| last_updated                | Watermark advancement.                   |
 
 Dropped: `abstract`, `abbreviation`, `description`,
 `hmdmc_number`, `created` (no current read-path consumers, verified
@@ -237,15 +237,15 @@ Indexes:
 `library_samples` (one row per
 `(pipeline_id_lims, id_sample_tmp, id_study_lims)` triple):
 
-| Column           | Consumers                                                   |
-| ---------------- | ----------------------------------------------------------- |
-| pipeline_id_lims | `FindSamplesByLibraryType`, `LibrariesForStudy`,            |
-|                  | `SamplesForLibrary`, `SamplesForLibraryType`,               |
-|                  | `ResolveLibrary`.                                           |
-| id_sample_tmp    | JOIN to `sample_mirror`; `StudiesForSample`,                |
-|                  | `LibrariesForSample`.                                       |
-| id_study_lims    | `SamplesForStudy`, `LibrariesForStudy`,                     |
-|                  | `StudiesForSample`. NOT NULL. CHECK(<> '').                 |
+| Column           | Consumers                                        |
+| ---------------- | ------------------------------------------------ |
+| pipeline_id_lims | `FindSamplesByLibraryType`, `LibrariesForStudy`, |
+|                  | `SamplesForLibrary`, `SamplesForLibraryType`,    |
+|                  | `ResolveLibrary`.                                |
+| id_sample_tmp    | JOIN to `sample_mirror`; `StudiesForSample`,     |
+|                  | `LibrariesForSample`.                            |
+| id_study_lims    | `SamplesForStudy`, `LibrariesForStudy`,          |
+|                  | `StudiesForSample`. NOT NULL. CHECK(<> '').      |
 
 Unique constraint:
 `UNIQUE(pipeline_id_lims, id_sample_tmp, id_study_lims)` (powers
@@ -258,7 +258,7 @@ Indexes (derived from the audit; the unique key already covers
 on it):
 
 - The UNIQUE acts as the `(pipeline_id_lims, id_sample_tmp,
-  id_study_lims)` index.
+id_study_lims)` index.
 - `(id_sample_tmp, id_study_lims)` to serve `StudiesForSample` /
   `LibrariesForSample`.
 - `(id_study_lims, pipeline_id_lims, id_sample_tmp)` to serve
@@ -267,10 +267,10 @@ on it):
 
 `donor_samples`:
 
-| Column        | Consumers                                                |
-| ------------- | -------------------------------------------------------- |
-| donor_id      | `ResolveSample` donor_id step (`LIMIT 2 + ErrAmbiguous`).|
-| id_sample_tmp | JOIN to `sample_mirror`.                                 |
+| Column        | Consumers                                                 |
+| ------------- | --------------------------------------------------------- |
+| donor_id      | `ResolveSample` donor_id step (`LIMIT 2 + ErrAmbiguous`). |
+| id_sample_tmp | JOIN to `sample_mirror`.                                  |
 
 Unique constraint: `UNIQUE(donor_id, id_sample_tmp)`.
 Collation set: `donor_id`.
@@ -279,25 +279,25 @@ Dropped from previous schema: `id_study_lims`.
 
 `iseq_product_metrics_mirror` (new):
 
-| Column                 | Consumers                                          |
-| ---------------------- | -------------------------------------------------- |
-| id_iseq_product        | PK (`BIGINT`/`INTEGER`); JOIN to                   |
-|                        | `seq_product_irods_locations_mirror`.              |
-| id_iseq_flowcell_tmp   | JOIN to `library_samples` via flowcell -> sample.  |
-| id_run                 | `RunsForStudy`, `SamplesForRun`, `LanesForSample`. |
-| position               | `LanesForSample`, `LanesForStudy`.                 |
-| tag_index              | `LanesForSample`.                                  |
-| id_sample_tmp          | Denormalised from `iseq_flowcell` at sync time so  |
-|                        | `LanesForSample` reads without an iseq_flowcell    |
-|                        | join.                                              |
-| id_study_lims          | Denormalised from the row's parent flowcell        |
-|                        | `iseq_flowcell.id_study_tmp -> study.id_study_lims`|
-|                        | (SQSCP) at sync time. NOT NULL. CHECK(<> '').      |
-|                        | Powers `RunsForStudy` / `LanesForStudy`.           |
-| qc                     | `cmd/mlwh info` run display, enrichment payload.   |
-| qc_lib                 | Enrichment payload.                                |
-| qc_seq                 | Enrichment payload.                                |
-| last_updated           | Watermark advancement.                             |
+| Column               | Consumers                                           |
+| -------------------- | --------------------------------------------------- |
+| id_iseq_product      | PK (`BIGINT`/`INTEGER`); JOIN to                    |
+|                      | `seq_product_irods_locations_mirror`.               |
+| id_iseq_flowcell_tmp | JOIN to `library_samples` via flowcell -> sample.   |
+| id_run               | `RunsForStudy`, `SamplesForRun`, `LanesForSample`.  |
+| position             | `LanesForSample`, `LanesForStudy`.                  |
+| tag_index            | `LanesForSample`.                                   |
+| id_sample_tmp        | Denormalised from `iseq_flowcell` at sync time so   |
+|                      | `LanesForSample` reads without an iseq_flowcell     |
+|                      | join.                                               |
+| id_study_lims        | Denormalised from the row's parent flowcell         |
+|                      | `iseq_flowcell.id_study_tmp -> study.id_study_lims` |
+|                      | (SQSCP) at sync time. NOT NULL. CHECK(<> '').       |
+|                      | Powers `RunsForStudy` / `LanesForStudy`.            |
+| qc                   | `cmd/mlwh info` run display, enrichment payload.    |
+| qc_lib               | Enrichment payload.                                 |
+| qc_seq               | Enrichment payload.                                 |
+| last_updated         | Watermark advancement.                              |
 
 Collation set: `id_study_lims`.
 
@@ -315,19 +315,19 @@ by the sync source query and never inserted.
 
 `seq_product_irods_locations_mirror` (new):
 
-| Column                     | Consumers                                      |
-| -------------------------- | ---------------------------------------------- |
-| id_iseq_product            | PK; JOIN target.                               |
-| irods_root_collection      | `IRODSPathsForSample`, `IRODSPathsForStudy`.   |
-| irods_data_relative_path   | `IRODSPathsForSample`, `IRODSPathsForStudy`.   |
-| irods_collection           | `IRODSPathsForSample`, `IRODSPathsForStudy`.   |
-| irods_file_name            | `IRODSPathsForSample`, `IRODSPathsForStudy`.   |
-| id_sample_tmp              | Denormalised; serves                           |
-|                            | `IRODSPathsForSample` without joining          |
-|                            | `iseq_product_metrics_mirror`.                 |
-| id_study_lims              | Denormalised; serves `IRODSPathsForStudy`.     |
-|                            | NOT NULL. CHECK(<> '').                        |
-| last_updated               | Watermark advancement.                         |
+| Column                   | Consumers                                    |
+| ------------------------ | -------------------------------------------- |
+| id_iseq_product          | PK; JOIN target.                             |
+| irods_root_collection    | `IRODSPathsForSample`, `IRODSPathsForStudy`. |
+| irods_data_relative_path | `IRODSPathsForSample`, `IRODSPathsForStudy`. |
+| irods_collection         | `IRODSPathsForSample`, `IRODSPathsForStudy`. |
+| irods_file_name          | `IRODSPathsForSample`, `IRODSPathsForStudy`. |
+| id_sample_tmp            | Denormalised; serves                         |
+|                          | `IRODSPathsForSample` without joining        |
+|                          | `iseq_product_metrics_mirror`.               |
+| id_study_lims            | Denormalised; serves `IRODSPathsForStudy`.   |
+|                          | NOT NULL. CHECK(<> '').                      |
+| last_updated             | Watermark advancement.                       |
 
 Collation set: `id_study_lims`.
 
@@ -338,20 +338,20 @@ Indexes:
 
 `sync_state`:
 
-| Column          | Notes                                              |
-| --------------- | -------------------------------------------------- |
-| table_name      | PK; one of `study`, `sample`, `iseq_flowcell`,     |
-|                 | `iseq_product_metrics`,                            |
-|                 | `seq_product_irods_locations`.                     |
-| high_water      | TEXT (RFC3339Nano). Zero means cold.               |
-| last_run        | TEXT (RFC3339Nano).                                |
-| resume_cursor   | TEXT NULL. Tab-separated encoding of the           |
-|                 | ordering tuple of the last row in the last         |
-|                 | committed batch (RFC3339Nano for `last_updated`).  |
-|                 | NULL at end-of-stream.                             |
-| indexes_dropped | INTEGER NOT NULL DEFAULT 0. Set in the same        |
-|                 | transaction that drops indexes; cleared in the     |
-|                 | same transaction that recreates them.              |
+| Column          | Notes                                             |
+| --------------- | ------------------------------------------------- |
+| table_name      | PK; one of `study`, `sample`, `iseq_flowcell`,    |
+|                 | `iseq_product_metrics`,                           |
+|                 | `seq_product_irods_locations`.                    |
+| high_water      | TEXT (RFC3339Nano). Zero means cold.              |
+| last_run        | TEXT (RFC3339Nano).                               |
+| resume_cursor   | TEXT NULL. Tab-separated encoding of the          |
+|                 | ordering tuple of the last row in the last        |
+|                 | committed batch (RFC3339Nano for `last_updated`). |
+|                 | NULL at end-of-stream.                            |
+| indexes_dropped | INTEGER NOT NULL DEFAULT 0. Set in the same       |
+|                 | transaction that drops indexes; cleared in the    |
+|                 | same transaction that recreates them.             |
 
 `schema_version`: unchanged single-row TEXT/INT version table; value
 bumped to 2.
@@ -377,7 +377,7 @@ public command surface accepts no `--tables` flag. Each goroutine:
 3. Opens a streaming MLWH connection (Go MySQL driver in unbuffered
    mode) and issues the source query with a strict `>` keyset
    predicate built from `resume_cursor`, or `last_updated >=
-   high_water` when no cursor.
+high_water` when no cursor.
 4. Buffers up to `syncBatchSize = 1000` rows then commits one
    transaction containing the batched multi-row INSERT and the
    updated `resume_cursor` (the ordering tuple of the last row in
@@ -526,17 +526,17 @@ exit, on error, and on signal.
   write to any cache table.
 - `StudyForSample(ctx, sangerName) (*Study, error)` is replaced by:
 
-  ```go
-  func (c *Client) StudiesForSample(
-      ctx context.Context, sangerName string,
-  ) ([]Study, error)
-  ```
+    ```go
+    func (c *Client) StudiesForSample(
+        ctx context.Context, sangerName string,
+    ) ([]Study, error)
+    ```
 
-  The new method joins `library_samples` -> `study_mirror` on
-  `id_study_lims` (with `id_lims='SQSCP'`) for the given
-  `sample_mirror.name`, ordering by `id_study_lims`. Returns
-  `ErrNotFound` if no rows exist for any reason other than an empty
-  cache (cf. `ErrCacheNeverSynced`).
+    The new method joins `library_samples` -> `study_mirror` on
+    `id_study_lims` (with `id_lims='SQSCP'`) for the given
+    `sample_mirror.name`, ordering by `id_study_lims`. Returns
+    `ErrNotFound` if no rows exist for any reason other than an empty
+    cache (cf. `ErrCacheNeverSynced`).
 
 - `Sample.LibraryType` and `Sample.IDStudyLims` are removed. Callers
   that need libraries or studies for a sample call
@@ -548,20 +548,20 @@ exit, on error, and on signal.
   `ErrAmbiguous` (>=2 matches with both candidate primary keys in the
   error string), or `ErrNotFound`.
 
-  ```go
-  FindSamplesBySangerID(ctx, raw)        // WHERE sanger_sample_id = ?
-  FindSamplesByIDSampleLims(ctx, raw)    // WHERE id_sample_lims = ?
-                                          //   AND id_lims = 'SQSCP'
-  FindSamplesByAccessionNumber(ctx, raw) // WHERE accession_number = ?
-  FindSamplesBySupplierName(ctx, raw)    // WHERE supplier_name = ?
-  FindSamplesByLibraryType(ctx, raw)
-      // FROM library_samples
-      // INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp =
-      //                              library_samples.id_sample_tmp
-      // WHERE library_samples.pipeline_id_lims = ?
-      // ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp
-      // LIMIT 2
-  ```
+    ```go
+    FindSamplesBySangerID(ctx, raw)        // WHERE sanger_sample_id = ?
+    FindSamplesByIDSampleLims(ctx, raw)    // WHERE id_sample_lims = ?
+                                            //   AND id_lims = 'SQSCP'
+    FindSamplesByAccessionNumber(ctx, raw) // WHERE accession_number = ?
+    FindSamplesBySupplierName(ctx, raw)    // WHERE supplier_name = ?
+    FindSamplesByLibraryType(ctx, raw)
+        // FROM library_samples
+        // INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp =
+        //                              library_samples.id_sample_tmp
+        // WHERE library_samples.pipeline_id_lims = ?
+        // ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp
+        // LIMIT 2
+    ```
 
 - `ResolveSample` donor_id step uses `LIMIT 2` and returns
   `ErrAmbiguous` if two distinct samples share the donor id.
@@ -619,37 +619,37 @@ The audit-driven principle: callers that produce display /
 filterable rows fan out per-pairing; callers that walk per-sample
 state carry slices.
 
-| Call site                                 | Shape                              |
-| ----------------------------------------- | ---------------------------------- |
-| `cmd/mlwh_info.go` sample report          | per-pairing rows: one              |
-|                                           | `(pipeline_id_lims, id_study_lims)`|
-|                                           | line per `library_samples` row.    |
-| `seqmeta/enrich.go` sample detail         | per-sample with                    |
-|                                           | `Studies []Study`,                 |
-|                                           | `Libraries []Library` populated    |
-|                                           | from `library_samples`.            |
-| `seqmeta/enrich.go` study detail          | per-sample with                    |
-|                                           | `Libraries` slice; library         |
-|                                           | groupings come from                |
-|                                           | `library_samples`, not             |
-|                                           | `Sample.LibraryType`.              |
-| `seqmeta/enrich.go`                       | iterates                           |
-| `distinctLibrariesForSamples`             | `sample.Libraries` slice.          |
-| `seqmeta/enrich.go libraryLinkForSample`  | iterates `sample.Libraries` and    |
-|                                           | returns one link per pairing.      |
-| `seqmeta/diff.go`                         | iterates                           |
-|                                           | `sample.Studies` /                 |
-|                                           | `sample.Libraries` slices,         |
-|                                           | hashes one entry per pairing.      |
-| `seqmeta/validate.go`                     | iterates slices on the resolved    |
-|                                           | sample object when comparing       |
-|                                           | studies / libraries.               |
-| `results/mlwh_search_resolver.go`         | per-pairing rows: emits one        |
-|                                           | tagged-id row per                  |
-|                                           | `(sample, study)` pairing.         |
-| `results/server.go` search expansion      | per-pairing rows: filters and      |
-|                                           | display rows behave as if MLWH     |
-|                                           | had distinct rows.                 |
+| Call site                                | Shape                               |
+| ---------------------------------------- | ----------------------------------- |
+| `cmd/mlwh_info.go` sample report         | per-pairing rows: one               |
+|                                          | `(pipeline_id_lims, id_study_lims)` |
+|                                          | line per `library_samples` row.     |
+| `seqmeta/enrich.go` sample detail        | per-sample with                     |
+|                                          | `Studies []Study`,                  |
+|                                          | `Libraries []Library` populated     |
+|                                          | from `library_samples`.             |
+| `seqmeta/enrich.go` study detail         | per-sample with                     |
+|                                          | `Libraries` slice; library          |
+|                                          | groupings come from                 |
+|                                          | `library_samples`, not              |
+|                                          | `Sample.LibraryType`.               |
+| `seqmeta/enrich.go`                      | iterates                            |
+| `distinctLibrariesForSamples`            | `sample.Libraries` slice.           |
+| `seqmeta/enrich.go libraryLinkForSample` | iterates `sample.Libraries` and     |
+|                                          | returns one link per pairing.       |
+| `seqmeta/diff.go`                        | iterates                            |
+|                                          | `sample.Studies` /                  |
+|                                          | `sample.Libraries` slices,          |
+|                                          | hashes one entry per pairing.       |
+| `seqmeta/validate.go`                    | iterates slices on the resolved     |
+|                                          | sample object when comparing        |
+|                                          | studies / libraries.                |
+| `results/mlwh_search_resolver.go`        | per-pairing rows: emits one         |
+|                                          | tagged-id row per                   |
+|                                          | `(sample, study)` pairing.          |
+| `results/server.go` search expansion     | per-pairing rows: filters and       |
+|                                          | display rows behave as if MLWH      |
+|                                          | had distinct rows.                  |
 
 The hierarchy methods that walk multiple studies / libraries for a
 sample share a single helper that loads
@@ -717,10 +717,10 @@ cache transparently, so that the next sync uses the new schema.
    `sync_state` row for `sample`, when `OpenCache` runs with v2,
    then the captured stderr contains exactly one line
    `mlwh cache: schema v1->v2, recreated tables:
-   [donor_samples, iseq_product_metrics_mirror, library_samples,
-   sample_mirror, seq_product_irods_locations_mirror, study_mirror]`,
+[donor_samples, iseq_product_metrics_mirror, library_samples,
+sample_mirror, seq_product_irods_locations_mirror, study_mirror]`,
    `sync_state` is empty, and querying `SELECT COUNT(*) FROM
-   sample_mirror` returns 0 without error.
+sample_mirror` returns 0 without error.
 3. Given a SQLite cache already at v2, when `OpenCache` runs again,
    then no stderr line is emitted.
 4. Given the same migration scenario as test 2 but with a MySQL
@@ -745,9 +745,9 @@ shapes match.
 1. Given the embedded SQLite and MySQL schemas at v2, when
    `parseSchemaShape` runs on each, then the resulting shapes have
    the same set of table names: `{sample_mirror, study_mirror,
-   library_samples, donor_samples,
-   iseq_product_metrics_mirror, seq_product_irods_locations_mirror,
-   sync_state, schema_version, sync_lock}`.
+library_samples, donor_samples,
+iseq_product_metrics_mirror, seq_product_irods_locations_mirror,
+sync_state, schema_version, sync_lock}`.
 2. Given the same setup, when comparing each table's column set,
    then the column names match (collation and type-family
    normalisations from `normaliseTypeFamily` already permitted).
@@ -757,7 +757,7 @@ shapes match.
 4. Given the same setup, when comparing unique constraints, then
    the unique-key column tuples per table are identical across
    dialects: `library_samples (pipeline_id_lims, id_sample_tmp,
-   id_study_lims)`, `donor_samples (donor_id, id_sample_tmp)`.
+id_study_lims)`, `donor_samples (donor_id, id_sample_tmp)`.
 
 ### A3: Case-insensitive text columns
 
@@ -862,7 +862,7 @@ no `--tables` flag.
    500ms on its FIRST row read while `iseq_flowcell` returns its
    rows immediately, when `cmd.Execute` runs `wa mlwh sync`, then
    the FIRST line written to stdout begins with `iseq_flowcell
-   inserted=`, the LAST stdout line begins with `study inserted=`,
+inserted=`, the LAST stdout line begins with `study inserted=`,
    and the captured stdout line order is NOT lexical / NOT source
    order but matches the per-table finish order recorded by the
    stub (i.e. each table's stdout line is emitted as soon as that
@@ -871,7 +871,7 @@ no `--tables` flag.
    tables are forced to fail simultaneously - `study` returns
    `fmt.Errorf("forced study failure")` on its first row read and
    `iseq_flowcell` returns `fmt.Errorf("forced iseq_flowcell
-   failure")` on its first row read, while the remaining three
+failure")` on its first row read, while the remaining three
    tables succeed - when `wa mlwh sync` is invoked via
    `cmd.Execute`, then the process exits non-zero (cobra returns a
    non-nil error), the captured stderr (or the joined error
@@ -942,7 +942,7 @@ NULL at end-of-stream.
    non-NULL and equals
    `<rfc3339nano of row 1000.last_updated>\t1000` (the last row of
    the last committed batch is row 1000, with `id_sample_tmp =
-   1000`).
+1000`).
 3. Given the cursor in test 2 and a stub that emits the remaining
    500 rows (rows 1001..1500) when queried with
    `last_updated > ? OR (last_updated = ? AND id_sample_tmp > ?)`,
@@ -956,8 +956,8 @@ NULL at end-of-stream.
    captured resume query SQL contains the explicit 4-column keyset
    predicate
    `(iseq_flowcell.last_updated > ?) OR (iseq_flowcell.last_updated
-   = ? AND (iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp,
-   study.id_study_lims) > (?, ?, ?))`
+= ? AND (iseq_flowcell.pipeline_id_lims, iseq_flowcell.id_sample_tmp,
+study.id_study_lims) > (?, ?, ?))`
    (or an equivalent row-comparison decomposition that ANDs the
    `last_updated = ?` tie with strict `>` on the remaining
    `(pipeline_id_lims, id_sample_tmp, id_study_lims)` triple), with
@@ -985,7 +985,7 @@ not bottlenecked on per-row index maintenance.
 2. Given the same setup, when sync completes its last batch, then
    the final cache state has the 8 indexes recreated (queryable via
    `SELECT name FROM sqlite_master WHERE type='index' AND
-   tbl_name='sample_mirror'`) and `indexes_dropped = 0`.
+tbl_name='sample_mirror'`) and `indexes_dropped = 0`.
 3. Given a populated cache (incremental sync with non-zero
    `high_water`), when sync runs, then the indexes are NOT dropped
    at any point (captured DDL log contains no `DROP INDEX`
@@ -1009,7 +1009,7 @@ not bottlenecked on per-row index maintenance.
    and an empty cold `sample_mirror` (no `sync_state` row), when
    sync begins, then a query against
    `INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE()
-   AND TABLE_NAME = 'sample_mirror' AND INDEX_NAME <> 'PRIMARY'`
+AND TABLE_NAME = 'sample_mirror' AND INDEX_NAME <> 'PRIMARY'`
    observed AFTER the cold-load `indexes_dropped = 1` transaction
    commits and BEFORE the final recreate transaction returns zero
    rows (all 8 secondary indexes are absent mid-load).
@@ -1018,8 +1018,8 @@ not bottlenecked on per-row index maintenance.
    `INFORMATION_SCHEMA.STATISTICS` lists exactly 8 distinct
    `INDEX_NAME` values (one per audited single-column index) on
    `sample_mirror`, covering the column set `{id_sample_lims,
-   uuid_sample_lims, name, sanger_sample_id, supplier_name,
-   accession_number, donor_id, last_updated}` (one index per
+uuid_sample_lims, name, sanger_sample_id, supplier_name,
+accession_number, donor_id, last_updated}` (one index per
    column, by `COLUMN_NAME` introspection), and the
    `sync_state.indexes_dropped` value for `sample_mirror` is 0.
 
@@ -1051,7 +1051,7 @@ stderr line per retry:
    `unexpected EOF`, when sync runs, then the table's sync fails
    after the 5th attempt, stderr contains exactly 5 reconnect
    lines with `attempt 1/5 .. attempt 5/5` and backoffs `1s 2s 4s
-   8s 16s`, and the returned error names `sample`.
+8s 16s`, and the returned error names `sample`.
 3. Given a stub that fails with a non-transient error
    (`fmt.Errorf("syntax error")`), when sync runs, then the table
    fails on the first attempt without retry and the captured
@@ -1075,7 +1075,7 @@ cache.
    concurrently against it, when both attempt the
    `IMMEDIATE BEGIN` on `sync_lock`, then exactly one acquires the
    lock and the other exits non-zero with stderr `mlwh sync:
-   another sync is already running against this cache` and stdout
+another sync is already running against this cache` and stdout
    empty.
 2. Given a MySQL cache and the same concurrent setup, when both
    attempt `GET_LOCK('wa_mlwh_sync_<id>', 0)`, then exactly one
@@ -1109,7 +1109,7 @@ As a developer, I want `library_samples`,
 1. Given a stub `iseq_flowcell` source emitting one row whose
    joined `study.id_lims` is `'GCLP'` (not SQSCP), when sync runs,
    then the row is filtered out at the source `INNER JOIN study
-   ON ... AND study.id_lims = 'SQSCP'` and `library_samples` has 0
+ON ... AND study.id_lims = 'SQSCP'` and `library_samples` has 0
    rows.
 2. Given a stub `iseq_product_metrics` source emitting one row
    whose flowcell has no SQSCP study, when sync runs, then
@@ -1137,8 +1137,8 @@ exit, so resolver / read connections are unaffected.
 
 1. Given a SQLite cache, when sync starts, then the captured PRAGMA
    sequence on the sync connection contains `PRAGMA
-   synchronous=NORMAL`, `PRAGMA cache_size=-200000`, `PRAGMA
-   temp_store=MEMORY` in that order.
+synchronous=NORMAL`, `PRAGMA cache_size=-200000`, `PRAGMA
+temp_store=MEMORY` in that order.
 2. Given a SQLite cache, when sync finishes (success or error),
    then the captured PRAGMA sequence ends with the pre-recorded
    values being restored.
@@ -1174,9 +1174,9 @@ is removed (no callers).
    `name = 'S1'`) and `library_samples` rows
    `('Standard', 1, '6568')`, `('Chromium', 1, '6569')`, plus
    matching `study_mirror` rows, when `StudiesForSample(ctx,
-   "S1")` runs, then it returns exactly two studies ordered by
+"S1")` runs, then it returns exactly two studies ordered by
    `id_study_lims`: `[Study{IDStudyLims:"6568"},
-   Study{IDStudyLims:"6569"}]`.
+Study{IDStudyLims:"6569"}]`.
 2. Given the same cache with sample `S2` that has no
    `library_samples` rows, when `StudiesForSample(ctx, "S2")`
    runs, then it returns `(nil, ErrNotFound)`.
@@ -1212,15 +1212,15 @@ map[int64][]Study, error)` that walks `library_samples`.
    `cmd/mlwh info S1` runs in text mode, then the output contains
    exactly two `library:` lines, one
    `library: Standard / 6568` and one `library: Chromium /
-   6569` in `id_study_lims` order.
+6569` in `id_study_lims` order.
 2. Given the same cache, when seqmeta's
    `buildSampleDetailFromProvider` runs for `S1`, then the
    returned `*SampleDetail.Libraries` has length 2 with
    `[{PipelineIDLims:"Standard", IDStudyLims:"6568"},
-    {PipelineIDLims:"Chromium", IDStudyLims:"6569"}]`.
+{PipelineIDLims:"Chromium", IDStudyLims:"6569"}]`.
 3. Given a `wa results` search filter `--sample S1`, when
    `results.SeqmetaSampleResolver.Expand(KindSangerSampleName,
-   "S1")` runs, then the returned `(samples, runs, lanes)` triple
+"S1")` runs, then the returned `(samples, runs, lanes)` triple
    reflects both studies' lanes (no dedup that hides the per-study
    provenance).
 4. Given `seqmeta/diff.go` `Diff` for a study `6568`, when one of
@@ -1244,7 +1244,7 @@ Each method runs one indexed query against `sample_mirror`, with
 
 - 1 match: returns a 1-element slice.
 - 2 matches: returns `nil, fmt.Errorf("%w: %q ambiguous between
-  %s and %s", ErrAmbiguous, raw, pk1, pk2)`.
+%s and %s", ErrAmbiguous, raw, pk1, pk2)`.
 - 0 matches: returns `nil, ErrNotFound`.
 
 **Acceptance tests:**
@@ -1331,7 +1331,7 @@ existing `ORDER BY <sample>.name`.
    `SamplesForLibrary`, `SamplesForLibraryType`, when each is
    inspected, then each contains
    `ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp
-   LIMIT ? OFFSET ?`.
+LIMIT ? OFFSET ?`.
 
 ### C6: No live-MLWH read fallback
 
@@ -1362,7 +1362,7 @@ accidentally hammer the upstream replica with read-time queries.
    on a partially-synced cache (no `sync_state` row for `study`),
    when called, then it returns
    `([]Study{}, fmt.Errorf("%w: %w", ErrNotFound,
-   ErrCacheNeverSynced))`.
+ErrCacheNeverSynced))`.
 
 ### C7: No mid-read cache writes
 
@@ -1463,10 +1463,10 @@ SQL through the Go MySQL driver.
    `WA_MLWH_PASSWORD` all set, and a fresh empty SQLite cache file
    under `t.TempDir()`, when the test:
    (a) times the unbuffered streaming of each of the five source
-       queries via `*sql.DB.QueryContext` (counting rows, no
-       writes); call this `streamDuration[table]`;
+   queries via `*sql.DB.QueryContext` (counting rows, no
+   writes); call this `streamDuration[table]`;
    (b) times `Client.Sync` end-to-end against the same cache; call
-       the per-table report's wall-clock `syncDuration[table]`,
+   the per-table report's wall-clock `syncDuration[table]`,
    then for every table:
    `syncDuration[table] <= 2 * streamDuration[table]`.
 2. Given `MLWH_SYNC_PERF_TEST` is unset, when the test runs, then

@@ -117,11 +117,11 @@ of pure read time. That is the floor.
 
 Same env, same binary, isolated empty cache file per run, 5-minute cap:
 
-| Single-table probe                            | Result                                         |
-| --------------------------------------------- | ---------------------------------------------- |
-| `study`                                       | success in 4 s                                 |
-| `iseq_flowcell`                               | killed at 240 s; 0 rows committed; 253 MiB WAL |
-| `sample`                                      | killed at 300 s; 0 rows committed; 28 MiB WAL  |
+| Single-table probe | Result                                         |
+| ------------------ | ---------------------------------------------- |
+| `study`            | success in 4 s                                 |
+| `iseq_flowcell`    | killed at 240 s; 0 rows committed; 253 MiB WAL |
+| `sample`           | killed at 300 s; 0 rows committed; 28 MiB WAL  |
 
 Per-row `existence-check + upsert` (sample/study) or
 `existence-check + DELETE + INSERT` (donor/flowcell child tables) inside
@@ -414,13 +414,8 @@ UPDATE`).
   same transaction as the batch's rows, so it is always consistent
   with the cache contents. On resume mid-table, the source query is
   re-issued with the cursor as a strict `>` keyset predicate. The
-  ordering tuples are:
-    - `study`: `(last_updated, id_study_tmp)`
-    - `sample`: `(last_updated, id_sample_tmp)`
-    - `iseq_flowcell`: `(last_updated, pipeline_id_lims,
-id_sample_tmp, id_study_lims)`
-    - `iseq_product_metrics`: `(last_updated, id_iseq_product)`
-    - `seq_product_irods_locations`: `(last_updated, id_iseq_product)`
+  ordering tuples are: - `study`: `(last_updated, id_study_tmp)` - `sample`: `(last_updated, id_sample_tmp)` - `iseq_flowcell`: `(last_updated, pipeline_id_lims,
+id_sample_tmp, id_study_lims)` - `iseq_product_metrics`: `(last_updated, id_iseq_product)` - `seq_product_irods_locations`: `(last_updated, id_iseq_product)`
 - **Cold-load index handling for `sample_mirror`.** "Cold" means
   the `sample_mirror` `sync_state` row is absent or its `high_water`
   is the zero value (`time.Time{}`). On cold load: drop the eight
@@ -525,37 +520,28 @@ id_sample_tmp, id_study_lims)`
       callers that walk per-sample state keep one struct with slices.
 - **Ambiguity rules across the resolver.** `LIMIT 2` + `ErrAmbiguous`
   is applied consistently wherever the underlying column is not
-  guaranteed unique in MLWH:
-    - `ResolveSample` `donor_id` step.
-    - `resolveStudyFromCacheWithWarmup` `accession_number` step
-      (note: the helper is renamed to drop "WithWarmup" since there
-      is no warmup any more, but the body retains its lookup logic).
-    - `seqmeta/client_adapter.go`
-      `FindSamplesBy{SangerID,IDSampleLims,AccessionNumber,
-SupplierName,LibraryType}` (see next bullet).
-    - The cross-column `FindSample(text)` cascade also returns
-      `ErrAmbiguous` when two different columns each match different
-      samples for the same input text.
-      Lookups where MLWH guarantees uniqueness by construction
-      (`id_study_lims`, `uuid_study_lims`) remain single-result. The
-      spec calls out this asymmetry explicitly.
+  guaranteed unique in MLWH: - `ResolveSample` `donor_id` step. - `resolveStudyFromCacheWithWarmup` `accession_number` step
+  (note: the helper is renamed to drop "WithWarmup" since there
+  is no warmup any more, but the body retains its lookup logic). - `seqmeta/client_adapter.go`
+  `FindSamplesBy{SangerID,IDSampleLims,AccessionNumber,
+SupplierName,LibraryType}` (see next bullet). - The cross-column `FindSample(text)` cascade also returns
+  `ErrAmbiguous` when two different columns each match different
+  samples for the same input text.
+  Lookups where MLWH guarantees uniqueness by construction
+  (`id_study_lims`, `uuid_study_lims`) remain single-result. The
+  spec calls out this asymmetry explicitly.
 - **`FindSamplesBy<Column>` is one column per method.** Each method
   queries ONLY the column its name advertises, with the SQSCP
-  `id_lims` filter where appropriate:
-    - `FindSamplesBySangerID` → `WHERE sanger_sample_id = ?`
-    - `FindSamplesByIDSampleLims` → `WHERE id_sample_lims = ?`
-    - `FindSamplesByAccessionNumber` → `WHERE accession_number = ?`
-    - `FindSamplesBySupplierName` → `WHERE supplier_name = ?`
-    - `FindSamplesByLibraryType` →
-      `SELECT … FROM library_samples INNER JOIN sample_mirror ON
-    sample_mirror.id_sample_tmp = library_samples.id_sample_tmp
-    WHERE library_samples.pipeline_id_lims = ?
-    ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp
-    LIMIT 2`
-      Each runs `LIMIT 2`. One match returns a single-element slice.
-      Two-or-more matches return `ErrAmbiguous` with both candidate
-      identifiers named in the error. Zero matches returns
-      `ErrNotFound`.
+  `id_lims` filter where appropriate: - `FindSamplesBySangerID` → `WHERE sanger_sample_id = ?` - `FindSamplesByIDSampleLims` → `WHERE id_sample_lims = ?` - `FindSamplesByAccessionNumber` → `WHERE accession_number = ?` - `FindSamplesBySupplierName` → `WHERE supplier_name = ?` - `FindSamplesByLibraryType` →
+  `SELECT … FROM library_samples INNER JOIN sample_mirror ON
+sample_mirror.id_sample_tmp = library_samples.id_sample_tmp
+WHERE library_samples.pipeline_id_lims = ?
+ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp
+LIMIT 2`
+  Each runs `LIMIT 2`. One match returns a single-element slice.
+  Two-or-more matches return `ErrAmbiguous` with both candidate
+  identifiers named in the error. Zero matches returns
+  `ErrNotFound`.
 - **`ClassifyIdentifier` integer-raw branch** drops the spurious
   `uuid_sample_lims = ?` lookup. Only the UUID branch queries that
   column.

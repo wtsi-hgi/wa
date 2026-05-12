@@ -1,4 +1,16 @@
+import { z } from "zod";
+
 import { enrichmentResultSchema, type EnrichmentResult } from "@/lib/contracts";
+
+// Lenient fallback for legacy cookies that persisted already-normalized
+// enrichment results before the input schema was tightened. We only require
+// the minimal identifying fields so older payloads keep round-tripping.
+const legacyEnrichmentResultSchema = z
+    .object({
+        identifier: z.string().min(1),
+        type: z.string(),
+    })
+    .passthrough();
 
 export const SEQMETA_CACHE_COOKIE_NAME = "wa-seqmeta-cache";
 const SEQMETA_CACHE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
@@ -104,6 +116,13 @@ function parseSeqmetaCacheSnapshot(value: unknown): SeqmetaCacheSnapshot {
 
         if (parsed.success) {
             snapshot[identifier] = parsed.data;
+            continue;
+        }
+
+        const legacy = legacyEnrichmentResultSchema.safeParse(candidate);
+
+        if (legacy.success) {
+            snapshot[identifier] = legacy.data as unknown as EnrichmentResult;
         }
     }
 

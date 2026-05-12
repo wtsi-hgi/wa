@@ -228,18 +228,20 @@ const normalizedSampleDetailSchema = z.object({
 type NormalizedSampleDetail = z.infer<typeof normalizedSampleDetailSchema>;
 
 export const sampleDetailSchema = mlwhSampleDetailInputSchema
-    .transform((detail): NormalizedSampleDetail => ({
-        sanger_id: detail.sample.sanger_id,
-        sample_name: detail.sample.sample_name,
-        sample: detail.sample,
-        study: detail.study,
-        lanes: detail.lanes,
-        libraries: detail.libraries?.map((library) => ({
-            library_type: library.pipeline_id_lims,
-            id_study_lims: library.id_study_lims,
-        })),
-        irods_paths: detail.irods_paths,
-    }))
+    .transform(
+        (detail): NormalizedSampleDetail => ({
+            sanger_id: detail.sample.sanger_id,
+            sample_name: detail.sample.sample_name,
+            sample: detail.sample,
+            study: detail.study,
+            lanes: detail.lanes,
+            libraries: detail.libraries?.map((library) => ({
+                library_type: library.pipeline_id_lims,
+                id_study_lims: library.id_study_lims,
+            })),
+            irods_paths: detail.irods_paths,
+        }),
+    )
     .pipe(normalizedSampleDetailSchema);
 export type SampleDetail = z.infer<typeof sampleDetailSchema>;
 

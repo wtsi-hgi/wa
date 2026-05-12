@@ -20,7 +20,7 @@ from hierarchy methods that populate `Sample.Studies` /
 audit table:
 
 - `cmd/mlwh_info.go` - per-pairing `library: <pipeline> /
-  <id_study_lims>` lines.
+<id_study_lims>` lines.
 - `seqmeta/enrich.go` - `buildSampleDetailFromProvider`,
   `distinctLibrariesForSamples`, `libraryLinkForSample`, and the
   study-detail builder consume the slice fields instead of the
