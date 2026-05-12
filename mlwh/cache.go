@@ -124,7 +124,7 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 		}
 	}
 
-	return &sqliteCache{rwDB: rwDB, roDB: roDB, lockDSN: lockDSN}, nil
+	return &sqliteCache{rwDB: rwDB, roDB: roDB, lockDSN: lockDSN, writeMu: &sync.Mutex{}}, nil
 }
 
 func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
@@ -217,6 +217,7 @@ type Client struct {
 	syncRetryWriter         io.Writer
 	syncRetrySleep          func(context.Context, time.Duration) error
 	mySQLLockTimeoutSeconds int
+	disableSyncLock         bool
 }
 
 // ReadDB exposes the client's read-only cache handle.
@@ -241,6 +242,9 @@ func (c *Client) acquireSyncLock(ctx context.Context) (func() error, error) {
 	if c == nil || c.cache == nil {
 		return nil, fmt.Errorf("mlwh: cache client not configured")
 	}
+	if c.disableSyncLock {
+		return nil, nil
+	}
 
 	switch cache := c.cache.(type) {
 	case *sqliteCache:
@@ -256,6 +260,7 @@ type sqliteCache struct {
 	rwDB    *sql.DB
 	roDB    *sql.DB
 	lockDSN string
+	writeMu *sync.Mutex
 }
 
 func (c *sqliteCache) DB() *sql.DB {
@@ -513,10 +518,332 @@ func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 
 		return writeSchemaVersion(ctx, db)
 	case rowCount == 1 && version == CacheSchemaVersion:
+		if err = validateCurrentCacheSchema(ctx, db, dialect); err != nil {
+			return migrateCacheSchema(ctx, db, dialect, version)
+		}
+
 		return nil
 	default:
 		return migrateCacheSchema(ctx, db, dialect, version)
 	}
+}
+
+func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
+	expected, err := expectedCacheSchemaShape(dialect)
+	if err != nil {
+		return err
+	}
+
+	actual, err := readCacheSchemaShape(ctx, db, dialect)
+	if err != nil {
+		return err
+	}
+
+	if err := compareCacheSchemaShapes(expected, actual); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func expectedCacheSchemaShape(dialect string) (schemaShape, error) {
+	stmts, err := loadSchema(dialect)
+	if err != nil {
+		return schemaShape{}, err
+	}
+
+	shape, err := parseSchemaShape(stmts)
+	if err != nil {
+		return schemaShape{}, err
+	}
+
+	return shape, nil
+}
+
+func readCacheSchemaShape(ctx context.Context, db *sql.DB, dialect string) (schemaShape, error) {
+	switch dialect {
+	case "sqlite":
+		return readSQLiteCacheSchemaShape(ctx, db)
+	case "mysql":
+		return readMySQLCacheSchemaShape(ctx, db)
+	default:
+		return schemaShape{}, fmt.Errorf("mlwh: unsupported cache schema dialect %q", dialect)
+	}
+}
+
+func compareCacheSchemaShapes(expected, actual schemaShape) error {
+	for table, expectedColumns := range expected.Tables {
+		actualColumns, ok := actual.Tables[table]
+		if !ok {
+			return fmt.Errorf("mlwh: cache schema missing table %s", table)
+		}
+		if len(expectedColumns) != len(actualColumns) {
+			return fmt.Errorf("mlwh: cache schema column mismatch for %s", table)
+		}
+		for column, expectedType := range expectedColumns {
+			actualType, ok := actualColumns[column]
+			if !ok || actualType != expectedType {
+				return fmt.Errorf("mlwh: cache schema column mismatch for %s.%s", table, column)
+			}
+		}
+		if !stringSlicesEqual(expected.Index[table], actual.Index[table]) {
+			return fmt.Errorf("mlwh: cache schema index mismatch for %s", table)
+		}
+		if !stringSlicesEqual(expected.Unique[table], actual.Unique[table]) {
+			return fmt.Errorf("mlwh: cache schema unique constraint mismatch for %s", table)
+		}
+	}
+
+	return nil
+}
+
+func stringSlicesEqual(expected, actual []string) bool {
+	if len(expected) != len(actual) {
+		return false
+	}
+	for i := range expected {
+		if expected[i] != actual[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func readSQLiteCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, error) {
+	shape := schemaShape{
+		Tables: make(map[string]map[string]string, len(schemaStatementOrder)),
+		Index:  make(map[string][]string, len(schemaStatementOrder)),
+		Unique: make(map[string][]string, len(schemaStatementOrder)),
+	}
+
+	for _, table := range schemaStatementOrder {
+		columns, err := readSQLiteTableColumns(ctx, db, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		shape.Tables[table] = columns
+
+		indexes, uniques, err := readSQLiteTableIndexes(ctx, db, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		if len(indexes) > 0 {
+			shape.Index[table] = indexes
+		}
+		if len(uniques) > 0 {
+			shape.Unique[table] = uniques
+		}
+	}
+
+	return shape, nil
+}
+
+func readSQLiteTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info('%s')", table))
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite table info for %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns := make(map[string]string)
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  any
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &primaryKey); err != nil {
+			return nil, fmt.Errorf("mlwh: scan sqlite table info for %s: %w", table, err)
+		}
+		columns[name] = normaliseTypeFamily(typeName)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite table info for %s: %w", table, err)
+	}
+
+	return columns, nil
+}
+
+func readSQLiteTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, []string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_list('%s')", table))
+	if err != nil {
+		return nil, nil, fmt.Errorf("mlwh: read sqlite index list for %s: %w", table, err)
+	}
+
+	type sqliteIndexListEntry struct {
+		name   string
+		unique int
+		origin string
+	}
+	entries := []sqliteIndexListEntry{}
+
+	for rows.Next() {
+		var (
+			seq      int
+			name     string
+			unique   int
+			origin   string
+			partial  int
+		)
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			_ = rows.Close()
+			return nil, nil, fmt.Errorf("mlwh: scan sqlite index list for %s: %w", table, err)
+		}
+		entries = append(entries, sqliteIndexListEntry{name: name, unique: unique, origin: origin})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, nil, fmt.Errorf("mlwh: read sqlite index list for %s: %w", table, err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, fmt.Errorf("mlwh: close sqlite index list for %s: %w", table, err)
+	}
+
+	indexes := []string{}
+	uniques := []string{}
+	for _, entry := range entries {
+		if entry.origin == "pk" {
+			continue
+		}
+		columns, err := readSQLiteIndexColumns(ctx, db, entry.name)
+		if err != nil {
+			return nil, nil, err
+		}
+		joined := strings.Join(columns, ",")
+		if entry.unique == 1 {
+			uniques = append(uniques, joined)
+			continue
+		}
+		if entry.origin == "c" {
+			indexes = append(indexes, joined)
+		}
+	}
+
+	sort.Strings(indexes)
+	sort.Strings(uniques)
+
+	return indexes, uniques, nil
+}
+
+func readSQLiteIndexColumns(ctx context.Context, db *sql.DB, indexName string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info('%s')", indexName))
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite index info for %s: %w", indexName, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns := []string{}
+	for rows.Next() {
+		var seqno, cid int
+		var name string
+		if err := rows.Scan(&seqno, &cid, &name); err != nil {
+			return nil, fmt.Errorf("mlwh: scan sqlite index info for %s: %w", indexName, err)
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite index info for %s: %w", indexName, err)
+	}
+
+	return columns, nil
+}
+
+func readMySQLCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, error) {
+	shape := schemaShape{
+		Tables: make(map[string]map[string]string, len(schemaStatementOrder)),
+		Index:  make(map[string][]string, len(schemaStatementOrder)),
+		Unique: make(map[string][]string, len(schemaStatementOrder)),
+	}
+
+	for _, table := range schemaStatementOrder {
+		columns, err := readMySQLTableColumns(ctx, db, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		shape.Tables[table] = columns
+
+		indexes, uniques, err := readMySQLTableIndexes(ctx, db, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		if len(indexes) > 0 {
+			shape.Index[table] = indexes
+		}
+		if len(uniques) > 0 {
+			shape.Unique[table] = uniques
+		}
+	}
+
+	return shape, nil
+}
+
+func readMySQLTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`, table)
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: read mysql columns for %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns := make(map[string]string)
+	for rows.Next() {
+		var name, dataType string
+		if err := rows.Scan(&name, &dataType); err != nil {
+			return nil, fmt.Errorf("mlwh: scan mysql columns for %s: %w", table, err)
+		}
+		columns[name] = normaliseTypeFamily(dataType)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read mysql columns for %s: %w", table, err)
+	}
+
+	return columns, nil
+}
+
+func readMySQLTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, []string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table)
+	if err != nil {
+		return nil, nil, fmt.Errorf("mlwh: read mysql indexes for %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	indexesByName := map[string][]string{}
+	uniquesByName := map[string][]string{}
+	for rows.Next() {
+		var indexName, columnName string
+		var nonUnique int
+		if err := rows.Scan(&indexName, &nonUnique, &columnName); err != nil {
+			return nil, nil, fmt.Errorf("mlwh: scan mysql indexes for %s: %w", table, err)
+		}
+		if nonUnique == 0 {
+			uniquesByName[indexName] = append(uniquesByName[indexName], columnName)
+			continue
+		}
+		indexesByName[indexName] = append(indexesByName[indexName], columnName)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("mlwh: read mysql indexes for %s: %w", table, err)
+	}
+
+	indexes := make([]string, 0, len(indexesByName))
+	for _, columns := range indexesByName {
+		indexes = append(indexes, strings.Join(columns, ","))
+	}
+	uniques := make([]string, 0, len(uniquesByName))
+	for _, columns := range uniquesByName {
+		uniques = append(uniques, strings.Join(columns, ","))
+	}
+	if len(indexes) > 0 {
+		sort.Strings(indexes)
+	}
+	if len(uniques) > 0 {
+		sort.Strings(uniques)
+	}
+
+	return indexes, uniques, nil
 }
 
 func querySchemaVersion(ctx context.Context, db *sql.DB) (int, int, error) {

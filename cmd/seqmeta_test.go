@@ -320,8 +320,6 @@ func TestServeCommand(t *testing.T) {
 	defer func() { listenFunc = originalListen }()
 	originalOpen := openSeqmetaClientFunc
 	defer func() { openSeqmetaClientFunc = originalOpen }()
-	originalTicker := newSeqmetaSyncTicker
-	defer func() { newSeqmetaSyncTicker = originalTicker }()
 
 	provider := &seqmetaMockProvider{
 		classifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
@@ -454,6 +452,23 @@ func TestServeCommand(t *testing.T) {
 		convey.So(strings.Join(os.Args, " "), convey.ShouldNotContainSubstring, "secret")
 	})
 
+	convey.Convey("E2.2a: seqmeta serve returns MLWH open errors", t, func() {
+		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/warehouse")
+		t.Setenv("WA_MLWH_CACHE_PATH", t.TempDir()+"/mlwh.sqlite")
+
+		originalOpenMLWH := openSeqmetaMLWHClient
+		defer func() { openSeqmetaMLWHClient = originalOpenMLWH }()
+
+		openSeqmetaMLWHClient = func(_ context.Context, _ mlwh.Config) (*mlwh.Client, error) {
+			return nil, errors.New("boom")
+		}
+
+		_, _, err := executeSeqmetaCommand(t, []string{"seqmeta", "serve", "--port", "0", "--db", t.TempDir() + "/seqmeta.db"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "boom")
+	})
+
 	convey.Convey("E2.3: seqmeta serve rejects password-bearing --mlwh-cache DSNs", t, func() {
 		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/warehouse")
 
@@ -464,51 +479,13 @@ func TestServeCommand(t *testing.T) {
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "--mlwh-cache")
 	})
 
-	convey.Convey("E2.4: seqmeta serve launches an opt-in sync goroutine", t, func() {
+	convey.Convey("E2.4: seqmeta serve rejects the removed --mlwh-sync-interval flag", t, func() {
 		setSeqmetaMLWHEnvForTest(t)
 
-		syncCh := make(chan struct{}, 1)
-		openSeqmetaClientFunc = func(_ context.Context, _ seqmetaMLWHConfig) (seqmetaCommandClient, error) {
-			return &seqmetaTestClient{
-				provider: provider,
-				syncFunc: func(_ context.Context) ([]mlwh.SyncReport, error) {
-					syncCh <- struct{}{}
+		_, stderr, err := executeSeqmetaCommand(t, []string{"seqmeta", "serve", "--mlwh-sync-interval", "5m"})
 
-					return []mlwh.SyncReport{{Table: "sample"}}, nil
-				},
-			}, nil
-		}
-
-		tickerCh := make(chan time.Time)
-		newSeqmetaSyncTicker = func(time.Duration) seqmetaTicker {
-			return &seqmetaTestTicker{channel: tickerCh}
-		}
-
-		addrCh := make(chan string, 1)
-		listenFunc = resultsServeListenFuncForTest(addrCh)
-
-		cmd := NewRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"seqmeta", "serve", "--port", "0", "--db", t.TempDir() + "/seqmeta.db", "--mlwh-sync-interval", "5m"})
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- cmd.ExecuteContext(ctx)
-		}()
-
-		<-addrCh
-		select {
-		case <-syncCh:
-		case <-time.After(500 * time.Millisecond):
-			t.Fatal("expected sync invocation")
-		}
-
-		cancel()
-		convey.So(<-errCh, convey.ShouldBeNil)
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "unknown flag: --mlwh-sync-interval")
 	})
 }
 
@@ -722,25 +699,15 @@ func (m *seqmetaMockProvider) GetSampleFiles(ctx context.Context, sangerName str
 	return []mlwh.IRODSPath{}, nil
 }
 
-type seqmetaTestTicker struct {
-	channel <-chan time.Time
-}
-
-func (t *seqmetaTestTicker) C() <-chan time.Time {
-	return t.channel
-}
-
-func (t *seqmetaTestTicker) Stop() {}
-
 func TestSeqmetaServeHelpFlags(t *testing.T) {
 	stdout, _, err := executeSeqmetaCommand(t, []string{"seqmeta", "serve", "--help"})
 	if err != nil {
 		t.Fatalf("seqmeta serve --help: %v", err)
 	}
 
-	convey.Convey("E2.1: seqmeta serve help shows MLWH flags and hides legacy flags", t, func() {
+	convey.Convey("E2.1: seqmeta serve help shows MLWH cache flags and hides removed or legacy flags", t, func() {
 		convey.So(stdout.String(), convey.ShouldContainSubstring, "--mlwh-cache")
-		convey.So(stdout.String(), convey.ShouldContainSubstring, "--mlwh-sync-interval")
+		convey.So(stdout.String(), convey.ShouldNotContainSubstring, "--mlwh-sync-interval")
 		convey.So(stdout.String(), convey.ShouldNotContainSubstring, "--token")
 		convey.So(stdout.String(), convey.ShouldNotContainSubstring, "--base-url")
 	})

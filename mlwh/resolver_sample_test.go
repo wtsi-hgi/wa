@@ -303,9 +303,9 @@ func TestResolveSampleWarmCacheMissForMySQLCacheReturnsNotFoundWithoutNegativeCa
 					WithArgs(raw).
 					WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
 			}
-			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
+			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 				WithArgs(syncTableSample).
-				WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
+				WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow("2026-01-02T03:04:05Z", nil, 0))
 			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + sampleMirrorSelectColumns + ` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 2`)).
 				WithArgs(raw).
 				WillReturnRows(cacheMissRows)

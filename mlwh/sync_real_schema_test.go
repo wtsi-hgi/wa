@@ -61,7 +61,7 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		reports, err := client.Sync(context.Background())
 

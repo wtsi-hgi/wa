@@ -269,15 +269,10 @@ describe("contract schemas", () => {
                         id_study_lims: "6568",
                         id_sample_lims: "SMP001",
                         sanger_id: "SANG001",
-                        sample_name: "sample-1",
+                        name: "sample-1",
                         taxon_id: 9606,
                         common_name: "Human",
                         library_type: "RNA",
-                        id_run: 1234,
-                        lane: 1,
-                        tag_index: 7,
-                        irods_path: "/seq/1234",
-                        study_accession_number: "ERP123456",
                         accession_number: "ERS123456",
                     },
                 ],
@@ -357,22 +352,19 @@ describe("contract schemas", () => {
                     },
                     library_details: [
                         {
-                            library_type: "RNA PolyA",
-                            id_study_lims: "6568",
+                            library: {
+                                pipeline_id_lims: "RNA PolyA",
+                                id_study_lims: "6568",
+                            },
                             samples: [
                                 {
                                     id_study_lims: "6568",
                                     id_sample_lims: "SMP001",
                                     sanger_id: "S1",
-                                    sample_name: "Sample 1",
+                                    name: "Sample 1",
                                     taxon_id: 9606,
                                     common_name: "Human",
                                     library_type: "RNA PolyA",
-                                    id_run: 100,
-                                    lane: 1,
-                                    tag_index: 10,
-                                    irods_path: "/seq/100",
-                                    study_accession_number: "ERP001",
                                     accession_number: "ERS001",
                                 },
                             ],
@@ -403,33 +395,21 @@ describe("contract schemas", () => {
                     id_study_lims: "6568",
                     id_sample_lims: "SMP001",
                     sanger_id: "S1",
-                    sample_name: "Sample 1",
+                    name: "Sample 1",
                     taxon_id: 9606,
                     common_name: "Human",
                     library_type: "RNA PolyA",
-                    id_run: 100,
-                    lane: 1,
-                    tag_index: 10,
-                    irods_path: "/seq/100",
-                    study_accession_number: "ERP001",
                     accession_number: "ERS001",
                 },
                 sample_detail: {
-                    sanger_id: "S1",
-                    sample_name: "Sample 1",
                     sample: {
                         id_study_lims: "6568",
                         id_sample_lims: "SMP001",
                         sanger_id: "S1",
-                        sample_name: "Sample 1",
+                        name: "Sample 1",
                         taxon_id: 9606,
                         common_name: "Human",
                         library_type: "RNA PolyA",
-                        id_run: 100,
-                        lane: 1,
-                        tag_index: 10,
-                        irods_path: "/seq/100",
-                        study_accession_number: "ERP001",
                         accession_number: "ERS001",
                     },
                     lanes: [
@@ -455,6 +435,51 @@ describe("contract schemas", () => {
         }
     });
 
+    it("preserves per-library study ids in hierarchical sample_detail", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "S1",
+            type: "sanger_sample_id",
+            graph: {
+                sample: {
+                    id_study_lims: "6568",
+                    id_sample_lims: "SMP001",
+                    sanger_id: "S1",
+                    name: "Sample 1",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "RNA PolyA",
+                    accession_number: "ERS001",
+                },
+                sample_detail: {
+                    sample: {
+                        id_study_lims: "6568",
+                        id_sample_lims: "SMP001",
+                        sanger_id: "S1",
+                        name: "Sample 1",
+                        taxon_id: 9606,
+                        common_name: "Human",
+                        library_type: "RNA PolyA",
+                        accession_number: "ERS001",
+                    },
+                    lanes: [],
+                    libraries: [
+                        { pipeline_id_lims: "RNA", id_study_lims: "6568" },
+                        { pipeline_id_lims: "Chromium", id_study_lims: "6569" },
+                    ],
+                },
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.graph.sample_detail?.libraries).toEqual([
+                { library_type: "RNA", id_study_lims: "6568" },
+                { library_type: "Chromium", id_study_lims: "6569" },
+            ]);
+        }
+    });
+
     it("parses sample-detail iRODS paths with the tightened four-field schema", () => {
         const result = enrichmentResultSchema.safeParse({
             identifier: "S1",
@@ -464,33 +489,21 @@ describe("contract schemas", () => {
                     id_study_lims: "6568",
                     id_sample_lims: "SMP001",
                     sanger_id: "S1",
-                    sample_name: "Sample 1",
+                    name: "Sample 1",
                     taxon_id: 9606,
                     common_name: "Human",
                     library_type: "RNA PolyA",
-                    id_run: 100,
-                    lane: 1,
-                    tag_index: 10,
-                    irods_path: "/seq/100",
-                    study_accession_number: "ERP001",
                     accession_number: "ERS001",
                 },
                 sample_detail: {
-                    sanger_id: "S1",
-                    sample_name: "Sample 1",
                     sample: {
                         id_study_lims: "6568",
                         id_sample_lims: "SMP001",
                         sanger_id: "S1",
-                        sample_name: "Sample 1",
+                        name: "Sample 1",
                         taxon_id: 9606,
                         common_name: "Human",
                         library_type: "RNA PolyA",
-                        id_run: 100,
-                        lane: 1,
-                        tag_index: 10,
-                        irods_path: "/seq/100",
-                        study_accession_number: "ERP001",
                         accession_number: "ERS001",
                     },
                     lanes: [],

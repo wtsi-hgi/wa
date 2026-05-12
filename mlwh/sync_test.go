@@ -169,8 +169,8 @@ func TestClientSyncFiveTableParallelReports(t *testing.T) {
 			syncTableSample: {
 				columns: sampleSyncSourceColumns,
 				rows: [][]driver.Value{
-					{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", "study-a", formatSyncTime(t1)},
-					{int64(2), "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", int64(9606), "human", "desc-b", "study-b", formatSyncTime(t2)},
+					{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", formatSyncTime(t1)},
+					{int64(2), "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", int64(9606), "human", "desc-b", formatSyncTime(t2)},
 				},
 			},
 			syncTableStudy: {
@@ -194,7 +194,7 @@ func TestClientSyncFiveTableParallelReports(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		reports, err := client.Sync(context.Background())
 
@@ -236,7 +236,7 @@ func TestClientSyncReportsPerTableDuration(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
 
@@ -256,7 +256,7 @@ func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
 		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
 			syncTableSample: {
 				columns: sampleSyncSourceColumns,
-				rows:    [][]driver.Value{{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", "study-a", formatSyncTime(t1)}},
+				rows:    [][]driver.Value{{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", formatSyncTime(t1)}},
 			},
 			syncTableStudy: {
 				queryErr: fmt.Errorf("forced study failure"),
@@ -276,7 +276,7 @@ func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		reports, err := client.Sync(context.Background())
 
@@ -331,7 +331,7 @@ func TestClientSyncStartsEachTableWithinOverlapWindow(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		_, err := client.Sync(context.Background())
 
@@ -370,7 +370,7 @@ func TestClientSyncSampleBatchesRowsIntoThreeTransactions(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		report, sawRows, err := client.syncTableData(context.Background(), syncTableSample, syncStateRecord{})
 
@@ -381,7 +381,7 @@ func TestClientSyncSampleBatchesRowsIntoThreeTransactions(t *testing.T) {
 		convey.So(report.Updated, convey.ShouldEqual, 0)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 2500)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM donor_samples`), convey.ShouldEqual, 2500)
-		convey.So(commitCounter.Count(), convey.ShouldEqual, 3)
+		convey.So(commitCounter.Count(), convey.ShouldEqual, 5)
 	})
 }
 
@@ -450,7 +450,7 @@ func TestClientSyncSampleUpsertIsLastWriteWinsWithinBatch(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		_, sawRows, err := client.syncTableData(context.Background(), syncTableSample, syncStateRecord{})
 
@@ -523,7 +523,7 @@ func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
 		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
 			syncTableSample: {
 				columns:         sampleSyncSourceColumns,
-				rows:            [][]driver.Value{{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", "study-a", now}, {int64(2), "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", int64(9606), "human", "desc-b", "study-b", now}},
+				rows:            [][]driver.Value{{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", now}, {int64(2), "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", int64(9606), "human", "desc-b", now}},
 				blockBeforeRow2: releaseRow2,
 				afterFirstRow:   func() { firstRowSeen <- syncTableSample },
 			},
@@ -554,7 +554,7 @@ func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		errCh := make(chan error, 1)
 		go func() {
@@ -894,7 +894,7 @@ func TestClientSyncConstraintViolationNamesOffendingLibrarySampleRow(t *testing.
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		reports, err := client.Sync(context.Background())
 
@@ -902,7 +902,7 @@ func TestClientSyncConstraintViolationNamesOffendingLibrarySampleRow(t *testing.
 		convey.So(err.Error(), convey.ShouldContainSubstring, syncTableIseqFlowcell)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "(Standard, 31)")
 		convey.So(err.Error(), convey.ShouldContainSubstring, "id_study_lims")
-		convey.So(reports, convey.ShouldHaveLength, 4)
+		convey.So(reports, convey.ShouldHaveLength, 5)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 0)
 	})
 }
@@ -1042,7 +1042,7 @@ func TestClientSyncSampleClearsResumeCursorAtEndOfStream(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
 
@@ -1069,7 +1069,7 @@ func TestClientSyncSamplePersistsResumeCursorForLastCommittedBatch(t *testing.T)
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
 
 		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
 
@@ -1457,7 +1457,7 @@ func TestClientSyncSampleReconnectsAfterTransientFault(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
 			waits = append(waits, delay)
 			return nil
 		}}
@@ -1493,7 +1493,7 @@ func TestClientSyncSampleStopsAfterFiveReconnectAttempts(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
 			waits = append(waits, delay)
 			return nil
 		}}
@@ -1527,7 +1527,7 @@ func TestClientSyncSampleDoesNotRetryNonTransientSourceError(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
 			waits = append(waits, delay)
 			return nil
 		}}
@@ -1569,7 +1569,7 @@ func TestClientSyncSampleResetsReconnectBudgetAfterSuccessfulResume(t *testing.T
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
 			waits = append(waits, delay)
 			return nil
 		}}
@@ -1626,7 +1626,7 @@ func TestClientSyncTwoTablesReconnectIndependently(t *testing.T) {
 		})
 		defer func() { _ = source.Close() }()
 
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true, syncRetryWriter: &stderr, syncRetrySleep: func(_ context.Context, delay time.Duration) error {
 			waits = append(waits, delay)
 			return nil
 		}}

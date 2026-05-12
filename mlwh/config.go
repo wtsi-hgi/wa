@@ -88,6 +88,16 @@ func Open(ctx context.Context, cfg Config) (*Client, error) {
 	return client, nil
 }
 
+// OpenCacheOnly constructs a cache-backed MLWH client without opening an upstream source connection.
+func OpenCacheOnly(ctx context.Context, cacheCfg CacheConfig) (*Client, error) {
+	cache, err := OpenCache(ctx, cacheCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{cache: cache, cacheReader: readDBFromCache(cache)}, nil
+}
+
 func readDBFromCache(cache Cache) *sql.DB {
 	if cache == nil {
 		return nil

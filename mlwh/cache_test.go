@@ -176,6 +176,71 @@ func TestOpenCacheSQLiteCurrentVersionEmitsNoMigrationLine(t *testing.T) {
 	})
 }
 
+func TestOpenCacheSQLiteCurrentVersionShapeMismatchResetsSchema(t *testing.T) {
+	convey.Convey("Given a SQLite cache at schema version 2 with a drifted table set", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`INSERT INTO sample_mirror(
+			id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+			sanger_sample_id, supplier_name, accession_number, donor_id,
+			taxon_id, common_name, description, last_updated
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			1, "SQSCP", "sample-1", "uuid-1", "sample-name",
+			"ssid-1", "supplier-1", "ENA1", "donor-1",
+			9606, "human", "desc", "2026-05-06T12:00:00Z",
+		)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`DROP TABLE study_mirror`)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+
+			var sampleRows int
+			convey.So(reopened.DB().QueryRow(`SELECT COUNT(*) FROM sample_mirror`).Scan(&sampleRows), convey.ShouldBeNil)
+			convey.So(sampleRows, convey.ShouldEqual, 0)
+		})
+
+		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v2->v2, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+	})
+}
+
+func TestOpenCacheSQLiteCurrentVersionWrongShapeResetsSchema(t *testing.T) {
+	convey.Convey("Given a SQLite cache at schema version 2 with a same-name table of the wrong shape", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(db.Close(), convey.ShouldBeNil) })
+
+		_, err = db.Exec(`DROP TABLE study_mirror`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`CREATE TABLE study_mirror(id_study_lims TEXT PRIMARY KEY)`)
+		convey.So(err, convey.ShouldBeNil)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+
+			var columnCount int
+			convey.So(reopened.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('study_mirror')`).Scan(&columnCount), convey.ShouldBeNil)
+			convey.So(columnCount, convey.ShouldBeGreaterThan, 1)
+		})
+
+		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v2->v2, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+	})
+}
+
 func TestOpenCacheSQLiteRepairsDroppedSampleIndexesSilently(t *testing.T) {
 	convey.Convey("B4.4: Given a SQLite cache with sample_mirror indexes missing and sync_state.indexes_dropped=1 plus non-zero high_water, when OpenCache runs again, then it recreates the indexes, clears the flag, and emits no migration line", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
@@ -592,6 +657,9 @@ func TestOpenCacheInjectsMySQLPasswordIntoResolvedDSN(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		expectSchemaBootstrap(rwMock, "mysql")
+		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableSample).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
 		roMock.ExpectPing()
 
 		var opened []string
@@ -853,4 +921,7 @@ func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int
 
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(toVersion).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+		WithArgs(syncTableSample).
+		WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
 }

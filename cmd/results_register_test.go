@@ -610,12 +610,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "exact")
 	})
 
-	convey.Convey("E1.6: Given register help, when printed, then --library warns about first call latency and wa mlwh sync", t, func() {
+	convey.Convey("E1.6: Given register help, when printed, then --library states that the MLWH cache must already be synced", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"results", "register", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "first call")
-		convey.So(output, convey.ShouldContainSubstring, "wa mlwh sync")
+		convey.So(output, convey.ShouldContainSubstring, "requires a previously synced MLWH cache")
 	})
 
 	convey.Convey("G1.4: Given missing --user, then the command returns an error and stderr contains the error", t, func() {

@@ -37,7 +37,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
@@ -52,22 +51,26 @@ const seqmetaProviderFetchLimit = 1_000_000
 var openSeqmetaMLWHClient = mlwh.Open
 
 var openSeqmetaClientFunc = func(ctx context.Context, cfg seqmetaMLWHConfig) (seqmetaCommandClient, error) {
-	client, err := openSeqmetaMLWHClient(ctx, mlwh.Config{
-		DSN:      cfg.DSN,
-		Password: cfg.Password,
-		Cache: mlwh.CacheConfig{
-			Path:     cfg.CachePath,
-			Password: cfg.CachePassword,
-		},
-	})
+	cacheCfg := mlwh.CacheConfig{Path: cfg.CachePath, Password: cfg.CachePassword}
+
+	var (
+		client *mlwh.Client
+		err    error
+	)
+	if strings.TrimSpace(cfg.DSN) == "" {
+		client, err = mlwh.OpenCacheOnly(ctx, cacheCfg)
+	} else {
+		client, err = openSeqmetaMLWHClient(ctx, mlwh.Config{
+			DSN:      cfg.DSN,
+			Password: cfg.Password,
+			Cache:    cacheCfg,
+		})
+	}
 	if err != nil {
+		return nil, err
 	}
 
 	return &seqmetaMLWHClientAdapter{client: client}, nil
-}
-
-var newSeqmetaSyncTicker = func(interval time.Duration) seqmetaTicker {
-	return &seqmetaRealTicker{ticker: time.NewTicker(interval)}
 }
 
 var seqmetaSyncTables = []string{"sample", "study", "iseq_flowcell"}
@@ -81,13 +84,13 @@ type seqmetaMLWHConfig struct {
 
 func resolveSeqmetaMLWHConfig(options *seqmetaOptions, cacheFlagChanged bool) (seqmetaMLWHConfig, error) {
 	dsn := strings.TrimSpace(firstEnv("WA_MLWH_DSN"))
-	if dsn == "" {
-		return seqmetaMLWHConfig{}, errors.New("WA_MLWH_DSN must be set")
-	}
-
-	validatedDSN, err := resolveSeqmetaMLWHDSN(dsn)
-	if err != nil {
-		return seqmetaMLWHConfig{}, fmt.Errorf("WA_MLWH_DSN: %w", err)
+	validatedDSN := ""
+	if dsn != "" {
+		var err error
+		validatedDSN, err = resolveSeqmetaMLWHDSN(dsn)
+		if err != nil {
+			return seqmetaMLWHConfig{}, fmt.Errorf("WA_MLWH_DSN: %w", err)
+		}
 	}
 
 	cachePath, err := resolveSeqmetaMLWHCachePath(options.mlwhCachePath, cacheFlagChanged)
@@ -134,45 +137,6 @@ func seqmetaFlagChanged(cmd *cobra.Command, name string) bool {
 	flag := cmd.Flags().Lookup(name)
 
 	return flag != nil && flag.Changed
-}
-
-func startSeqmetaSyncLoop(ctx context.Context, client seqmetaCommandClient, interval time.Duration) {
-	if interval <= 0 || client == nil {
-		return
-	}
-
-	ticker := newSeqmetaSyncTicker(interval)
-	go func() {
-		defer ticker.Stop()
-
-		_, _ = client.Sync(ctx)
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C():
-				_, _ = client.Sync(ctx)
-			}
-		}
-	}()
-}
-
-type seqmetaTicker interface {
-	C() <-chan time.Time
-	Stop()
-}
-
-type seqmetaRealTicker struct {
-	ticker *time.Ticker
-}
-
-func (t *seqmetaRealTicker) C() <-chan time.Time {
-	return t.ticker.C
-}
-
-func (t *seqmetaRealTicker) Stop() {
-	t.ticker.Stop()
 }
 
 type seqmetaMLWHClientAdapter struct {
@@ -289,9 +253,8 @@ func (a *seqmetaMLWHClientAdapter) Close() error {
 }
 
 type seqmetaOptions struct {
-	dbPath           string
-	mlwhCachePath    string
-	mlwhSyncInterval time.Duration
+	dbPath        string
+	mlwhCachePath string
 }
 
 func newSeqmetaCommand() *cobra.Command {
@@ -307,7 +270,6 @@ func newSeqmetaCommand() *cobra.Command {
 
 	command.PersistentFlags().StringVar(&options.dbPath, "db", "seqmeta.db", "SQLite database path")
 	command.PersistentFlags().StringVar(&options.mlwhCachePath, "mlwh-cache", "", "MLWH cache SQLite path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
-	command.PersistentFlags().DurationVar(&options.mlwhSyncInterval, "mlwh-sync-interval", 0, "Periodic MLWH sync interval; zero disables background sync")
 
 	command.AddCommand(newSeqmetaDiffCommand(options))
 	command.AddCommand(newSeqmetaValidateCommand(options))
@@ -478,7 +440,6 @@ func newSeqmetaServeCommand(options *seqmetaOptions) *cobra.Command {
 
 			httpServer := &http.Server{Handler: seqmeta.NewServer(provider, store).Handler()}
 			ctx := commandContext(cmd)
-			startSeqmetaSyncLoop(ctx, provider, options.mlwhSyncInterval)
 
 			go func() {
 				<-ctx.Done()

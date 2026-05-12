@@ -74,26 +74,17 @@ func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySample
 }
 
 type mockSearchExpander struct {
-	expandCalls int
-	expandFunc  func(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
-	lanesFunc   func(context.Context, string, int, int) ([]mlwh.Lane, error)
+	expandCalls      int
+	searchValuesFunc func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
 }
 
-func (m *mockSearchExpander) ExpandIdentifier(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 	m.expandCalls++
-	if m.expandFunc == nil {
-		return nil, nil
+	if m.searchValuesFunc == nil {
+		return nil, nil, nil, nil
 	}
 
-	return m.expandFunc(ctx, kind, canonical)
-}
-
-func (m *mockSearchExpander) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
-	if m.lanesFunc == nil {
-		return nil, nil
-	}
-
-	return m.lanesFunc(ctx, sangerName, limit, offset)
+	return m.searchValuesFunc(ctx, kind, canonical)
 }
 
 func TestServerPostResults(t *testing.T) {
@@ -910,22 +901,17 @@ func TestServerGetResults(t *testing.T) {
 			reg.PipelineIdentifier = "pipe-4"
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "OTHER-SAMPLE"}
 		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-sibling-lane", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-5"
+			reg.Metadata = map[string]string{"seqmeta_lane": "67890_2#11"}
+		}))
 
 		expander := &mockSearchExpander{
-			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []mlwh.TaggedID{
-					{Kind: mlwh.KindStudyLimsID, Canonical: "6568"},
-					{Kind: mlwh.KindSangerSampleName, Canonical: "7607STDY14643771"},
-					{Kind: mlwh.KindRunID, Canonical: "12345"},
-				}, nil
-			},
-			lanesFunc: func(_ context.Context, sangerName string, _, _ int) ([]mlwh.Lane, error) {
-				convey.So(sangerName, convey.ShouldEqual, "7607STDY14643771")
-
-				return []mlwh.Lane{{IDRun: 12345, Position: 1, TagIndex: 10}}, nil
+				return []string{"7607STDY14643771"}, []string{"12345"}, []string{"12345_1#10"}, nil
 			},
 		}
 
@@ -946,6 +932,7 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(runKeys, convey.ShouldContain, "run-study-direct")
 		convey.So(runKeys, convey.ShouldContain, "run-study-sample")
 		convey.So(runKeys, convey.ShouldContain, "run-study-lane")
+		convey.So(runKeys, convey.ShouldNotContain, "run-study-sibling-lane")
 	})
 
 	convey.Convey("G1.3: Given repeated study search within 5 minutes, then mlwh ExpandIdentifier is called at most once", t, func() {
@@ -955,14 +942,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []mlwh.TaggedID{
-					{Kind: mlwh.KindStudyLimsID, Canonical: "6568"},
-					{Kind: mlwh.KindSangerSampleName, Canonical: "SANG-CACHE"},
-				}, nil
+				return []string{"SANG-CACHE"}, nil, nil, nil
 			},
 		}
 
@@ -986,20 +970,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
 				convey.So(canonical, convey.ShouldEqual, "Standard")
 
-				return []mlwh.TaggedID{
-					{Kind: mlwh.KindLibraryType, Canonical: "Standard"},
-					{Kind: mlwh.KindSangerSampleName, Canonical: "LIB-S1"},
-					{Kind: mlwh.KindRunID, Canonical: "100"},
-				}, nil
-			},
-			lanesFunc: func(_ context.Context, sangerName string, _, _ int) ([]mlwh.Lane, error) {
-				convey.So(sangerName, convey.ShouldEqual, "LIB-S1")
-
-				return []mlwh.Lane{{IDRun: 100, Position: 1, TagIndex: 1}}, nil
+				return []string{"LIB-S1"}, []string{"100"}, []string{"100_1#1"}, nil
 			},
 		}
 
@@ -1027,14 +1002,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindRunID)
 				convey.So(canonical, convey.ShouldEqual, "100")
 
-				return []mlwh.TaggedID{
-					{Kind: mlwh.KindRunID, Canonical: "100"},
-					{Kind: mlwh.KindSangerSampleName, Canonical: "RUN-S1"},
-				}, nil
+				return []string{"RUN-S1"}, []string{"100"}, nil, nil
 			},
 		}
 

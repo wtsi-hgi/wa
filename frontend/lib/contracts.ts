@@ -108,22 +108,6 @@ export type EnrichmentStudy = z.infer<typeof enrichmentStudySchema>;
 export const enrichmentStudiesSchema = z.array(enrichmentStudySchema);
 export type EnrichmentStudies = z.infer<typeof enrichmentStudiesSchema>;
 
-const legacyEnrichmentSampleInputSchema = z.object({
-    id_study_lims: z.string(),
-    id_sample_lims: z.string(),
-    sanger_id: z.string(),
-    sample_name: z.string(),
-    taxon_id: z.number(),
-    common_name: z.string(),
-    library_type: z.string(),
-    id_run: z.number(),
-    lane: z.number(),
-    tag_index: z.number(),
-    irods_path: z.string(),
-    study_accession_number: z.string(),
-    accession_number: z.string(),
-});
-
 const mlwhEnrichmentSampleInputSchema = z.object({
     id_study_lims: z.string(),
     id_sample_lims: z.string(),
@@ -135,9 +119,7 @@ const mlwhEnrichmentSampleInputSchema = z.object({
     accession_number: z.string(),
 });
 
-type EnrichmentSampleInput =
-    | z.infer<typeof legacyEnrichmentSampleInputSchema>
-    | z.infer<typeof mlwhEnrichmentSampleInputSchema>;
+type EnrichmentSampleInput = z.infer<typeof mlwhEnrichmentSampleInputSchema>;
 
 const normalizedEnrichmentSampleSchema = z.object({
     id_study_lims: z.string(),
@@ -162,24 +144,6 @@ type NormalizedEnrichmentSample = z.infer<
 function normalizeEnrichmentSample(
     sample: EnrichmentSampleInput,
 ): NormalizedEnrichmentSample {
-    if ("sample_name" in sample) {
-        return {
-            id_study_lims: sample.id_study_lims,
-            id_sample_lims: sample.id_sample_lims,
-            sanger_id: sample.sanger_id,
-            sample_name: sample.sample_name,
-            taxon_id: sample.taxon_id,
-            common_name: sample.common_name,
-            library_type: sample.library_type,
-            accession_number: sample.accession_number,
-            id_run: sample.id_run,
-            lane: sample.lane,
-            tag_index: sample.tag_index,
-            irods_path: sample.irods_path,
-            study_accession_number: sample.study_accession_number,
-        };
-    }
-
     return {
         id_study_lims: sample.id_study_lims,
         id_sample_lims: sample.id_sample_lims,
@@ -197,8 +161,7 @@ function normalizeEnrichmentSample(
     };
 }
 
-export const enrichmentSampleSchema = z
-    .union([legacyEnrichmentSampleInputSchema, mlwhEnrichmentSampleInputSchema])
+export const enrichmentSampleSchema = mlwhEnrichmentSampleInputSchema
     .transform(normalizeEnrichmentSample)
     .pipe(normalizedEnrichmentSampleSchema);
 export type EnrichmentSample = z.infer<typeof enrichmentSampleSchema>;
@@ -241,14 +204,7 @@ export type LaneDetail = z.infer<typeof laneDetailSchema>;
 
 const mlwhLibraryLinkInputSchema = z.object({
     pipeline_id_lims: z.string(),
-});
-
-const legacySampleDetailInputSchema = z.object({
-    sanger_id: z.string(),
-    sample_name: z.string(),
-    sample: enrichmentSampleSchema,
-    lanes: z.array(laneDetailSchema),
-    irods_paths: z.array(irodsPathSchema).optional(),
+    id_study_lims: z.string(),
 });
 
 const mlwhSampleDetailInputSchema = z.object({
@@ -271,40 +227,21 @@ const normalizedSampleDetailSchema = z.object({
 
 type NormalizedSampleDetail = z.infer<typeof normalizedSampleDetailSchema>;
 
-export const sampleDetailSchema = z
-    .union([legacySampleDetailInputSchema, mlwhSampleDetailInputSchema])
-    .transform((detail): NormalizedSampleDetail => {
-        if ("sanger_id" in detail && "sample_name" in detail) {
-            return {
-                sanger_id: detail.sanger_id,
-                sample_name: detail.sample_name,
-                sample: detail.sample,
-                lanes: detail.lanes,
-                irods_paths: detail.irods_paths,
-            };
-        }
-
-        return {
-            sanger_id: detail.sample.sanger_id,
-            sample_name: detail.sample.sample_name,
-            sample: detail.sample,
-            study: detail.study,
-            lanes: detail.lanes,
-            libraries: detail.libraries?.map((library) => ({
-                library_type: library.pipeline_id_lims,
-                id_study_lims: detail.sample.id_study_lims,
-            })),
-            irods_paths: detail.irods_paths,
-        };
-    })
+export const sampleDetailSchema = mlwhSampleDetailInputSchema
+    .transform((detail): NormalizedSampleDetail => ({
+        sanger_id: detail.sample.sanger_id,
+        sample_name: detail.sample.sample_name,
+        sample: detail.sample,
+        study: detail.study,
+        lanes: detail.lanes,
+        libraries: detail.libraries?.map((library) => ({
+            library_type: library.pipeline_id_lims,
+            id_study_lims: library.id_study_lims,
+        })),
+        irods_paths: detail.irods_paths,
+    }))
     .pipe(normalizedSampleDetailSchema);
 export type SampleDetail = z.infer<typeof sampleDetailSchema>;
-
-const legacyLibraryDetailInputSchema = z.object({
-    library_type: z.string(),
-    id_study_lims: z.string(),
-    samples: enrichmentSamplesSchema,
-});
 
 const mlwhLibraryDetailInputSchema = z.object({
     library: mlwhLibraryLinkInputSchema.optional(),
@@ -318,23 +255,13 @@ const normalizedLibraryDetailSchema = z.object({
 });
 
 function normalizeLibraryDetail(
-    detail:
-        | z.infer<typeof legacyLibraryDetailInputSchema>
-        | z.infer<typeof mlwhLibraryDetailInputSchema>,
+    detail: z.infer<typeof mlwhLibraryDetailInputSchema>,
     fallbackStudyLims?: string,
 ): {
     library_type: string;
     id_study_lims: string;
     samples: EnrichmentSamples;
 } {
-    if ("library_type" in detail) {
-        return {
-            library_type: detail.library_type,
-            id_study_lims: detail.id_study_lims,
-            samples: detail.samples,
-        };
-    }
-
     const firstSample = detail.samples[0];
 
     return {
@@ -345,16 +272,10 @@ function normalizeLibraryDetail(
     };
 }
 
-export const libraryDetailSchema = z
-    .union([legacyLibraryDetailInputSchema, mlwhLibraryDetailInputSchema])
+export const libraryDetailSchema = mlwhLibraryDetailInputSchema
     .transform((detail) => normalizeLibraryDetail(detail))
     .pipe(normalizedLibraryDetailSchema);
 export type LibraryDetail = z.infer<typeof libraryDetailSchema>;
-
-const legacyStudyDetailInputSchema = z.object({
-    study: enrichmentStudySchema,
-    library_details: z.array(legacyLibraryDetailInputSchema),
-});
 
 const mlwhStudyDetailInputSchema = z.object({
     study: enrichmentStudySchema,
@@ -366,8 +287,7 @@ const normalizedStudyDetailSchema = z.object({
     library_details: z.array(normalizedLibraryDetailSchema),
 });
 
-export const studyDetailSchema = z
-    .union([legacyStudyDetailInputSchema, mlwhStudyDetailInputSchema])
+export const studyDetailSchema = mlwhStudyDetailInputSchema
     .transform((detail) => ({
         study: detail.study,
         library_details: detail.library_details.map((libraryDetail) =>

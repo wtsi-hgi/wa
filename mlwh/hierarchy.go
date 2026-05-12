@@ -44,15 +44,16 @@ var (
 	samplesForStudyCacheSQL       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForLibraryTypeCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForLibraryCacheSQL     = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
-	samplesForRunCacheSQL         = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
+	samplesForRunCacheSQL         = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	findSamplesBySangerIDSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
 	findSamplesByIDSampleLimsSQL  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
 	findSamplesByAccessionSQL     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
 	findSamplesBySupplierSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesByLibraryTypeSQL   = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	findSamplesByLibraryTypeSQL   = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT 2`
 	librariesForStudySQL          = `SELECT pipeline_id_lims, COUNT(DISTINCT id_sample_tmp) FROM library_samples WHERE id_study_lims = ? GROUP BY pipeline_id_lims ORDER BY pipeline_id_lims LIMIT ? OFFSET ?`
 	runsForStudyCacheSQL          = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_study_lims = ? ORDER BY id_run LIMIT ? OFFSET ?`
 	lanesForSampleCacheSQL        = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
+	lanesForSampleStudyCacheSQL   = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? AND id_study_lims = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
 	irodsPathsForSampleCacheSQL   = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
 	irodsPathsForStudyCacheSQL    = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
 	studiesForSampleCacheSQL      = `SELECT DISTINCT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_lims`
@@ -307,32 +308,6 @@ func sampleMatchResult(raw string, samples []Sample) ([]Sample, error) {
 	}
 }
 
-func addSampleRunTags(ctx context.Context, client *Client, taggedIDSet map[TaggedID]struct{}, samples []Sample) error {
-	slices.SortFunc(samples, func(left, right Sample) int {
-		if left.Name < right.Name {
-			return -1
-		}
-		if left.Name > right.Name {
-			return 1
-		}
-
-		return 0
-	})
-
-	addSampleTags(taggedIDSet, samples)
-
-	for _, sample := range samples {
-		lanes, err := client.LanesForSample(ctx, sample.Name, MaxSamplesPerHop, 0)
-		if err != nil {
-			return err
-		}
-
-		addRunTags(taggedIDSet, lanes)
-	}
-
-	return nil
-}
-
 func addSampleTags(taggedIDSet map[TaggedID]struct{}, samples []Sample) {
 	for _, sample := range samples {
 		taggedIDSet[TaggedID{Kind: KindSangerSampleName, Canonical: sample.Name}] = struct{}{}
@@ -342,6 +317,183 @@ func addSampleTags(taggedIDSet map[TaggedID]struct{}, samples []Sample) {
 func addRunTags(taggedIDSet map[TaggedID]struct{}, lanes []Lane) {
 	for _, lane := range lanes {
 		taggedIDSet[TaggedID{Kind: KindRunID, Canonical: strconv.Itoa(lane.IDRun)}] = struct{}{}
+	}
+}
+
+type sampleStudyPair struct {
+	Sample      Sample
+	StudyLimsID string
+}
+
+type expandedSearchValues struct {
+	TaggedIDs []TaggedID
+	Samples   []string
+	Runs      []string
+	Lanes     []string
+}
+
+func sortSampleStudyPairs(pairs []sampleStudyPair) {
+	slices.SortFunc(pairs, func(left, right sampleStudyPair) int {
+		if left.Sample.Name < right.Sample.Name {
+			return -1
+		}
+		if left.Sample.Name > right.Sample.Name {
+			return 1
+		}
+		if left.StudyLimsID < right.StudyLimsID {
+			return -1
+		}
+		if left.StudyLimsID > right.StudyLimsID {
+			return 1
+		}
+		if left.Sample.IDSampleTmp < right.Sample.IDSampleTmp {
+			return -1
+		}
+		if left.Sample.IDSampleTmp > right.Sample.IDSampleTmp {
+			return 1
+		}
+
+		return 0
+	})
+}
+
+func appendUniqueString(values []string, seen map[string]struct{}, value string) []string {
+	if value == "" {
+		return values
+	}
+	if _, ok := seen[value]; ok {
+		return values
+	}
+
+	seen[value] = struct{}{}
+
+	return append(values, value)
+}
+
+func laneSearchValue(lane Lane) string {
+	if lane.Position <= 0 || lane.TagIndex <= 0 {
+		return ""
+	}
+
+	return strconv.Itoa(lane.IDRun) + "_" + strconv.Itoa(lane.Position) + "#" + strconv.Itoa(lane.TagIndex)
+}
+
+func (c *Client) lanesForSampleStudy(ctx context.Context, sampleID int64, studyLimsID string, limit, offset int) ([]Lane, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, lanesForSampleStudyCacheSQL, sampleID, studyLimsID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query lanes for sample study: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	lanes := make([]Lane, 0)
+	for rows.Next() {
+		lane := Lane{}
+		if err = rows.Scan(&lane.IDRun, &lane.Position, &lane.TagIndex); err != nil {
+			return nil, fmt.Errorf("%w: scan lanes for sample study: %w", ErrUpstreamImpaired, err)
+		}
+
+		lanes = append(lanes, lane)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query lanes for sample study: %w", ErrUpstreamImpaired, err)
+	}
+	if len(lanes) == 0 {
+		if syncErr := c.requireAnySyncState(ctx, syncTableIseqProductMetrics); syncErr != nil {
+			return nil, syncErr
+		}
+	}
+
+	return lanes, nil
+}
+
+func buildTaggedIDs(base TaggedID, sampleTags []TaggedID, runTagSet map[TaggedID]struct{}) []TaggedID {
+	taggedIDs := make([]TaggedID, 0, 1+len(sampleTags)+len(runTagSet))
+	taggedIDs = append(taggedIDs, base)
+	taggedIDs = append(taggedIDs, sampleTags...)
+	taggedIDs = append(taggedIDs, sortedTaggedIDs(runTagSet)...)
+
+	return taggedIDs
+}
+
+func (c *Client) expandSampleStudyPairs(ctx context.Context, base TaggedID, pairs []sampleStudyPair) (expandedSearchValues, error) {
+	sortSampleStudyPairs(pairs)
+
+	sampleTags := make([]TaggedID, 0, len(pairs))
+	sampleValues := make([]string, 0, len(pairs))
+	sampleSeen := make(map[string]struct{}, len(pairs))
+	runTagSet := make(map[TaggedID]struct{})
+	laneValues := make([]string, 0)
+	laneSeen := make(map[string]struct{})
+
+	for _, pair := range pairs {
+		sampleTags = append(sampleTags, TaggedID{Kind: KindSangerSampleName, Canonical: pair.Sample.Name})
+		sampleValues = appendUniqueString(sampleValues, sampleSeen, pair.Sample.Name)
+
+		lanes, err := c.lanesForSampleStudy(ctx, pair.Sample.IDSampleTmp, pair.StudyLimsID, MaxSamplesPerHop, 0)
+		if err != nil {
+			return expandedSearchValues{}, err
+		}
+
+		for _, lane := range lanes {
+			runTagSet[TaggedID{Kind: KindRunID, Canonical: strconv.Itoa(lane.IDRun)}] = struct{}{}
+			laneValues = appendUniqueString(laneValues, laneSeen, laneSearchValue(lane))
+		}
+	}
+
+	runTags := sortedTaggedIDs(runTagSet)
+	runValues := make([]string, 0, len(runTags))
+	for _, runTag := range runTags {
+		runValues = append(runValues, runTag.Canonical)
+	}
+
+	return expandedSearchValues{
+		TaggedIDs: buildTaggedIDs(base, sampleTags, runTagSet),
+		Samples:   sampleValues,
+		Runs:      runValues,
+		Lanes:     laneValues,
+	}, nil
+}
+
+func expandRunIdentifier(base TaggedID, canonical string, samples []Sample) expandedSearchValues {
+	taggedIDSet := make(map[TaggedID]struct{}, len(samples))
+	addSampleTags(taggedIDSet, samples)
+	taggedIDs := append([]TaggedID{base}, sortedTaggedIDs(taggedIDSet)...)
+	sampleValues := make([]string, 0, len(taggedIDs)-1)
+	for _, taggedID := range taggedIDs[1:] {
+		sampleValues = append(sampleValues, taggedID.Canonical)
+	}
+
+	return expandedSearchValues{
+		TaggedIDs: taggedIDs,
+		Samples:   sampleValues,
+		Runs:      []string{canonical},
+	}
+}
+
+func expandSampleIdentifier(base TaggedID, canonical string, lanes []Lane) expandedSearchValues {
+	runTagSet := make(map[TaggedID]struct{})
+	addRunTags(runTagSet, lanes)
+	taggedIDs := append([]TaggedID{base}, sortedTaggedIDs(runTagSet)...)
+	runValues := make([]string, 0, len(taggedIDs)-1)
+	for _, taggedID := range taggedIDs[1:] {
+		runValues = append(runValues, taggedID.Canonical)
+	}
+	laneValues := make([]string, 0, len(lanes))
+	laneSeen := make(map[string]struct{}, len(lanes))
+	for _, lane := range lanes {
+		laneValues = appendUniqueString(laneValues, laneSeen, laneSearchValue(lane))
+	}
+
+	return expandedSearchValues{
+		TaggedIDs: taggedIDs,
+		Samples:   []string{canonical},
+		Runs:      runValues,
+		Lanes:     laneValues,
 	}
 }
 
@@ -485,14 +637,25 @@ func (c *Client) SamplesForStudy(ctx context.Context, studyLimsID string, limit,
 		return nil, err
 	}
 	if studyExists {
-		if err := c.requireAnySyncState(ctx, syncTableSample, syncTableIseqFlowcell); err != nil {
+		summary, err := c.requiredSyncStateSummary(ctx, syncTableSample, syncTableIseqFlowcell)
+		if err != nil {
 			return nil, err
+		}
+		if summary.allAbsent {
+			return []Sample{}, neverSyncedReadErr()
+		}
+		if !summary.allPresent {
+			return []Sample{}, neverSyncedReadErr()
 		}
 
 		return []Sample{}, nil
 	}
 
 	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+		if errors.Is(err, ErrCacheNeverSynced) {
+			return []Sample{}, err
+		}
+
 		return nil, err
 	}
 
@@ -523,6 +686,10 @@ func (c *Client) SamplesForRun(ctx context.Context, idRun string, limit, offset 
 	}
 
 	if err = c.requireResolverSyncState(ctx, syncTableIseqProductMetrics); err != nil {
+		if errors.Is(err, ErrCacheNeverSynced) {
+			return []Sample{}, err
+		}
+
 		return nil, err
 	}
 
@@ -553,14 +720,25 @@ func (c *Client) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLim
 		return nil, err
 	}
 	if studyExists {
-		if err := c.requireAnySyncState(ctx, syncTableSample, syncTableIseqFlowcell); err != nil {
+		summary, err := c.requiredSyncStateSummary(ctx, syncTableSample, syncTableIseqFlowcell)
+		if err != nil {
 			return nil, err
+		}
+		if summary.allAbsent {
+			return []Sample{}, neverSyncedReadErr()
+		}
+		if !summary.allPresent {
+			return []Sample{}, neverSyncedReadErr()
 		}
 
 		return []Sample{}, nil
 	}
 
 	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+		if errors.Is(err, ErrCacheNeverSynced) {
+			return []Sample{}, err
+		}
+
 		return nil, err
 	}
 
@@ -586,8 +764,15 @@ func (c *Client) SamplesForLibraryType(ctx context.Context, pipelineIDLims strin
 		return samples, nil
 	}
 
-	if err := c.requireAnySyncState(ctx, syncTableSample, syncTableIseqFlowcell); err != nil {
+	summary, err := c.requiredSyncStateSummary(ctx, syncTableSample, syncTableIseqFlowcell)
+	if err != nil {
 		return nil, err
+	}
+	if summary.allAbsent {
+		return []Sample{}, neverSyncedReadErr()
+	}
+	if !summary.allPresent {
+		return []Sample{}, neverSyncedReadErr()
 	}
 
 	return []Sample{}, nil
@@ -598,6 +783,10 @@ func (c *Client) LibrariesForStudy(ctx context.Context, studyLimsID string, limi
 	if _, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				if errors.Is(syncErr, ErrCacheNeverSynced) {
+					return []Library{}, syncErr
+				}
+
 				return nil, syncErr
 			}
 
@@ -634,6 +823,10 @@ func (c *Client) LibrariesForStudy(ctx context.Context, studyLimsID string, limi
 	}
 	if len(libraries) == 0 {
 		if syncErr := c.requireAnySyncState(ctx, syncTableIseqFlowcell); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []Library{}, syncErr
+			}
+
 			return nil, syncErr
 		}
 	}
@@ -649,6 +842,10 @@ func (c *Client) RunsForStudy(ctx context.Context, studyLimsID string, limit, of
 	}
 	if !studyExists {
 		if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+			if errors.Is(err, ErrCacheNeverSynced) {
+				return []Run{}, err
+			}
+
 			return nil, err
 		}
 
@@ -680,6 +877,10 @@ func (c *Client) RunsForStudy(ctx context.Context, studyLimsID string, limit, of
 	}
 	if len(runs) == 0 {
 		if syncErr := c.requireAnySyncState(ctx, syncTableIseqProductMetrics); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []Run{}, syncErr
+			}
+
 			return nil, syncErr
 		}
 	}
@@ -693,6 +894,10 @@ func (c *Client) LanesForSample(ctx context.Context, sangerName string, limit, o
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			if syncErr := c.requireAnySyncState(ctx, syncTableSample); syncErr != nil {
+				if errors.Is(syncErr, ErrCacheNeverSynced) {
+					return []Lane{}, syncErr
+				}
+
 				return nil, syncErr
 			}
 
@@ -727,6 +932,10 @@ func (c *Client) LanesForSample(ctx context.Context, sangerName string, limit, o
 	}
 	if len(lanes) == 0 {
 		if syncErr := c.requireAnySyncState(ctx, syncTableIseqProductMetrics); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []Lane{}, syncErr
+			}
+
 			return nil, syncErr
 		}
 	}
@@ -740,6 +949,10 @@ func (c *Client) IRODSPathsForSample(ctx context.Context, sangerName string, lim
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			if syncErr := c.requireAnySyncState(ctx, syncTableSample); syncErr != nil {
+				if errors.Is(syncErr, ErrCacheNeverSynced) {
+					return []IRODSPath{}, syncErr
+				}
+
 				return nil, syncErr
 			}
 
@@ -755,6 +968,10 @@ func (c *Client) IRODSPathsForSample(ctx context.Context, sangerName string, lim
 	}
 	if len(paths) == 0 {
 		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []IRODSPath{}, syncErr
+			}
+
 			return nil, syncErr
 		}
 	}
@@ -768,6 +985,10 @@ func (c *Client) IRODSPathsForStudy(ctx context.Context, studyLimsID string, lim
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				if errors.Is(syncErr, ErrCacheNeverSynced) {
+					return []IRODSPath{}, syncErr
+				}
+
 				return nil, syncErr
 			}
 
@@ -783,6 +1004,10 @@ func (c *Client) IRODSPathsForStudy(ctx context.Context, studyLimsID string, lim
 	}
 	if len(paths) == 0 {
 		if syncErr := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); syncErr != nil {
+			if errors.Is(syncErr, ErrCacheNeverSynced) {
+				return []IRODSPath{}, syncErr
+			}
+
 			return nil, syncErr
 		}
 	}
@@ -873,68 +1098,76 @@ func (c *Client) ExpandIdentifier(ctx context.Context, kind IdentifierKind, cano
 		return taggedIDs, nil
 	}
 
-	taggedIDs, err := c.expandIdentifier(ctx, kind, canonical)
+	values, err := c.expandIdentifierValues(ctx, kind, canonical)
 	if err != nil {
 		return nil, err
 	}
 
-	c.setExpandIdentifierCache(kind, canonical, taggedIDs)
+	c.setExpandIdentifierCache(kind, canonical, values.TaggedIDs)
 
-	return taggedIDs, nil
+	return values.TaggedIDs, nil
 }
 
-func (c *Client) expandIdentifier(ctx context.Context, kind IdentifierKind, canonical string) ([]TaggedID, error) {
-	base := []TaggedID{{Kind: kind, Canonical: canonical}}
-	extra := make(map[TaggedID]struct{})
+// ExpandSearchValues expands a canonical identifier into sample, run, and lane search values.
+func (c *Client) ExpandSearchValues(ctx context.Context, kind IdentifierKind, canonical string) ([]string, []string, []string, error) {
+	values, err := c.expandIdentifierValues(ctx, kind, canonical)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return values.Samples, values.Runs, values.Lanes, nil
+}
+
+func (c *Client) expandIdentifierValues(ctx context.Context, kind IdentifierKind, canonical string) (expandedSearchValues, error) {
+	base := TaggedID{Kind: kind, Canonical: canonical}
 
 	switch kind {
 	case KindStudyLimsID:
 		samples, err := c.SamplesForStudy(ctx, canonical, MaxSamplesPerHop, 0)
 		if err != nil {
-			return nil, err
+			return expandedSearchValues{}, err
+		}
+		pairs := make([]sampleStudyPair, 0, len(samples))
+		for _, sample := range samples {
+			pairs = append(pairs, sampleStudyPair{Sample: sample, StudyLimsID: canonical})
 		}
 
-		if err = addSampleRunTags(ctx, c, extra, samples); err != nil {
-			return nil, err
-		}
+		return c.expandSampleStudyPairs(ctx, base, pairs)
 	case KindLibraryType:
 		studyLimsIDs, err := c.libraryStudyLimsIDs(ctx, canonical)
 		if err != nil {
-			return nil, err
+			return expandedSearchValues{}, err
 		}
 
-		samples := make([]Sample, 0)
+		pairs := make([]sampleStudyPair, 0)
 		for _, studyLimsID := range studyLimsIDs {
 			studySamples, sampleErr := c.SamplesForLibrary(ctx, canonical, studyLimsID, MaxSamplesPerHop, 0)
 			if sampleErr != nil {
-				return nil, sampleErr
+				return expandedSearchValues{}, sampleErr
 			}
-
-			samples = append(samples, studySamples...)
+			for _, sample := range studySamples {
+				pairs = append(pairs, sampleStudyPair{Sample: sample, StudyLimsID: studyLimsID})
+			}
 		}
 
-		if err = addSampleRunTags(ctx, c, extra, samples); err != nil {
-			return nil, err
-		}
+		return c.expandSampleStudyPairs(ctx, base, pairs)
 	case KindSangerSampleName:
 		lanes, err := c.LanesForSample(ctx, canonical, MaxSamplesPerHop, 0)
 		if err != nil {
-			return nil, err
+			return expandedSearchValues{}, err
 		}
 
-		addRunTags(extra, lanes)
+		return expandSampleIdentifier(base, canonical, lanes), nil
 	case KindRunID:
 		samples, err := c.SamplesForRun(ctx, canonical, MaxSamplesPerHop, 0)
 		if err != nil {
-			return nil, err
+			return expandedSearchValues{}, err
 		}
 
-		addSampleTags(extra, samples)
+		return expandRunIdentifier(base, canonical, samples), nil
 	default:
-		return nil, ErrUnsupportedIdentifier
+		return expandedSearchValues{}, ErrUnsupportedIdentifier
 	}
-
-	return append(base, sortedTaggedIDs(extra)...), nil
 }
 
 func (c *Client) libraryStudyLimsIDs(ctx context.Context, pipelineIDLims string) ([]string, error) {

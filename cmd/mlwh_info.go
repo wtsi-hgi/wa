@@ -43,6 +43,10 @@ const (
 )
 
 var openMLWHInfoClient = func(ctx context.Context, cfg mlwh.Config) (mlwhInfoClient, error) {
+	if strings.TrimSpace(cfg.DSN) == "" {
+		return mlwh.OpenCacheOnly(ctx, cfg.Cache)
+	}
+
 	return mlwh.Open(ctx, cfg)
 }
 
@@ -468,9 +472,8 @@ func newMLWHInfoCommand() *cobra.Command {
 			"for piping into jq.",
 			"",
 			"Reads from the local SQLite cache populated by 'wa mlwh sync'.",
-			"If the cache is cold for a needed table the resolver may attempt",
-			"to warm it from upstream MLWH; if that fails the command exits",
-			"with an error suggesting you run 'wa mlwh sync' first.",
+			"If the cache is cold for a needed table the command exits with",
+			"an error suggesting you run 'wa mlwh sync' first.",
 			"",
 			"Configuration is read from the environment (same variables as",
 			"'wa mlwh sync'). Use the persistent --env flag (or",
@@ -478,13 +481,10 @@ func newMLWHInfoCommand() *cobra.Command {
 			".env.<name> / .env.<name>.local files from the working directory",
 			"before resolving:",
 			"",
-			"  WA_MLWH_DSN             Required. Go MySQL DSN for the upstream",
-			"                          MLWH, e.g.",
-			"                          user@tcp(mlwh-db-ro:3435)/mlwarehouse.",
-			"                          Embedded passwords are rejected; use",
-			"                          WA_MLWH_PASSWORD instead.",
-			"  WA_MLWH_PASSWORD        Optional. Password injected into the DSN",
-			"                          at connect time.",
+			"  WA_MLWH_DSN             Optional for cache-backed reads; required",
+			"                          only when running 'wa mlwh sync'.",
+			"  WA_MLWH_PASSWORD        Optional. Password used with",
+			"                          WA_MLWH_DSN when syncing from upstream.",
 			"  WA_MLWH_CACHE_PATH      Optional. Path to the local SQLite cache",
 			"                          file. Defaults to <user-cache-dir>/wa/",
 			"                          mlwh.sqlite (created on first use).",

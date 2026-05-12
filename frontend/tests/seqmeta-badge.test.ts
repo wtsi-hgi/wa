@@ -325,9 +325,26 @@ describe("M1 result detail seqmeta enrichment", () => {
     it("does not render project rows even when legacy project fields are present", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
         const legacyEnrichment = enrichmentResultSchema.parse({
-            ...buildEnrichment(),
+            identifier: "SANG001",
+            type: "sanger_sample_id",
             graph: {
-                ...buildEnrichment().graph,
+                study: buildStudy(),
+                sample: {
+                    id_study_lims: "6568",
+                    id_sample_lims: "LIMS001",
+                    sanger_id: "SANG001",
+                    name: "Sample 1",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "RNA",
+                    accession_number: "ERS123456",
+                },
+                libraries: [
+                    {
+                        library_type: "RNA",
+                        id_study_lims: "6568",
+                    },
+                ],
                 project: {
                     id: 101,
                     name: "Project RNA",
@@ -339,6 +356,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                     },
                 ],
             },
+            partial: false,
         });
 
         render(

@@ -884,6 +884,11 @@ func (c *Client) sleepSyncRetry(ctx context.Context, delay time.Duration) error 
 }
 
 func withSyncWriteTx(ctx context.Context, cache Cache, apply func(*sql.Tx) error) error {
+	if sqliteCache, ok := cache.(*sqliteCache); ok && sqliteCache.writeMu != nil {
+		sqliteCache.writeMu.Lock()
+		defer sqliteCache.writeMu.Unlock()
+	}
+
 	tx, err := cache.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("mlwh: begin cache sync: %w", err)
@@ -2216,7 +2221,7 @@ func (c *Client) requireAnySyncState(ctx context.Context, tables ...string) erro
 	if err != nil {
 		return err
 	}
-	if summary.allAbsent {
+	if !summary.allPresent {
 		return neverSyncedReadErr()
 	}
 
@@ -2225,6 +2230,7 @@ func (c *Client) requireAnySyncState(ctx context.Context, tables ...string) erro
 
 type requiredSyncStateSummaryResult struct {
 	allAbsent bool
+	allPresent bool
 }
 
 func (c *Client) requiredSyncStateSummary(ctx context.Context, tables ...string) (requiredSyncStateSummaryResult, error) {
@@ -2242,7 +2248,7 @@ func (c *Client) requiredSyncStateSummary(ctx context.Context, tables ...string)
 	}
 
 	seen := make(map[string]struct{}, len(tables))
-	summary := requiredSyncStateSummaryResult{allAbsent: true}
+	summary := requiredSyncStateSummaryResult{allAbsent: true, allPresent: true}
 
 	for _, table := range tables {
 		if table == "" {
@@ -2259,6 +2265,8 @@ func (c *Client) requiredSyncStateSummary(ctx context.Context, tables ...string)
 		}
 		if state.Exists {
 			summary.allAbsent = false
+		} else {
+			summary.allPresent = false
 		}
 	}
 
