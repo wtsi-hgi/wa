@@ -73,8 +73,6 @@ var openSeqmetaClientFunc = func(ctx context.Context, cfg seqmetaMLWHConfig) (se
 	return &seqmetaMLWHClientAdapter{client: client}, nil
 }
 
-var seqmetaSyncTables = []string{"sample", "study", "iseq_flowcell"}
-
 type seqmetaMLWHConfig struct {
 	DSN           string
 	Password      string
@@ -335,8 +333,13 @@ func newSeqmetaDiffCommand(options *seqmetaOptions) *cobra.Command {
 				})
 			}
 
+			files, err := provider.GetSampleFiles(ctx, sampleID)
+			if err != nil {
+				return err
+			}
+
 			return store.WithLock(func() error {
-				prepared, err := seqmeta.PrepareDiffSampleFiles(ctx, provider, store, sampleID)
+				prepared, err := seqmeta.PrepareDiffSampleFilesForList(store, sampleID, files)
 				if err != nil {
 					return err
 				}

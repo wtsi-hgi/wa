@@ -77,6 +77,8 @@ var sampleSyncSourceColumns = []string{
 	"last_updated",
 }
 
+var sampleColdSyncSourceQueryForTest = sampleColdSyncSourceQuery()
+
 var sampleSyncSourceQueryForTest = sampleSyncSourceQuery()
 
 var studySyncSourceColumns = []string{
@@ -105,6 +107,31 @@ var studySyncSourceColumns = []string{
 }
 
 var studySyncSourceQueryForTest = `SELECT ` + studySelectColumns + `, last_updated FROM study WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_study_tmp`
+
+var iseqProductMetricsSyncSourceColumns = []string{
+	"id_iseq_product",
+	"id_iseq_pr_metrics_tmp",
+	"id_iseq_flowcell_tmp",
+	"id_run",
+	"position",
+	"tag_index",
+	"id_sample_tmp",
+	"id_study_lims",
+	"qc",
+	"qc_lib",
+	"qc_seq",
+	"last_updated",
+}
+
+var seqProductIRODSLocationsSyncSourceColumns = []string{
+	"id_seq_product_irods_locations_tmp",
+	"id_product",
+	"irods_root_collection",
+	"irods_data_relative_path",
+	"id_sample_tmp",
+	"id_study_lims",
+	"last_updated",
+}
 
 type syncStartRecord struct {
 	At          time.Time
@@ -184,12 +211,12 @@ func TestClientSyncFiveTableParallelReports(t *testing.T) {
 				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(t1)}},
 			},
 			syncTableIseqProductMetrics: {
-				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
-				rows:    [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
+				columns: iseqProductMetricsSyncSourceColumns,
+				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:    [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(t2)}},
+				columns: []string{"id_seq_product_irods_locations_tmp", "id_product", "irods_root_collection", "irods_data_relative_path", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t2)}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -214,6 +241,49 @@ func TestClientSyncFiveTableParallelReports(t *testing.T) {
 
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 2)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 1)
+	})
+}
+
+func TestClientSyncSQLiteAdvisoryLockAllowsParallelTableWrites(t *testing.T) {
+	convey.Convey("Given a file-backed SQLite cache and one source row per sync table", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		t1 := time.Date(2026, time.May, 12, 9, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(1), "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", int64(9606), "human", "desc-a", formatSyncTime(t1)}},
+			},
+			syncTableStudy: {
+				columns: studySyncSourceColumns,
+				rows:    [][]driver.Value{studyRowValues(10, "SQSCP", "5001", "study-uuid-1", "study-a", "acc-study-a", t1)},
+			},
+			syncTableIseqFlowcell: {
+				columns: []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(t1)}},
+			},
+			syncTableIseqProductMetrics: {
+				columns: iseqProductMetricsSyncSourceColumns,
+				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
+			},
+			syncTableSeqProductIRODSLocations: {
+				columns: []string{"id_seq_product_irods_locations_tmp", "id_product", "irods_root_collection", "irods_data_relative_path", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t1)}},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 5)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 1)
@@ -266,12 +336,12 @@ func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
 				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(t1)}},
 			},
 			syncTableIseqProductMetrics: {
-				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
-				rows:    [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
+				columns: iseqProductMetricsSyncSourceColumns,
+				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:    [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(t1)}},
+				columns: []string{"id_seq_product_irods_locations_tmp", "id_product", "irods_root_collection", "irods_data_relative_path", "id_sample_tmp", "id_study_lims", "last_updated"},
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t1)}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -318,12 +388,12 @@ func TestClientSyncStartsEachTableWithinOverlapWindow(t *testing.T) {
 				starts.records[syncTableIseqFlowcell] = record
 				starts.mu.Unlock()
 			}),
-			syncTableIseqProductMetrics: syncSingleRowSourcePlan([]string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"}, []driver.Value{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
+			syncTableIseqProductMetrics: syncSingleRowSourcePlan(iseqProductMetricsSyncSourceColumns, []driver.Value{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
 				starts.mu.Lock()
 				starts.records[syncTableIseqProductMetrics] = record
 				starts.mu.Unlock()
 			}),
-			syncTableSeqProductIRODSLocations: syncSingleRowSourcePlan([]string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"}, []driver.Value{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
+			syncTableSeqProductIRODSLocations: syncSingleRowSourcePlan([]string{"id_seq_product_irods_locations_tmp", "id_product", "irods_root_collection", "irods_data_relative_path", "id_sample_tmp", "id_study_lims", "last_updated"}, []driver.Value{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
 				starts.mu.Lock()
 				starts.records[syncTableSeqProductIRODSLocations] = record
 				starts.mu.Unlock()
@@ -540,14 +610,14 @@ func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
 				afterFirstRow:   func() { firstRowSeen <- syncTableIseqFlowcell },
 			},
 			syncTableIseqProductMetrics: {
-				columns:         []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
-				rows:            [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), now}, {int64(1002), int64(2002), int64(9002), int64(2), int64(1), int64(2), "5002", int64(1), int64(1), int64(1), now}},
+				columns:         iseqProductMetricsSyncSourceColumns,
+				rows:            [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), now}, {"product-1002", int64(3002), int64(2002), int64(9002), int64(2), int64(1), int64(2), "5002", int64(1), int64(1), int64(1), now}},
 				blockBeforeRow2: releaseRow2,
 				afterFirstRow:   func() { firstRowSeen <- syncTableIseqProductMetrics },
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns:         []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:            [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file-1.cram", int64(1), "5001", now}, {int64(1002), "/seq", "run/2", "/seq/run", "file-2.cram", int64(2), "5002", now}},
+				columns:         seqProductIRODSLocationsSyncSourceColumns,
+				rows:            [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file-1.cram", int64(1), "5001", now}, {int64(7002), "product-1002", "/seq", "run/file-2.cram", int64(2), "5002", now}},
 				blockBeforeRow2: releaseRow2,
 				afterFirstRow:   func() { firstRowSeen <- syncTableSeqProductIRODSLocations },
 			},
@@ -624,12 +694,12 @@ func TestClientSyncSampleColdCachePopulatesMirrorsAndWatermark(t *testing.T) {
 		t2 := t1.Add(10 * time.Minute)
 		t3 := t2.Add(10 * time.Minute)
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
-			WithArgs(formatSyncTime(time.Time{})).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleColdSyncSourceQueryForTest)).
+			WithArgs(sampleColdInitialID).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
-				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", 9606, "human", "desc-a", formatSyncTime(t1)).
-				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", 9606, "human", "desc-b", formatSyncTime(t2)).
-				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", formatSyncTime(t3)))
+				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", "supplier-a", "acc-a", "donor-a", 9606, "human", "desc-a", formatSyncTime(t3)).
+				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", "acc-b", "donor-b", 9606, "human", "desc-b", formatSyncTime(t1)).
+				AddRow(3, "SQSCP", "103", "sample-uuid-3", "sample-c", "sanger-c", "supplier-c", "acc-c", "donor-c", 9606, "human", "desc-c", formatSyncTime(t2)))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sourceDB}
 
@@ -670,8 +740,8 @@ func TestClientSyncSampleColdCacheToleratesNullableTextFields(t *testing.T) {
 
 		timestamp := time.Date(2026, time.May, 10, 9, 30, 0, 0, time.UTC)
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSyncSourceQueryForTest)).
-			WithArgs(formatSyncTime(time.Time{})).
+		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleColdSyncSourceQueryForTest)).
+			WithArgs(sampleColdInitialID).
 			WillReturnRows(sqlmock.NewRows(sampleSyncSourceColumns).
 				AddRow(1, "SQSCP", "101", "sample-uuid-1", "sample-a", "sanger-a", nil, "acc-a", "donor-a", 9606, "human", "desc-a", formatSyncTime(timestamp)).
 				AddRow(2, "SQSCP", "102", "sample-uuid-2", "sample-b", "sanger-b", "supplier-b", nil, nil, nil, nil, nil, formatSyncTime(timestamp.Add(time.Minute))))
@@ -884,11 +954,11 @@ func TestClientSyncConstraintViolationNamesOffendingLibrarySampleRow(t *testing.
 				rows:    [][]driver.Value{{"Standard", int64(31), "", formatSyncTime(t1)}},
 			},
 			syncTableIseqProductMetrics: {
-				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
+				columns: iseqProductMetricsSyncSourceColumns,
 				rows:    nil,
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
+				columns: seqProductIRODSLocationsSyncSourceColumns,
 				rows:    nil,
 			},
 		})
@@ -1073,12 +1143,85 @@ func TestClientSyncSamplePersistsResumeCursorForLastCommittedBatch(t *testing.T)
 
 		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
 
-		expectedCursor := formatSyncTime(base.Add(999*time.Second)) + "\t1000"
+		expectedCursor := "id_sample_tmp_desc\t1000"
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(errors.Is(err, driver.ErrBadConn), convey.ShouldBeTrue)
 		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableSample), convey.ShouldEqual, expectedCursor)
 		convey.So(readSyncHighWater(t, cache.DB(), syncTableSample), convey.ShouldHappenOnOrBetween, base.Add(999*time.Second), base.Add(999*time.Second))
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 1000)
+	})
+}
+
+func TestClientSyncSampleColdLoadUsesIDSampleTmpKeysetQuery(t *testing.T) {
+	convey.Convey("Given an empty sample cache", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		var capturedQuery string
+		var capturedArgs []driver.NamedValue
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns: sampleSyncSourceColumns,
+				rows:    nil,
+				querySink: func(query string, args []driver.NamedValue) {
+					capturedQuery = query
+					capturedArgs = append([]driver.NamedValue(nil), args...)
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(capturedQuery, convey.ShouldContainSubstring, `id_sample_tmp < ?`)
+		convey.So(capturedQuery, convey.ShouldContainSubstring, `ORDER BY id_sample_tmp DESC`)
+		convey.So(capturedQuery, convey.ShouldNotContainSubstring, `last_updated >= ?`)
+		convey.So(capturedQuery, convey.ShouldNotContainSubstring, `ORDER BY last_updated`)
+		convey.So(namedValueOrdinals(capturedArgs), convey.ShouldResemble, []any{sampleColdInitialID})
+	})
+}
+
+func TestClientSyncSampleColdLoadRestartsLegacyLastUpdatedCursorWithIDKeyset(t *testing.T) {
+	convey.Convey("Given a cold sample sync state left behind with a legacy last_updated resume cursor", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		legacyHighWater := time.Date(2021, time.December, 1, 12, 0, 0, 0, time.UTC)
+		legacyCursor := formatSyncTime(legacyHighWater) + "\t9419243"
+		convey.So(writeSyncState(context.Background(), cache.DB(), "sqlite", syncTableSample, legacyHighWater, &legacyCursor, false), convey.ShouldBeNil)
+
+		var capturedQuery string
+		var capturedArgs []driver.NamedValue
+		base := time.Date(2020, time.January, 1, 9, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {
+				columns:  sampleSyncSourceColumns,
+				rows:     sampleSyncRowsForRange(1, 1000, base, nil),
+				finalErr: driver.ErrBadConn,
+				querySink: func(query string, args []driver.NamedValue) {
+					capturedQuery = query
+					capturedArgs = append([]driver.NamedValue(nil), args...)
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSample)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, driver.ErrBadConn), convey.ShouldBeTrue)
+		convey.So(capturedQuery, convey.ShouldContainSubstring, `id_sample_tmp < ?`)
+		convey.So(capturedQuery, convey.ShouldContainSubstring, `ORDER BY id_sample_tmp DESC`)
+		convey.So(capturedQuery, convey.ShouldNotContainSubstring, `ORDER BY last_updated`)
+		convey.So(namedValueOrdinals(capturedArgs), convey.ShouldResemble, []any{sampleColdInitialID})
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableSample), convey.ShouldEqual, "id_sample_tmp_desc\t1000")
+		convey.So(readSyncHighWater(t, cache.DB(), syncTableSample), convey.ShouldHappenOnOrBetween, legacyHighWater, legacyHighWater)
 	})
 }
 
@@ -1103,7 +1246,7 @@ func TestClientSyncSampleResumesFromStrictKeysetCursor(t *testing.T) {
 		}
 
 		cursorTime := base.Add(999 * time.Second)
-		seedSyncStateWithCursor(t, cache.DB(), syncTableSample, cursorTime, formatSyncTime(cursorTime)+"\t1000")
+		seedSyncStateWithCursor(t, cache.DB(), syncTableSample, cursorTime, "last_updated\t"+formatSyncTime(cursorTime)+"\t1000")
 
 		sourceDB, sourceMock, err := sqlmock.New()
 		convey.So(err, convey.ShouldBeNil)
@@ -1180,6 +1323,88 @@ func TestClientSyncIseqFlowcellUsesFourColumnResumeCursor(t *testing.T) {
 			"pipe-2000",
 			int64(2000),
 			"study-2000",
+		})
+	})
+}
+
+func TestClientSyncIseqProductMetricsKeepsProductKeyAndUsesMetricsTmpCursor(t *testing.T) {
+	convey.Convey("Given 1000 iseq_product_metrics rows with distinct product keys and tmp ids followed by driver.ErrBadConn", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 12, 10, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableIseqProductMetrics: {
+				columns:  iseqProductMetricsSyncSourceColumns,
+				rows:     iseqProductMetricsSyncRowsForRange(1, 1000, base, 9000),
+				finalErr: driver.ErrBadConn,
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		expectedTime := base.Add(999 * time.Second)
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, driver.ErrBadConn), convey.ShouldBeTrue)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableIseqProductMetrics), convey.ShouldEqual, formatSyncTime(expectedTime)+"\t1000")
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-10000"), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "1000"), convey.ShouldEqual, 0)
+	})
+}
+
+func TestClientSyncSeqProductIRODSLocationsUsesLocationTmpCursor(t *testing.T) {
+	convey.Convey("Given 1000 seq_product_irods_locations rows with distinct product keys and location tmp ids followed by driver.ErrBadConn", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 12, 10, 30, 0, 0, time.UTC)
+		firstSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns:  seqProductIRODSLocationsSyncSourceColumns,
+				rows:     seqProductIRODSLocationsSyncRowsForRange(1, 1000, base, 9000),
+				finalErr: driver.ErrBadConn,
+			},
+		})
+		defer func() { _ = firstSource.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: firstSource, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		expectedTime := base.Add(999 * time.Second)
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, driver.ErrBadConn), convey.ShouldBeTrue)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableSeqProductIRODSLocations), convey.ShouldEqual, formatSyncTime(expectedTime)+"\t1000")
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "product-10000"), convey.ShouldEqual, 1)
+
+		var capturedQuery string
+		var capturedArgs []driver.NamedValue
+		secondSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    nil,
+				querySink: func(query string, args []driver.NamedValue) {
+					capturedQuery = query
+					capturedArgs = append([]driver.NamedValue(nil), args...)
+				},
+			},
+		})
+		defer func() { _ = secondSource.Close() }()
+
+		client.syncSource = secondSource
+
+		reports, resumeErr := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.So(resumeErr, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(capturedQuery, convey.ShouldContainSubstring, `spi.id_seq_product_irods_locations_tmp > ?`)
+		convey.So(namedValueOrdinals(capturedArgs), convey.ShouldResemble, []any{
+			formatSyncTime(expectedTime),
+			formatSyncTime(expectedTime),
+			int64(1000),
 		})
 	})
 }
@@ -1336,12 +1561,12 @@ func TestClientSyncNonSampleTablesNeverSetIndexesDropped(t *testing.T) {
 				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(base.Add(time.Minute))}},
 			},
 			syncTableIseqProductMetrics: {
-				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
-				rows:    [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(base.Add(2 * time.Minute))}},
+				columns: iseqProductMetricsSyncSourceColumns,
+				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(base.Add(2 * time.Minute))}},
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:    [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(base.Add(3 * time.Minute))}},
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(base.Add(3 * time.Minute))}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -1616,12 +1841,12 @@ func TestClientSyncTwoTablesReconnectIndependently(t *testing.T) {
 				rows:    [][]driver.Value{{"Standard", int64(1), "5001", formatSyncTime(base.Add(2 * time.Second))}},
 			},
 			syncTableIseqProductMetrics: {
-				columns: []string{"id_iseq_product", "id_iseq_flowcell_tmp", "id_run", "position", "tag_index", "id_sample_tmp", "id_study_lims", "qc", "qc_lib", "qc_seq", "last_updated"},
-				rows:    [][]driver.Value{{int64(1001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(base.Add(3 * time.Second))}},
+				columns: iseqProductMetricsSyncSourceColumns,
+				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(base.Add(3 * time.Second))}},
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns: []string{"id_iseq_product", "irods_root_collection", "irods_data_relative_path", "irods_collection", "irods_file_name", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:    [][]driver.Value{{int64(1001), "/seq", "run/1", "/seq/run", "file.cram", int64(1), "5001", formatSyncTime(base.Add(4 * time.Second))}},
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(base.Add(4 * time.Second))}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -2064,6 +2289,7 @@ func (d *recordingSQLiteDriver) Open(name string) (driver.Conn, error) {
 }
 
 func (c *recordingSQLiteConn) Begin() (driver.Tx, error) {
+	//nolint:staticcheck // Required to satisfy the legacy driver.Conn interface in this test wrapper.
 	tx, err := c.Conn.Begin()
 	if err != nil || c.observer == nil {
 		return tx, err
@@ -2596,6 +2822,45 @@ func flowcellSyncRowsForRange(startID, endID int64, base time.Time) [][]driver.V
 	return rows
 }
 
+func iseqProductMetricsSyncRowsForRange(startID, endID int64, base time.Time, productOffset int64) [][]driver.Value {
+	rows := make([][]driver.Value, 0, endID-startID+1)
+	for id := startID; id <= endID; id++ {
+		rows = append(rows, []driver.Value{
+			fmt.Sprintf("product-%d", id+productOffset),
+			id,
+			id + 2000,
+			int64(9000 + id),
+			int64(1),
+			int64(1),
+			id + 100,
+			fmt.Sprintf("study-%d", id),
+			int64(1),
+			int64(1),
+			int64(1),
+			formatSyncTime(base.Add(time.Duration(id-startID) * time.Second)),
+		})
+	}
+
+	return rows
+}
+
+func seqProductIRODSLocationsSyncRowsForRange(startID, endID int64, base time.Time, productOffset int64) [][]driver.Value {
+	rows := make([][]driver.Value, 0, endID-startID+1)
+	for id := startID; id <= endID; id++ {
+		rows = append(rows, []driver.Value{
+			id,
+			fmt.Sprintf("product-%d", id+productOffset),
+			"/seq",
+			fmt.Sprintf("run/%d.cram", id),
+			id + 100,
+			fmt.Sprintf("study-%d", id),
+			formatSyncTime(base.Add(time.Duration(id-startID) * time.Second)),
+		})
+	}
+
+	return rows
+}
+
 func sampleRowsFromDriverValues(columns []string, values [][]driver.Value) *sqlmock.Rows {
 	rows := sqlmock.NewRows(columns)
 	for _, row := range values {
@@ -2780,6 +3045,9 @@ func (r *syncTestRows) Next(dest []driver.Value) error {
 	}
 
 	row := r.plan.rows[r.index]
+	if len(row) != len(dest) {
+		return fmt.Errorf("sync test row has %d values for %d columns", len(row), len(dest))
+	}
 	copy(dest, row)
 	r.index++
 	if r.index == 1 && r.plan.afterFirstRow != nil {

@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -40,8 +41,10 @@ import (
 // upstream "MLWH" SQLite database whose table shapes faithfully match the real
 // Sanger MLWH columns (in particular: the upstream `sample` table has NO
 // `id_study_lims` column; `iseq_flowcell` links to `study` via
-// `id_study_tmp` rather than carrying `id_study_lims`; and the study table
-// uses the current `ega_dac_accession_number` spelling).
+// `id_study_tmp` rather than carrying `id_study_lims`; product metric
+// watermarks are `last_changed`; iRODS locations key products through
+// `id_product`; and the study table uses the current
+// `ega_dac_accession_number` spelling).
 // This regression test would have caught the production bug where
 // `wa mlwh sync --env development` failed with
 // `Unknown column 'id_study_lims' in 'field list'` because the previous sync
@@ -84,6 +87,15 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 1)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 1)
+
+			paths, pathErr := client.IRODSPathsForSample(context.Background(), "sample-a", 100, 0)
+			convey.So(pathErr, convey.ShouldBeNil)
+			convey.So(paths, convey.ShouldResemble, []IRODSPath{{
+				IDProduct:  "product-1001",
+				Collection: "/seq/run",
+				DataObject: "1",
+				IRODSPath:  "/seq/run/1",
+			}})
 
 			var studyLimsForSample1 string
 			convey.So(cache.DB().QueryRow(`SELECT id_study_lims FROM library_samples WHERE id_sample_tmp = 1`).Scan(&studyLimsForSample1), convey.ShouldBeNil)
@@ -249,6 +261,43 @@ func TestClientSyncProductTablesRealSourceSkipRowsWithoutSQSCPStudy(t *testing.T
 	})
 }
 
+func TestClientSyncProductMetricsRealSourceNormalizesNullableNumericFields(t *testing.T) {
+	convey.Convey("B7.3: Given a real-source product metric row with nullable lane and QC fields", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		seedRealMLWHStudyRow(t, source, 40, "SQSCP", "8001", "uuid-study-40", "Study Forty", "acc-st-40", time.Date(2026, time.May, 7, 8, 5, 0, 0, time.UTC))
+		seedRealMLWHFlowcellRow(t, source, 400, "Standard", 41, 40, time.Date(2026, time.May, 7, 9, 5, 0, 0, time.UTC))
+		_, err := source.Exec(
+			`INSERT INTO iseq_product_metrics(id_iseq_pr_metrics_tmp, id_iseq_product, last_changed, id_iseq_flowcell_tmp, id_run, position, tag_index, qc, qc_lib, qc_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			4001,
+			"product-4001",
+			formatSyncTime(time.Date(2026, time.May, 7, 9, 10, 0, 0, time.UTC)),
+			400,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 1)
+
+		var idRun, position, tagIndex, qc, qcLib, qcSeq int
+		convey.So(cache.DB().QueryRow(`SELECT id_run, position, tag_index, qc, qc_lib, qc_seq FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, "product-4001").Scan(&idRun, &position, &tagIndex, &qc, &qcLib, &qcSeq), convey.ShouldBeNil)
+		convey.So([]int{idRun, position, tagIndex, qc, qcLib, qcSeq}, convey.ShouldResemble, []int{0, 0, 0, 0, 0, 0})
+	})
+}
+
 func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -316,24 +365,25 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 	)`)
 
 	mustExec(t, db, `CREATE TABLE iseq_product_metrics (
-		id_iseq_product      INTEGER PRIMARY KEY,
-		id_iseq_flowcell_tmp INTEGER NOT NULL,
-		id_run               INTEGER NOT NULL,
-		position             INTEGER NOT NULL,
-		tag_index            INTEGER NOT NULL,
-		qc                   INTEGER NOT NULL,
-		qc_lib               INTEGER NOT NULL,
-		qc_seq               INTEGER NOT NULL,
-		last_updated         TEXT NOT NULL
+		id_iseq_pr_metrics_tmp INTEGER PRIMARY KEY,
+		id_iseq_product        TEXT NOT NULL,
+		last_changed           TEXT NOT NULL,
+		id_iseq_flowcell_tmp INTEGER,
+		id_run               INTEGER,
+		position             INTEGER,
+		tag_index            INTEGER,
+		qc                   INTEGER,
+		qc_lib               INTEGER,
+		qc_seq               INTEGER
 	)`)
 
 	mustExec(t, db, `CREATE TABLE seq_product_irods_locations (
-		id_iseq_product          INTEGER PRIMARY KEY,
+		id_seq_product_irods_locations_tmp INTEGER PRIMARY KEY,
+		last_changed            TEXT NOT NULL,
+		id_product              TEXT NOT NULL,
 		irods_root_collection    TEXT NOT NULL,
 		irods_data_relative_path TEXT NOT NULL,
-		irods_collection         TEXT NOT NULL,
-		irods_file_name          TEXT NOT NULL,
-		last_updated             TEXT NOT NULL
+		irods_secondary_data_relative_path TEXT
 	)`)
 
 	return db
@@ -379,8 +429,10 @@ func seedRealMLWHProductMetricRow(t *testing.T, db *sql.DB, idProduct int64, idF
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO iseq_product_metrics(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO iseq_product_metrics(id_iseq_pr_metrics_tmp, id_iseq_product, last_changed, id_iseq_flowcell_tmp, id_run, position, tag_index, qc, qc_lib, qc_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		idProduct,
+		fmt.Sprintf("product-%d", idProduct),
+		formatSyncTime(lastUpdated),
 		idFlowcellTmp,
 		idRun,
 		position,
@@ -388,7 +440,6 @@ func seedRealMLWHProductMetricRow(t *testing.T, db *sql.DB, idProduct int64, idF
 		qc,
 		qcLib,
 		qcSeq,
-		formatSyncTime(lastUpdated),
 	)
 	if err != nil {
 		t.Fatalf("seedRealMLWHProductMetricRow: %v", err)
@@ -397,15 +448,17 @@ func seedRealMLWHProductMetricRow(t *testing.T, db *sql.DB, idProduct int64, idF
 
 func seedRealMLWHIRODSLocationRow(t *testing.T, db *sql.DB, idProduct int64, rootCollection, relativePath, collection, fileName string, lastUpdated time.Time) {
 	t.Helper()
+	_ = collection
+	_ = fileName
 
 	_, err := db.Exec(
-		`INSERT INTO seq_product_irods_locations(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO seq_product_irods_locations(id_seq_product_irods_locations_tmp, last_changed, id_product, irods_root_collection, irods_data_relative_path, irods_secondary_data_relative_path) VALUES (?, ?, ?, ?, ?, ?)`,
 		idProduct,
+		formatSyncTime(lastUpdated),
+		fmt.Sprintf("product-%d", idProduct),
 		rootCollection,
 		relativePath,
-		collection,
-		fileName,
-		formatSyncTime(lastUpdated),
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("seedRealMLWHIRODSLocationRow: %v", err)

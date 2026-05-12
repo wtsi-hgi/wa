@@ -62,15 +62,17 @@ func TestLiveMLWHSyncQueriesMatchDevelopmentSchema(t *testing.T) {
 	}
 
 	convey.Convey("Given live MLWH credentials from the development env path", t, func() {
-		err = explainLiveQuery(ctx, sourceDB, `EXPLAIN `+sampleSyncSourceQuery(), formatSyncTime(time.Now().UTC()))
-		convey.So(err, convey.ShouldBeNil)
+		queries, queryErr := liveMLWHColdSyncPerfQueries()
+		convey.So(queryErr, convey.ShouldBeNil)
 
-		err = explainLiveQuery(ctx, sourceDB, `EXPLAIN `+flowcellSyncSourceQuery(), formatSyncTime(time.Now().UTC()))
-		convey.So(err, convey.ShouldBeNil)
+		for _, query := range queries {
+			err = explainLiveQuery(ctx, sourceDB, `EXPLAIN `+query.query, query.args...)
+			convey.So(err, convey.ShouldBeNil)
+		}
 
 		err = explainLiveQuery(ctx, sourceDB, `EXPLAIN SELECT `+sampleSelectColumns+` FROM sample WHERE uuid_sample_lims = ? LIMIT 1`, "00000000-0000-0000-0000-000000000000")
 
-		convey.Convey("when the sync and cold-cache sample queries are explained against the live source, then they compile without schema errors", func() {
+		convey.Convey("when every production sync source query and the cold-cache sample query are explained against the live source, then they compile without schema errors", func() {
 			convey.So(err, convey.ShouldBeNil)
 		})
 	})
@@ -184,7 +186,7 @@ type liveMLWHPerfQuery struct {
 }
 
 func liveMLWHColdSyncPerfQueries() ([]liveMLWHPerfQuery, error) {
-	sampleQuery, sampleArgs, err := sampleSyncQuery(syncStateRecord{})
+	sampleQuery, sampleArgs, _, err := sampleSyncQuery(syncStateRecord{})
 	if err != nil {
 		return nil, err
 	}

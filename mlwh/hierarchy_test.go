@@ -54,8 +54,6 @@ var (
 		 INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims
 		 WHERE study_mirror.id_lims = 'SQSCP' AND library_samples.id_sample_tmp IN (?,?,?)
 		 ORDER BY library_samples.id_sample_tmp, study_mirror.id_study_lims, library_samples.pipeline_id_lims`
-	sampleByNameCacheQuery            = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`
-	samplesForRunQuery                = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ? ORDER BY sample_mirror.name LIMIT ? OFFSET ?`
 	samplesForLibraryCacheQuery       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForLibraryStudyParentQuery = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
 )
@@ -64,8 +62,8 @@ const (
 	runsForStudyQuery        = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_study_lims = ? ORDER BY id_run LIMIT ? OFFSET ?`
 	lanesForSampleQuery      = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
 	lanesForSampleStudyQuery = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? AND id_study_lims = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
-	irodsPathsForSampleQuery = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
-	irodsPathsForStudyQuery  = `SELECT CAST(id_iseq_product AS TEXT), irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
+	irodsPathsForSampleQuery = `SELECT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
+	irodsPathsForStudyQuery  = `SELECT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
 )
 
 func TestSamplesForStudyWarmCacheUsesJoinOnly(t *testing.T) {
@@ -612,8 +610,8 @@ func TestIRODSPathsForSampleReturnsJoinedPaths(t *testing.T) {
 		defer cleanup()
 
 		seedHierarchySample(t, client.cache.DB(), 31, "6568", "7607STDY14643771")
-		seedIRODSLocationMirrorRow(t, client.cache.DB(), 4001, "/seq/1234", "1234_1#1.cram", 31, "6568")
-		seedIRODSLocationMirrorRow(t, client.cache.DB(), 4002, "/seq/1234", "1234_1#2.cram", 31, "6568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "4001", "/seq/1234", "1234_1#1.cram", 31, "6568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "4002", "/seq/1234", "1234_1#2.cram", 31, "6568")
 
 		paths, err := client.IRODSPathsForSample(context.Background(), "7607STDY14643771", 100, 0)
 
@@ -694,8 +692,8 @@ func TestIRODSPathsForStudyReturnsJoinedPaths(t *testing.T) {
 		defer cleanup()
 
 		seedHierarchyStudy(t, client.cache.DB(), 71, "6568")
-		seedIRODSLocationMirrorRow(t, client.cache.DB(), 5001, "/seq/5678", "5678_1#1.cram", 91, "6568")
-		seedIRODSLocationMirrorRow(t, client.cache.DB(), 5002, "/seq/5678", "5678_1#2.cram", 92, "6568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "5001", "/seq/5678", "5678_1#1.cram", 91, "6568")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "5002", "/seq/5678", "5678_1#2.cram", 92, "6568")
 
 		paths, err := client.IRODSPathsForStudy(context.Background(), "6568", 100, 0)
 
@@ -721,7 +719,7 @@ func TestHierarchyReadsNeverOpenWriteTransactions(t *testing.T) {
 		seedHierarchySample(t, cache.DB(), 1, "6568", "S1")
 		seedLibrarySample(t, cache.DB(), "Standard", 1, "6568")
 		seedIseqProductMetricsMirrorRow(t, cache.DB(), 1001, 1, 12345, 1, 0, "6568")
-		seedIRODSLocationMirrorRow(t, cache.DB(), 1001, "/seq/1234", "1234_1#1.cram", 1, "6568")
+		seedIRODSLocationMirrorRow(t, cache.DB(), "1001", "/seq/1234", "1234_1#1.cram", 1, "6568")
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 		observer.Reset()
@@ -1324,7 +1322,7 @@ func seedIseqProductMetricsMirrorRow(t *testing.T, db *sql.DB, idIseqProduct, id
 	}
 }
 
-func seedIRODSLocationMirrorRow(t *testing.T, db *sql.DB, idIseqProduct int64, collection, fileName string, idSampleTmp int64, idStudyLims string) {
+func seedIRODSLocationMirrorRow(t *testing.T, db *sql.DB, idIseqProduct string, collection, fileName string, idSampleTmp int64, idStudyLims string) {
 	t.Helper()
 
 	_, err := db.Exec(

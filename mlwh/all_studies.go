@@ -28,7 +28,6 @@ package mlwh
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 )
 
@@ -177,17 +176,4 @@ func (c *Client) queryAllStudiesCache(ctx context.Context, db *sql.DB, limit, of
 	}
 
 	return studies, nil
-}
-
-func (c *Client) studyCacheWarm(ctx context.Context, db *sql.DB) (bool, error) {
-	var found int
-	err := db.QueryRowContext(ctx, `SELECT 1 FROM study_mirror WHERE id_lims = 'SQSCP' LIMIT 1`).Scan(&found)
-	if err == nil {
-		return true, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("%w: query study cache warmth: %w", ErrUpstreamImpaired, err)
-	}
-
-	return c.hasSyncState(ctx, syncTableStudy)
 }

@@ -204,20 +204,19 @@ func resolveMySQLDSN(cfg CacheConfig) (string, error) {
 
 // Client owns the cache connections used by sync and read paths.
 type Client struct {
-	cache                   Cache
-	cacheReader             *sql.DB
-	syncSource              Querier
-	sourceDB                *sql.DB
-	syncMu                  *sync.Mutex
-	expandCacheMu           *sync.RWMutex
-	expandCache             map[expandIdentifierCacheKey]expandIdentifierCacheEntry
-	now                     func() time.Time
-	syncRunner              func(context.Context, *sql.Tx, []string) error
-	syncReportWriter        io.Writer
-	syncRetryWriter         io.Writer
-	syncRetrySleep          func(context.Context, time.Duration) error
-	mySQLLockTimeoutSeconds int
-	disableSyncLock         bool
+	cache            Cache
+	cacheReader      *sql.DB
+	syncSource       Querier
+	sourceDB         *sql.DB
+	syncMu           *sync.Mutex
+	expandCacheMu    *sync.RWMutex
+	expandCache      map[expandIdentifierCacheKey]expandIdentifierCacheEntry
+	now              func() time.Time
+	syncRunner       func(context.Context, *sql.Tx, []string) error
+	syncReportWriter io.Writer
+	syncRetryWriter  io.Writer
+	syncRetrySleep   func(context.Context, time.Duration) error
+	disableSyncLock  bool
 }
 
 // ReadDB exposes the client's read-only cache handle.
@@ -302,6 +301,14 @@ func (c *sqliteCache) acquireSyncLock(ctx context.Context) (func() error, error)
 	}
 	lockDB.SetMaxOpenConns(1)
 	lockDB.SetMaxIdleConns(1)
+	if err = ensureSQLiteSyncLockSchema(ctx, lockDB); err != nil {
+		_ = lockDB.Close()
+		if isSQLiteSyncLockBusy(err) {
+			return nil, ErrSyncAlreadyRunning
+		}
+
+		return nil, err
+	}
 
 	lockConn, err := lockDB.Conn(ctx)
 	if err != nil {
@@ -471,6 +478,14 @@ func ensureSQLiteSyncLockRow(ctx context.Context, execer interface {
 	return nil
 }
 
+func ensureSQLiteSyncLockSchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sync_lock(id INTEGER PRIMARY KEY CHECK(id = 1))`); err != nil {
+		return fmt.Errorf("mlwh: ensure sqlite sync_lock schema: %w", err)
+	}
+
+	return nil
+}
+
 func isSQLiteSyncLockBusy(err error) bool {
 	message := strings.ToLower(err.Error())
 
@@ -490,10 +505,6 @@ func mysqlReadOnlyDSN(dsn string) (string, error) {
 	parsed.Params["transaction_read_only"] = "1"
 
 	return parsed.FormatDSN(), nil
-}
-
-func applySQLiteSchema(ctx context.Context, db *sql.DB) error {
-	return applySchema(ctx, db, "sqlite")
 }
 
 func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
@@ -537,6 +548,9 @@ func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string)
 	actual, err := readCacheSchemaShape(ctx, db, dialect)
 	if err != nil {
 		return err
+	}
+	if allowMissingSampleMirrorIndexesForRecovery(ctx, db, expected, actual) {
+		actual.Index["sample_mirror"] = append([]string(nil), expected.Index["sample_mirror"]...)
 	}
 
 	if err := compareCacheSchemaShapes(expected, actual); err != nil {
@@ -610,6 +624,32 @@ func stringSlicesEqual(expected, actual []string) bool {
 	return true
 }
 
+func allowMissingSampleMirrorIndexesForRecovery(ctx context.Context, db *sql.DB, expected, actual schemaShape) bool {
+	if stringSlicesEqual(expected.Index["sample_mirror"], actual.Index["sample_mirror"]) {
+		return false
+	}
+
+	var (
+		highWaterRaw   string
+		indexesDropped int
+	)
+	err := db.QueryRowContext(
+		ctx,
+		`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`,
+		syncTableSample,
+	).Scan(&highWaterRaw, &indexesDropped)
+	if err != nil || indexesDropped != 1 {
+		return false
+	}
+
+	highWater, err := parseSyncTimeString(highWaterRaw)
+	if err != nil {
+		return false
+	}
+
+	return !highWater.IsZero() && len(actual.Index["sample_mirror"]) == 0
+}
+
 func readSQLiteCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, error) {
 	shape := schemaShape{
 		Tables: make(map[string]map[string]string, len(schemaStatementOrder)),
@@ -649,11 +689,11 @@ func readSQLiteTableColumns(ctx context.Context, db *sql.DB, table string) (map[
 	columns := make(map[string]string)
 	for rows.Next() {
 		var (
-			cid       int
-			name      string
-			typeName  string
-			notNull   int
-			defaultV  any
+			cid        int
+			name       string
+			typeName   string
+			notNull    int
+			defaultV   any
 			primaryKey int
 		)
 		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &primaryKey); err != nil {
@@ -683,11 +723,11 @@ func readSQLiteTableIndexes(ctx context.Context, db *sql.DB, table string) ([]st
 
 	for rows.Next() {
 		var (
-			seq      int
-			name     string
-			unique   int
-			origin   string
-			partial  int
+			seq     int
+			name    string
+			unique  int
+			origin  string
+			partial int
 		)
 		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
 			_ = rows.Close()
@@ -1185,7 +1225,7 @@ func sqliteLockDSN(path string) string {
 		return ""
 	}
 
-	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(0)", filepath.ToSlash(path))
+	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(0)", filepath.ToSlash(path+".sync-lock"))
 }
 
 func sqliteReadOnlyDSN(path string) string {

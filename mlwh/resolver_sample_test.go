@@ -382,12 +382,6 @@ func newResolverSampleTestClient(t *testing.T) (*Client, sqlmock.Sqlmock, func()
 	return client, sourceMock, cleanup
 }
 
-func expectSampleTextMiss(mock sqlmock.Sqlmock, raw string, queries ...string) {
-	for _, query := range queries {
-		mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(raw).WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-	}
-}
-
 func sampleResolverColumns() []string {
 	return []string{
 		"id_sample_tmp",

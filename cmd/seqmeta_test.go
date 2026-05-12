@@ -187,6 +187,13 @@ func TestDiffCommand(t *testing.T) {
 
 				return []mlwh.Sample{{Name: "S1"}, {Name: "S2"}}, nil
 			},
+			getSampleFilesFunc: func(_ context.Context, sangerName string) ([]mlwh.IRODSPath, error) {
+				if sangerName != "ABC" {
+					return nil, errors.New("unexpected sample id")
+				}
+
+				return []mlwh.IRODSPath{{Collection: "/abc", IRODSPath: "/abc/file.cram"}}, nil
+			},
 			irodsPathsForSampleFunc: func(_ context.Context, sangerName string, _, _ int) ([]mlwh.IRODSPath, error) {
 				if sangerName != "ABC" {
 					return nil, errors.New("unexpected sample id")

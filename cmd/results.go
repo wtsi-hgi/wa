@@ -55,6 +55,7 @@ var resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
 
 var resultsRegisterResolverOpener = openResultsRegisterResolver
 
+//nolint:unused // Overridden by results serve tests to avoid wall-clock waits.
 var resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
 	return &resultsServeRealTicker{ticker: time.NewTicker(interval)}
 }
@@ -194,19 +195,23 @@ func openResultsServeMLWHClientWithConfig(ctx context.Context, cfg resultsServeM
 	return &resultsServeMLWHRuntime{client: client, sourceDB: sourceDB}, nil
 }
 
+//nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 type resultsServeTicker interface {
 	Chan() <-chan time.Time
 	Stop()
 }
 
+//nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 type resultsServeRealTicker struct {
 	ticker *time.Ticker
 }
 
+//nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 func (t *resultsServeRealTicker) Chan() <-chan time.Time {
 	return t.ticker.C
 }
 
+//nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 func (t *resultsServeRealTicker) Stop() {
 	t.ticker.Stop()
 }

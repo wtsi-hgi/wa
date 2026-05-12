@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS iseq_product_metrics_mirror (
-	id_iseq_product      BIGINT NOT NULL PRIMARY KEY,
+	id_iseq_product      VARCHAR(255) NOT NULL PRIMARY KEY,
 	id_iseq_flowcell_tmp BIGINT NOT NULL,
 	id_run               BIGINT NOT NULL,
 	position             INT    NOT NULL,

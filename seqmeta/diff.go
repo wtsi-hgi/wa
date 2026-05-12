@@ -421,6 +421,15 @@ func PrepareDiffSampleFiles(
 		return nil, err
 	}
 
+	return PrepareDiffSampleFilesForList(store, sangerID, files)
+}
+
+// PrepareDiffSampleFilesForList computes a deferred diff from a pre-fetched file list.
+func PrepareDiffSampleFilesForList(
+	store *Store,
+	sangerID string,
+	files []mlwh.IRODSPath,
+) (*PreparedDiff[mlwh.IRODSPath], error) {
 	return prepareDiffSampleFiles(store, sangerID, files)
 }
 

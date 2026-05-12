@@ -332,7 +332,7 @@ FRONTEND_LOG="$LOG_DIR/frontend.log"
 FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $frontend_port}"
 SEQMETA_CMD="${WA_RUN_DEV_SEQMETA_CMD:-}"
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
-SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-480}"
+SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-1200}"
 
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$results_port/results/stats}"
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-http://127.0.0.1:$frontend_port/api/health}"
@@ -589,6 +589,12 @@ else
   MLWH_CACHE_PATH="${WA_MLWH_CACHE_PATH:-}"
   MLWH_CACHE_EPHEMERAL=0
 
+  # When seqmeta is auto-managed from an MLWH DSN, provide a reusable local
+  # cache path if the operator did not configure one explicitly.
+  if [[ -z "$MLWH_CACHE_PATH" && -n "${WA_MLWH_DSN:-}" ]]; then
+    MLWH_CACHE_PATH="$TMP_DIR/mlwh-$scenario.sqlite"
+  fi
+
   if [[ -n "$MLWH_CACHE_PATH" && "$MLWH_CACHE_PATH" != *"@tcp("* && "$MLWH_CACHE_PATH" != *"@unix("* ]]; then
     mlwh_cache_dir="$(dirname "$MLWH_CACHE_PATH")"
     if [[ -n "$mlwh_cache_dir" && "$mlwh_cache_dir" != "." ]]; then
@@ -672,9 +678,6 @@ elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
   else
     printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
     seqmeta_args=(seqmeta serve --port "$seqmeta_port")
-    if (( seed_fixtures )); then
-      seqmeta_args+=(--mlwh-sync-interval 24h)
-    fi
     "${BIN_PATH}" "${seqmeta_args[@]}" >"$SEQMETA_LOG" 2>&1 &
     PIDS+=("$!")
     SEQMETA_STARTED=1

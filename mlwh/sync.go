@@ -48,6 +48,9 @@ const (
 	syncTableIseqProductMetrics       = "iseq_product_metrics"
 	syncTableSeqProductIRODSLocations = "seq_product_irods_locations"
 	sqscpIDLims                       = "SQSCP"
+	sampleIDDescResumeCursorMode      = "id_sample_tmp_desc"
+	sampleLastUpdatedResumeCursorMode = "last_updated"
+	sampleColdInitialID               = int64(1<<63 - 1)
 )
 
 var supportedSyncTables = []string{
@@ -171,6 +174,17 @@ var sampleMirrorSecondaryIndexes = []sampleMirrorIndexSpec{
 	{Name: "sample_mirror_last_updated_idx", Column: "last_updated"},
 }
 
+type sampleSyncMode int
+
+const (
+	sampleSyncModeIncremental sampleSyncMode = iota
+	sampleSyncModeColdID
+)
+
+func sampleColdSyncSourceQuery() string {
+	return `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated FROM sample WHERE id_lims = 'SQSCP' AND id_sample_tmp < ? ORDER BY id_sample_tmp DESC`
+}
+
 func sampleSyncSourceQuery() string {
 	return `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated FROM sample WHERE id_lims = 'SQSCP' AND last_updated >= ? ORDER BY last_updated, id_sample_tmp`
 }
@@ -188,19 +202,19 @@ func flowcellSyncSourceQueryFromCursor() string {
 }
 
 func iseqProductMetricsSyncSourceQuery() string {
-	return `SELECT ipm.id_iseq_product, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_updated FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE ipm.last_updated >= ? ORDER BY ipm.last_updated, ipm.id_iseq_product`
+	return `SELECT ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE ipm.last_changed >= ? ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
 }
 
 func iseqProductMetricsSyncSourceQueryFromCursor() string {
-	return `SELECT ipm.id_iseq_product, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_updated FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (ipm.last_updated > ?) OR (ipm.last_updated = ? AND ipm.id_iseq_product > ?) ORDER BY ipm.last_updated, ipm.id_iseq_product`
+	return `SELECT ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (ipm.last_changed > ?) OR (ipm.last_changed = ? AND ipm.id_iseq_pr_metrics_tmp > ?) ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
 }
 
 func seqProductIRODSLocationsSyncSourceQuery() string {
-	return `SELECT spi.id_iseq_product, spi.irods_root_collection, spi.irods_data_relative_path, spi.irods_collection, spi.irods_file_name, ifc.id_sample_tmp, study.id_study_lims, spi.last_updated FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_iseq_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE spi.last_updated >= ? ORDER BY spi.last_updated, spi.id_iseq_product`
+	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE spi.last_changed >= ? ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`
 }
 
 func seqProductIRODSLocationsSyncSourceQueryFromCursor() string {
-	return `SELECT spi.id_iseq_product, spi.irods_root_collection, spi.irods_data_relative_path, spi.irods_collection, spi.irods_file_name, ifc.id_sample_tmp, study.id_study_lims, spi.last_updated FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_iseq_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (spi.last_updated > ?) OR (spi.last_updated = ? AND spi.id_iseq_product > ?) ORDER BY spi.last_updated, spi.id_iseq_product`
+	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (spi.last_changed > ?) OR (spi.last_changed = ? AND spi.id_seq_product_irods_locations_tmp > ?) ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`
 }
 
 type syncStateRecord struct {
@@ -225,7 +239,7 @@ type SyncReport struct {
 }
 
 func syncSampleTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
-	query, args, err := sampleSyncQuery(state)
+	query, args, mode, err := sampleSyncQuery(state)
 	if err != nil {
 		return SyncReport{}, false, err
 	}
@@ -248,8 +262,12 @@ func syncSampleTable(ctx context.Context, cache Cache, source Querier, state syn
 			return nil
 		}
 
-		batchHighWater := batch[len(batch)-1].LastUpdated
-		resumeCursor := encodeSampleResumeCursor(batch[len(batch)-1])
+		lastRow := batch[len(batch)-1]
+		batchHighWater := report.HighWater
+		resumeCursor := encodeSampleLastUpdatedResumeCursor(lastRow)
+		if mode == sampleSyncModeColdID {
+			resumeCursor = encodeSampleIDDescResumeCursor(lastRow)
+		}
 		result, applyErr := writeSampleBatch(ctx, cache, batch, batchHighWater, &resumeCursor, state.IndexesDropped)
 		if applyErr != nil {
 			return applyErr
@@ -920,32 +938,6 @@ func withSyncWriteTx(ctx context.Context, cache Cache, apply func(*sql.Tx) error
 	return nil
 }
 
-func readSyncState(ctx context.Context, tx *sql.Tx, table string) (syncStateRecord, error) {
-	var highWaterRaw any
-	var resumeCursor sql.NullString
-	var indexesDropped int
-	if err := tx.QueryRowContext(ctx, `SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`, table).Scan(&highWaterRaw, &resumeCursor, &indexesDropped); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return syncStateRecord{}, nil
-		}
-
-		return syncStateRecord{}, fmt.Errorf("mlwh: query sync state for %s: %w", table, err)
-	}
-
-	highWater, err := parseSyncTimeValue(highWaterRaw)
-	if err != nil {
-		return syncStateRecord{}, fmt.Errorf("mlwh: parse sync state for %s: %w", table, err)
-	}
-
-	state := syncStateRecord{HighWater: highWater, Exists: true}
-	if resumeCursor.Valid {
-		state.ResumeCursor = &resumeCursor.String
-	}
-	state.IndexesDropped = indexesDropped == 1
-
-	return state, nil
-}
-
 func parseSyncTimeValue(raw any) (time.Time, error) {
 	switch value := raw.(type) {
 	case time.Time:
@@ -1063,17 +1055,56 @@ func formatSyncTime(value time.Time) string {
 	return value.UTC().Format(time.RFC3339Nano)
 }
 
-func sampleSyncQuery(state syncStateRecord) (string, []any, error) {
+func sampleSyncQuery(state syncStateRecord) (string, []any, sampleSyncMode, error) {
+	if shouldUseSampleColdIDSync(state) {
+		idSampleTmp, err := sampleColdResumeID(state)
+		if err != nil {
+			return "", nil, sampleSyncModeColdID, err
+		}
+
+		return sampleColdSyncSourceQuery(), []any{idSampleTmp}, sampleSyncModeColdID, nil
+	}
+
 	if state.ResumeCursor == nil {
-		return sampleSyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, nil
+		return sampleSyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, sampleSyncModeIncremental, nil
 	}
 
-	lastUpdated, idSampleTmp, err := parseTwoPartResumeCursor(*state.ResumeCursor)
+	lastUpdated, idSampleTmp, err := parseSampleLastUpdatedResumeCursor(*state.ResumeCursor)
 	if err != nil {
-		return "", nil, fmt.Errorf("mlwh: parse sample resume cursor: %w", err)
+		return "", nil, sampleSyncModeIncremental, fmt.Errorf("mlwh: parse sample resume cursor: %w", err)
 	}
 
-	return sampleSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), idSampleTmp}, nil
+	return sampleSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), idSampleTmp}, sampleSyncModeIncremental, nil
+}
+
+func shouldUseSampleColdIDSync(state syncStateRecord) bool {
+	if !state.Exists || state.IndexesDropped {
+		return true
+	}
+	if state.ResumeCursor == nil {
+		return false
+	}
+	if strings.HasPrefix(*state.ResumeCursor, sampleLastUpdatedResumeCursorMode+"\t") {
+		return false
+	}
+
+	return true
+}
+
+func sampleColdResumeID(state syncStateRecord) (int64, error) {
+	if state.ResumeCursor == nil {
+		return sampleColdInitialID, nil
+	}
+
+	idSampleTmp, ok, err := parseSampleIDDescResumeCursor(*state.ResumeCursor)
+	if err != nil {
+		return 0, fmt.Errorf("mlwh: parse sample id resume cursor: %w", err)
+	}
+	if ok {
+		return idSampleTmp, nil
+	}
+
+	return sampleColdInitialID, nil
 }
 
 func studySyncQuery(state syncStateRecord) (string, []any, error) {
@@ -1122,12 +1153,12 @@ func seqProductIRODSLocationsSyncQuery(state syncStateRecord) (string, []any, er
 		return seqProductIRODSLocationsSyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, nil
 	}
 
-	lastUpdated, idIseqProduct, err := parseTwoPartResumeCursor(*state.ResumeCursor)
+	lastUpdated, rowID, err := parseTwoPartResumeCursor(*state.ResumeCursor)
 	if err != nil {
 		return "", nil, fmt.Errorf("mlwh: parse seq_product_irods_locations resume cursor: %w", err)
 	}
 
-	return seqProductIRODSLocationsSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), idIseqProduct}, nil
+	return seqProductIRODSLocationsSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), rowID}, nil
 }
 
 func finalizeSyncState(ctx context.Context, cache Cache, table string, highWater time.Time) error {
@@ -1161,13 +1192,12 @@ func prepareSampleMirrorIndexesForSync(ctx context.Context, cache Cache, state *
 			return err
 		}
 
-		return writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSample, time.Time{}, nil, true)
+		return writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSample, state.HighWater, nil, true)
 	}); err != nil {
 		return err
 	}
 
 	state.Exists = true
-	state.HighWater = time.Time{}
 	state.IndexesDropped = true
 
 	return nil
@@ -1175,6 +1205,9 @@ func prepareSampleMirrorIndexesForSync(ctx context.Context, cache Cache, state *
 
 func shouldDropSampleMirrorIndexes(state syncStateRecord) bool {
 	if !state.Exists {
+		return true
+	}
+	if shouldUseSampleColdIDSync(state) && !state.IndexesDropped {
 		return true
 	}
 
@@ -1279,6 +1312,39 @@ func parseTwoPartResumeCursor(raw string) (time.Time, int64, error) {
 	return lastUpdated, id, nil
 }
 
+func parseSampleIDDescResumeCursor(raw string) (int64, bool, error) {
+	parts := strings.Split(raw, "\t")
+	if len(parts) != 2 || parts[0] != sampleIDDescResumeCursorMode {
+		return 0, false, nil
+	}
+
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, true, fmt.Errorf("parse integer field %q: %w", parts[1], err)
+	}
+
+	return id, true, nil
+}
+
+func parseSampleLastUpdatedResumeCursor(raw string) (time.Time, int64, error) {
+	parts := strings.Split(raw, "\t")
+	if len(parts) != 3 || parts[0] != sampleLastUpdatedResumeCursorMode {
+		return time.Time{}, 0, fmt.Errorf("expected %s cursor with 3 fields, got %d", sampleLastUpdatedResumeCursorMode, len(parts))
+	}
+
+	lastUpdated, err := parseSyncTimeString(parts[1])
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+
+	id, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return time.Time{}, 0, fmt.Errorf("parse integer field %q: %w", parts[2], err)
+	}
+
+	return lastUpdated, id, nil
+}
+
 func parseFlowcellResumeCursor(raw string) (time.Time, string, int64, string, error) {
 	parts := strings.Split(raw, "\t")
 	if len(parts) != 4 {
@@ -1298,8 +1364,12 @@ func parseFlowcellResumeCursor(raw string) (time.Time, string, int64, string, er
 	return lastUpdated, parts[1], idSampleTmp, parts[3], nil
 }
 
-func encodeSampleResumeCursor(row sampleSyncRow) string {
-	return formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.Sample.IDSampleTmp, 10)
+func encodeSampleLastUpdatedResumeCursor(row sampleSyncRow) string {
+	return sampleLastUpdatedResumeCursorMode + "\t" + formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.Sample.IDSampleTmp, 10)
+}
+
+func encodeSampleIDDescResumeCursor(row sampleSyncRow) string {
+	return sampleIDDescResumeCursorMode + "\t" + strconv.FormatInt(row.Sample.IDSampleTmp, 10)
 }
 
 func encodeStudyResumeCursor(row studySyncRow) string {
@@ -1311,11 +1381,11 @@ func encodeFlowcellResumeCursor(row flowcellSyncRow) string {
 }
 
 func encodeIseqProductMetricsResumeCursor(row iseqProductMetricsSyncRow) string {
-	return formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.IDIseqProduct, 10)
+	return formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.SourceRowID, 10)
 }
 
 func encodeSeqProductIRODSLocationsResumeCursor(row seqProductIRODSLocationsSyncRow) string {
-	return formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.IDIseqProduct, 10)
+	return formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.SourceRowID, 10)
 }
 
 func (c *Client) syncTableData(ctx context.Context, table string, state syncStateRecord) (SyncReport, bool, error) {
@@ -1341,7 +1411,8 @@ func (c *Client) syncTableData(ctx context.Context, table string, state syncStat
 }
 
 type iseqProductMetricsSyncRow struct {
-	IDIseqProduct     int64
+	IDIseqProduct     string
+	SourceRowID       int64
 	IDIseqFlowcellTmp int64
 	IDRun             int
 	Position          int
@@ -1426,21 +1497,29 @@ func syncIseqProductMetricsTable(ctx context.Context, cache Cache, source Querie
 func scanIseqProductMetricsSyncRow(rows *sql.Rows) (iseqProductMetricsSyncRow, error) {
 	var row iseqProductMetricsSyncRow
 	var lastUpdated any
+	var idRun, position, tagIndex, qc, qcLib, qcSeq sql.NullInt64
 	if err := rows.Scan(
 		&row.IDIseqProduct,
+		&row.SourceRowID,
 		&row.IDIseqFlowcellTmp,
-		&row.IDRun,
-		&row.Position,
-		&row.TagIndex,
+		&idRun,
+		&position,
+		&tagIndex,
 		&row.IDSampleTmp,
 		&row.IDStudyLims,
-		&row.QC,
-		&row.QCLib,
-		&row.QCSeq,
+		&qc,
+		&qcLib,
+		&qcSeq,
 		&lastUpdated,
 	); err != nil {
 		return iseqProductMetricsSyncRow{}, fmt.Errorf("mlwh: scan iseq_product_metrics sync row: %w", err)
 	}
+	row.IDRun = nullIntValue(idRun)
+	row.Position = nullIntValue(position)
+	row.TagIndex = nullIntValue(tagIndex)
+	row.QC = nullIntValue(qc)
+	row.QCLib = nullIntValue(qcLib)
+	row.QCSeq = nullIntValue(qcSeq)
 
 	parsed, err := parseSyncTimeValue(lastUpdated)
 	if err != nil {
@@ -1451,8 +1530,12 @@ func scanIseqProductMetricsSyncRow(rows *sql.Rows) (iseqProductMetricsSyncRow, e
 	return row, nil
 }
 
-func upsertIseqProductMetricsMirror(ctx context.Context, tx *sql.Tx, dialect string, row iseqProductMetricsSyncRow) error {
-	return upsertIseqProductMetricsMirrorBatch(ctx, tx, dialect, []iseqProductMetricsSyncRow{row})
+func nullIntValue(value sql.NullInt64) int {
+	if !value.Valid {
+		return 0
+	}
+
+	return int(value.Int64)
 }
 
 func upsertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []iseqProductMetricsSyncRow) error {
@@ -1481,7 +1564,8 @@ func upsertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialec
 }
 
 type seqProductIRODSLocationsSyncRow struct {
-	IDIseqProduct         int64
+	SourceRowID           int64
+	IDIseqProduct         string
 	IRODSRootCollection   string
 	IRODSDataRelativePath string
 	IRODSCollection       string
@@ -1564,17 +1648,17 @@ func scanSeqProductIRODSLocationsSyncRow(rows *sql.Rows) (seqProductIRODSLocatio
 	var row seqProductIRODSLocationsSyncRow
 	var lastUpdated any
 	if err := rows.Scan(
+		&row.SourceRowID,
 		&row.IDIseqProduct,
 		&row.IRODSRootCollection,
 		&row.IRODSDataRelativePath,
-		&row.IRODSCollection,
-		&row.IRODSFileName,
 		&row.IDSampleTmp,
 		&row.IDStudyLims,
 		&lastUpdated,
 	); err != nil {
 		return seqProductIRODSLocationsSyncRow{}, fmt.Errorf("mlwh: scan seq_product_irods_locations sync row: %w", err)
 	}
+	row.IRODSCollection, row.IRODSFileName = splitIRODSRelativePath(row.IRODSRootCollection, row.IRODSDataRelativePath)
 
 	parsed, err := parseSyncTimeValue(lastUpdated)
 	if err != nil {
@@ -1585,8 +1669,24 @@ func scanSeqProductIRODSLocationsSyncRow(rows *sql.Rows) (seqProductIRODSLocatio
 	return row, nil
 }
 
-func upsertSeqProductIRODSLocationsMirror(ctx context.Context, tx *sql.Tx, dialect string, row seqProductIRODSLocationsSyncRow) error {
-	return upsertSeqProductIRODSLocationsMirrorBatch(ctx, tx, dialect, []seqProductIRODSLocationsSyncRow{row})
+func splitIRODSRelativePath(rootCollection, relativePath string) (string, string) {
+	trimmedRelativePath := strings.TrimSpace(relativePath)
+	if trimmedRelativePath == "" {
+		return rootCollection, ""
+	}
+
+	lastSlash := strings.LastIndex(trimmedRelativePath, "/")
+	if lastSlash == -1 {
+		return rootCollection, trimmedRelativePath
+	}
+
+	directory := trimmedRelativePath[:lastSlash]
+	fileName := trimmedRelativePath[lastSlash+1:]
+	if directory == "" {
+		return rootCollection, fileName
+	}
+
+	return strings.TrimRight(rootCollection, "/") + "/" + directory, fileName
 }
 
 func upsertSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []seqProductIRODSLocationsSyncRow) error {
@@ -1674,10 +1774,6 @@ func scanSampleSyncRow(rows *sql.Rows) (sampleSyncRow, error) {
 	return row, nil
 }
 
-func upsertSampleMirror(ctx context.Context, tx *sql.Tx, dialect string, row sampleSyncRow) error {
-	return upsertSampleMirrorBatch(ctx, tx, dialect, []sampleSyncRow{row})
-}
-
 func upsertSampleMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []sampleSyncRow) error {
 	stmt := buildBulkUpsertStatement(dialect, "sample_mirror", sampleMirrorColumns, []string{"id_sample_tmp"}, len(rows))
 	args := make([]any, 0, len(rows)*len(sampleMirrorColumns))
@@ -1703,10 +1799,6 @@ func upsertSampleMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, ro
 	}
 
 	return nil
-}
-
-func replaceDonorSample(ctx context.Context, tx *sql.Tx, row sampleSyncRow) error {
-	return replaceDonorSampleBatch(ctx, tx, []sampleSyncRow{row})
 }
 
 func replaceDonorSampleBatch(ctx context.Context, tx *sql.Tx, rows []sampleSyncRow) error {
@@ -1749,10 +1841,6 @@ func scanStudySyncRow(rows *sql.Rows) (studySyncRow, error) {
 	row.LastUpdated = parsed
 
 	return row, nil
-}
-
-func upsertStudyMirror(ctx context.Context, tx *sql.Tx, dialect string, row studySyncRow) error {
-	return upsertStudyMirrorBatch(ctx, tx, dialect, []studySyncRow{row})
 }
 
 func upsertStudyMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []studySyncRow) error {
@@ -1820,29 +1908,6 @@ func scanFlowcellSyncRow(rows *sql.Rows) (flowcellSyncRow, error) {
 
 func flowcellKey(row flowcellSyncRow) string {
 	return fmt.Sprintf("%s\x00%d\x00%s", row.PipelineIDLims, row.IDSampleTmp, row.IDStudyLims)
-}
-
-func replaceLibrarySample(ctx context.Context, tx *sql.Tx, row flowcellSyncRow) error {
-	if _, err := tx.ExecContext(
-		ctx,
-		`DELETE FROM library_samples WHERE pipeline_id_lims = ? AND id_sample_tmp = ? AND id_study_lims = ?`,
-		row.PipelineIDLims,
-		row.IDSampleTmp,
-		row.IDStudyLims,
-	); err != nil {
-		return fmt.Errorf("mlwh: clear library sample row %s/%d/%s: %w", row.PipelineIDLims, row.IDSampleTmp, row.IDStudyLims, err)
-	}
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
-		row.PipelineIDLims,
-		row.IDSampleTmp,
-		row.IDStudyLims,
-	); err != nil {
-		return fmt.Errorf("mlwh: insert library sample row %s/%d/%s: %w", row.PipelineIDLims, row.IDSampleTmp, row.IDStudyLims, err)
-	}
-
-	return nil
 }
 
 func upsertLibrarySampleBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []flowcellSyncRow) error {
@@ -1952,7 +2017,7 @@ func dedupeFlowcellBatch(rows []flowcellSyncRow) []flowcellSyncRow {
 }
 
 func dedupeIseqProductMetricsBatch(rows []iseqProductMetricsSyncRow) []iseqProductMetricsSyncRow {
-	indices := make(map[int64]int, len(rows))
+	indices := make(map[string]int, len(rows))
 	deduped := make([]iseqProductMetricsSyncRow, 0, len(rows))
 	for _, row := range rows {
 		index, ok := indices[row.IDIseqProduct]
@@ -1969,7 +2034,7 @@ func dedupeIseqProductMetricsBatch(rows []iseqProductMetricsSyncRow) []iseqProdu
 }
 
 func dedupeSeqProductIRODSLocationsBatch(rows []seqProductIRODSLocationsSyncRow) []seqProductIRODSLocationsSyncRow {
-	indices := make(map[int64]int, len(rows))
+	indices := make(map[string]int, len(rows))
 	deduped := make([]seqProductIRODSLocationsSyncRow, 0, len(rows))
 	for _, row := range rows {
 		index, ok := indices[row.IDIseqProduct]
@@ -2043,7 +2108,7 @@ func validateFlowcellBatch(rows []flowcellSyncRow) error {
 func validateIseqProductMetricsBatch(rows []iseqProductMetricsSyncRow) error {
 	for _, row := range rows {
 		if row.IDStudyLims == "" {
-			return fmt.Errorf("mlwh: iseq_product_metrics_mirror row %d violates constraint: id_study_lims must not be empty", row.IDIseqProduct)
+			return fmt.Errorf("mlwh: iseq_product_metrics_mirror row %s violates constraint: id_study_lims must not be empty", row.IDIseqProduct)
 		}
 	}
 
@@ -2053,7 +2118,7 @@ func validateIseqProductMetricsBatch(rows []iseqProductMetricsSyncRow) error {
 func validateSeqProductIRODSLocationsBatch(rows []seqProductIRODSLocationsSyncRow) error {
 	for _, row := range rows {
 		if row.IDStudyLims == "" {
-			return fmt.Errorf("mlwh: seq_product_irods_locations_mirror row %d violates constraint: id_study_lims must not be empty", row.IDIseqProduct)
+			return fmt.Errorf("mlwh: seq_product_irods_locations_mirror row %q violates constraint: id_study_lims must not be empty", row.IDIseqProduct)
 		}
 	}
 
@@ -2195,19 +2260,6 @@ func writeSeqProductIRODSLocationsBatch(ctx context.Context, cache Cache, rows [
 	return result, err
 }
 
-func rowExists(ctx context.Context, tx *sql.Tx, query string, args ...any) (bool, error) {
-	var found int
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(&found); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-
-		return false, fmt.Errorf("mlwh: query cache row existence: %w", err)
-	}
-
-	return true, nil
-}
-
 func (c *Client) requireResolverSyncState(ctx context.Context, table string) error {
 	return c.requireAnySyncState(ctx, table)
 }
@@ -2229,7 +2281,7 @@ func (c *Client) requireAnySyncState(ctx context.Context, tables ...string) erro
 }
 
 type requiredSyncStateSummaryResult struct {
-	allAbsent bool
+	allAbsent  bool
 	allPresent bool
 }
 
