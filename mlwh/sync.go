@@ -829,7 +829,6 @@ func (c *Client) syncTables(ctx context.Context) (reports []SyncReport, err erro
 
 	return reports, errors.Join(errs...)
 }
-
 func readSyncStateFromDB(ctx context.Context, db *sql.DB, table string) (syncStateRecord, error) {
 	var highWaterRaw any
 	var resumeCursor sql.NullString
@@ -1212,8 +1211,11 @@ func sampleSyncQuery(state syncStateRecord) (string, []any, sampleSyncMode, erro
 }
 
 func shouldUseSampleColdIDSync(state syncStateRecord) bool {
-	if !state.Exists || state.IndexesDropped {
+	if !state.Exists {
 		return true
+	}
+	if state.IndexesDropped {
+		return state.HighWater.IsZero() || state.ResumeCursor != nil
 	}
 	if state.ResumeCursor == nil {
 		return false
@@ -1405,8 +1407,12 @@ func finalizeSampleSyncState(ctx context.Context, cache Cache, highWater time.Ti
 		if indexesDropped {
 			if shouldDeferMirrorIndexRebuild(cache) {
 				deferredIndexesDropped = true
-			} else if err := rebuildSampleMirrorColdLoadIndexes(ctx, tx, cache.Dialect()); err != nil {
-				return err
+			} else {
+				repaired, err := rebuildSampleMirrorColdLoadIndexes(ctx, tx, cache.Dialect())
+				if err != nil {
+					return err
+				}
+				deferredIndexesDropped = !repaired
 			}
 		}
 
@@ -1418,27 +1424,48 @@ func shouldDeferMirrorIndexRebuild(cache Cache) bool {
 	return cache != nil && cache.Dialect() == "mysql"
 }
 
-func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect string) error {
+func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect string) (bool, error) {
 	if err := rebuildDonorSampleTable(ctx, tx, dialect); err != nil {
-		return err
+		return false, err
 	}
 	if dialect == "mysql" {
 		rebuildInline, err := shouldRebuildMySQLSampleSecondaryIndexesInline(ctx, tx)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if !rebuildInline {
-			return createMirrorSecondaryIndexes(ctx, tx, dialect, syncMirrorIndexSet{
+			return false, createMirrorSecondaryIndexes(ctx, tx, dialect, syncMirrorIndexSet{
+				Table:   "sample_mirror",
+				Indexes: []syncIndexSpec{{Name: "sample_mirror_name_idx", Column: "name"}},
+			})
+		}
+	}
+	if dialect == "sqlite" {
+		rebuildInline, err := shouldRebuildSQLiteSampleSecondaryIndexesInline(ctx, tx)
+		if err != nil {
+			return false, err
+		}
+		if !rebuildInline {
+			return false, createMirrorSecondaryIndexes(ctx, tx, dialect, syncMirrorIndexSet{
 				Table:   "sample_mirror",
 				Indexes: []syncIndexSpec{{Name: "sample_mirror_name_idx", Column: "name"}},
 			})
 		}
 	}
 	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return true, nil
+}
+
+func shouldRebuildSQLiteSampleSecondaryIndexesInline(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sample_mirror`).Scan(&count); err != nil {
+		return false, fmt.Errorf("mlwh: count sample_mirror rows before sqlite index rebuild: %w", err)
+	}
+
+	return count <= mysqlInlineSampleIndexRowLimit, nil
 }
 
 func shouldRebuildMySQLSampleSecondaryIndexesInline(ctx context.Context, tx *sql.Tx) (bool, error) {
@@ -1627,6 +1654,19 @@ func createMirrorDroppedIndexes(ctx context.Context, tx *sql.Tx, dialect string,
 			return false, err
 		}
 	}
+	if dialect == "sqlite" {
+		rebuildInline, err := shouldRebuildSQLiteMirrorSecondaryIndexesInline(ctx, tx, indexSet)
+		if err != nil {
+			return false, err
+		}
+		if !rebuildInline {
+			if err := createSQLiteSparseMirrorReadIndexes(ctx, tx, dialect, indexSet); err != nil {
+				return false, err
+			}
+
+			return false, nil
+		}
+	}
 
 	if dialect == "mysql" && indexSet.PrimaryKeyColumn != "" {
 		rebuildInline, err := shouldRebuildMySQLMirrorSecondaryIndexesInline(ctx, tx, indexSet)
@@ -1659,6 +1699,24 @@ func createMySQLSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect
 	}
 
 	return true, nil
+}
+
+func createSQLiteSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
+	readIndexSet, ok := mySQLSparseMirrorReadIndexSet(indexSet)
+	if !ok {
+		return nil
+	}
+
+	return createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet)
+}
+
+func shouldRebuildSQLiteMirrorSecondaryIndexesInline(ctx context.Context, tx *sql.Tx, indexSet syncMirrorIndexSet) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+indexSet.Table).Scan(&count); err != nil {
+		return false, fmt.Errorf("mlwh: count %s rows before sqlite index rebuild: %w", indexSet.Table, err)
+	}
+
+	return count <= mysqlInlineMirrorIndexRowLimit, nil
 }
 
 func mySQLSparseMirrorReadIndexSet(indexSet syncMirrorIndexSet) (syncMirrorIndexSet, bool) {
@@ -2052,7 +2110,12 @@ func upsertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialec
 	})
 }
 
-func insertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, rows []iseqProductMetricsSyncRow) error {
+
+func insertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []iseqProductMetricsSyncRow) error {
+	if dialect == "sqlite" {
+		return execPreparedInsertRows(ctx, tx, "iseq_product_metrics_mirror", iseqProductMetricsMirrorColumns, rows, iseqProductMetricsMirrorRowArgs, "insert iseq_product_metrics mirror batch")
+	}
+
 	return forEachRowChunk(rows, syncStatementRowLimit(len(iseqProductMetricsMirrorColumns)), func(chunk []iseqProductMetricsSyncRow) error {
 		stmt := buildBulkInsertStatement("iseq_product_metrics_mirror", iseqProductMetricsMirrorColumns, len(chunk))
 		if _, err := tx.ExecContext(ctx, stmt, iseqProductMetricsMirrorBatchArgs(chunk)...); err != nil {
@@ -2063,33 +2126,37 @@ func insertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, rows [
 	})
 }
 
-func replaceIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, rows []iseqProductMetricsSyncRow) error {
+func replaceIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []iseqProductMetricsSyncRow) error {
 	if err := deleteExistingKeys(ctx, tx, "iseq_product_metrics_mirror", []string{"id_iseq_product"}, iseqProductMetricsBatchKeys(rows)); err != nil {
 		return err
 	}
 
-	return insertIseqProductMetricsMirrorBatch(ctx, tx, rows)
+	return insertIseqProductMetricsMirrorBatch(ctx, tx, dialect, rows)
 }
 
 func iseqProductMetricsMirrorBatchArgs(rows []iseqProductMetricsSyncRow) []any {
 	args := make([]any, 0, len(rows)*len(iseqProductMetricsMirrorColumns))
 	for _, row := range rows {
-		args = append(args,
-			row.IDIseqProduct,
-			row.IDIseqFlowcellTmp,
-			row.IDRun,
-			row.Position,
-			row.TagIndex,
-			row.IDSampleTmp,
-			row.IDStudyLims,
-			row.QC,
-			row.QCLib,
-			row.QCSeq,
-			formatSyncTime(row.LastUpdated),
-		)
+		args = append(args, iseqProductMetricsMirrorRowArgs(row)...)
 	}
 
 	return args
+}
+
+func iseqProductMetricsMirrorRowArgs(row iseqProductMetricsSyncRow) []any {
+	return []any{
+		row.IDIseqProduct,
+		row.IDIseqFlowcellTmp,
+		row.IDRun,
+		row.Position,
+		row.TagIndex,
+		row.IDSampleTmp,
+		row.IDStudyLims,
+		row.QC,
+		row.QCLib,
+		row.QCSeq,
+		formatSyncTime(row.LastUpdated),
+	}
 }
 
 type seqProductIRODSLocationsSyncRow struct {
@@ -2249,6 +2316,10 @@ func splitIRODSRelativePath(rootCollection, relativePath string) (string, string
 }
 
 func insertSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []seqProductIRODSLocationsSyncRow) error {
+	if dialect == "sqlite" {
+		return execPreparedInsertRows(ctx, tx, "seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorColumns, rows, seqProductIRODSLocationsMirrorRowArgs, "insert seq_product_irods_locations mirror batch")
+	}
+
 	return forEachRowChunk(rows, syncStatementRowLimit(len(seqProductIRODSLocationsMirrorColumns)), func(chunk []seqProductIRODSLocationsSyncRow) error {
 		stmt := buildBulkInsertStatement("seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorColumns, len(chunk))
 		if dialect == "mysql" {
@@ -2273,19 +2344,23 @@ func replaceSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx,
 func seqProductIRODSLocationsMirrorBatchArgs(rows []seqProductIRODSLocationsSyncRow) []any {
 	args := make([]any, 0, len(rows)*len(seqProductIRODSLocationsMirrorColumns))
 	for _, row := range rows {
-		args = append(args,
-			row.IDIseqProduct,
-			row.IRODSRootCollection,
-			row.IRODSDataRelativePath,
-			row.IRODSCollection,
-			row.IRODSFileName,
-			row.IDSampleTmp,
-			row.IDStudyLims,
-			formatSyncTime(row.LastUpdated),
-		)
+		args = append(args, seqProductIRODSLocationsMirrorRowArgs(row)...)
 	}
 
 	return args
+}
+
+func seqProductIRODSLocationsMirrorRowArgs(row seqProductIRODSLocationsSyncRow) []any {
+	return []any{
+		row.IDIseqProduct,
+		row.IRODSRootCollection,
+		row.IRODSDataRelativePath,
+		row.IRODSCollection,
+		row.IRODSFileName,
+		row.IDSampleTmp,
+		row.IDStudyLims,
+		formatSyncTime(row.LastUpdated),
+	}
 }
 
 type sampleSyncRow struct {
@@ -2363,7 +2438,11 @@ func upsertSampleMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, ro
 	})
 }
 
-func insertSampleMirrorBatch(ctx context.Context, tx *sql.Tx, rows []sampleSyncRow) error {
+func insertSampleMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []sampleSyncRow) error {
+	if dialect == "sqlite" {
+		return execPreparedInsertRows(ctx, tx, "sample_mirror", sampleMirrorColumns, rows, sampleMirrorRowArgs, "insert sample mirror batch")
+	}
+
 	return forEachRowChunk(rows, syncStatementRowLimit(len(sampleMirrorColumns)), func(chunk []sampleSyncRow) error {
 		stmt := buildBulkInsertStatement("sample_mirror", sampleMirrorColumns, len(chunk))
 		if _, err := tx.ExecContext(ctx, stmt, sampleMirrorBatchArgs(chunk)...); err != nil {
@@ -2372,6 +2451,22 @@ func insertSampleMirrorBatch(ctx context.Context, tx *sql.Tx, rows []sampleSyncR
 
 		return nil
 	})
+}
+
+func execPreparedInsertRows[T any](ctx context.Context, tx *sql.Tx, table string, columns []string, rows []T, rowArgs func(T) []any, label string) error {
+	stmt, err := tx.PrepareContext(ctx, buildBulkInsertStatement(table, columns, 1))
+	if err != nil {
+		return fmt.Errorf("mlwh: prepare %s: %w", label, err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, row := range rows {
+		if _, err = stmt.ExecContext(ctx, rowArgs(row)...); err != nil {
+			return fmt.Errorf("mlwh: %s: %w", label, err)
+		}
+	}
+
+	return nil
 }
 
 func sampleMirrorBatchArgs(rows []sampleSyncRow) []any {
@@ -2833,7 +2928,7 @@ func writeSampleBatch(ctx context.Context, cache Cache, rows []sampleSyncRow, hi
 			}
 		}
 		if assumeInserted {
-			if err := insertSampleMirrorBatch(ctx, tx, deduped); err != nil {
+			if err := insertSampleMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 				return err
 			}
 		} else if err := upsertSampleMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
@@ -2939,11 +3034,11 @@ func writeIseqProductMetricsBatch(ctx context.Context, cache Cache, rows []iseqP
 			}
 		}
 		if assumeInserted {
-			if err := insertIseqProductMetricsMirrorBatch(ctx, tx, deduped); err != nil {
+			if err := insertIseqProductMetricsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 				return err
 			}
 		} else if shouldReplaceSparseMySQLMirrorRows(cache, indexesDropped, assumeInserted) {
-			if err := replaceIseqProductMetricsMirrorBatch(ctx, tx, deduped); err != nil {
+			if err := replaceIseqProductMetricsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 				return err
 			}
 		} else if err := upsertIseqProductMetricsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {

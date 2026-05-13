@@ -283,6 +283,90 @@ func TestOpenCacheSQLiteRepairsDroppedSampleIndexesSilently(t *testing.T) {
 	})
 }
 
+func TestOpenCacheSQLiteSkipsDroppedIndexRepairDuringColdResume(t *testing.T) {
+	convey.Convey("Given a SQLite product mirror with dropped indexes and a cold resume cursor", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(db.Close(), convey.ShouldBeNil) })
+
+		for _, indexName := range iseqProductMetricsMirrorSecondaryIndexNames() {
+			_, err = db.Exec(`DROP INDEX IF EXISTS ` + indexName)
+			convey.So(err, convey.ShouldBeNil)
+		}
+
+		_, err = db.Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?) ON CONFLICT(table_name) DO UPDATE SET high_water = excluded.high_water, last_run = excluded.last_run, resume_cursor = excluded.resume_cursor, indexes_dropped = excluded.indexes_dropped`,
+			syncTableIseqProductMetrics,
+			"2026-05-13T10:47:57Z",
+			"2026-05-13T10:48:00Z",
+			iseqProductMetricsIDResumeMode+"\t2110183853",
+			1,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(mirrorIndexNames(t, db, "sqlite", iseqProductMetricsMirrorIndexSet), convey.ShouldBeEmpty)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+		})
+
+		convey.So(output, convey.ShouldEqual, "")
+		convey.So(mirrorIndexNames(t, db, "sqlite", iseqProductMetricsMirrorIndexSet), convey.ShouldBeEmpty)
+		convey.So(readSyncStateRow(t, db, syncTableIseqProductMetrics).IndexesDropped, convey.ShouldEqual, 1)
+	})
+}
+
+func TestOpenCacheSQLiteSparseSampleReadIndexDoesNotRebuildDonors(t *testing.T) {
+	convey.Convey("Given a completed sparse SQLite sample cache with only the name read index", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(db.Close(), convey.ShouldBeNil) })
+
+		for _, indexName := range sampleMirrorSecondaryIndexNames() {
+			if indexName == "sample_mirror_name_idx" {
+				continue
+			}
+			_, err = db.Exec(`DROP INDEX IF EXISTS ` + indexName)
+			convey.So(err, convey.ShouldBeNil)
+		}
+		_, err = db.Exec(`INSERT INTO donor_samples(donor_id, id_sample_tmp) VALUES (?, ?)`, "donor-1", 1)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?) ON CONFLICT(table_name) DO UPDATE SET high_water = excluded.high_water, last_run = excluded.last_run, resume_cursor = excluded.resume_cursor, indexes_dropped = excluded.indexes_dropped`,
+			syncTableSample,
+			"2026-05-13T11:24:59Z",
+			"2026-05-13T11:25:00Z",
+			nil,
+			1,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+		})
+
+		convey.So(output, convey.ShouldEqual, "")
+		convey.So(countRows(t, db, `SELECT COUNT(*) FROM donor_samples`), convey.ShouldEqual, 1)
+		convey.So(sampleMirrorIndexNames(t, db, "sqlite"), convey.ShouldResemble, []string{"sample_mirror_name_idx"})
+		convey.So(readSyncStateRow(t, db, syncTableSample).IndexesDropped, convey.ShouldEqual, 1)
+	})
+}
+
 func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 	convey.Convey("Given a MySQL cache backend whose schema_version row is still v1", t, func() {
 		originalOpen := sqlOpenFunc
@@ -743,9 +827,9 @@ func TestOpenCacheInjectsMySQLPasswordIntoResolvedDSN(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		expectSchemaBootstrap(rwMock, "mysql")
-		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
 		expectNoDroppedMirrorRepairRows(rwMock, syncTableIseqProductMetrics)
 		expectNoDroppedMirrorRepairRows(rwMock, syncTableSeqProductIRODSLocations)
 		roMock.ExpectPing()
@@ -804,9 +888,9 @@ func TestOpenCacheTrimsTrailingEnvSemicolonFromMySQLDSN(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		expectSchemaBootstrap(rwMock, "mysql")
-		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
 		expectNoDroppedMirrorRepairRows(rwMock, syncTableIseqProductMetrics)
 		expectNoDroppedMirrorRepairRows(rwMock, syncTableSeqProductIRODSLocations)
 		roMock.ExpectPing()
@@ -1065,15 +1149,15 @@ func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int
 
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(toVersion).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 		WithArgs(syncTableSample).
-		WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
+		WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
 	expectNoDroppedMirrorRepairRows(mock, syncTableIseqProductMetrics)
 	expectNoDroppedMirrorRepairRows(mock, syncTableSeqProductIRODSLocations)
 }
 
 func expectNoDroppedMirrorRepairRows(mock sqlmock.Sqlmock, table string) {
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 		WithArgs(table).
-		WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
+		WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
 }
