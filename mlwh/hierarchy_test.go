@@ -44,12 +44,12 @@ import (
 var (
 	samplesForStudyCacheQuery  = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
 	samplesForStudyParentQuery = `SELECT 1 FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleFanOutOneIDQuery     = `SELECT library_samples.id_sample_tmp, library_samples.pipeline_id_lims, ` + qualifiedStudyMirrorSelectSQL + `
+	sampleFanOutOneIDQuery     = `SELECT library_samples.id_sample_tmp, library_samples.pipeline_id_lims, library_samples.library_id, library_samples.id_library_lims, ` + qualifiedStudyMirrorSelectSQL + `
 		 FROM library_samples
 		 INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims
 		 WHERE study_mirror.id_lims = 'SQSCP' AND library_samples.id_sample_tmp IN (?)
 		 ORDER BY library_samples.id_sample_tmp, study_mirror.id_study_lims, library_samples.pipeline_id_lims`
-	sampleFanOutThreeIDsQuery = `SELECT library_samples.id_sample_tmp, library_samples.pipeline_id_lims, ` + qualifiedStudyMirrorSelectSQL + `
+	sampleFanOutThreeIDsQuery = `SELECT library_samples.id_sample_tmp, library_samples.pipeline_id_lims, library_samples.library_id, library_samples.id_library_lims, ` + qualifiedStudyMirrorSelectSQL + `
 		 FROM library_samples
 		 INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims
 		 WHERE study_mirror.id_lims = 'SQSCP' AND library_samples.id_sample_tmp IN (?,?,?)
@@ -83,12 +83,12 @@ func TestSamplesForStudyWarmCacheUsesJoinOnly(t *testing.T) {
 			WithArgs(int64(3), int64(1), int64(2)).
 			WillReturnRows(
 				sqlmock.NewRows([]string{
-					"id_sample_tmp", "pipeline_id_lims",
+					"id_sample_tmp", "pipeline_id_lims", "library_id", "id_library_lims",
 					"study_mirror.id_study_tmp", "study_mirror.id_lims", "study_mirror.id_study_lims", "study_mirror.uuid_study_lims", "study_mirror.name", "study_mirror.accession_number", "study_mirror.study_title", "study_mirror.faculty_sponsor", "study_mirror.state", "study_mirror.data_release_strategy", "study_mirror.data_access_group", "study_mirror.programme", "study_mirror.reference_genome", "study_mirror.ethically_approved", "study_mirror.study_type", "study_mirror.contains_human_dna", "study_mirror.contaminated_human_dna", "study_mirror.study_visibility", "study_mirror.ega_dac_accession_number", "study_mirror.ega_policy_accession_number", "study_mirror.data_release_timing",
 				}).
-					AddRow(int64(1), "lib-1", int64(11), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate").
-					AddRow(int64(2), "lib-2", int64(12), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate").
-					AddRow(int64(3), "lib-3", int64(13), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate"),
+					AddRow(int64(1), "lib-1", "", "", int64(11), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate").
+					AddRow(int64(2), "lib-2", "", "", int64(12), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate").
+					AddRow(int64(3), "lib-3", "", "", int64(13), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate"),
 			)
 
 		samples, err := client.SamplesForStudy(context.Background(), "6568", 100, 0)
@@ -209,10 +209,10 @@ func TestSamplesForLibraryWarmCacheUsesLibrarySamplesJoinOnly(t *testing.T) {
 			WithArgs(int64(1)).
 			WillReturnRows(
 				sqlmock.NewRows([]string{
-					"id_sample_tmp", "pipeline_id_lims",
+					"id_sample_tmp", "pipeline_id_lims", "library_id", "id_library_lims",
 					"study_mirror.id_study_tmp", "study_mirror.id_lims", "study_mirror.id_study_lims", "study_mirror.uuid_study_lims", "study_mirror.name", "study_mirror.accession_number", "study_mirror.study_title", "study_mirror.faculty_sponsor", "study_mirror.state", "study_mirror.data_release_strategy", "study_mirror.data_access_group", "study_mirror.programme", "study_mirror.reference_genome", "study_mirror.ethically_approved", "study_mirror.study_type", "study_mirror.contains_human_dna", "study_mirror.contaminated_human_dna", "study_mirror.study_visibility", "study_mirror.ega_dac_accession_number", "study_mirror.ega_policy_accession_number", "study_mirror.data_release_timing",
 				}).
-					AddRow(int64(1), "Standard", int64(11), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate"),
+					AddRow(int64(1), "Standard", "", "", int64(11), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate"),
 			)
 
 		samples, err := client.SamplesForLibrary(context.Background(), "Standard", "6568", 1, 0)
@@ -487,10 +487,10 @@ func TestExpandIdentifierStudyUsesAtMostFourQueries(t *testing.T) {
 			WithArgs(int64(1)).
 			WillReturnRows(
 				sqlmock.NewRows([]string{
-					"id_sample_tmp", "pipeline_id_lims",
+					"id_sample_tmp", "pipeline_id_lims", "library_id", "id_library_lims",
 					"study_mirror.id_study_tmp", "study_mirror.id_lims", "study_mirror.id_study_lims", "study_mirror.uuid_study_lims", "study_mirror.name", "study_mirror.accession_number", "study_mirror.study_title", "study_mirror.faculty_sponsor", "study_mirror.state", "study_mirror.data_release_strategy", "study_mirror.data_access_group", "study_mirror.programme", "study_mirror.reference_genome", "study_mirror.ethically_approved", "study_mirror.study_type", "study_mirror.contains_human_dna", "study_mirror.contaminated_human_dna", "study_mirror.study_visibility", "study_mirror.ega_dac_accession_number", "study_mirror.ega_policy_accession_number", "study_mirror.data_release_timing",
 				}).
-					AddRow(int64(1), "Standard", int64(11), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate"),
+					AddRow(int64(1), "Standard", "", "", int64(11), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate"),
 			)
 		roMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleStudyQuery)).
 			WithArgs(int64(1), "6568", 1000, 0).
@@ -522,10 +522,10 @@ func TestExpandIdentifierCachesResultsForTTL(t *testing.T) {
 			WithArgs(int64(1)).
 			WillReturnRows(
 				sqlmock.NewRows([]string{
-					"id_sample_tmp", "pipeline_id_lims",
+					"id_sample_tmp", "pipeline_id_lims", "library_id", "id_library_lims",
 					"study_mirror.id_study_tmp", "study_mirror.id_lims", "study_mirror.id_study_lims", "study_mirror.uuid_study_lims", "study_mirror.name", "study_mirror.accession_number", "study_mirror.study_title", "study_mirror.faculty_sponsor", "study_mirror.state", "study_mirror.data_release_strategy", "study_mirror.data_access_group", "study_mirror.programme", "study_mirror.reference_genome", "study_mirror.ethically_approved", "study_mirror.study_type", "study_mirror.contains_human_dna", "study_mirror.contaminated_human_dna", "study_mirror.study_visibility", "study_mirror.ega_dac_accession_number", "study_mirror.ega_policy_accession_number", "study_mirror.data_release_timing",
 				}).
-					AddRow(int64(1), "Standard", int64(11), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate"),
+					AddRow(int64(1), "Standard", "", "", int64(11), "SQSCP", "6568", "study-uuid-1", "Study A", "ERP1", "title-1", "sponsor-1", "active", "open", "group-1", "programme-1", "GRCh38", true, "type-1", true, false, "public", "DAC1", "POL1", "immediate"),
 			)
 		roMock.ExpectQuery(regexp.QuoteMeta(lanesForSampleStudyQuery)).
 			WithArgs(int64(1), "6568", 1000, 0).
@@ -620,6 +620,78 @@ func TestIRODSPathsForSampleReturnsJoinedPaths(t *testing.T) {
 			{IDProduct: "4001", Collection: "/seq/1234", DataObject: "1234_1#1.cram", IRODSPath: "/seq/1234/1234_1#1.cram"},
 			{IDProduct: "4002", Collection: "/seq/1234", DataObject: "1234_1#2.cram", IRODSPath: "/seq/1234/1234_1#2.cram"},
 		})
+	})
+}
+
+func TestIRODSPathsForSampleNormalisesTrailingCollectionSlash(t *testing.T) {
+	convey.Convey("Given an iRODS collection already ending in a slash", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchySample(t, client.cache.DB(), 34, "7607", "7607STDY14643771")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "5c7e2518e6e4b9f0bff053374d43a2b1f9bbb84625f035148db857b9bb01bfc0", "/seq/illumina/runs/48/48522/plex1/", "48522#1.cram", 34, "7607")
+
+		paths, err := client.IRODSPathsForSample(context.Background(), "7607STDY14643771", 100, 0)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(paths, convey.ShouldHaveLength, 1)
+		convey.So(paths[0].IRODSPath, convey.ShouldEqual, "/seq/illumina/runs/48/48522/plex1/48522#1.cram")
+	})
+}
+
+func TestIRODSPathsForSampleReturnsCompositeProductPathForEveryLinkedSample(t *testing.T) {
+	convey.Convey("Given one iRODS product path linked to multiple component samples", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchySample(t, client.cache.DB(), 31, "7607", "7607STDY14643771")
+		seedHierarchySample(t, client.cache.DB(), 32, "7607", "7607STDY14643772")
+		seedHierarchySample(t, client.cache.DB(), 33, "7607", "NO_IRODS_SAMPLE")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "5c7e2518e6e4b9f0bff053374d43a2b1f9bbb84625f035148db857b9bb01bfc0", "/seq/illumina/runs/48/48522/plex1", "48522#1.cram", 31, "7607")
+		seedIRODSLocationMirrorRow(t, client.cache.DB(), "5c7e2518e6e4b9f0bff053374d43a2b1f9bbb84625f035148db857b9bb01bfc0", "/seq/illumina/runs/48/48522/plex1", "48522#1.cram", 32, "7607")
+		seedSyncState(t, client.cache.DB(), syncTableSeqProductIRODSLocations, time.Date(2026, time.May, 13, 10, 0, 0, 0, time.UTC))
+
+		firstPaths, firstErr := client.IRODSPathsForSample(context.Background(), "7607STDY14643771", 100, 0)
+		secondPaths, secondErr := client.IRODSPathsForSample(context.Background(), "7607STDY14643772", 100, 0)
+		missingPaths, missingErr := client.IRODSPathsForSample(context.Background(), "NO_IRODS_SAMPLE", 100, 0)
+
+		convey.So(firstErr, convey.ShouldBeNil)
+		convey.So(firstPaths, convey.ShouldResemble, []IRODSPath{{
+			IDProduct:  "5c7e2518e6e4b9f0bff053374d43a2b1f9bbb84625f035148db857b9bb01bfc0",
+			Collection: "/seq/illumina/runs/48/48522/plex1",
+			DataObject: "48522#1.cram",
+			IRODSPath:  "/seq/illumina/runs/48/48522/plex1/48522#1.cram",
+		}})
+		convey.So(secondErr, convey.ShouldBeNil)
+		convey.So(secondPaths, convey.ShouldHaveLength, 1)
+		convey.So(missingErr, convey.ShouldBeNil)
+		convey.So(missingPaths, convey.ShouldResemble, []IRODSPath{})
+	})
+}
+
+func TestFindSamplesBySangerIDHydratesLibraryIdentifiers(t *testing.T) {
+	convey.Convey("Given a cached sample linked to a library row with MLWH library identifiers", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 13, 10, 1, 0, 0, time.UTC))
+		seedHierarchyStudy(t, client.cache.DB(), 81, "7607")
+		seedHierarchySample(t, client.cache.DB(), 31, "7607", "7607STDY14643771")
+		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET sanger_sample_id = ? WHERE id_sample_tmp = ?`, "7607STDY14643771", 31)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = client.cache.DB().Exec(`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`, "Custom", 31, "7607", "71046409", "SQPP-47463-G:B1")
+		convey.So(err, convey.ShouldBeNil)
+
+		samples, err := client.FindSamplesBySangerID(context.Background(), "7607STDY14643771")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].Libraries, convey.ShouldResemble, []Library{{
+			PipelineIDLims: "Custom",
+			IDStudyLims:    "7607",
+			LibraryID:      "71046409",
+			IDLibraryLims:  "SQPP-47463-G:B1",
+		}})
 	})
 }
 

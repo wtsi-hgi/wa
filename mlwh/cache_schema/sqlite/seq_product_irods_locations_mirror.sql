@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS seq_product_irods_locations_mirror (
-	id_iseq_product          TEXT    NOT NULL PRIMARY KEY,
+	id_iseq_product          TEXT    NOT NULL,
 	irods_root_collection    TEXT    NOT NULL,
 	irods_data_relative_path TEXT    NOT NULL,
 	irods_collection         TEXT    NOT NULL,

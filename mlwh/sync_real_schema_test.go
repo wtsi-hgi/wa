@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,35 @@ func TestSyncAgainstRealMLWHSchema(t *testing.T) {
 			convey.So(studyLimsForSample1, convey.ShouldEqual, "5001")
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples WHERE id_sample_tmp = 2`), convey.ShouldEqual, 0)
 		})
+	})
+}
+
+func TestClientSyncSeqProductIRODSLocationsRealSourceExpandsCompositeProducts(t *testing.T) {
+	convey.Convey("Given an upstream composite product iRODS location whose component products link to two samples", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.May, 13, 9, 0, 0, 0, time.UTC)
+		seedRealMLWHStudyRow(t, source, 50, "SQSCP", "7607", "uuid-study-50", "Study Fifty", "acc-st-50", base)
+		seedRealMLWHFlowcellRow(t, source, 5001, "Custom", 9419243, 50, base.Add(time.Minute))
+		seedRealMLWHFlowcellRow(t, source, 5002, "Custom", 9419244, 50, base.Add(2*time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 6001, 5001, 48522, 1, 1, 1, 1, 1, base.Add(3*time.Minute))
+		seedRealMLWHProductMetricRow(t, source, 6002, 5002, 48522, 2, 1, 1, 1, 1, base.Add(4*time.Minute))
+		seedRealMLWHCompositeProductMetricRow(t, source, 7001, "composite-product", `{"components":[{"id_run":48522,"position":1,"tag_index":1},{"id_run":48522,"position":2,"tag_index":1}]}`, base.Add(5*time.Minute))
+		seedRealMLWHIRODSLocationProductRow(t, source, 8001, "composite-product", "/seq/illumina/runs/48/48522", "plex1/48522#1.cram", base.Add(6*time.Minute))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(reports[0].Inserted, convey.ShouldEqual, 2)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "composite-product"), convey.ShouldEqual, 2)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND id_sample_tmp = ? AND id_study_lims = ?`, "composite-product", 9419243, "7607"), convey.ShouldEqual, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND id_sample_tmp = ? AND id_study_lims = ?`, "composite-product", 9419244, "7607"), convey.ShouldEqual, 1)
+		convey.So(locationMirrorFileForTest(t, cache.DB(), "composite-product"), convey.ShouldEqual, "48522#1.cram")
 	})
 }
 
@@ -361,6 +391,8 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		pipeline_id_lims     TEXT NOT NULL,
 		id_sample_tmp        INTEGER NOT NULL,
 		id_study_tmp         INTEGER NOT NULL,
+		legacy_library_id    INTEGER,
+		id_library_lims      TEXT,
 		last_updated         TEXT NOT NULL
 	)`)
 
@@ -372,6 +404,7 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 		id_run               INTEGER,
 		position             INTEGER,
 		tag_index            INTEGER,
+		iseq_composition_tmp TEXT,
 		qc                   INTEGER,
 		qc_lib               INTEGER,
 		qc_seq               INTEGER
@@ -417,8 +450,8 @@ func seedRealMLWHFlowcellRow(t *testing.T, db *sql.DB, idTmp int64, pipelineIDLi
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO iseq_flowcell(id_iseq_flowcell_tmp, pipeline_id_lims, id_sample_tmp, id_study_tmp, last_updated) VALUES (?, ?, ?, ?, ?)`,
-		idTmp, pipelineIDLims, idSampleTmp, idStudyTmp, formatSyncTime(lastUpdated),
+		`INSERT INTO iseq_flowcell(id_iseq_flowcell_tmp, pipeline_id_lims, id_sample_tmp, id_study_tmp, legacy_library_id, id_library_lims, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		idTmp, pipelineIDLims, idSampleTmp, idStudyTmp, nil, nil, formatSyncTime(lastUpdated),
 	)
 	if err != nil {
 		t.Fatalf("seedRealMLWHFlowcellRow: %v", err)
@@ -429,7 +462,7 @@ func seedRealMLWHProductMetricRow(t *testing.T, db *sql.DB, idProduct int64, idF
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO iseq_product_metrics(id_iseq_pr_metrics_tmp, id_iseq_product, last_changed, id_iseq_flowcell_tmp, id_run, position, tag_index, qc, qc_lib, qc_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO iseq_product_metrics(id_iseq_pr_metrics_tmp, id_iseq_product, last_changed, id_iseq_flowcell_tmp, id_run, position, tag_index, iseq_composition_tmp, qc, qc_lib, qc_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		idProduct,
 		fmt.Sprintf("product-%d", idProduct),
 		formatSyncTime(lastUpdated),
@@ -437,6 +470,7 @@ func seedRealMLWHProductMetricRow(t *testing.T, db *sql.DB, idProduct int64, idF
 		idRun,
 		position,
 		tagIndex,
+		fmt.Sprintf(`{"components":[{"id_run":%d,"position":%d,"tag_index":%d}]}`, idRun, position, tagIndex),
 		qc,
 		qcLib,
 		qcSeq,
@@ -446,16 +480,44 @@ func seedRealMLWHProductMetricRow(t *testing.T, db *sql.DB, idProduct int64, idF
 	}
 }
 
+func seedRealMLWHCompositeProductMetricRow(t *testing.T, db *sql.DB, idTmp int64, idProduct string, composition string, lastUpdated time.Time) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO iseq_product_metrics(id_iseq_pr_metrics_tmp, id_iseq_product, last_changed, id_iseq_flowcell_tmp, id_run, position, tag_index, iseq_composition_tmp, qc, qc_lib, qc_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		idTmp,
+		idProduct,
+		formatSyncTime(lastUpdated),
+		nil,
+		nil,
+		nil,
+		nil,
+		composition,
+		1,
+		1,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("seedRealMLWHCompositeProductMetricRow: %v", err)
+	}
+}
+
 func seedRealMLWHIRODSLocationRow(t *testing.T, db *sql.DB, idProduct int64, rootCollection, relativePath, collection, fileName string, lastUpdated time.Time) {
 	t.Helper()
 	_ = collection
 	_ = fileName
 
+	seedRealMLWHIRODSLocationProductRow(t, db, idProduct, fmt.Sprintf("product-%d", idProduct), rootCollection, relativePath, lastUpdated)
+}
+
+func seedRealMLWHIRODSLocationProductRow(t *testing.T, db *sql.DB, idTmp int64, idProduct, rootCollection, relativePath string, lastUpdated time.Time) {
+	t.Helper()
+
 	_, err := db.Exec(
 		`INSERT INTO seq_product_irods_locations(id_seq_product_irods_locations_tmp, last_changed, id_product, irods_root_collection, irods_data_relative_path, irods_secondary_data_relative_path) VALUES (?, ?, ?, ?, ?, ?)`,
-		idProduct,
+		idTmp,
 		formatSyncTime(lastUpdated),
-		fmt.Sprintf("product-%d", idProduct),
+		idProduct,
 		rootCollection,
 		relativePath,
 		nil,
@@ -463,6 +525,29 @@ func seedRealMLWHIRODSLocationRow(t *testing.T, db *sql.DB, idProduct int64, roo
 	if err != nil {
 		t.Fatalf("seedRealMLWHIRODSLocationRow: %v", err)
 	}
+}
+
+type sqliteJSONTableSource struct {
+	db *sql.DB
+}
+
+func (source sqliteJSONTableSource) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return source.db.QueryContext(ctx, rewriteJSONTableQueryForSQLite(query), args...)
+}
+
+func rewriteJSONTableQueryForSQLite(query string) string {
+	query = strings.Replace(query,
+		`INNER JOIN JSON_TABLE(path_ipm.iseq_composition_tmp, '$.components[*]' COLUMNS(component_run INT PATH '$.id_run', component_position INT PATH '$.position', component_tag_index INT PATH '$.tag_index')) component ON TRUE`,
+		`INNER JOIN json_each(path_ipm.iseq_composition_tmp, '$.components') component ON TRUE`,
+		1,
+	)
+	query = strings.Replace(query,
+		`ipm.id_run = component.component_run AND ipm.position = component.component_position AND ipm.tag_index = component.component_tag_index`,
+		`ipm.id_run = CAST(json_extract(component.value, '$.id_run') AS INTEGER) AND ipm.position = CAST(json_extract(component.value, '$.position') AS INTEGER) AND ipm.tag_index = CAST(json_extract(component.value, '$.tag_index') AS INTEGER)`,
+		1,
+	)
+
+	return query
 }
 
 func mustExec(t *testing.T, db *sql.DB, stmt string) {

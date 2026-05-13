@@ -191,7 +191,18 @@ func writeSampleSection(out io.Writer, sample *mlwh.Sample) {
 			continue
 		}
 
-		_, _ = fmt.Fprintf(out, "  library: %s / %s\n", library.PipelineIDLims, library.IDStudyLims)
+		_, _ = fmt.Fprintf(out, "  library: %s / %s", library.PipelineIDLims, library.IDStudyLims)
+		writeLibraryIdentifiers(out, library)
+		_, _ = fmt.Fprintln(out)
+	}
+}
+
+func writeLibraryIdentifiers(out io.Writer, library mlwh.Library) {
+	if strings.TrimSpace(library.LibraryID) != "" {
+		_, _ = fmt.Fprintf(out, " library_id=%s", library.LibraryID)
+	}
+	if strings.TrimSpace(library.IDLibraryLims) != "" {
+		_, _ = fmt.Fprintf(out, " id_library_lims=%s", library.IDLibraryLims)
 	}
 }
 
@@ -254,6 +265,7 @@ func writeLibrariesSection(out io.Writer, libraries []mlwh.Library) {
 		if strings.TrimSpace(lib.IDStudyLims) != "" {
 			_, _ = fmt.Fprintf(out, " id_study_lims=%s", lib.IDStudyLims)
 		}
+		writeLibraryIdentifiers(out, lib)
 		_, _ = fmt.Fprintln(out)
 	}
 }

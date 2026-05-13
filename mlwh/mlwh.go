@@ -59,6 +59,8 @@ const (
 type Library struct {
 	PipelineIDLims string `json:"pipeline_id_lims"`
 	IDStudyLims    string `json:"id_study_lims"`
+	LibraryID      string `json:"library_id,omitempty"`
+	IDLibraryLims  string `json:"id_library_lims,omitempty"`
 }
 
 // Run is the run identifier shape resolved from MLWH.

@@ -59,7 +59,7 @@ func TestOpenCacheSQLiteFreshSetsSchemaVersion(t *testing.T) {
 		var syncStateRows int
 		convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM sync_state`).Scan(&syncStateRows), convey.ShouldBeNil)
 
-		convey.Convey("when OpenCache runs, then it uses sqlite, records schema version 2, and leaves sync_state empty", func() {
+		convey.Convey("when OpenCache runs, then it uses sqlite, records the current schema version, and leaves sync_state empty", func() {
 			convey.So(cache.Dialect(), convey.ShouldEqual, "sqlite")
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(version, convey.ShouldEqual, CacheSchemaVersion)
@@ -145,7 +145,7 @@ func TestOpenCacheSQLiteSchemaMismatchResetsSchema(t *testing.T) {
 		})
 
 		convey.Convey("when OpenCache runs, then it migrates to v2, recreates the affected tables, and clears sync_state", func() {
-			convey.So(output, convey.ShouldEqual, "mlwh cache: schema v1->v2, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+			convey.So(output, convey.ShouldEqual, "mlwh cache: schema v1->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
 			convey.So(version, convey.ShouldEqual, CacheSchemaVersion)
 			convey.So(sampleRows, convey.ShouldEqual, 0)
 			convey.So(syncStateRows, convey.ShouldEqual, 1)
@@ -157,7 +157,7 @@ func TestOpenCacheSQLiteSchemaMismatchResetsSchema(t *testing.T) {
 }
 
 func TestOpenCacheSQLiteCurrentVersionEmitsNoMigrationLine(t *testing.T) {
-	convey.Convey("Given a SQLite cache already at schema version 2", t, func() {
+	convey.Convey("Given a SQLite cache already at the current schema version", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
 
 		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
@@ -177,7 +177,7 @@ func TestOpenCacheSQLiteCurrentVersionEmitsNoMigrationLine(t *testing.T) {
 }
 
 func TestOpenCacheSQLiteCurrentVersionShapeMismatchResetsSchema(t *testing.T) {
-	convey.Convey("Given a SQLite cache at schema version 2 with a drifted table set", t, func() {
+	convey.Convey("Given a SQLite cache at the current schema version with a drifted table set", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
 
 		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
@@ -206,12 +206,12 @@ func TestOpenCacheSQLiteCurrentVersionShapeMismatchResetsSchema(t *testing.T) {
 			convey.So(sampleRows, convey.ShouldEqual, 0)
 		})
 
-		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v2->v2, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v3->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
 	})
 }
 
 func TestOpenCacheSQLiteCurrentVersionWrongShapeResetsSchema(t *testing.T) {
-	convey.Convey("Given a SQLite cache at schema version 2 with a same-name table of the wrong shape", t, func() {
+	convey.Convey("Given a SQLite cache at the current schema version with a same-name table of the wrong shape", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
 
 		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
@@ -237,7 +237,7 @@ func TestOpenCacheSQLiteCurrentVersionWrongShapeResetsSchema(t *testing.T) {
 			convey.So(columnCount, convey.ShouldBeGreaterThan, 1)
 		})
 
-		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v2->v2, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v3->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
 	})
 }
 
@@ -325,7 +325,7 @@ func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 		})
 
 		convey.Convey("when OpenCache runs, then it applies the v2 migration and emits the same single stderr line", func() {
-			convey.So(output, convey.ShouldEqual, "mlwh cache: schema v1->v2, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+			convey.So(output, convey.ShouldEqual, "mlwh cache: schema v1->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
 			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})

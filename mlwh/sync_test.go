@@ -1449,7 +1449,7 @@ func TestClientSyncIseqProductMetricsKeepsProductKeyAndUsesMetricsTmpCursor(t *t
 }
 
 func TestClientSyncSeqProductIRODSLocationsUsesLocationTmpCursor(t *testing.T) {
-	convey.Convey("Given 1000 seq_product_irods_locations rows with distinct product keys and location tmp ids followed by driver.ErrBadConn", t, func() {
+	convey.Convey("Given 1001 seq_product_irods_locations rows with distinct product keys and location tmp ids followed by driver.ErrBadConn", t, func() {
 		withSyncColdBatchSizeForTest(t, syncBatchSize)
 
 		cache := openSQLiteSyncTestCache(t)
@@ -1459,7 +1459,7 @@ func TestClientSyncSeqProductIRODSLocationsUsesLocationTmpCursor(t *testing.T) {
 		firstSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
 			syncTableSeqProductIRODSLocations: {
 				columns:  seqProductIRODSLocationsSyncSourceColumns,
-				rows:     seqProductIRODSLocationsSyncRowsForRange(1, 1000, base, 9000),
+				rows:     seqProductIRODSLocationsSyncRowsForRange(1, 1001, base, 9000),
 				finalErr: driver.ErrBadConn,
 			},
 		})
@@ -1497,6 +1497,99 @@ func TestClientSyncSeqProductIRODSLocationsUsesLocationTmpCursor(t *testing.T) {
 		convey.So(reports, convey.ShouldHaveLength, 1)
 		convey.So(capturedQuery, convey.ShouldContainSubstring, `spi.id_seq_product_irods_locations_tmp > ?`)
 		convey.So(namedValueOrdinals(capturedArgs), convey.ShouldResemble, []any{int64(1000)})
+	})
+}
+
+func TestClientSyncSeqProductIRODSLocationsIncrementalResumeReplacesExistingRows(t *testing.T) {
+	convey.Convey("Given an interrupted incremental seq_product_irods_locations sync resumes for an existing product", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 12, 11, 0, 0, 0, time.UTC)
+		seedSeqProductIRODSLocationsMirrorRow(t, cache.DB(), "product-loc-1", "/seq/old", "old.cram", base)
+		seedSyncStateWithCursor(t, cache.DB(), syncTableSeqProductIRODSLocations, base, formatSyncTime(base)+"\t9000")
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows: [][]driver.Value{
+					{int64(9001), "product-loc-1", "/seq", "new/new.cram", int64(8001), "study-new", formatSyncTime(base.Add(time.Minute))},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "product-loc-1"), convey.ShouldEqual, 1)
+		convey.So(locationMirrorFileForTest(t, cache.DB(), "product-loc-1"), convey.ShouldEqual, "new.cram")
+	})
+}
+
+func TestClientSyncSeqProductIRODSLocationsResumeKeepsExpandedSourceRowsAtomic(t *testing.T) {
+	convey.Convey("Given expanded composite iRODS rows share a source location id across a cold batch boundary", t, func() {
+		withSyncColdBatchSizeForTest(t, syncBatchSize)
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 13, 10, 0, 0, 0, time.UTC)
+		firstRows := seqProductIRODSLocationsSyncRowsForRange(1, 999, base, 9000)
+		firstRows = append(firstRows,
+			[]driver.Value{int64(1000), "composite-product", "/seq/illumina/runs/48/48522", "plex1/48522#1.cram", int64(9419243), "7607", formatSyncTime(base.Add(999 * time.Second))},
+			[]driver.Value{int64(1000), "composite-product", "/seq/illumina/runs/48/48522", "plex1/48522#1.cram", int64(9419244), "7607", formatSyncTime(base.Add(1000 * time.Second))},
+			[]driver.Value{int64(1001), "product-after-composite", "/seq", "run/after.cram", int64(9419245), "7607", formatSyncTime(base.Add(1001 * time.Second))},
+		)
+
+		firstSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns:  seqProductIRODSLocationsSyncSourceColumns,
+				rows:     firstRows,
+				finalErr: driver.ErrBadConn,
+			},
+		})
+		defer func() { _ = firstSource.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: firstSource, disableSyncLock: true}
+
+		_, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, driver.ErrBadConn), convey.ShouldBeTrue)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableSeqProductIRODSLocations), convey.ShouldEqual, seqProductIRODSLocationsIDMode+"\t1000")
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "composite-product"), convey.ShouldEqual, 2)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror`), convey.ShouldEqual, 1001)
+
+		var capturedQuery string
+		var capturedArgs []driver.NamedValue
+		resumeSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows: [][]driver.Value{
+					{int64(1001), "product-after-composite", "/seq", "run/after.cram", int64(9419245), "7607", formatSyncTime(base.Add(1001 * time.Second))},
+				},
+				querySink: func(query string, args []driver.NamedValue) {
+					capturedQuery = query
+					capturedArgs = append([]driver.NamedValue(nil), args...)
+				},
+			},
+		})
+		defer func() { _ = resumeSource.Close() }()
+
+		client.syncSource = resumeSource
+		reports, resumeErr := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.So(resumeErr, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+		convey.So(capturedQuery, convey.ShouldContainSubstring, `spi.id_seq_product_irods_locations_tmp > ?`)
+		convey.So(namedValueOrdinals(capturedArgs), convey.ShouldResemble, []any{int64(1000)})
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "composite-product"), convey.ShouldEqual, 2)
+		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "product-after-composite"), convey.ShouldEqual, 1)
+		convey.So(readSyncResumeCursor(t, cache.DB(), syncTableSeqProductIRODSLocations), convey.ShouldBeNil)
 	})
 }
 

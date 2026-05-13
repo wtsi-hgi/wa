@@ -198,7 +198,7 @@ func loadSampleFanOut(ctx context.Context, c *Client, sampleIDs []int64) (map[in
 
 	rows, err := db.QueryContext(
 		ctx,
-		`SELECT library_samples.id_sample_tmp, library_samples.pipeline_id_lims, `+qualifiedStudyMirrorSelectSQL+`
+		`SELECT library_samples.id_sample_tmp, library_samples.pipeline_id_lims, library_samples.library_id, library_samples.id_library_lims, `+qualifiedStudyMirrorSelectSQL+`
 		 FROM library_samples
 		 INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims
 		 WHERE study_mirror.id_lims = 'SQSCP' AND library_samples.id_sample_tmp IN (`+placeholders+`)
@@ -221,8 +221,8 @@ func loadSampleFanOut(ctx context.Context, c *Client, sampleIDs []int64) (map[in
 		)
 
 		study, scanErr := scanStudyRow(func(dest ...any) error {
-			scanArgs := make([]any, 0, len(dest)+2)
-			scanArgs = append(scanArgs, &sampleID, &library.PipelineIDLims)
+			scanArgs := make([]any, 0, len(dest)+4)
+			scanArgs = append(scanArgs, &sampleID, &library.PipelineIDLims, &library.LibraryID, &library.IDLibraryLims)
 			scanArgs = append(scanArgs, dest...)
 
 			return rows.Scan(scanArgs...)
@@ -1081,7 +1081,7 @@ func (c *Client) queryIRODSPaths(ctx context.Context, query string, parent any, 
 		if err = rows.Scan(&path.IDProduct, &path.Collection, &path.DataObject); err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrUpstreamImpaired, action, err)
 		}
-		path.IRODSPath = path.Collection + "/" + path.DataObject
+		path.IRODSPath = strings.TrimRight(path.Collection, "/") + "/" + path.DataObject
 
 		paths = append(paths, path)
 	}

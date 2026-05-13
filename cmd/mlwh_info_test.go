@@ -283,6 +283,71 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 	})
 }
 
+func TestMLWHInfoCommandSampleIncludesLibraryIdentifiersAndIRODSPaths(t *testing.T) {
+	convey.Convey("Given a sample resolves to a library with identifiers and an iRODS path, when wa mlwh info runs, then text and JSON output include those fields", t, func() {
+		newStub := func() *stubMLWHInfoClient {
+			return &stubMLWHInfoClient{
+				classify: func(_ context.Context, raw string) (mlwh.Match, error) {
+					convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: "7607STDY14643771",
+						Sample: &mlwh.Sample{
+							Name:           "7607STDY14643771",
+							IDSampleLims:   "9575305",
+							SangerSampleID: "7607STDY14643771",
+							Libraries: []mlwh.Library{{
+								PipelineIDLims: "Custom",
+								IDStudyLims:    "7607",
+								LibraryID:      "71046409",
+								IDLibraryLims:  "SQPP-47463-G:B1",
+							}},
+						},
+					}, nil
+				},
+				studiesForSample: func(_ context.Context, _ string) ([]mlwh.Study, error) {
+					return []mlwh.Study{{IDStudyLims: "7607", Name: "Target prioritisation"}}, nil
+				},
+				lanesForSample: func(_ context.Context, _ string, _, _ int) ([]mlwh.Lane, error) {
+					return []mlwh.Lane{{IDRun: 48522, Position: 1, TagIndex: 1}}, nil
+				},
+				irodsPathsForSample: func(_ context.Context, _ string, _, _ int) ([]mlwh.IRODSPath, error) {
+					return []mlwh.IRODSPath{{
+						IDProduct:  "5c7e2518e6e4b9f0bff053374d43a2b1f9bbb84625f035148db857b9bb01bfc0",
+						Collection: "/seq/illumina/runs/48/48522/plex1",
+						DataObject: "48522#1.cram",
+						IRODSPath:  "/seq/illumina/runs/48/48522/plex1/48522#1.cram",
+					}}, nil
+				},
+			}
+		}
+
+		withStubMLWHInfoClient(t, newStub())
+		textOutput, textErr := executeRootCommandForTest(t, []string{"mlwh", "info", "7607STDY14643771"})
+
+		convey.So(textErr, convey.ShouldBeNil)
+		convey.So(textOutput, convey.ShouldContainSubstring, "library: Custom / 7607 library_id=71046409 id_library_lims=SQPP-47463-G:B1")
+		convey.So(textOutput, convey.ShouldContainSubstring, "/seq/illumina/runs/48/48522/plex1/48522#1.cram")
+
+		withStubMLWHInfoClient(t, newStub())
+		jsonOutput, jsonErr := executeRootCommandForTest(t, []string{"mlwh", "info", "7607STDY14643771", "--json"})
+
+		convey.So(jsonErr, convey.ShouldBeNil)
+
+		decoded := map[string]any{}
+		convey.So(json.Unmarshal([]byte(jsonOutput), &decoded), convey.ShouldBeNil)
+		sample := decoded["sample"].(map[string]any)
+		libraries := sample["libraries"].([]any)
+		library := libraries[0].(map[string]any)
+		convey.So(library["library_id"], convey.ShouldEqual, "71046409")
+		convey.So(library["id_library_lims"], convey.ShouldEqual, "SQPP-47463-G:B1")
+		paths := decoded["irods_paths"].([]any)
+		path := paths[0].(map[string]any)
+		convey.So(path["irods_path"], convey.ShouldEqual, "/seq/illumina/runs/48/48522/plex1/48522#1.cram")
+	})
+}
+
 func TestMLWHInfoCommandJSONOutput(t *testing.T) {
 	convey.Convey("Given --json, when wa mlwh info runs, then stdout is a single JSON object containing the resolved data", t, func() {
 		stub := &stubMLWHInfoClient{
