@@ -1768,8 +1768,32 @@ func TestRepairDroppedProductMirrorIndexesDefersLargeMySQLPrimaryKeyRebuild(t *t
 			WithArgs(syncTableIseqProductMetrics).
 			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}).AddRow(formatSyncTime(highWater), 1))
 		mock.ExpectBegin()
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM iseq_product_metrics_mirror`)).
-			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(mysqlInlineMirrorIndexRowLimit + 1))
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
+			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}).AddRow("ipm_mirror_sample_run_position_tag_idx"))
+		mock.ExpectCommit()
+
+		err = repairDroppedMirrorIndexSet(context.Background(), db, "mysql", iseqProductMetricsMirrorIndexSet)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestRepairDroppedProductMirrorIndexesCreatesSampleLookupIndex(t *testing.T) {
+	convey.Convey("Given a completed large MySQL product mirror with resolver-critical indexes missing", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		highWater := time.Date(2026, time.May, 13, 9, 15, 0, 0, time.UTC)
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableIseqProductMetrics).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}).AddRow(formatSyncTime(highWater), 1))
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", iseqProductMetricsMirrorIndexSet.Table))).
+			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}))
+		mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE iseq_product_metrics_mirror ADD INDEX ipm_mirror_sample_run_position_tag_idx(id_sample_tmp, id_run, position, tag_index)`)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit()
 
 		err = repairDroppedMirrorIndexSet(context.Background(), db, "mysql", iseqProductMetricsMirrorIndexSet)

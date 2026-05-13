@@ -80,6 +80,32 @@ func (c *Client) ResolveSample(ctx context.Context, raw string) (Match, error) {
 	return Match{Kind: KindDonorID, Canonical: sample.Name, Sample: sample}, nil
 }
 
+// ResolveSampleName resolves an exact canonical sample name from the cache.
+func (c *Client) ResolveSampleName(ctx context.Context, raw string) (Match, error) {
+	sample, err := c.resolveSampleFromCache(
+		ctx,
+		`SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`,
+		raw,
+	)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireResolverSyncState(ctx, syncTableSample); syncErr != nil {
+				return Match{}, syncErr
+			}
+		}
+
+		return Match{}, err
+	}
+
+	samples := []Sample{*sample}
+	if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+		return Match{}, err
+	}
+	sample = &samples[0]
+
+	return Match{Kind: KindSangerSampleName, Canonical: sample.Name, Sample: sample}, nil
+}
+
 func (c *Client) resolveSampleDirectFromCache(ctx context.Context, raw string) (Match, error) {
 	if isUUIDShape(raw) {
 		sample, err := c.resolveSampleFromCache(

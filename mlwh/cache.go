@@ -615,26 +615,56 @@ func compareCacheSchemaShapes(expected, actual schemaShape) error {
 }
 
 func allowLargeMySQLColdLoadIndexShape(ctx context.Context, db *sql.DB, expected, actual schemaShape) {
-	for _, table := range []string{"iseq_product_metrics_mirror", "seq_product_irods_locations_mirror"} {
-		if !mysqlTableExceedsInlineIndexLimit(ctx, db, table, mysqlInlineMirrorIndexRowLimit) {
+	for _, indexSet := range []syncMirrorIndexSet{iseqProductMetricsMirrorIndexSet, seqProductIRODSLocationsMirrorIndexSet} {
+		if stringSlicesEqual(expected.Index[indexSet.Table], actual.Index[indexSet.Table]) {
+			continue
+		}
+		if !mysqlSyncStateRecordsDroppedIndexes(ctx, db, indexSet.SyncTable) &&
+			!mysqlTableEstimateExceedsInlineIndexLimit(ctx, db, indexSet.Table, mysqlInlineMirrorIndexRowLimit) {
 			continue
 		}
 
-		actual.Index[table] = append([]string(nil), expected.Index[table]...)
+		actual.Index[indexSet.Table] = append([]string(nil), expected.Index[indexSet.Table]...)
 	}
 
-	if mysqlTableExceedsInlineIndexLimit(ctx, db, "sample_mirror", mysqlInlineSampleIndexRowLimit) {
+	if !stringSlicesEqual(expected.Index["sample_mirror"], actual.Index["sample_mirror"]) &&
+		mysqlTableEstimateExceedsInlineIndexLimit(ctx, db, "sample_mirror", mysqlInlineSampleIndexRowLimit) {
 		actual.Index["sample_mirror"] = append([]string(nil), expected.Index["sample_mirror"]...)
 	}
 }
 
-func mysqlTableExceedsInlineIndexLimit(ctx context.Context, db *sql.DB, table string, limit int) bool {
-	var count int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&count); err != nil {
+func mysqlSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {
+	var (
+		highWaterRaw   string
+		indexesDropped int
+	)
+	if err := db.QueryRowContext(
+		ctx,
+		`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`,
+		table,
+	).Scan(&highWaterRaw, &indexesDropped); err != nil || indexesDropped != 1 {
 		return false
 	}
 
-	return count > limit
+	highWater, err := parseSyncTimeString(highWaterRaw)
+	if err != nil {
+		return false
+	}
+
+	return !highWater.IsZero()
+}
+
+func mysqlTableEstimateExceedsInlineIndexLimit(ctx context.Context, db *sql.DB, table string, limit int) bool {
+	var rows sql.NullInt64
+	if err := db.QueryRowContext(
+		ctx,
+		`SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+		table,
+	).Scan(&rows); err != nil || !rows.Valid {
+		return false
+	}
+
+	return rows.Int64 > int64(limit)
 }
 
 func stringSlicesEqual(expected, actual []string) bool {

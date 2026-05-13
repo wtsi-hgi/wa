@@ -73,6 +73,10 @@ type mlwhInfoClient interface {
 	Close() error
 }
 
+type mlwhInfoSampleNameResolver interface {
+	ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error)
+}
+
 func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag string, jsonOut bool) error {
 	match, err := classifyForInfo(ctx, client, identifier, typeFlag)
 	if err != nil {
@@ -318,8 +322,26 @@ func writeWarningsSection(out io.Writer, warnings []string) {
 func classifyForInfo(ctx context.Context, client mlwhInfoClient, identifier, typeFlag string) (mlwh.Match, error) {
 	switch strings.ToLower(strings.TrimSpace(typeFlag)) {
 	case "":
+		if match, err := client.ResolveStudy(ctx, identifier); err == nil {
+			return match, nil
+		} else if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, err
+		}
+
+		if match, err := resolveSampleNameForInfo(ctx, client, identifier); err == nil {
+			return match, nil
+		} else if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, err
+		}
+
 		return client.ClassifyIdentifier(ctx, identifier)
 	case "sample":
+		if match, err := resolveSampleNameForInfo(ctx, client, identifier); err == nil {
+			return match, nil
+		} else if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, err
+		}
+
 		return client.ResolveSample(ctx, identifier)
 	case "study":
 		return client.ResolveStudy(ctx, identifier)
@@ -330,6 +352,15 @@ func classifyForInfo(ctx context.Context, client mlwhInfoClient, identifier, typ
 	default:
 		return mlwh.Match{}, fmt.Errorf("unknown --type %q (expected sample, study, run or library)", typeFlag)
 	}
+}
+
+func resolveSampleNameForInfo(ctx context.Context, client mlwhInfoClient, identifier string) (mlwh.Match, error) {
+	nameResolver, ok := client.(mlwhInfoSampleNameResolver)
+	if !ok {
+		return mlwh.Match{}, mlwh.ErrNotFound
+	}
+
+	return nameResolver.ResolveSampleName(ctx, identifier)
 }
 
 func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *infoReport, sample *mlwh.Sample) {

@@ -332,6 +332,92 @@ func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 	})
 }
 
+func TestAllowLargeMySQLColdLoadIndexShapeUsesDroppedSyncState(t *testing.T) {
+	convey.Convey("Given a sparse large MySQL product mirror with dropped indexes recorded in sync_state", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		highWater := time.Date(2026, time.May, 13, 9, 0, 0, 0, time.UTC)
+		expected := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"name"},
+		}}
+		actual := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"name"},
+		}}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableIseqProductMetrics).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}).AddRow(formatSyncTime(highWater), 1))
+
+		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
+
+		convey.So(actual.Index["iseq_product_metrics_mirror"], convey.ShouldResemble, expected.Index["iseq_product_metrics_mirror"])
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestAllowLargeMySQLColdLoadIndexShapeUsesMetadataEstimateWithoutCountingRows(t *testing.T) {
+	convey.Convey("Given an existing sparse MySQL product mirror whose dropped-index flag is absent", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		expected := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+		}}
+		actual := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+		}}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableIseqProductMetrics).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
+			WithArgs("iseq_product_metrics_mirror").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_ROWS"}).AddRow(mysqlInlineMirrorIndexRowLimit + 1))
+
+		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
+
+		convey.So(actual.Index["iseq_product_metrics_mirror"], convey.ShouldResemble, expected.Index["iseq_product_metrics_mirror"])
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestAllowLargeMySQLColdLoadIndexShapeAllowsLargeSampleNameOnlyIndex(t *testing.T) {
+	convey.Convey("Given a large MySQL sample mirror repaired with only the resolver-critical name index", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		expected := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"accession_number", "donor_id", "id_sample_lims", "last_updated", "name", "sanger_sample_id", "supplier_name", "uuid_sample_lims"},
+		}}
+		actual := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"name"},
+		}}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
+			WithArgs("sample_mirror").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_ROWS"}).AddRow(mysqlInlineSampleIndexRowLimit + 1))
+
+		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
+
+		convey.So(actual.Index["sample_mirror"], convey.ShouldResemble, expected.Index["sample_mirror"])
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
 func TestOpenCacheRejectsMySQLDSNWithPassword(t *testing.T) {
 	convey.Convey("Given a MySQL DSN that embeds a password", t, func() {
 		_, err := OpenCache(context.Background(), CacheConfig{Path: "user:secret@tcp(localhost:3306)/wa_cache"})

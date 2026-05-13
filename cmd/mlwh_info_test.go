@@ -71,6 +71,7 @@ func TestMLWHInfoHelpRendersConfigurationDetails(t *testing.T) {
 
 type stubMLWHInfoClient struct {
 	classify        func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveName     func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveSample   func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveStudy    func(ctx context.Context, raw string) (mlwh.Match, error)
 	resolveRun      func(ctx context.Context, raw string) (mlwh.Match, error)
@@ -89,6 +90,14 @@ type stubMLWHInfoClient struct {
 	samplesForLibrary   func(ctx context.Context, pipelineID, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 
 	closed bool
+}
+
+func (s *stubMLWHInfoClient) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	if s.resolveName != nil {
+		return s.resolveName(ctx, raw)
+	}
+
+	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
 func (s *stubMLWHInfoClient) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -112,7 +121,7 @@ func (s *stubMLWHInfoClient) ResolveStudy(ctx context.Context, raw string) (mlwh
 		return s.resolveStudy(ctx, raw)
 	}
 
-	return mlwh.Match{}, errors.New("resolveStudy not stubbed")
+	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
 func (s *stubMLWHInfoClient) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -417,6 +426,58 @@ func TestMLWHInfoCommandTypeOverride(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "DN1234")
+	})
+}
+
+func TestMLWHInfoCommandUsesFastSampleNameResolver(t *testing.T) {
+	convey.Convey("Given a canonical sample name, when wa mlwh info runs with and without --type sample, then it avoids the broader sample resolver cascade", t, func() {
+		newStub := func() *stubMLWHInfoClient {
+			return &stubMLWHInfoClient{
+				classify: func(_ context.Context, _ string) (mlwh.Match, error) {
+					t.Fatalf("ClassifyIdentifier must not be called after the sample-name fast path matches")
+
+					return mlwh.Match{}, nil
+				},
+				resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
+					convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+					return mlwh.Match{}, mlwh.ErrNotFound
+				},
+				resolveName: func(_ context.Context, raw string) (mlwh.Match, error) {
+					convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: raw,
+						Sample: &mlwh.Sample{
+							Name: raw,
+							Libraries: []mlwh.Library{{
+								PipelineIDLims: "Custom",
+								IDStudyLims:    "7607",
+							}},
+							Studies: []mlwh.Study{{IDStudyLims: "7607"}},
+						},
+					}, nil
+				},
+				resolveSample: func(_ context.Context, _ string) (mlwh.Match, error) {
+					t.Fatalf("ResolveSample must not be called after the sample-name fast path matches")
+
+					return mlwh.Match{}, nil
+				},
+			}
+		}
+
+		withStubMLWHInfoClient(t, newStub())
+		autoOutput, autoErr := executeRootCommandForTest(t, []string{"mlwh", "info", "7607STDY14643771"})
+
+		convey.So(autoErr, convey.ShouldBeNil)
+		convey.So(autoOutput, convey.ShouldContainSubstring, "7607STDY14643771")
+
+		withStubMLWHInfoClient(t, newStub())
+		typedOutput, typedErr := executeRootCommandForTest(t, []string{"mlwh", "info", "--type", "sample", "7607STDY14643771"})
+
+		convey.So(typedErr, convey.ShouldBeNil)
+		convey.So(typedOutput, convey.ShouldContainSubstring, "7607STDY14643771")
 	})
 }
 

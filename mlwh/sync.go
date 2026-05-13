@@ -211,6 +211,15 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
 }
 
+var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
+}
+
+var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
+	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
+}
+
 var seqProductIRODSLocationsMirrorIndexSet = syncMirrorIndexSet{
 	Table:                 "seq_product_irods_locations_mirror",
 	SyncTable:             syncTableSeqProductIRODSLocations,
@@ -1612,6 +1621,13 @@ func createMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect strin
 }
 
 func createMirrorDroppedIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
+	if dialect == "mysql" {
+		repaired, err := createMySQLSparseMirrorReadIndexes(ctx, tx, dialect, indexSet)
+		if repaired || err != nil {
+			return false, err
+		}
+	}
+
 	if dialect == "mysql" && indexSet.PrimaryKeyColumn != "" {
 		rebuildInline, err := shouldRebuildMySQLMirrorSecondaryIndexesInline(ctx, tx, indexSet)
 		if err != nil {
@@ -1630,6 +1646,30 @@ func createMirrorDroppedIndexes(ctx context.Context, tx *sql.Tx, dialect string,
 	}
 
 	return true, nil
+}
+
+func createMySQLSparseMirrorReadIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
+	readIndexSet, ok := mySQLSparseMirrorReadIndexSet(indexSet)
+	if !ok {
+		return false, nil
+	}
+
+	if err := createMirrorSecondaryIndexes(ctx, tx, dialect, readIndexSet); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func mySQLSparseMirrorReadIndexSet(indexSet syncMirrorIndexSet) (syncMirrorIndexSet, bool) {
+	switch indexSet.Table {
+	case iseqProductMetricsMirrorIndexSet.Table:
+		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: iseqProductMetricsMirrorReadIndexes}, true
+	case seqProductIRODSLocationsMirrorIndexSet.Table:
+		return syncMirrorIndexSet{Table: indexSet.Table, Indexes: seqProductIRODSLocationsMirrorReadIndexes}, true
+	default:
+		return syncMirrorIndexSet{}, false
+	}
 }
 
 func shouldRebuildMySQLMirrorSecondaryIndexesInline(ctx context.Context, tx *sql.Tx, indexSet syncMirrorIndexSet) (bool, error) {
