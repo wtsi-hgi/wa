@@ -660,6 +660,8 @@ func TestOpenCacheInjectsMySQLPasswordIntoResolvedDSN(t *testing.T) {
 		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 			WithArgs(syncTableSample).
 			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
+		expectNoDroppedMirrorRepairRows(rwMock, syncTableIseqProductMetrics)
+		expectNoDroppedMirrorRepairRows(rwMock, syncTableSeqProductIRODSLocations)
 		roMock.ExpectPing()
 
 		var opened []string
@@ -699,6 +701,62 @@ func TestOpenCacheInjectsMySQLPasswordIntoResolvedDSN(t *testing.T) {
 			convey.So(strings.Contains(opened[1], "secret"), convey.ShouldBeTrue)
 			convey.So(roCfg.Params["transaction_read_only"], convey.ShouldEqual, "1")
 
+			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestOpenCacheTrimsTrailingEnvSemicolonFromMySQLDSN(t *testing.T) {
+	convey.Convey("Given a MySQL cache DSN copied from a dotenv line with a trailing semicolon", t, func() {
+		originalOpen := sqlOpenFunc
+		defer func() { sqlOpenFunc = originalOpen }()
+
+		rwDB, rwMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		convey.So(err, convey.ShouldBeNil)
+		roDB, roMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		convey.So(err, convey.ShouldBeNil)
+
+		expectSchemaBootstrap(rwMock, "mysql")
+		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableSample).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
+		expectNoDroppedMirrorRepairRows(rwMock, syncTableIseqProductMetrics)
+		expectNoDroppedMirrorRepairRows(rwMock, syncTableSeqProductIRODSLocations)
+		roMock.ExpectPing()
+
+		var opened []string
+		openCount := 0
+		sqlOpenFunc = func(driverName, dataSourceName string) (*sql.DB, error) {
+			convey.So(driverName, convey.ShouldEqual, "mysql")
+			opened = append(opened, dataSourceName)
+			openCount++
+
+			switch openCount {
+			case 1:
+				return rwDB, nil
+			case 2:
+				return roDB, nil
+			default:
+				return nil, fmt.Errorf("unexpected sql.Open call %d", openCount)
+			}
+		}
+
+		_, err = OpenCache(context.Background(), CacheConfig{Path: "cache_user@tcp(localhost:3306)/wa_cache;?parseTime=true", Password: "secret"})
+
+		convey.Convey("when OpenCache runs, then both MySQL connections use the normalized database name", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(opened, convey.ShouldHaveLength, 2)
+
+			rwCfg, parseErr := mysql.ParseDSN(opened[0])
+			convey.So(parseErr, convey.ShouldBeNil)
+			roCfg, parseErr := mysql.ParseDSN(opened[1])
+			convey.So(parseErr, convey.ShouldBeNil)
+
+			convey.So(rwCfg.DBName, convey.ShouldEqual, "wa_cache")
+			convey.So(roCfg.DBName, convey.ShouldEqual, "wa_cache")
+			convey.So(rwCfg.ParseTime, convey.ShouldBeTrue)
+			convey.So(roCfg.ParseTime, convey.ShouldBeTrue)
 			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
@@ -923,5 +981,13 @@ func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(toVersion).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
 		WithArgs(syncTableSample).
+		WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
+	expectNoDroppedMirrorRepairRows(mock, syncTableIseqProductMetrics)
+	expectNoDroppedMirrorRepairRows(mock, syncTableSeqProductIRODSLocations)
+}
+
+func expectNoDroppedMirrorRepairRows(mock sqlmock.Sqlmock, table string) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+		WithArgs(table).
 		WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}))
 }

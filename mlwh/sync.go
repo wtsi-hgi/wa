@@ -40,6 +40,7 @@ import (
 
 const (
 	syncBatchSize                     = 1000
+	syncStatementParamLimit           = 30000
 	maxSyncReconnectAttempts          = 5
 	sqliteSyncPragmaCleanupTimeout    = 5 * time.Second
 	syncTableSample                   = "sample"
@@ -50,8 +51,15 @@ const (
 	sqscpIDLims                       = "SQSCP"
 	sampleIDDescResumeCursorMode      = "id_sample_tmp_desc"
 	sampleLastUpdatedResumeCursorMode = "last_updated"
+	iseqProductMetricsIDResumeMode    = "id_iseq_pr_metrics_tmp"
+	seqProductIRODSLocationsIDMode    = "id_seq_product_irods_locations_tmp"
 	sampleColdInitialID               = int64(1<<63 - 1)
+	syncColdInitialAscendingID        = int64(0)
+	mysqlInlineSampleIndexRowLimit    = 1000000
+	mysqlInlineMirrorIndexRowLimit    = 1000000
 )
+
+var syncColdBatchSize = 50000
 
 var supportedSyncTables = []string{
 	syncTableSample,
@@ -158,12 +166,20 @@ var studySourceColumnSpecs = []studySourceColumnSpec{
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
 
-type sampleMirrorIndexSpec struct {
+type syncIndexSpec struct {
 	Name   string
 	Column string
 }
 
-var sampleMirrorSecondaryIndexes = []sampleMirrorIndexSpec{
+type syncMirrorIndexSet struct {
+	Table                 string
+	SyncTable             string
+	PrimaryKeyColumn      string
+	SkipPrimaryKeyRebuild bool
+	Indexes               []syncIndexSpec
+}
+
+var sampleMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "sample_mirror_id_sample_lims_idx", Column: "id_sample_lims"},
 	{Name: "sample_mirror_uuid_sample_lims_idx", Column: "uuid_sample_lims"},
 	{Name: "sample_mirror_name_idx", Column: "name"},
@@ -172,6 +188,41 @@ var sampleMirrorSecondaryIndexes = []sampleMirrorIndexSpec{
 	{Name: "sample_mirror_accession_number_idx", Column: "accession_number"},
 	{Name: "sample_mirror_donor_id_idx", Column: "donor_id"},
 	{Name: "sample_mirror_last_updated_idx", Column: "last_updated"},
+}
+
+var sampleMirrorIndexSet = syncMirrorIndexSet{Table: "sample_mirror", SyncTable: syncTableSample, Indexes: sampleMirrorSecondaryIndexes}
+
+var iseqProductMetricsMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
+	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
+	{Name: "iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx", Column: "id_iseq_flowcell_tmp"},
+	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
+}
+
+var iseqProductMetricsMirrorIndexSet = syncMirrorIndexSet{
+	Table:            "iseq_product_metrics_mirror",
+	SyncTable:        syncTableIseqProductMetrics,
+	PrimaryKeyColumn: "id_iseq_product",
+	Indexes:          iseqProductMetricsMirrorSecondaryIndexes,
+}
+
+var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
+	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
+}
+
+var seqProductIRODSLocationsMirrorIndexSet = syncMirrorIndexSet{
+	Table:                 "seq_product_irods_locations_mirror",
+	SyncTable:             syncTableSeqProductIRODSLocations,
+	PrimaryKeyColumn:      "id_iseq_product",
+	SkipPrimaryKeyRebuild: true,
+	Indexes:               seqProductIRODSLocationsMirrorSecondaryIndexes,
+}
+
+var syncMirrorIndexSets = []syncMirrorIndexSet{
+	sampleMirrorIndexSet,
+	iseqProductMetricsMirrorIndexSet,
+	seqProductIRODSLocationsMirrorIndexSet,
 }
 
 type sampleSyncMode int
@@ -205,12 +256,20 @@ func iseqProductMetricsSyncSourceQuery() string {
 	return `SELECT ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE ipm.last_changed >= ? ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
 }
 
+func iseqProductMetricsColdSyncSourceQuery() string {
+	return `SELECT /*+ JOIN_FIXED_ORDER() */ ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE ipm.id_iseq_pr_metrics_tmp < ? ORDER BY ipm.id_iseq_pr_metrics_tmp DESC`
+}
+
 func iseqProductMetricsSyncSourceQueryFromCursor() string {
 	return `SELECT ipm.id_iseq_product, ipm.id_iseq_pr_metrics_tmp, ipm.id_iseq_flowcell_tmp, ipm.id_run, ipm.position, ipm.tag_index, ifc.id_sample_tmp, study.id_study_lims, ipm.qc, ipm.qc_lib, ipm.qc_seq, ipm.last_changed FROM iseq_product_metrics ipm INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE (ipm.last_changed > ?) OR (ipm.last_changed = ? AND ipm.id_iseq_pr_metrics_tmp > ?) ORDER BY ipm.last_changed, ipm.id_iseq_pr_metrics_tmp`
 }
 
 func seqProductIRODSLocationsSyncSourceQuery() string {
 	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE spi.last_changed >= ? ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`
+}
+
+func seqProductIRODSLocationsColdSyncSourceQuery() string {
+	return `SELECT spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp, study.id_study_lims, spi.last_changed FROM seq_product_irods_locations spi INNER JOIN iseq_product_metrics ipm ON ipm.id_iseq_product = spi.id_product INNER JOIN iseq_flowcell ifc ON ifc.id_iseq_flowcell_tmp = ipm.id_iseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = ifc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE spi.id_seq_product_irods_locations_tmp > ? ORDER BY spi.id_seq_product_irods_locations_tmp`
 }
 
 func seqProductIRODSLocationsSyncSourceQueryFromCursor() string {
@@ -243,6 +302,8 @@ func syncSampleTable(ctx context.Context, cache Cache, source Querier, state syn
 	if err != nil {
 		return SyncReport{}, false, err
 	}
+	batchSize := sampleSyncBatchSize(mode)
+	assumeInserted := sampleSyncCanAssumeInserted(state, mode)
 
 	rows, err := source.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -256,7 +317,7 @@ func syncSampleTable(ctx context.Context, cache Cache, source Querier, state syn
 
 	report := SyncReport{Table: syncTableSample, HighWater: state.HighWater}
 	sawRows := false
-	batch := make([]sampleSyncRow, 0, syncBatchSize)
+	batch := make([]sampleSyncRow, 0, batchSize)
 	flushBatch := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -268,7 +329,7 @@ func syncSampleTable(ctx context.Context, cache Cache, source Querier, state syn
 		if mode == sampleSyncModeColdID {
 			resumeCursor = encodeSampleIDDescResumeCursor(lastRow)
 		}
-		result, applyErr := writeSampleBatch(ctx, cache, batch, batchHighWater, &resumeCursor, state.IndexesDropped)
+		result, applyErr := writeSampleBatch(ctx, cache, batch, batchHighWater, &resumeCursor, state.IndexesDropped, assumeInserted)
 		if applyErr != nil {
 			return applyErr
 		}
@@ -296,7 +357,7 @@ func syncSampleTable(ctx context.Context, cache Cache, source Querier, state syn
 		}
 
 		batch = append(batch, row)
-		if len(batch) == syncBatchSize {
+		if len(batch) == batchSize {
 			if err = flushBatch(); err != nil {
 				return report, false, err
 			}
@@ -318,6 +379,40 @@ func syncSampleTable(ctx context.Context, cache Cache, source Querier, state syn
 	return report, sawRows, nil
 }
 
+func sampleSyncBatchSize(mode sampleSyncMode) int {
+	if mode == sampleSyncModeColdID {
+		return syncColdBatchSize
+	}
+
+	return syncBatchSize
+}
+
+func sampleSyncCanAssumeInserted(state syncStateRecord, mode sampleSyncMode) bool {
+	if mode != sampleSyncModeColdID {
+		return false
+	}
+	if !state.Exists || state.HighWater.IsZero() {
+		return true
+	}
+	if !state.IndexesDropped || state.ResumeCursor == nil {
+		return false
+	}
+
+	return strings.HasPrefix(*state.ResumeCursor, sampleIDDescResumeCursorMode+"\t")
+}
+
+func syncBatchSizeForState(state syncStateRecord) int {
+	if state.HighWater.IsZero() || state.ResumeCursor != nil {
+		return syncColdBatchSize
+	}
+
+	return syncBatchSize
+}
+
+func syncStateCanAssumeInserted(state syncStateRecord) bool {
+	return !state.Exists || state.HighWater.IsZero() || state.ResumeCursor != nil
+}
+
 func syncStudyTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
 	query, args, err := studySyncQuery(state)
 	if err != nil {
@@ -334,7 +429,9 @@ func syncStudyTable(ctx context.Context, cache Cache, source Querier, state sync
 
 	report := SyncReport{Table: syncTableStudy, HighWater: state.HighWater}
 	sawRows := false
-	batch := make([]studySyncRow, 0, syncBatchSize)
+	batchSize := syncBatchSizeForState(state)
+	assumeInserted := syncStateCanAssumeInserted(state)
+	batch := make([]studySyncRow, 0, batchSize)
 	flushBatch := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -342,7 +439,7 @@ func syncStudyTable(ctx context.Context, cache Cache, source Querier, state sync
 
 		batchHighWater := batch[len(batch)-1].LastUpdated
 		resumeCursor := encodeStudyResumeCursor(batch[len(batch)-1])
-		result, applyErr := writeStudyBatch(ctx, cache, batch, batchHighWater, &resumeCursor)
+		result, applyErr := writeStudyBatch(ctx, cache, batch, batchHighWater, &resumeCursor, assumeInserted)
 		if applyErr != nil {
 			return applyErr
 		}
@@ -354,7 +451,6 @@ func syncStudyTable(ctx context.Context, cache Cache, source Querier, state sync
 
 		return nil
 	}
-
 	for rows.Next() {
 		row, scanErr := scanStudySyncRow(rows)
 		if scanErr != nil {
@@ -370,7 +466,7 @@ func syncStudyTable(ctx context.Context, cache Cache, source Querier, state sync
 		}
 
 		batch = append(batch, row)
-		if len(batch) == syncBatchSize {
+		if len(batch) == batchSize {
 			if err = flushBatch(); err != nil {
 				return report, false, err
 			}
@@ -477,7 +573,9 @@ func syncFlowcellTable(ctx context.Context, cache Cache, source Querier, state s
 	report := SyncReport{Table: syncTableIseqFlowcell, HighWater: state.HighWater}
 	sawRows := false
 	seen := make(map[string]struct{})
-	batch := make([]flowcellSyncRow, 0, syncBatchSize)
+	batchSize := syncBatchSizeForState(state)
+	assumeInserted := syncStateCanAssumeInserted(state)
+	batch := make([]flowcellSyncRow, 0, batchSize)
 	flushBatch := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -485,7 +583,7 @@ func syncFlowcellTable(ctx context.Context, cache Cache, source Querier, state s
 
 		batchHighWater := batch[len(batch)-1].LastUpdated
 		resumeCursor := encodeFlowcellResumeCursor(batch[len(batch)-1])
-		result, applyErr := writeFlowcellBatch(ctx, cache, batch, batchHighWater, &resumeCursor)
+		result, applyErr := writeFlowcellBatch(ctx, cache, batch, batchHighWater, &resumeCursor, assumeInserted)
 		if applyErr != nil {
 			return applyErr
 		}
@@ -520,7 +618,7 @@ func syncFlowcellTable(ctx context.Context, cache Cache, source Querier, state s
 		seen[key] = struct{}{}
 
 		batch = append(batch, row)
-		if len(batch) == syncBatchSize {
+		if len(batch) == batchSize {
 			if err = flushBatch(); err != nil {
 				return report, false, err
 			}
@@ -564,7 +662,7 @@ func configureSQLiteSyncWritePragmas(ctx context.Context, cache Cache) (func() e
 	}
 
 	for _, statement := range []string{
-		`PRAGMA synchronous = NORMAL`,
+		`PRAGMA synchronous = OFF`,
 		`PRAGMA cache_size = -200000`,
 		`PRAGMA temp_store = MEMORY`,
 	} {
@@ -690,6 +788,11 @@ func (c *Client) syncTables(ctx context.Context) (reports []SyncReport, err erro
 
 		if result.err != nil {
 			errs = append(errs, result.err)
+		}
+	}
+	if len(errs) == 0 {
+		if repairErr := repairDroppedMirrorIndexes(ctx, c.cache.DB(), c.cache.Dialect()); repairErr != nil {
+			errs = append(errs, repairErr)
 		}
 	}
 
@@ -1135,30 +1238,91 @@ func flowcellSyncQuery(state syncStateRecord) (string, []any, error) {
 	return flowcellSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), pipelineIDLims, idSampleTmp, idStudyLims}, nil
 }
 
-func iseqProductMetricsSyncQuery(state syncStateRecord) (string, []any, error) {
+func iseqProductMetricsSyncQuery(state syncStateRecord) (string, []any, bool, error) {
+	if shouldUseAscendingIDColdSync(state, iseqProductMetricsIDResumeMode) {
+		id, err := descendingIDColdResumeID(state, iseqProductMetricsIDResumeMode)
+		if err != nil {
+			return "", nil, true, err
+		}
+
+		return iseqProductMetricsColdSyncSourceQuery(), []any{id}, true, nil
+	}
+
 	if state.ResumeCursor == nil {
-		return iseqProductMetricsSyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, nil
+		return iseqProductMetricsSyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, false, nil
 	}
 
 	lastUpdated, idIseqProduct, err := parseTwoPartResumeCursor(*state.ResumeCursor)
 	if err != nil {
-		return "", nil, fmt.Errorf("mlwh: parse iseq_product_metrics resume cursor: %w", err)
+		return "", nil, false, fmt.Errorf("mlwh: parse iseq_product_metrics resume cursor: %w", err)
 	}
 
-	return iseqProductMetricsSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), idIseqProduct}, nil
+	return iseqProductMetricsSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), idIseqProduct}, false, nil
 }
 
-func seqProductIRODSLocationsSyncQuery(state syncStateRecord) (string, []any, error) {
+func seqProductIRODSLocationsSyncQuery(state syncStateRecord) (string, []any, bool, error) {
+	if shouldUseAscendingIDColdSync(state, seqProductIRODSLocationsIDMode) {
+		id, err := ascendingIDColdResumeID(state, seqProductIRODSLocationsIDMode)
+		if err != nil {
+			return "", nil, true, err
+		}
+
+		return seqProductIRODSLocationsColdSyncSourceQuery(), []any{id}, true, nil
+	}
+
 	if state.ResumeCursor == nil {
-		return seqProductIRODSLocationsSyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, nil
+		return seqProductIRODSLocationsSyncSourceQuery(), []any{formatSyncTime(state.HighWater)}, false, nil
 	}
 
 	lastUpdated, rowID, err := parseTwoPartResumeCursor(*state.ResumeCursor)
 	if err != nil {
-		return "", nil, fmt.Errorf("mlwh: parse seq_product_irods_locations resume cursor: %w", err)
+		return "", nil, false, fmt.Errorf("mlwh: parse seq_product_irods_locations resume cursor: %w", err)
 	}
 
-	return seqProductIRODSLocationsSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), rowID}, nil
+	return seqProductIRODSLocationsSyncSourceQueryFromCursor(), []any{formatSyncTime(lastUpdated), formatSyncTime(lastUpdated), rowID}, false, nil
+}
+
+func shouldUseAscendingIDColdSync(state syncStateRecord, cursorMode string) bool {
+	if !state.Exists || state.HighWater.IsZero() {
+		return true
+	}
+	if state.ResumeCursor == nil {
+		return false
+	}
+
+	return strings.HasPrefix(*state.ResumeCursor, cursorMode+"\t")
+}
+
+func ascendingIDColdResumeID(state syncStateRecord, cursorMode string) (int64, error) {
+	if state.ResumeCursor == nil {
+		return syncColdInitialAscendingID, nil
+	}
+
+	id, ok, err := parseAscendingIDResumeCursor(*state.ResumeCursor, cursorMode)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		return id, nil
+	}
+
+	return syncColdInitialAscendingID, nil
+}
+
+func descendingIDColdResumeID(state syncStateRecord, cursorMode string) (int64, error) {
+	if state.ResumeCursor == nil {
+		return sampleColdInitialID, nil
+	}
+
+	id, ok, err := parseAscendingIDResumeCursor(*state.ResumeCursor, cursorMode)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		return id, nil
+	}
+
+	return sampleColdInitialID, nil
 }
 
 func finalizeSyncState(ctx context.Context, cache Cache, table string, highWater time.Time) error {
@@ -1167,16 +1331,90 @@ func finalizeSyncState(ctx context.Context, cache Cache, table string, highWater
 	})
 }
 
+func finalizeMirrorSyncState(ctx context.Context, cache Cache, indexSet syncMirrorIndexSet, highWater time.Time, indexesDropped bool) error {
+	return withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
+		deferredIndexesDropped := false
+		if indexesDropped {
+			if shouldDeferMirrorIndexRebuild(cache) {
+				deferredIndexesDropped = true
+			} else {
+				repaired, err := createMirrorDroppedIndexes(ctx, tx, cache.Dialect(), indexSet)
+				if err != nil {
+					return err
+				}
+				deferredIndexesDropped = !repaired
+			}
+		}
+
+		return writeSyncStateTx(ctx, tx, cache.Dialect(), indexSet.SyncTable, highWater, nil, deferredIndexesDropped)
+	})
+}
+
 func finalizeSampleSyncState(ctx context.Context, cache Cache, highWater time.Time, indexesDropped bool) error {
 	return withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
+		deferredIndexesDropped := false
 		if indexesDropped {
-			if err := createSampleMirrorSecondaryIndexes(ctx, tx, cache.Dialect()); err != nil {
+			if shouldDeferMirrorIndexRebuild(cache) {
+				deferredIndexesDropped = true
+			} else if err := rebuildSampleMirrorColdLoadIndexes(ctx, tx, cache.Dialect()); err != nil {
 				return err
 			}
 		}
 
-		return writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSample, highWater, nil, false)
+		return writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSample, highWater, nil, deferredIndexesDropped)
 	})
+}
+
+func shouldDeferMirrorIndexRebuild(cache Cache) bool {
+	return cache != nil && cache.Dialect() == "mysql"
+}
+
+func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect string) error {
+	if err := rebuildDonorSampleTable(ctx, tx, dialect); err != nil {
+		return err
+	}
+	if dialect == "mysql" {
+		rebuildInline, err := shouldRebuildMySQLSampleSecondaryIndexesInline(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if !rebuildInline {
+			return createMirrorSecondaryIndexes(ctx, tx, dialect, syncMirrorIndexSet{
+				Table:   "sample_mirror",
+				Indexes: []syncIndexSpec{{Name: "sample_mirror_name_idx", Column: "name"}},
+			})
+		}
+	}
+	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func shouldRebuildMySQLSampleSecondaryIndexesInline(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sample_mirror`).Scan(&count); err != nil {
+		return false, fmt.Errorf("mlwh: count sample_mirror rows before index rebuild: %w", err)
+	}
+
+	return count <= mysqlInlineSampleIndexRowLimit, nil
+}
+
+func rebuildDonorSampleTable(ctx context.Context, tx *sql.Tx, dialect string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM donor_samples`); err != nil {
+		return fmt.Errorf("mlwh: clear donor samples before rebuild: %w", err)
+	}
+
+	insert := `INSERT OR IGNORE INTO donor_samples(donor_id, id_sample_tmp) SELECT donor_id, id_sample_tmp FROM sample_mirror`
+	if dialect == "mysql" {
+		insert = `INSERT IGNORE INTO donor_samples(donor_id, id_sample_tmp) SELECT donor_id, id_sample_tmp FROM sample_mirror`
+	}
+	if _, err := tx.ExecContext(ctx, insert); err != nil {
+		return fmt.Errorf("mlwh: rebuild donor samples from sample_mirror: %w", err)
+	}
+
+	return nil
 }
 
 func prepareSampleMirrorIndexesForSync(ctx context.Context, cache Cache, state *syncStateRecord) error {
@@ -1214,55 +1452,86 @@ func shouldDropSampleMirrorIndexes(state syncStateRecord) bool {
 	return state.HighWater.IsZero() && !state.IndexesDropped
 }
 
-func sampleMirrorIndexInventoryQuery(dialect string) string {
-	if dialect == "mysql" {
-		return `SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sample_mirror' AND INDEX_NAME <> 'PRIMARY'`
+func prepareMirrorIndexesForColdSync(ctx context.Context, cache Cache, state *syncStateRecord, indexSet syncMirrorIndexSet) error {
+	if state == nil {
+		return fmt.Errorf("mlwh: %s sync state not configured", indexSet.SyncTable)
+	}
+	if state.IndexesDropped {
+		return nil
 	}
 
-	return `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sample_mirror'`
+	if err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
+		if err := dropMirrorSecondaryIndexes(ctx, tx, cache.Dialect(), indexSet); err != nil {
+			return err
+		}
+		if err := dropMirrorPrimaryKey(ctx, tx, cache.Dialect(), indexSet); err != nil {
+			return err
+		}
+
+		return writeSyncStateTx(ctx, tx, cache.Dialect(), indexSet.SyncTable, state.HighWater, state.ResumeCursor, true)
+	}); err != nil {
+		return err
+	}
+
+	state.Exists = true
+	state.IndexesDropped = true
+
+	return nil
 }
 
-func sampleMirrorExistingIndexes(ctx context.Context, tx *sql.Tx, dialect string) (map[string]struct{}, error) {
-	rows, err := tx.QueryContext(ctx, sampleMirrorIndexInventoryQuery(dialect))
+func mirrorIndexInventoryQuery(dialect string, table string) string {
+	if dialect == "mysql" {
+		return fmt.Sprintf(`SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%s' AND INDEX_NAME <> 'PRIMARY'`, table)
+	}
+
+	return fmt.Sprintf(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = '%s' AND name NOT LIKE 'sqlite_autoindex_%%'`, table)
+}
+
+func mirrorExistingIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (map[string]struct{}, error) {
+	rows, err := tx.QueryContext(ctx, mirrorIndexInventoryQuery(dialect, indexSet.Table))
 	if err != nil {
-		return nil, fmt.Errorf("mlwh: query sample_mirror indexes: %w", err)
+		return nil, fmt.Errorf("mlwh: query %s indexes: %w", indexSet.Table, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	indexes := make(map[string]struct{}, len(sampleMirrorSecondaryIndexes))
+	indexes := make(map[string]struct{}, len(indexSet.Indexes))
 	for rows.Next() {
 		var name string
 		if err = rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("mlwh: scan sample_mirror index: %w", err)
+			return nil, fmt.Errorf("mlwh: scan %s index: %w", indexSet.Table, err)
 		}
 
 		indexes[name] = struct{}{}
 	}
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: iterate sample_mirror indexes: %w", err)
+		return nil, fmt.Errorf("mlwh: iterate %s indexes: %w", indexSet.Table, err)
 	}
 
 	return indexes, nil
 }
 
 func dropSampleMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string) error {
-	existing, err := sampleMirrorExistingIndexes(ctx, tx, dialect)
+	return dropMirrorSecondaryIndexes(ctx, tx, dialect, sampleMirrorIndexSet)
+}
+
+func dropMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
+	existing, err := mirrorExistingIndexes(ctx, tx, dialect, indexSet)
 	if err != nil {
 		return err
 	}
 
-	for _, index := range sampleMirrorSecondaryIndexes {
+	for _, index := range indexSet.Indexes {
 		if _, ok := existing[index.Name]; !ok {
 			continue
 		}
 
 		stmt := `DROP INDEX IF EXISTS ` + index.Name
 		if dialect == "mysql" {
-			stmt = `DROP INDEX ` + index.Name + ` ON sample_mirror`
+			stmt = `DROP INDEX ` + index.Name + ` ON ` + indexSet.Table
 		}
 
 		if _, err = tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("mlwh: drop sample_mirror index %s: %w", index.Name, err)
+			return fmt.Errorf("mlwh: drop %s index %s: %w", indexSet.Table, index.Name, err)
 		}
 	}
 
@@ -1270,27 +1539,152 @@ func dropSampleMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect s
 }
 
 func createSampleMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string) error {
-	existing, err := sampleMirrorExistingIndexes(ctx, tx, dialect)
+	return createMirrorSecondaryIndexes(ctx, tx, dialect, sampleMirrorIndexSet)
+}
+
+func createMirrorSecondaryIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
+	existing, err := mirrorExistingIndexes(ctx, tx, dialect, indexSet)
 	if err != nil {
 		return err
 	}
 
-	for _, index := range sampleMirrorSecondaryIndexes {
-		if _, ok := existing[index.Name]; ok {
-			continue
+	missing := missingMirrorSecondaryIndexes(existing, indexSet.Indexes)
+	if len(missing) == 0 {
+		return nil
+	}
+	if dialect == "mysql" {
+		if _, err = tx.ExecContext(ctx, buildMySQLCreateMirrorSecondaryIndexesStatement(indexSet.Table, missing)); err != nil {
+			return fmt.Errorf("mlwh: create %s indexes: %w", indexSet.Table, err)
 		}
 
-		stmt := fmt.Sprintf(`CREATE INDEX %s ON sample_mirror(%s)`, index.Name, index.Column)
-		if dialect == "sqlite" {
-			stmt = fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON sample_mirror(%s)`, index.Name, index.Column)
-		}
+		return nil
+	}
+
+	for _, index := range missing {
+		stmt := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s(%s)`, index.Name, indexSet.Table, index.Column)
 
 		if _, err = tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("mlwh: create sample_mirror index %s: %w", index.Name, err)
+			return fmt.Errorf("mlwh: create %s index %s: %w", indexSet.Table, index.Name, err)
 		}
 	}
 
 	return nil
+}
+
+func createMirrorDroppedIndexes(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) (bool, error) {
+	if dialect == "mysql" && indexSet.PrimaryKeyColumn != "" {
+		rebuildInline, err := shouldRebuildMySQLMirrorSecondaryIndexesInline(ctx, tx, indexSet)
+		if err != nil {
+			return false, err
+		}
+		if !rebuildInline {
+			return false, nil
+		}
+	}
+
+	if err := createMirrorPrimaryKey(ctx, tx, dialect, indexSet); err != nil {
+		return false, err
+	}
+	if err := createMirrorSecondaryIndexes(ctx, tx, dialect, indexSet); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func shouldRebuildMySQLMirrorSecondaryIndexesInline(ctx context.Context, tx *sql.Tx, indexSet syncMirrorIndexSet) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+indexSet.Table).Scan(&count); err != nil {
+		return false, fmt.Errorf("mlwh: count %s rows before index rebuild: %w", indexSet.Table, err)
+	}
+
+	return count <= mysqlInlineMirrorIndexRowLimit, nil
+}
+
+func mirrorPrimaryKeyExists(ctx context.Context, tx *sql.Tx, indexSet syncMirrorIndexSet) (bool, error) {
+	if indexSet.PrimaryKeyColumn == "" {
+		return false, nil
+	}
+
+	var count int
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = 'PRIMARY'`,
+		indexSet.Table,
+	).Scan(&count); err != nil {
+		return false, fmt.Errorf("mlwh: query %s primary key: %w", indexSet.Table, err)
+	}
+
+	return count > 0, nil
+}
+
+func dropMirrorPrimaryKey(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
+	if dialect != "mysql" || indexSet.PrimaryKeyColumn == "" {
+		return nil
+	}
+
+	exists, err := mirrorPrimaryKeyExists(ctx, tx, indexSet)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+
+	if _, err = tx.ExecContext(ctx, `ALTER TABLE `+indexSet.Table+` DROP PRIMARY KEY`); err != nil {
+		return fmt.Errorf("mlwh: drop %s primary key: %w", indexSet.Table, err)
+	}
+
+	return nil
+}
+
+func createMirrorPrimaryKey(ctx context.Context, tx *sql.Tx, dialect string, indexSet syncMirrorIndexSet) error {
+	if dialect != "mysql" || indexSet.PrimaryKeyColumn == "" {
+		return nil
+	}
+	if indexSet.SkipPrimaryKeyRebuild {
+		return nil
+	}
+
+	exists, err := mirrorPrimaryKeyExists(ctx, tx, indexSet)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	if _, err = tx.ExecContext(ctx, `ALTER TABLE `+indexSet.Table+` ADD PRIMARY KEY(`+indexSet.PrimaryKeyColumn+`)`); err != nil {
+		return fmt.Errorf("mlwh: create %s primary key: %w", indexSet.Table, err)
+	}
+
+	return nil
+}
+
+func missingMirrorSecondaryIndexes(existing map[string]struct{}, indexes []syncIndexSpec) []syncIndexSpec {
+	missing := make([]syncIndexSpec, 0, len(indexes))
+	for _, index := range indexes {
+		if _, ok := existing[index.Name]; ok {
+			continue
+		}
+
+		missing = append(missing, index)
+	}
+
+	return missing
+}
+
+func buildMySQLCreateSampleMirrorSecondaryIndexesStatement(indexes []syncIndexSpec) string {
+	return buildMySQLCreateMirrorSecondaryIndexesStatement("sample_mirror", indexes)
+}
+
+func buildMySQLCreateMirrorSecondaryIndexesStatement(table string, indexes []syncIndexSpec) string {
+	parts := make([]string, 0, len(indexes))
+	for _, index := range indexes {
+		parts = append(parts, fmt.Sprintf("ADD INDEX %s(%s)", index.Name, index.Column))
+	}
+
+	return "ALTER TABLE " + table + " " + strings.Join(parts, ", ")
 }
 
 func parseTwoPartResumeCursor(raw string) (time.Time, int64, error) {
@@ -1315,6 +1709,20 @@ func parseTwoPartResumeCursor(raw string) (time.Time, int64, error) {
 func parseSampleIDDescResumeCursor(raw string) (int64, bool, error) {
 	parts := strings.Split(raw, "\t")
 	if len(parts) != 2 || parts[0] != sampleIDDescResumeCursorMode {
+		return 0, false, nil
+	}
+
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, true, fmt.Errorf("parse integer field %q: %w", parts[1], err)
+	}
+
+	return id, true, nil
+}
+
+func parseAscendingIDResumeCursor(raw string, cursorMode string) (int64, bool, error) {
+	parts := strings.Split(raw, "\t")
+	if len(parts) != 2 || parts[0] != cursorMode {
 		return 0, false, nil
 	}
 
@@ -1388,6 +1796,10 @@ func encodeSeqProductIRODSLocationsResumeCursor(row seqProductIRODSLocationsSync
 	return formatSyncTime(row.LastUpdated) + "\t" + strconv.FormatInt(row.SourceRowID, 10)
 }
 
+func encodeAscendingIDResumeCursor(cursorMode string, id int64) string {
+	return cursorMode + "\t" + strconv.FormatInt(id, 10)
+}
+
 func (c *Client) syncTableData(ctx context.Context, table string, state syncStateRecord) (SyncReport, bool, error) {
 	source := c.syncSource
 	if source == nil {
@@ -1426,9 +1838,14 @@ type iseqProductMetricsSyncRow struct {
 }
 
 func syncIseqProductMetricsTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
-	query, args, err := iseqProductMetricsSyncQuery(state)
+	query, args, coldIDSync, err := iseqProductMetricsSyncQuery(state)
 	if err != nil {
 		return SyncReport{}, false, err
+	}
+	if coldIDSync {
+		if err = prepareMirrorIndexesForColdSync(ctx, cache, &state, iseqProductMetricsMirrorIndexSet); err != nil {
+			return SyncReport{}, false, err
+		}
 	}
 
 	rows, err := source.QueryContext(ctx, query, args...)
@@ -1439,7 +1856,9 @@ func syncIseqProductMetricsTable(ctx context.Context, cache Cache, source Querie
 
 	report := SyncReport{Table: syncTableIseqProductMetrics, HighWater: state.HighWater}
 	sawRows := false
-	batch := make([]iseqProductMetricsSyncRow, 0, syncBatchSize)
+	batchSize := syncBatchSizeForState(state)
+	assumeInserted := syncStateCanAssumeInserted(state)
+	batch := make([]iseqProductMetricsSyncRow, 0, batchSize)
 	flushBatch := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -1447,7 +1866,11 @@ func syncIseqProductMetricsTable(ctx context.Context, cache Cache, source Querie
 
 		batchHighWater := batch[len(batch)-1].LastUpdated
 		resumeCursor := encodeIseqProductMetricsResumeCursor(batch[len(batch)-1])
-		result, applyErr := writeIseqProductMetricsBatch(ctx, cache, batch, batchHighWater, &resumeCursor)
+		if coldIDSync {
+			batchHighWater = report.HighWater
+			resumeCursor = encodeAscendingIDResumeCursor(iseqProductMetricsIDResumeMode, batch[len(batch)-1].SourceRowID)
+		}
+		result, applyErr := writeIseqProductMetricsBatch(ctx, cache, batch, batchHighWater, &resumeCursor, state.IndexesDropped, assumeInserted)
 		if applyErr != nil {
 			return applyErr
 		}
@@ -1472,7 +1895,7 @@ func syncIseqProductMetricsTable(ctx context.Context, cache Cache, source Querie
 		}
 
 		batch = append(batch, row)
-		if len(batch) == syncBatchSize {
+		if len(batch) == batchSize {
 			if err = flushBatch(); err != nil {
 				return report, false, err
 			}
@@ -1486,7 +1909,7 @@ func syncIseqProductMetricsTable(ctx context.Context, cache Cache, source Querie
 		return report, false, err
 	}
 	if sawRows || state.Exists {
-		if err = finalizeSyncState(ctx, cache, syncTableIseqProductMetrics, report.HighWater); err != nil {
+		if err = finalizeMirrorSyncState(ctx, cache, iseqProductMetricsMirrorIndexSet, report.HighWater, state.IndexesDropped); err != nil {
 			return report, false, err
 		}
 	}
@@ -1539,7 +1962,36 @@ func nullIntValue(value sql.NullInt64) int {
 }
 
 func upsertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []iseqProductMetricsSyncRow) error {
-	stmt := buildBulkUpsertStatement(dialect, "iseq_product_metrics_mirror", iseqProductMetricsMirrorColumns, []string{"id_iseq_product"}, len(rows))
+	return forEachRowChunk(rows, syncStatementRowLimit(len(iseqProductMetricsMirrorColumns)), func(chunk []iseqProductMetricsSyncRow) error {
+		stmt := buildBulkUpsertStatement(dialect, "iseq_product_metrics_mirror", iseqProductMetricsMirrorColumns, []string{"id_iseq_product"}, len(chunk))
+		if _, err := tx.ExecContext(ctx, stmt, iseqProductMetricsMirrorBatchArgs(chunk)...); err != nil {
+			return fmt.Errorf("mlwh: upsert iseq_product_metrics mirror batch: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func insertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, rows []iseqProductMetricsSyncRow) error {
+	return forEachRowChunk(rows, syncStatementRowLimit(len(iseqProductMetricsMirrorColumns)), func(chunk []iseqProductMetricsSyncRow) error {
+		stmt := buildBulkInsertStatement("iseq_product_metrics_mirror", iseqProductMetricsMirrorColumns, len(chunk))
+		if _, err := tx.ExecContext(ctx, stmt, iseqProductMetricsMirrorBatchArgs(chunk)...); err != nil {
+			return fmt.Errorf("mlwh: insert iseq_product_metrics mirror batch: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func replaceIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, rows []iseqProductMetricsSyncRow) error {
+	if err := deleteExistingKeys(ctx, tx, "iseq_product_metrics_mirror", []string{"id_iseq_product"}, iseqProductMetricsBatchKeys(rows)); err != nil {
+		return err
+	}
+
+	return insertIseqProductMetricsMirrorBatch(ctx, tx, rows)
+}
+
+func iseqProductMetricsMirrorBatchArgs(rows []iseqProductMetricsSyncRow) []any {
 	args := make([]any, 0, len(rows)*len(iseqProductMetricsMirrorColumns))
 	for _, row := range rows {
 		args = append(args,
@@ -1556,11 +2008,8 @@ func upsertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialec
 			formatSyncTime(row.LastUpdated),
 		)
 	}
-	if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
-		return fmt.Errorf("mlwh: upsert iseq_product_metrics mirror batch: %w", err)
-	}
 
-	return nil
+	return args
 }
 
 type seqProductIRODSLocationsSyncRow struct {
@@ -1576,9 +2025,14 @@ type seqProductIRODSLocationsSyncRow struct {
 }
 
 func syncSeqProductIRODSLocationsTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
-	query, args, err := seqProductIRODSLocationsSyncQuery(state)
+	query, args, coldIDSync, err := seqProductIRODSLocationsSyncQuery(state)
 	if err != nil {
 		return SyncReport{}, false, err
+	}
+	if coldIDSync {
+		if err = prepareMirrorIndexesForColdSync(ctx, cache, &state, seqProductIRODSLocationsMirrorIndexSet); err != nil {
+			return SyncReport{}, false, err
+		}
 	}
 
 	rows, err := source.QueryContext(ctx, query, args...)
@@ -1589,7 +2043,9 @@ func syncSeqProductIRODSLocationsTable(ctx context.Context, cache Cache, source 
 
 	report := SyncReport{Table: syncTableSeqProductIRODSLocations, HighWater: state.HighWater}
 	sawRows := false
-	batch := make([]seqProductIRODSLocationsSyncRow, 0, syncBatchSize)
+	batchSize := syncBatchSizeForState(state)
+	assumeInserted := syncStateCanAssumeInserted(state)
+	batch := make([]seqProductIRODSLocationsSyncRow, 0, batchSize)
 	flushBatch := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -1597,7 +2053,11 @@ func syncSeqProductIRODSLocationsTable(ctx context.Context, cache Cache, source 
 
 		batchHighWater := batch[len(batch)-1].LastUpdated
 		resumeCursor := encodeSeqProductIRODSLocationsResumeCursor(batch[len(batch)-1])
-		result, applyErr := writeSeqProductIRODSLocationsBatch(ctx, cache, batch, batchHighWater, &resumeCursor)
+		if coldIDSync {
+			batchHighWater = report.HighWater
+			resumeCursor = encodeAscendingIDResumeCursor(seqProductIRODSLocationsIDMode, batch[len(batch)-1].SourceRowID)
+		}
+		result, applyErr := writeSeqProductIRODSLocationsBatch(ctx, cache, batch, batchHighWater, &resumeCursor, state.IndexesDropped, assumeInserted)
 		if applyErr != nil {
 			return applyErr
 		}
@@ -1622,7 +2082,7 @@ func syncSeqProductIRODSLocationsTable(ctx context.Context, cache Cache, source 
 		}
 
 		batch = append(batch, row)
-		if len(batch) == syncBatchSize {
+		if len(batch) == batchSize {
 			if err = flushBatch(); err != nil {
 				return report, false, err
 			}
@@ -1636,7 +2096,7 @@ func syncSeqProductIRODSLocationsTable(ctx context.Context, cache Cache, source 
 		return report, false, err
 	}
 	if sawRows || state.Exists {
-		if err = finalizeSyncState(ctx, cache, syncTableSeqProductIRODSLocations, report.HighWater); err != nil {
+		if err = finalizeMirrorSyncState(ctx, cache, seqProductIRODSLocationsMirrorIndexSet, report.HighWater, state.IndexesDropped); err != nil {
 			return report, false, err
 		}
 	}
@@ -1690,7 +2150,39 @@ func splitIRODSRelativePath(rootCollection, relativePath string) (string, string
 }
 
 func upsertSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []seqProductIRODSLocationsSyncRow) error {
-	stmt := buildBulkUpsertStatement(dialect, "seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorColumns, []string{"id_iseq_product"}, len(rows))
+	return forEachRowChunk(rows, syncStatementRowLimit(len(seqProductIRODSLocationsMirrorColumns)), func(chunk []seqProductIRODSLocationsSyncRow) error {
+		stmt := buildBulkUpsertStatement(dialect, "seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorColumns, []string{"id_iseq_product"}, len(chunk))
+		if _, err := tx.ExecContext(ctx, stmt, seqProductIRODSLocationsMirrorBatchArgs(chunk)...); err != nil {
+			return fmt.Errorf("mlwh: upsert seq_product_irods_locations mirror batch: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func insertSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []seqProductIRODSLocationsSyncRow) error {
+	return forEachRowChunk(rows, syncStatementRowLimit(len(seqProductIRODSLocationsMirrorColumns)), func(chunk []seqProductIRODSLocationsSyncRow) error {
+		stmt := buildBulkInsertStatement("seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorColumns, len(chunk))
+		if dialect == "mysql" {
+			stmt = strings.Replace(stmt, "INSERT INTO", "INSERT IGNORE INTO", 1)
+		}
+		if _, err := tx.ExecContext(ctx, stmt, seqProductIRODSLocationsMirrorBatchArgs(chunk)...); err != nil {
+			return fmt.Errorf("mlwh: insert seq_product_irods_locations mirror batch: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func replaceSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []seqProductIRODSLocationsSyncRow) error {
+	if err := deleteExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", []string{"id_iseq_product"}, seqProductIRODSLocationsBatchKeys(rows)); err != nil {
+		return err
+	}
+
+	return insertSeqProductIRODSLocationsMirrorBatch(ctx, tx, dialect, rows)
+}
+
+func seqProductIRODSLocationsMirrorBatchArgs(rows []seqProductIRODSLocationsSyncRow) []any {
 	args := make([]any, 0, len(rows)*len(seqProductIRODSLocationsMirrorColumns))
 	for _, row := range rows {
 		args = append(args,
@@ -1704,11 +2196,8 @@ func upsertSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, 
 			formatSyncTime(row.LastUpdated),
 		)
 	}
-	if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
-		return fmt.Errorf("mlwh: upsert seq_product_irods_locations mirror batch: %w", err)
-	}
 
-	return nil
+	return args
 }
 
 type sampleSyncRow struct {
@@ -1775,48 +2264,81 @@ func scanSampleSyncRow(rows *sql.Rows) (sampleSyncRow, error) {
 }
 
 func upsertSampleMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []sampleSyncRow) error {
-	stmt := buildBulkUpsertStatement(dialect, "sample_mirror", sampleMirrorColumns, []string{"id_sample_tmp"}, len(rows))
+	return forEachRowChunk(rows, syncStatementRowLimit(len(sampleMirrorColumns)), func(chunk []sampleSyncRow) error {
+		stmt := buildBulkUpsertStatement(dialect, "sample_mirror", sampleMirrorColumns, []string{"id_sample_tmp"}, len(chunk))
+		args := sampleMirrorBatchArgs(chunk)
+		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+			return fmt.Errorf("mlwh: upsert sample mirror batch: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func insertSampleMirrorBatch(ctx context.Context, tx *sql.Tx, rows []sampleSyncRow) error {
+	return forEachRowChunk(rows, syncStatementRowLimit(len(sampleMirrorColumns)), func(chunk []sampleSyncRow) error {
+		stmt := buildBulkInsertStatement("sample_mirror", sampleMirrorColumns, len(chunk))
+		if _, err := tx.ExecContext(ctx, stmt, sampleMirrorBatchArgs(chunk)...); err != nil {
+			return fmt.Errorf("mlwh: insert sample mirror batch: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func sampleMirrorBatchArgs(rows []sampleSyncRow) []any {
 	args := make([]any, 0, len(rows)*len(sampleMirrorColumns))
 	for _, row := range rows {
-		args = append(args,
-			row.Sample.IDSampleTmp,
-			row.Sample.IDLims,
-			row.Sample.IDSampleLims,
-			row.Sample.UUIDSampleLims,
-			row.Sample.Name,
-			row.Sample.SangerSampleID,
-			row.Sample.SupplierName,
-			row.Sample.AccessionNumber,
-			row.Sample.DonorID,
-			row.Sample.TaxonID,
-			row.Sample.CommonName,
-			row.Sample.Description,
-			formatSyncTime(row.LastUpdated),
-		)
-	}
-	if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
-		return fmt.Errorf("mlwh: upsert sample mirror batch: %w", err)
+		args = append(args, sampleMirrorRowArgs(row)...)
 	}
 
-	return nil
+	return args
+}
+
+func sampleMirrorRowArgs(row sampleSyncRow) []any {
+	return []any{
+		row.Sample.IDSampleTmp,
+		row.Sample.IDLims,
+		row.Sample.IDSampleLims,
+		row.Sample.UUIDSampleLims,
+		row.Sample.Name,
+		row.Sample.SangerSampleID,
+		row.Sample.SupplierName,
+		row.Sample.AccessionNumber,
+		row.Sample.DonorID,
+		row.Sample.TaxonID,
+		row.Sample.CommonName,
+		row.Sample.Description,
+		formatSyncTime(row.LastUpdated),
+	}
 }
 
 func replaceDonorSampleBatch(ctx context.Context, tx *sql.Tx, rows []sampleSyncRow) error {
-	whereClause, whereArgs := buildKeyInClause([]string{"id_sample_tmp"}, sampleBatchKeys(rows))
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM donor_samples WHERE %s", whereClause), whereArgs...); err != nil {
-		return fmt.Errorf("mlwh: clear donor sample batch: %w", err)
+	keyChunkLimit := syncStatementRowLimit(1)
+	for start := 0; start < len(rows); start += keyChunkLimit {
+		end := min(start+keyChunkLimit, len(rows))
+		whereClause, whereArgs := buildKeyInClause([]string{"id_sample_tmp"}, sampleBatchKeys(rows[start:end]))
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM donor_samples WHERE %s", whereClause), whereArgs...); err != nil {
+			return fmt.Errorf("mlwh: clear donor sample batch: %w", err)
+		}
 	}
 
-	insert := buildBulkInsertStatement("donor_samples", []string{"donor_id", "id_sample_tmp"}, len(rows))
-	args := make([]any, 0, len(rows)*2)
-	for _, row := range rows {
-		args = append(args, row.Sample.DonorID, row.Sample.IDSampleTmp)
-	}
-	if _, err := tx.ExecContext(ctx, insert, args...); err != nil {
-		return fmt.Errorf("mlwh: insert donor sample batch: %w", err)
-	}
+	return insertDonorSampleBatch(ctx, tx, rows)
+}
 
-	return nil
+func insertDonorSampleBatch(ctx context.Context, tx *sql.Tx, rows []sampleSyncRow) error {
+	return forEachRowChunk(rows, syncStatementRowLimit(2), func(chunk []sampleSyncRow) error {
+		insert := buildBulkInsertStatement("donor_samples", []string{"donor_id", "id_sample_tmp"}, len(chunk))
+		args := make([]any, 0, len(chunk)*2)
+		for _, row := range chunk {
+			args = append(args, row.Sample.DonorID, row.Sample.IDSampleTmp)
+		}
+		if _, err := tx.ExecContext(ctx, insert, args...); err != nil {
+			return fmt.Errorf("mlwh: insert donor sample batch: %w", err)
+		}
+
+		return nil
+	})
 }
 
 type studySyncRow struct {
@@ -1844,39 +2366,41 @@ func scanStudySyncRow(rows *sql.Rows) (studySyncRow, error) {
 }
 
 func upsertStudyMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []studySyncRow) error {
-	stmt := buildBulkUpsertStatement(dialect, "study_mirror", studyMirrorColumns, []string{"id_study_tmp"}, len(rows))
-	args := make([]any, 0, len(rows)*len(studyMirrorColumns))
-	for _, row := range rows {
-		args = append(args,
-			row.Study.IDStudyTmp,
-			row.Study.IDLims,
-			row.Study.IDStudyLims,
-			row.Study.UUIDStudyLims,
-			row.Study.Name,
-			row.Study.AccessionNumber,
-			row.Study.StudyTitle,
-			row.Study.FacultySponsor,
-			row.Study.State,
-			row.Study.DataReleaseStrategy,
-			row.Study.DataAccessGroup,
-			row.Study.Programme,
-			row.Study.ReferenceGenome,
-			row.Study.EthicallyApproved,
-			row.Study.StudyType,
-			row.Study.ContainsHumanDNA,
-			row.Study.ContaminatedHumanDNA,
-			row.Study.StudyVisibility,
-			row.Study.EGADACAccessionNumber,
-			row.Study.EGAPolicyAccessionNumber,
-			row.Study.DataReleaseTiming,
-			formatSyncTime(row.LastUpdated),
-		)
-	}
-	if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
-		return fmt.Errorf("mlwh: upsert study mirror batch: %w", err)
-	}
+	return forEachRowChunk(rows, syncStatementRowLimit(len(studyMirrorColumns)), func(chunk []studySyncRow) error {
+		stmt := buildBulkUpsertStatement(dialect, "study_mirror", studyMirrorColumns, []string{"id_study_tmp"}, len(chunk))
+		args := make([]any, 0, len(chunk)*len(studyMirrorColumns))
+		for _, row := range chunk {
+			args = append(args,
+				row.Study.IDStudyTmp,
+				row.Study.IDLims,
+				row.Study.IDStudyLims,
+				row.Study.UUIDStudyLims,
+				row.Study.Name,
+				row.Study.AccessionNumber,
+				row.Study.StudyTitle,
+				row.Study.FacultySponsor,
+				row.Study.State,
+				row.Study.DataReleaseStrategy,
+				row.Study.DataAccessGroup,
+				row.Study.Programme,
+				row.Study.ReferenceGenome,
+				row.Study.EthicallyApproved,
+				row.Study.StudyType,
+				row.Study.ContainsHumanDNA,
+				row.Study.ContaminatedHumanDNA,
+				row.Study.StudyVisibility,
+				row.Study.EGADACAccessionNumber,
+				row.Study.EGAPolicyAccessionNumber,
+				row.Study.DataReleaseTiming,
+				formatSyncTime(row.LastUpdated),
+			)
+		}
+		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+			return fmt.Errorf("mlwh: upsert study mirror batch: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 type flowcellSyncRow struct {
@@ -1911,16 +2435,18 @@ func flowcellKey(row flowcellSyncRow) string {
 }
 
 func upsertLibrarySampleBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []flowcellSyncRow) error {
-	stmt := buildBulkUpsertStatement(dialect, "library_samples", []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims"}, []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims"}, len(rows))
-	args := make([]any, 0, len(rows)*3)
-	for _, row := range rows {
-		args = append(args, row.PipelineIDLims, row.IDSampleTmp, row.IDStudyLims)
-	}
-	if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
-		return fmt.Errorf("mlwh: upsert library sample batch: %w", err)
-	}
+	return forEachRowChunk(rows, syncStatementRowLimit(3), func(chunk []flowcellSyncRow) error {
+		stmt := buildBulkUpsertStatement(dialect, "library_samples", []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims"}, []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims"}, len(chunk))
+		args := make([]any, 0, len(chunk)*3)
+		for _, row := range chunk {
+			args = append(args, row.PipelineIDLims, row.IDSampleTmp, row.IDStudyLims)
+		}
+		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+			return fmt.Errorf("mlwh: upsert library sample batch: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 type syncBatchResult struct {
@@ -1933,14 +2459,71 @@ func countExistingKeys(ctx context.Context, tx *sql.Tx, table string, keyColumns
 		return 0, nil
 	}
 
-	whereClause, args := buildKeyInClause(keyColumns, keys)
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s", table, whereClause)
-	var count int
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("mlwh: count existing %s batch rows: %w", table, err)
+	total := 0
+	chunkLimit := syncStatementRowLimit(len(keyColumns))
+	for start := 0; start < len(keys); start += chunkLimit {
+		end := min(start+chunkLimit, len(keys))
+		whereClause, args := buildKeyInClause(keyColumns, keys[start:end])
+		query := fmt.Sprintf("SELECT COUNT(*) FROM (SELECT 1 FROM %s WHERE %s GROUP BY %s) AS existing_keys", table, whereClause, strings.Join(keyColumns, ", "))
+		var count int
+		if err := tx.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+			return 0, fmt.Errorf("mlwh: count existing %s batch rows: %w", table, err)
+		}
+
+		total += count
 	}
 
-	return count, nil
+	return total, nil
+}
+
+func deleteExistingKeys(ctx context.Context, tx *sql.Tx, table string, keyColumns []string, keys [][]any) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	chunkLimit := syncStatementRowLimit(len(keyColumns))
+	for start := 0; start < len(keys); start += chunkLimit {
+		end := min(start+chunkLimit, len(keys))
+		whereClause, args := buildKeyInClause(keyColumns, keys[start:end])
+		query := fmt.Sprintf("DELETE FROM %s WHERE %s", table, whereClause)
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return fmt.Errorf("mlwh: delete existing %s batch rows: %w", table, err)
+		}
+	}
+
+	return nil
+}
+
+func shouldReplaceSparseMySQLMirrorRows(cache Cache, indexesDropped bool, assumeInserted bool) bool {
+	return !assumeInserted && indexesDropped && cache != nil && cache.Dialect() == "mysql"
+}
+
+func syncStatementRowLimit(columnCount int) int {
+	if columnCount <= 0 {
+		return syncBatchSize
+	}
+
+	limit := syncStatementParamLimit / columnCount
+	if limit < 1 {
+		return 1
+	}
+
+	return limit
+}
+
+func forEachRowChunk[T any](rows []T, limit int, apply func([]T) error) error {
+	if limit <= 0 {
+		limit = len(rows)
+	}
+
+	for start := 0; start < len(rows); start += limit {
+		end := min(start+limit, len(rows))
+		if err := apply(rows[start:end]); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func buildKeyInClause(keyColumns []string, keys [][]any) (string, []any) {
@@ -2125,24 +2708,39 @@ func validateSeqProductIRODSLocationsBatch(rows []seqProductIRODSLocationsSyncRo
 	return nil
 }
 
-func writeSampleBatch(ctx context.Context, cache Cache, rows []sampleSyncRow, highWater time.Time, resumeCursor *string, indexesDropped bool) (syncBatchResult, error) {
+func writeSampleBatch(ctx context.Context, cache Cache, rows []sampleSyncRow, highWater time.Time, resumeCursor *string, indexesDropped bool, assumeInserted bool) (syncBatchResult, error) {
 	deduped := dedupeSampleBatch(rows)
 	var result syncBatchResult
 	err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
-		existing, err := countExistingKeys(ctx, tx, "sample_mirror", []string{"id_sample_tmp"}, sampleBatchKeys(deduped))
-		if err != nil {
+		existing := 0
+		if !assumeInserted {
+			var err error
+			existing, err = countExistingKeys(ctx, tx, "sample_mirror", []string{"id_sample_tmp"}, sampleBatchKeys(deduped))
+			if err != nil {
+				return err
+			}
+		}
+		if assumeInserted {
+			if err := insertSampleMirrorBatch(ctx, tx, deduped); err != nil {
+				return err
+			}
+		} else if err := upsertSampleMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 			return err
 		}
-		if err = upsertSampleMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
-			return err
-		}
-		if err = replaceDonorSampleBatch(ctx, tx, deduped); err != nil {
-			return err
+
+		if !indexesDropped {
+			if assumeInserted {
+				if err := insertDonorSampleBatch(ctx, tx, deduped); err != nil {
+					return err
+				}
+			} else if err := replaceDonorSampleBatch(ctx, tx, deduped); err != nil {
+				return err
+			}
 		}
 
 		result.Updated = existing
 		result.Inserted = len(deduped) - existing
-		if err = writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSample, highWater, resumeCursor, indexesDropped); err != nil {
+		if err := writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSample, highWater, resumeCursor, indexesDropped); err != nil {
 			return err
 		}
 
@@ -2152,21 +2750,25 @@ func writeSampleBatch(ctx context.Context, cache Cache, rows []sampleSyncRow, hi
 	return result, err
 }
 
-func writeStudyBatch(ctx context.Context, cache Cache, rows []studySyncRow, highWater time.Time, resumeCursor *string) (syncBatchResult, error) {
+func writeStudyBatch(ctx context.Context, cache Cache, rows []studySyncRow, highWater time.Time, resumeCursor *string, assumeInserted bool) (syncBatchResult, error) {
 	deduped := dedupeStudyBatch(rows)
 	var result syncBatchResult
 	err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
-		existing, err := countExistingKeys(ctx, tx, "study_mirror", []string{"id_study_tmp"}, studyBatchKeys(deduped))
-		if err != nil {
-			return err
+		existing := 0
+		if !assumeInserted {
+			var err error
+			existing, err = countExistingKeys(ctx, tx, "study_mirror", []string{"id_study_tmp"}, studyBatchKeys(deduped))
+			if err != nil {
+				return err
+			}
 		}
-		if err = upsertStudyMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
+		if err := upsertStudyMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 			return err
 		}
 
 		result.Updated = existing
 		result.Inserted = len(deduped) - existing
-		if err = writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableStudy, highWater, resumeCursor, false); err != nil {
+		if err := writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableStudy, highWater, resumeCursor, false); err != nil {
 			return err
 		}
 
@@ -2176,7 +2778,7 @@ func writeStudyBatch(ctx context.Context, cache Cache, rows []studySyncRow, high
 	return result, err
 }
 
-func writeFlowcellBatch(ctx context.Context, cache Cache, rows []flowcellSyncRow, highWater time.Time, resumeCursor *string) (syncBatchResult, error) {
+func writeFlowcellBatch(ctx context.Context, cache Cache, rows []flowcellSyncRow, highWater time.Time, resumeCursor *string, assumeInserted bool) (syncBatchResult, error) {
 	deduped := dedupeFlowcellBatch(rows)
 	if err := validateFlowcellBatch(deduped); err != nil {
 		return syncBatchResult{}, err
@@ -2184,17 +2786,21 @@ func writeFlowcellBatch(ctx context.Context, cache Cache, rows []flowcellSyncRow
 
 	var result syncBatchResult
 	err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
-		existing, err := countExistingKeys(ctx, tx, "library_samples", []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims"}, flowcellBatchKeys(deduped))
-		if err != nil {
-			return err
+		existing := 0
+		if !assumeInserted {
+			var err error
+			existing, err = countExistingKeys(ctx, tx, "library_samples", []string{"pipeline_id_lims", "id_sample_tmp", "id_study_lims"}, flowcellBatchKeys(deduped))
+			if err != nil {
+				return err
+			}
 		}
-		if err = upsertLibrarySampleBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
+		if err := upsertLibrarySampleBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 			return err
 		}
 
 		result.Updated = existing
 		result.Inserted = len(deduped) - existing
-		if err = writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableIseqFlowcell, highWater, resumeCursor, false); err != nil {
+		if err := writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableIseqFlowcell, highWater, resumeCursor, false); err != nil {
 			return err
 		}
 
@@ -2204,7 +2810,7 @@ func writeFlowcellBatch(ctx context.Context, cache Cache, rows []flowcellSyncRow
 	return result, err
 }
 
-func writeIseqProductMetricsBatch(ctx context.Context, cache Cache, rows []iseqProductMetricsSyncRow, highWater time.Time, resumeCursor *string) (syncBatchResult, error) {
+func writeIseqProductMetricsBatch(ctx context.Context, cache Cache, rows []iseqProductMetricsSyncRow, highWater time.Time, resumeCursor *string, indexesDropped bool, assumeInserted bool) (syncBatchResult, error) {
 	deduped := dedupeIseqProductMetricsBatch(rows)
 	if err := validateIseqProductMetricsBatch(deduped); err != nil {
 		return syncBatchResult{}, err
@@ -2212,17 +2818,29 @@ func writeIseqProductMetricsBatch(ctx context.Context, cache Cache, rows []iseqP
 
 	var result syncBatchResult
 	err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
-		existing, err := countExistingKeys(ctx, tx, "iseq_product_metrics_mirror", []string{"id_iseq_product"}, iseqProductMetricsBatchKeys(deduped))
-		if err != nil {
-			return err
+		existing := 0
+		if !assumeInserted {
+			var err error
+			existing, err = countExistingKeys(ctx, tx, "iseq_product_metrics_mirror", []string{"id_iseq_product"}, iseqProductMetricsBatchKeys(deduped))
+			if err != nil {
+				return err
+			}
 		}
-		if err = upsertIseqProductMetricsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
+		if assumeInserted {
+			if err := insertIseqProductMetricsMirrorBatch(ctx, tx, deduped); err != nil {
+				return err
+			}
+		} else if shouldReplaceSparseMySQLMirrorRows(cache, indexesDropped, assumeInserted) {
+			if err := replaceIseqProductMetricsMirrorBatch(ctx, tx, deduped); err != nil {
+				return err
+			}
+		} else if err := upsertIseqProductMetricsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 			return err
 		}
 
 		result.Updated = existing
 		result.Inserted = len(deduped) - existing
-		if err = writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableIseqProductMetrics, highWater, resumeCursor, false); err != nil {
+		if err := writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableIseqProductMetrics, highWater, resumeCursor, indexesDropped); err != nil {
 			return err
 		}
 
@@ -2232,7 +2850,7 @@ func writeIseqProductMetricsBatch(ctx context.Context, cache Cache, rows []iseqP
 	return result, err
 }
 
-func writeSeqProductIRODSLocationsBatch(ctx context.Context, cache Cache, rows []seqProductIRODSLocationsSyncRow, highWater time.Time, resumeCursor *string) (syncBatchResult, error) {
+func writeSeqProductIRODSLocationsBatch(ctx context.Context, cache Cache, rows []seqProductIRODSLocationsSyncRow, highWater time.Time, resumeCursor *string, indexesDropped bool, assumeInserted bool) (syncBatchResult, error) {
 	deduped := dedupeSeqProductIRODSLocationsBatch(rows)
 	if err := validateSeqProductIRODSLocationsBatch(deduped); err != nil {
 		return syncBatchResult{}, err
@@ -2240,17 +2858,29 @@ func writeSeqProductIRODSLocationsBatch(ctx context.Context, cache Cache, rows [
 
 	var result syncBatchResult
 	err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
-		existing, err := countExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", []string{"id_iseq_product"}, seqProductIRODSLocationsBatchKeys(deduped))
-		if err != nil {
-			return err
+		existing := 0
+		if !assumeInserted {
+			var err error
+			existing, err = countExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", []string{"id_iseq_product"}, seqProductIRODSLocationsBatchKeys(deduped))
+			if err != nil {
+				return err
+			}
 		}
-		if err = upsertSeqProductIRODSLocationsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
+		if assumeInserted {
+			if err := insertSeqProductIRODSLocationsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
+				return err
+			}
+		} else if shouldReplaceSparseMySQLMirrorRows(cache, indexesDropped, assumeInserted) {
+			if err := replaceSeqProductIRODSLocationsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
+				return err
+			}
+		} else if err := upsertSeqProductIRODSLocationsMirrorBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 			return err
 		}
 
 		result.Updated = existing
 		result.Inserted = len(deduped) - existing
-		if err = writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSeqProductIRODSLocations, highWater, resumeCursor, false); err != nil {
+		if err := writeSyncStateTx(ctx, tx, cache.Dialect(), syncTableSeqProductIRODSLocations, highWater, resumeCursor, indexesDropped); err != nil {
 			return err
 		}
 

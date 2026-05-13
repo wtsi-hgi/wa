@@ -201,12 +201,12 @@ func liveMLWHColdSyncPerfQueries() ([]liveMLWHPerfQuery, error) {
 		return nil, err
 	}
 
-	iseqProductMetricsQuery, iseqProductMetricsArgs, err := iseqProductMetricsSyncQuery(syncStateRecord{})
+	iseqProductMetricsQuery, iseqProductMetricsArgs, _, err := iseqProductMetricsSyncQuery(syncStateRecord{})
 	if err != nil {
 		return nil, err
 	}
 
-	seqProductIRODSLocationsQuery, seqProductIRODSLocationsArgs, err := seqProductIRODSLocationsSyncQuery(syncStateRecord{})
+	seqProductIRODSLocationsQuery, seqProductIRODSLocationsArgs, _, err := seqProductIRODSLocationsSyncQuery(syncStateRecord{})
 	if err != nil {
 		return nil, err
 	}

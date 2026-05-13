@@ -99,7 +99,7 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 
 		return nil, err
 	}
-	if err = repairDroppedSampleMirrorIndexes(ctx, rwDB, "sqlite"); err != nil {
+	if err = repairDroppedMirrorIndexes(ctx, rwDB, "sqlite"); err != nil {
 		_ = rwDB.Close()
 
 		return nil, err
@@ -149,7 +149,7 @@ func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 
 		return nil, err
 	}
-	if err = repairDroppedSampleMirrorIndexes(ctx, rwDB, "mysql"); err != nil {
+	if err = repairDroppedMirrorIndexes(ctx, rwDB, "mysql"); err != nil {
 		_ = rwDB.Close()
 
 		return nil, err
@@ -186,7 +186,7 @@ type CacheConfig struct {
 }
 
 func resolveMySQLDSN(cfg CacheConfig) (string, error) {
-	parsed, err := mysql.ParseDSN(cfg.Path)
+	parsed, err := mysql.ParseDSN(normalizeMySQLDSNInput(cfg.Path))
 	if err != nil {
 		return "", fmt.Errorf("mlwh: parse mysql cache dsn: %w", err)
 	}
@@ -552,6 +552,9 @@ func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string)
 	if allowMissingSampleMirrorIndexesForRecovery(ctx, db, expected, actual) {
 		actual.Index["sample_mirror"] = append([]string(nil), expected.Index["sample_mirror"]...)
 	}
+	if dialect == "mysql" {
+		allowLargeMySQLColdLoadIndexShape(ctx, db, expected, actual)
+	}
 
 	if err := compareCacheSchemaShapes(expected, actual); err != nil {
 		return err
@@ -609,6 +612,29 @@ func compareCacheSchemaShapes(expected, actual schemaShape) error {
 	}
 
 	return nil
+}
+
+func allowLargeMySQLColdLoadIndexShape(ctx context.Context, db *sql.DB, expected, actual schemaShape) {
+	for _, table := range []string{"iseq_product_metrics_mirror", "seq_product_irods_locations_mirror"} {
+		if !mysqlTableExceedsInlineIndexLimit(ctx, db, table, mysqlInlineMirrorIndexRowLimit) {
+			continue
+		}
+
+		actual.Index[table] = append([]string(nil), expected.Index[table]...)
+	}
+
+	if mysqlTableExceedsInlineIndexLimit(ctx, db, "sample_mirror", mysqlInlineSampleIndexRowLimit) {
+		actual.Index["sample_mirror"] = append([]string(nil), expected.Index["sample_mirror"]...)
+	}
+}
+
+func mysqlTableExceedsInlineIndexLimit(ctx context.Context, db *sql.DB, table string, limit int) bool {
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&count); err != nil {
+		return false
+	}
+
+	return count > limit
 }
 
 func stringSlicesEqual(expected, actual []string) bool {
@@ -1071,7 +1097,17 @@ func applySchema(ctx context.Context, db *sql.DB, dialect string) error {
 	return nil
 }
 
-func repairDroppedSampleMirrorIndexes(ctx context.Context, db *sql.DB, dialect string) error {
+func repairDroppedMirrorIndexes(ctx context.Context, db *sql.DB, dialect string) error {
+	for _, indexSet := range syncMirrorIndexSets {
+		if err := repairDroppedMirrorIndexSet(ctx, db, dialect, indexSet); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string, indexSet syncMirrorIndexSet) error {
 	var (
 		highWaterRaw   string
 		indexesDropped int
@@ -1080,13 +1116,13 @@ func repairDroppedSampleMirrorIndexes(ctx context.Context, db *sql.DB, dialect s
 	err := db.QueryRowContext(
 		ctx,
 		`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`,
-		syncTableSample,
+		indexSet.SyncTable,
 	).Scan(&highWaterRaw, &indexesDropped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("mlwh: query sample_mirror dropped-index recovery state: %w", err)
+		return fmt.Errorf("mlwh: query %s dropped-index recovery state: %w", indexSet.Table, err)
 	}
 	if indexesDropped != 1 {
 		return nil
@@ -1094,7 +1130,7 @@ func repairDroppedSampleMirrorIndexes(ctx context.Context, db *sql.DB, dialect s
 
 	highWater, err := parseSyncTimeString(highWaterRaw)
 	if err != nil {
-		return fmt.Errorf("mlwh: parse sample_mirror dropped-index recovery high_water: %w", err)
+		return fmt.Errorf("mlwh: parse %s dropped-index recovery high_water: %w", indexSet.Table, err)
 	}
 	if highWater.IsZero() {
 		return nil
@@ -1102,7 +1138,7 @@ func repairDroppedSampleMirrorIndexes(ctx context.Context, db *sql.DB, dialect s
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("mlwh: begin sample_mirror dropped-index recovery: %w", err)
+		return fmt.Errorf("mlwh: begin %s dropped-index recovery: %w", indexSet.Table, err)
 	}
 
 	committed := false
@@ -1117,14 +1153,24 @@ func repairDroppedSampleMirrorIndexes(ctx context.Context, db *sql.DB, dialect s
 			return fmt.Errorf("mlwh: configure sqlite dropped-index recovery: %w", err)
 		}
 	}
-	if err = createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
-		return err
+	repaired := true
+	if indexSet.Table == "sample_mirror" {
+		if err = rebuildSampleMirrorColdLoadIndexes(ctx, tx, dialect); err != nil {
+			return err
+		}
+	} else {
+		repaired, err = createMirrorDroppedIndexes(ctx, tx, dialect, indexSet)
+		if err != nil {
+			return err
+		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE sync_state SET indexes_dropped = 0 WHERE table_name = ?`, syncTableSample); err != nil {
-		return fmt.Errorf("mlwh: clear sample_mirror dropped-index recovery flag: %w", err)
+	if repaired {
+		if _, err = tx.ExecContext(ctx, `UPDATE sync_state SET indexes_dropped = 0 WHERE table_name = ?`, indexSet.SyncTable); err != nil {
+			return fmt.Errorf("mlwh: clear %s dropped-index recovery flag: %w", indexSet.Table, err)
+		}
 	}
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("mlwh: commit sample_mirror dropped-index recovery: %w", err)
+		return fmt.Errorf("mlwh: commit %s dropped-index recovery: %w", indexSet.Table, err)
 	}
 
 	committed = true

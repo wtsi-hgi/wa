@@ -113,7 +113,7 @@ func readDBFromCache(cache Cache) *sql.DB {
 
 // ResolveDSN returns a MySQL DSN with any separate password applied.
 func ResolveDSN(dsn string, password string) (string, error) {
-	trimmedDSN := strings.TrimSpace(dsn)
+	trimmedDSN := normalizeMySQLDSNInput(dsn)
 	if trimmedDSN == "" {
 		return "", errors.New("mlwh: dsn must not be empty")
 	}
@@ -154,6 +154,17 @@ func setMySQLDSNBoolParam(dsn string, key string, value bool) string {
 	params.Set(key, fmt.Sprintf("%t", value))
 
 	return parts[0] + "?" + params.Encode()
+}
+
+func normalizeMySQLDSNInput(dsn string) string {
+	trimmed := strings.TrimSpace(dsn)
+	prefix, params, hasParams := strings.Cut(trimmed, "?")
+	prefix = strings.TrimSuffix(strings.TrimSpace(prefix), ";")
+	if hasParams {
+		return prefix + "?" + params
+	}
+
+	return prefix
 }
 
 // Close releases the cache and source database handles owned by the client.

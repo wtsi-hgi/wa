@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -96,6 +97,27 @@ func TestParseSchemaShapeParity(t *testing.T) {
 				"donor_samples":   {"donor_id,id_sample_tmp"},
 				"library_samples": {"pipeline_id_lims,id_sample_tmp,id_study_lims"},
 			})
+		})
+	})
+}
+
+func TestMySQLSchemaIndexNamesFitIdentifierLimit(t *testing.T) {
+	convey.Convey("Given the embedded MySQL schema", t, func() {
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when CREATE INDEX statements are inspected, then every index name fits MySQL's 64-character identifier limit", func() {
+			for _, statementGroup := range mysqlSchema {
+				for _, statement := range splitSQLStatements(statementGroup) {
+					fields := strings.Fields(strings.TrimSpace(statement))
+					if len(fields) < 3 || !strings.EqualFold(fields[0], "CREATE") || !strings.EqualFold(fields[1], "INDEX") {
+						continue
+					}
+
+					indexName := strings.Trim(fields[2], "`")
+					convey.So(len(indexName), convey.ShouldBeLessThanOrEqualTo, 64)
+				}
+			}
 		})
 	})
 }
@@ -580,7 +602,7 @@ func openMySQLCacheForTest(t *testing.T, cfg CacheConfig) Cache {
 		_, _ = adminDB.ExecContext(context.Background(), "DROP DATABASE IF EXISTS `"+testDBName+"`")
 	})
 
-	testDSN, err := mysql.ParseDSN(cfg.Path)
+	testDSN, err := mysql.ParseDSN(normalizeMySQLDSNInput(cfg.Path))
 	if err != nil {
 		t.Fatalf("mysql.ParseDSN(path): %v", err)
 	}
@@ -588,9 +610,22 @@ func openMySQLCacheForTest(t *testing.T, cfg CacheConfig) Cache {
 
 	cache, err := OpenCache(context.Background(), CacheConfig{Path: testDSN.FormatDSN(), Password: cfg.Password})
 	if err != nil {
+		if isMySQLCacheIntegrationPermissionError(err) {
+			t.Skipf("skipping MySQL cache integration: cache user lacks privileges on temporary database: %v", err)
+		}
+
 		t.Fatalf("OpenCache(mysql): %v", err)
 	}
 	t.Cleanup(func() { _ = cache.Close() })
 
 	return cache
+}
+
+func isMySQLCacheIntegrationPermissionError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) {
+		return false
+	}
+
+	return mysqlErr.Number == 1044 || mysqlErr.Number == 1049 || mysqlErr.Number == 1142
 }

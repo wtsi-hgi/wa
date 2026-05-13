@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS iseq_product_metrics_mirror (
 CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_run_position_tag_index_idx
 	ON iseq_product_metrics_mirror(id_run, position, tag_index);
 
-CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_sample_tmp_id_run_position_tag_index_idx
+CREATE INDEX IF NOT EXISTS ipm_mirror_sample_run_position_tag_idx
 	ON iseq_product_metrics_mirror(id_sample_tmp, id_run, position, tag_index);
 
 CREATE INDEX IF NOT EXISTS iseq_product_metrics_mirror_id_iseq_flowcell_tmp_idx
