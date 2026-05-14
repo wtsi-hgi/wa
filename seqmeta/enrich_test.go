@@ -37,15 +37,6 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-func detailGraphSample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
-	return mlwh.Sample{
-		Name:           name,
-		SangerSampleID: sangerSampleID,
-		Studies:        []mlwh.Study{{IDStudyLims: studyID}},
-		Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
-	}
-}
-
 func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 	ctx := context.Background()
 
@@ -187,6 +178,76 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleID)
 		convey.So(len(sampleNode["lanes"].([]any)), convey.ShouldEqual, 3)
 		convey.So(sampleNode["sample"].(map[string]any)["sanger_sample_id"], convey.ShouldEqual, "7607STDY14643771")
+	})
+
+	convey.Convey("Bug 3: sample enrichment accepts the canonical sample name stored by results register", t, func() {
+		sampleDetail := &mlwh.SampleDetail{
+			Sample: detailGraphSample("7607", "SANGER-ALT", "7607STDY14643771", "Custom"),
+			Lanes:  []mlwh.Lane{{IDRun: 48522, Position: 1, TagIndex: 1}},
+		}
+		provider := &MockProvider{
+			ResolveSampleFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindSangerSampleName,
+					Canonical: "7607STDY14643771",
+					Sample:    &sampleDetail.Sample,
+				}, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				return nil, mlwh.ErrNotFound
+			},
+			SampleDetailFunc: func(_ context.Context, sangerName string) (*mlwh.SampleDetail, error) {
+				convey.So(sangerName, convey.ShouldEqual, "7607STDY14643771")
+
+				return sampleDetail, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "7607STDY14643771")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleName)
+		convey.So(result.Graph.SampleDetail, convey.ShouldNotBeNil)
+		convey.So(result.Graph.SampleDetail.Lanes, convey.ShouldHaveLength, 1)
+	})
+
+	convey.Convey("Bug 3: run enrichment resolves a registered run id even when no sample expansion matched", t, func() {
+		provider := &MockProvider{
+			FindSamplesByRunIDFn: func(_ context.Context, idRun int) ([]mlwh.Sample, error) {
+				convey.So(idRun, convey.ShouldEqual, 48522)
+
+				return nil, mlwh.ErrNotFound
+			},
+			ResolveRunFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "48522")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindRunID,
+					Canonical: "48522",
+					Run:       &mlwh.Run{IDRun: 48522},
+				}, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "48522")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(result.Identifier, convey.ShouldEqual, "48522")
+		convey.So(result.Partial, convey.ShouldBeTrue)
+		convey.So(result.Missing, convey.ShouldContain, MissingHop{Hop: HopSamples, Reason: ReasonNotFound, Status: http.StatusNotFound})
 	})
 
 	convey.Convey("D3.3: enrichment JSON omits legacy project and users graph keys", t, func() {
@@ -412,4 +473,44 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
 		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
 	})
+
+	convey.Convey("Bug 3: library enrichment accepts one-word pipeline_id_lims values stored by results register", t, func() {
+		provider := &MockProvider{
+			FindSamplesByLibraryTypeFn: func(_ context.Context, libraryType string) ([]mlwh.Sample, error) {
+				convey.So(libraryType, convey.ShouldEqual, "Custom")
+
+				return []mlwh.Sample{
+					detailGraphSample("7607", "SANGER-ALT", "7607STDY14643771", libraryType),
+				}, nil
+			},
+			GetStudyFunc: func(_ context.Context, identifier string) (*mlwh.Study, error) {
+				if identifier == "7607" {
+					return &mlwh.Study{IDStudyLims: "7607", Name: "Study 7607"}, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "Custom")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 1)
+	})
+}
+
+func detailGraphSample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
+	return mlwh.Sample{
+		Name:           name,
+		SangerSampleID: sangerSampleID,
+		Studies:        []mlwh.Study{{IDStudyLims: studyID}},
+		Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
+	}
 }

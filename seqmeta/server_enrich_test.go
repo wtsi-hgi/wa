@@ -27,6 +27,7 @@ package seqmeta
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -36,15 +37,6 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
-
-func serverEnrichSample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
-	return mlwh.Sample{
-		Name:           name,
-		SangerSampleID: sangerSampleID,
-		Studies:        []mlwh.Study{{IDStudyLims: studyID}},
-		Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
-	}
-}
 
 func TestServerEnrichEndpoint(t *testing.T) {
 	store, err := OpenStore(":memory:")
@@ -172,4 +164,147 @@ func TestServerEnrichEndpoint(t *testing.T) {
 		convey.So(result.Graph.Studies, convey.ShouldHaveLength, 1)
 		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 1)
 	})
+
+	convey.Convey("enrich endpoint ignores stale negative cache entries for one-word library identifiers", t, func() {
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "Custom",
+			Body:       []byte(`{"error":"seqmeta: unknown identifier"}`),
+			FetchedAt:  time.Now(),
+			TTL:        time.Hour,
+			Negative:   true,
+		}), convey.ShouldBeNil)
+
+		provider.FindSamplesByLibraryTypeFn = func(_ context.Context, libraryType string) ([]mlwh.Sample, error) {
+			convey.So(libraryType, convey.ShouldEqual, "Custom")
+
+			return []mlwh.Sample{
+				serverEnrichSample("7607", "SANGER-ALT", "7607STDY14643771", libraryType),
+			}, nil
+		}
+		provider.GetStudyFunc = func(_ context.Context, identifier string) (*mlwh.Study, error) {
+			if identifier != "7607" {
+				return nil, mlwh.ErrNotFound
+			}
+
+			return &mlwh.Study{IDStudyLims: "7607", Name: "Study 7607"}, nil
+		}
+
+		request := httptest.NewRequest(http.MethodGet, "/enrich/Custom", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		var result EnrichmentResult
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
+	})
+
+	convey.Convey("enrich endpoint ignores stale negative cache entries for run IDs", t, func() {
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "48522",
+			Body:       []byte(`{"error":"seqmeta: unknown identifier"}`),
+			FetchedAt:  time.Now(),
+			TTL:        time.Hour,
+			Negative:   true,
+		}), convey.ShouldBeNil)
+
+		provider.FindSamplesByRunIDFn = func(_ context.Context, idRun int) ([]mlwh.Sample, error) {
+			convey.So(idRun, convey.ShouldEqual, 48522)
+
+			return nil, mlwh.ErrNotFound
+		}
+		provider.ResolveRunFunc = func(_ context.Context, raw string) (mlwh.Match, error) {
+			convey.So(raw, convey.ShouldEqual, "48522")
+
+			return mlwh.Match{
+				Kind:      mlwh.KindRunID,
+				Canonical: "48522",
+				Run:       &mlwh.Run{IDRun: 48522},
+			}, nil
+		}
+
+		request := httptest.NewRequest(http.MethodGet, "/enrich/48522", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		var result EnrichmentResult
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(result.Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(result.Partial, convey.ShouldBeTrue)
+	})
+
+	convey.Convey("enrich endpoint ignores stale negative cache entries for canonical sample names", t, func() {
+		sample := serverEnrichSample("7607", "SANGER-ALT", "7607STDY14643771", "Custom")
+		convey.So(store.SaveEnrichCache(enrichCacheEntry{
+			Identifier: "7607STDY14643771",
+			Body:       []byte(`{"error":"seqmeta: unknown identifier"}`),
+			FetchedAt:  time.Now(),
+			TTL:        time.Hour,
+			Negative:   true,
+		}), convey.ShouldBeNil)
+
+		provider.FindSamplesBySangerIDFn = func(_ context.Context, sangerID string) ([]mlwh.Sample, error) {
+			convey.So(sangerID, convey.ShouldEqual, "7607STDY14643771")
+
+			return nil, mlwh.ErrNotFound
+		}
+		provider.ResolveSampleFunc = func(_ context.Context, raw string) (mlwh.Match, error) {
+			convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+			return mlwh.Match{
+				Kind:      mlwh.KindSangerSampleName,
+				Canonical: "7607STDY14643771",
+				Sample:    &sample,
+			}, nil
+		}
+		provider.SampleDetailFunc = func(_ context.Context, sampleName string) (*mlwh.SampleDetail, error) {
+			convey.So(sampleName, convey.ShouldEqual, "7607STDY14643771")
+
+			return &mlwh.SampleDetail{Sample: sample}, nil
+		}
+
+		request := httptest.NewRequest(http.MethodGet, "/enrich/7607STDY14643771", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		var result EnrichmentResult
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleName)
+		convey.So(result.Graph.SampleDetail, convey.ShouldNotBeNil)
+	})
+
+	convey.Convey("enrich endpoint does not store negative cache entries for unmatched one-word identifiers", t, func() {
+		convey.So(store.DeleteEnrichCache("UnmatchedIdentifier"), convey.ShouldBeNil)
+		provider.FindSamplesBySangerIDFn = nil
+		provider.FindSamplesByRunIDFn = nil
+		provider.ResolveRunFunc = nil
+		provider.ResolveSampleFunc = nil
+		provider.SampleDetailFunc = nil
+		provider.FindSamplesByLibraryTypeFn = nil
+
+		request := httptest.NewRequest(http.MethodGet, "/enrich/UnmatchedIdentifier", nil)
+		recorder := httptest.NewRecorder()
+
+		server.Handler().ServeHTTP(recorder, request)
+
+		entry, loadErr := store.LoadEnrichCache("UnmatchedIdentifier")
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
+		convey.So(loadErr, convey.ShouldEqual, sql.ErrNoRows)
+		convey.So(entry, convey.ShouldBeNil)
+	})
+}
+
+func serverEnrichSample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
+	return mlwh.Sample{
+		Name:           name,
+		SangerSampleID: sangerSampleID,
+		Studies:        []mlwh.Study{{IDStudyLims: studyID}},
+		Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
+	}
 }

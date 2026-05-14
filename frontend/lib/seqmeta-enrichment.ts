@@ -17,10 +17,6 @@ export function isSeqmetaKey(key: string): boolean {
     return key.startsWith("seqmeta_");
 }
 
-function looksLikeLibraryType(value: string): boolean {
-    return /\s/.test(value);
-}
-
 export function hasUsableSeqmetaCacheEntry(
     cache: SeqmetaCacheStore,
     value: string,
@@ -31,7 +27,7 @@ export function hasUsableSeqmetaCacheEntry(
 
     const cached = cache.get(value);
 
-    return !(cached === null && looksLikeLibraryType(value));
+    return cached !== null;
 }
 
 export function collectSeqmetaValues(
@@ -225,7 +221,9 @@ function primeSeqmetaCacheEntry(
     enrichment: EnrichmentResult,
 ): void {
     for (const [value, type] of collectSeqmetaAliases(enrichment)) {
-        if (cache.has(value)) {
+        const cached = cache.get(value);
+
+        if (cached !== null && cached !== undefined) {
             continue;
         }
 
@@ -274,7 +272,7 @@ export async function enrichSeqmetaMetadata(
     const [firstValue, ...remainingValues] = pendingValues;
 
     // First value enrichment (sequential to populate cache aliases)
-    if (!cache.has(firstValue)) {
+    if (!hasUsableSeqmetaCacheEntry(cache, firstValue)) {
         try {
             const result = await enrichIdentifier(firstValue);
 
@@ -298,13 +296,15 @@ export async function enrichSeqmetaMetadata(
     }
 
     // Remaining values in parallel (after cache may be primed)
-    const stillPending = remainingValues.filter((value) => !cache.has(value));
+    const stillPending = remainingValues.filter(
+        (value) => !hasUsableSeqmetaCacheEntry(cache, value),
+    );
 
     if (stillPending.length > 0) {
         const results = await Promise.all(
             stillPending.map(async (value) => {
                 // Double-check cache in case first lookup populated it
-                if (cache.has(value)) {
+                if (hasUsableSeqmetaCacheEntry(cache, value)) {
                     const enrichment = cache.get(value) ?? null;
                     return { value, enrichment, error: null };
                 }

@@ -342,13 +342,8 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := s.loadFreshEnrichCache(identifier, time.Now())
 	if err == nil {
-		if !entry.Negative || !looksLikeLibraryType(identifier) {
-			status := http.StatusOK
-			if entry.Negative {
-				status = http.StatusNotFound
-			}
-
-			_ = writeJSONBytes(w, status, entry.Body)
+		if !entry.Negative {
+			_ = writeJSONBytes(w, http.StatusOK, entry.Body)
 
 			return
 		}
@@ -372,20 +367,6 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 				_ = writeError(w, http.StatusInternalServerError, marshalErr.Error())
 
 				return
-			}
-
-			if !looksLikeLibraryType(identifier) {
-				if saveErr := s.store.SaveEnrichCache(enrichCacheEntry{
-					Identifier: identifier,
-					Body:       body,
-					FetchedAt:  time.Now(),
-					TTL:        s.negativeTTL,
-					Negative:   true,
-				}); saveErr != nil {
-					_ = writeError(w, http.StatusInternalServerError, saveErr.Error())
-
-					return
-				}
 			}
 
 			_ = writeJSONBytes(w, status, body)
