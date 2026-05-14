@@ -361,6 +361,100 @@ describe("contract schemas", () => {
         });
     });
 
+    it("accepts raw MLWH sample payloads returned by study enrichment", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "6568",
+            type: "study_lims_id",
+            graph: {
+                study: {
+                    id_study_tmp: 6396,
+                    id_lims: "SQSCP",
+                    id_study_lims: "6568",
+                    name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                    faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
+                    state: "active",
+                    accession_number: "EGAS00001005445",
+                    data_release_strategy: "managed",
+                    study_title: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                    data_access_group: "team205 cellgeni team283",
+                    programme: "Cellular Genomics",
+                    reference_genome: "GRCh38",
+                    ethically_approved: true,
+                    study_type: "Transcriptome Analysis",
+                    contains_human_dna: true,
+                    contaminated_human_dna: false,
+                    study_visibility: "Hold",
+                    ega_dac_accession_number: "",
+                    ega_policy_accession_number: "",
+                    data_release_timing: "delayed",
+                },
+                samples: [
+                    {
+                        id_sample_tmp: 5993642,
+                        id_lims: "SQSCP",
+                        id_sample_lims: "6050954",
+                        uuid_sample_lims:
+                            "92210be6-e582-11eb-af21-fa163eac3af7",
+                        name: "WTSI_wEMB10524782",
+                        sanger_sample_id: "WTSI_wEMB10524782",
+                        supplier_name: "C84-WEM-2-FO-1_S2_mA",
+                        accession_number: "EGAN00003258234",
+                        donor_id: "WTSI_wEMB10524782",
+                        taxon_id: 9606,
+                        common_name: "human",
+                        description: "",
+                        studies: [
+                            {
+                                id_study_tmp: 6396,
+                                id_lims: "SQSCP",
+                                id_study_lims: "6568",
+                                name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                                faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
+                                state: "active",
+                                accession_number: "EGAS00001005445",
+                                data_release_strategy: "managed",
+                                study_title:
+                                    "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                                data_access_group: "team205 cellgeni team283",
+                                programme: "Cellular Genomics",
+                                reference_genome: "GRCh38",
+                                ethically_approved: true,
+                                study_type: "Transcriptome Analysis",
+                                contains_human_dna: true,
+                                contaminated_human_dna: false,
+                                study_visibility: "Hold",
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
+                                data_release_timing: "delayed",
+                            },
+                        ],
+                        libraries: [
+                            {
+                                pipeline_id_lims: "Chromium single cell ATAC",
+                                id_study_lims: "6568",
+                                library_id: "44768485",
+                                id_library_lims: "DN829362H:A1",
+                            },
+                        ],
+                    },
+                ],
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+            return;
+        }
+
+        expect(result.data.graph.samples?.[0]).toMatchObject({
+            id_study_lims: "6568",
+            sanger_id: "WTSI_wEMB10524782",
+            sample_name: "WTSI_wEMB10524782",
+            library_type: "Chromium single cell ATAC",
+        });
+    });
+
     it("rejects enrichment results that omit the graph envelope", () => {
         const result = enrichmentResultSchema.safeParse({
             identifier: "6568",

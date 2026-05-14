@@ -108,6 +108,13 @@ export type EnrichmentStudy = z.infer<typeof enrichmentStudySchema>;
 export const enrichmentStudiesSchema = z.array(enrichmentStudySchema);
 export type EnrichmentStudies = z.infer<typeof enrichmentStudiesSchema>;
 
+const mlwhLibraryLinkInputSchema = z
+    .object({
+        pipeline_id_lims: z.string(),
+        id_study_lims: z.string(),
+    })
+    .passthrough();
+
 const mlwhEnrichmentSampleInputSchema = z.object({
     id_study_lims: z.string(),
     id_sample_lims: z.string(),
@@ -120,6 +127,23 @@ const mlwhEnrichmentSampleInputSchema = z.object({
 });
 
 type EnrichmentSampleInput = z.infer<typeof mlwhEnrichmentSampleInputSchema>;
+
+const mlwhRawEnrichmentSampleInputSchema = z
+    .object({
+        id_sample_lims: z.string(),
+        name: z.string(),
+        sanger_sample_id: z.string().optional(),
+        taxon_id: z.number(),
+        common_name: z.string(),
+        accession_number: z.string(),
+        studies: z.array(enrichmentStudySchema).optional(),
+        libraries: z.array(mlwhLibraryLinkInputSchema).optional(),
+    })
+    .passthrough();
+
+type RawEnrichmentSampleInput = z.infer<
+    typeof mlwhRawEnrichmentSampleInputSchema
+>;
 
 const normalizedEnrichmentSampleSchema = z.object({
     id_study_lims: z.string(),
@@ -161,13 +185,42 @@ function normalizeEnrichmentSample(
     };
 }
 
+function normalizeRawEnrichmentSample(
+    sample: RawEnrichmentSampleInput,
+): NormalizedEnrichmentSample {
+    const firstStudy = sample.studies?.[0];
+    const firstLibrary = sample.libraries?.[0];
+
+    return {
+        id_study_lims:
+            firstLibrary?.id_study_lims ?? firstStudy?.id_study_lims ?? "",
+        id_sample_lims: sample.id_sample_lims,
+        sanger_id: sample.sanger_sample_id ?? sample.name,
+        sample_name: sample.name,
+        taxon_id: sample.taxon_id,
+        common_name: sample.common_name,
+        library_type: firstLibrary?.pipeline_id_lims ?? "",
+        accession_number: sample.accession_number,
+        id_run: undefined,
+        lane: undefined,
+        tag_index: undefined,
+        irods_path: undefined,
+        study_accession_number: firstStudy?.accession_number,
+    };
+}
+
 const mlwhEnrichmentSampleSchema = mlwhEnrichmentSampleInputSchema
     .transform(normalizeEnrichmentSample)
+    .pipe(normalizedEnrichmentSampleSchema);
+
+const mlwhRawEnrichmentSampleSchema = mlwhRawEnrichmentSampleInputSchema
+    .transform(normalizeRawEnrichmentSample)
     .pipe(normalizedEnrichmentSampleSchema);
 
 export const enrichmentSampleSchema = z.union([
     normalizedEnrichmentSampleSchema,
     mlwhEnrichmentSampleSchema,
+    mlwhRawEnrichmentSampleSchema,
 ]);
 export type EnrichmentSample = z.infer<typeof enrichmentSampleSchema>;
 
@@ -206,11 +259,6 @@ export const laneDetailSchema = z
     })
     .pipe(normalizedLaneDetailSchema);
 export type LaneDetail = z.infer<typeof laneDetailSchema>;
-
-const mlwhLibraryLinkInputSchema = z.object({
-    pipeline_id_lims: z.string(),
-    id_study_lims: z.string(),
-});
 
 const mlwhSampleDetailInputSchema = z.object({
     sample: enrichmentSampleSchema,

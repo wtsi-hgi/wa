@@ -39,6 +39,7 @@ type MockProvider struct {
 	QueryContextFunc               func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	ClassifyIdentifierFunc         func(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveSampleFunc              func(ctx context.Context, raw string) (mlwh.Match, error)
+	ResolveSampleNameFunc          func(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveStudyFunc               func(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveRunFunc                 func(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveLibraryFunc             func(ctx context.Context, raw string) (mlwh.Match, error)
@@ -86,6 +87,14 @@ func (m *MockProvider) ResolveSample(ctx context.Context, raw string) (mlwh.Matc
 	}
 
 	return mlwh.Match{}, nil
+}
+
+func (m *MockProvider) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m != nil && m.ResolveSampleNameFunc != nil {
+		return m.ResolveSampleNameFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
 func (m *MockProvider) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {

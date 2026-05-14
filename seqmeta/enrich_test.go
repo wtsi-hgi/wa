@@ -218,6 +218,47 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		convey.So(result.Graph.SampleDetail.Lanes, convey.ShouldHaveLength, 1)
 	})
 
+	convey.Convey("Bug 4: sample enrichment tries the fast canonical sample-name resolver before broad sample scans", t, func() {
+		sampleDetail := &mlwh.SampleDetail{
+			Sample: detailGraphSample("6568", "WTSI_wEMB10524782", "WTSI_wEMB10524782", "Chromium single cell ATAC"),
+			Lanes:  []mlwh.Lane{{IDRun: 40121, Position: 1, TagIndex: 5}},
+		}
+		provider := &MockProvider{
+			ResolveSampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "WTSI_wEMB10524782")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindSangerSampleName,
+					Canonical: "WTSI_wEMB10524782",
+					Sample:    &sampleDetail.Sample,
+				}, nil
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				return nil, errors.New("unexpected broad sanger_sample_id scan")
+			},
+			ResolveSampleFunc: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, errors.New("unexpected broad ResolveSample cascade")
+			},
+			SampleDetailFunc: func(_ context.Context, sangerName string) (*mlwh.SampleDetail, error) {
+				convey.So(sangerName, convey.ShouldEqual, "WTSI_wEMB10524782")
+
+				return sampleDetail, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "WTSI_wEMB10524782")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierSangerSampleName)
+		convey.So(result.Graph.SampleDetail, convey.ShouldNotBeNil)
+		convey.So(result.Graph.SampleDetail.Lanes, convey.ShouldHaveLength, 1)
+	})
+
 	convey.Convey("Bug 3: run enrichment resolves a registered run id even when no sample expansion matched", t, func() {
 		provider := &MockProvider{
 			FindSamplesByRunIDFn: func(_ context.Context, idRun int) ([]mlwh.Sample, error) {
@@ -472,6 +513,41 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 
 		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
 		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
+	})
+
+	convey.Convey("Bug 4: library enrichment uses a bounded paged lookup for multi-sample library types", t, func() {
+		provider := &MockProvider{
+			FindSamplesByLibraryTypeFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				return nil, errors.New("unexpected unique library-type lookup")
+			},
+			SamplesForLibraryTypeFunc: func(_ context.Context, libraryType string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(libraryType, convey.ShouldEqual, "Chromium single cell 3 prime v3")
+				convey.So(limit, convey.ShouldEqual, MaxLibrarySamples+1)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return []mlwh.Sample{
+					detailGraphSample("6568", "S1", "Sample 1", libraryType),
+					detailGraphSample("6568", "S2", "Sample 2", libraryType),
+				}, nil
+			},
+			GetStudyFunc: func(_ context.Context, identifier string) (*mlwh.Study, error) {
+				convey.So(identifier, convey.ShouldEqual, "6568")
+
+				return &mlwh.Study{IDStudyLims: "6568", Name: "Study 6568"}, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "Chromium single cell 3 prime v3")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 2)
+		convey.So(result.Partial, convey.ShouldBeFalse)
 	})
 
 	convey.Convey("Bug 3: library enrichment accepts one-word pipeline_id_lims values stored by results register", t, func() {

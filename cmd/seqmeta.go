@@ -157,6 +157,10 @@ func (a *seqmetaMLWHClientAdapter) ResolveSample(ctx context.Context, raw string
 	return a.client.ResolveSample(ctx, raw)
 }
 
+func (a *seqmetaMLWHClientAdapter) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	return a.client.ResolveSampleName(ctx, raw)
+}
+
 func (a *seqmetaMLWHClientAdapter) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
 	return a.client.ResolveStudy(ctx, raw)
 }

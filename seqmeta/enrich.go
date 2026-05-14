@@ -45,6 +45,7 @@ var enrichClassifiers = []enrichClassifier{
 	{classify: classifyStudyID},
 	{classify: classifyStudyAccession},
 	{classify: classifyRunID},
+	{classify: classifySangerSampleName},
 	{classify: classifySangerSampleID},
 	{classify: classifySampleLimsID},
 	{classify: classifySampleAccession},
@@ -300,6 +301,10 @@ func buildStudyDetails(studies []mlwh.Study, samples []mlwh.Sample) []mlwh.Study
 }
 
 type sampleClassifier func(context.Context, Provider, string) ([]mlwh.Sample, error)
+
+type sampleNameResolver interface {
+	ResolveSampleName(context.Context, string) (mlwh.Match, error)
+}
 
 func classifySampleIdentifier(
 	ctx context.Context,
@@ -594,7 +599,7 @@ func enrichStudy(ctx context.Context, provider Provider, study *mlwh.Study, resu
 }
 
 func classifyLibraryType(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
-	samples, err := provider.FindSamplesByLibraryType(ctx, identifier)
+	samples, err := samplesForLibraryType(ctx, provider, identifier)
 	if err != nil {
 		if isContextError(err) {
 			return nil, false, nil, err
@@ -661,6 +666,18 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 	}
 
 	return result, true, nil, nil
+}
+
+func samplesForLibraryType(ctx context.Context, provider Provider, identifier string) ([]mlwh.Sample, error) {
+	samples, err := provider.SamplesForLibraryType(ctx, identifier, MaxLibrarySamples+1, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(samples) > 0 {
+		return samples, nil
+	}
+
+	return provider.FindSamplesByLibraryType(ctx, identifier)
 }
 
 func libraryStudyDetails(ctx context.Context, provider Provider, libraryType string, samples []mlwh.Sample) ([]mlwh.StudyDetail, []MissingHop, error) {
@@ -1012,6 +1029,33 @@ func classifyResolvedSample(ctx context.Context, provider Provider, identifier s
 	}
 
 	return buildSampleEnrichment(ctx, provider, identifier, identifierType, []mlwh.Sample{*match.Sample})
+}
+
+func classifySangerSampleName(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+	resolver, ok := provider.(sampleNameResolver)
+	if !ok {
+		return nil, false, nil, nil
+	}
+
+	match, err := resolver.ResolveSampleName(ctx, identifier)
+	if err != nil {
+		if isContextError(err) {
+			return nil, false, nil, err
+		}
+		if isClientError(err) {
+			return nil, false, nil, nil
+		}
+
+		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
+	}
+	if match.Sample == nil {
+		return nil, false, nil, nil
+	}
+	if match.Kind != mlwh.KindSangerSampleName {
+		return nil, false, nil, nil
+	}
+
+	return buildSampleEnrichment(ctx, provider, identifier, IdentifierSangerSampleName, []mlwh.Sample{*match.Sample})
 }
 
 func sampleIdentifierType(kind mlwh.IdentifierKind) (IdentifierType, bool) {
