@@ -400,6 +400,60 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(result.ID, convey.ShouldEqual, "updated-result")
 	})
 
+	convey.Convey("Given --run and a warm MLWH cache, register resolves from the cache without opening the upstream source DSN", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
+		seedResultsRegisterRunCacheForTest(t, cachePath, 48522)
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+		t.Setenv("WA_MLWH_DSN", "mlwh_humgen:secret@tcp(127.0.0.1:1)/mlwarehouse")
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "cache-only-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--nextflow-workflow", workflowPath,
+			"--run", "48522",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
+			"seqmeta_runid": "48522",
+		})
+	})
+
 	convey.Convey("E1.4: Given --study/--run/--library/--sample together, when all mlwh resolvers succeed, then register stores canonical seqmeta metadata entries", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -686,6 +740,38 @@ func writeRegisterCommandTestFile(t *testing.T, path, content string) {
 
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func seedResultsRegisterRunCacheForTest(t *testing.T, cachePath string, runID int) {
+	t.Helper()
+
+	cache, err := mlwh.OpenCache(context.Background(), mlwh.CacheConfig{Path: cachePath})
+	if err != nil {
+		t.Fatalf("open mlwh cache: %v", err)
+	}
+	defer func() {
+		if err := cache.Close(); err != nil {
+			t.Fatalf("close mlwh cache: %v", err)
+		}
+	}()
+
+	_, err = cache.DB().Exec(
+		`INSERT INTO iseq_product_metrics_mirror(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		1001,
+		1,
+		runID,
+		1,
+		0,
+		1,
+		"7607",
+		1,
+		1,
+		1,
+		"2026-05-14T12:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("seed run cache: %v", err)
 	}
 }
 

@@ -110,27 +110,12 @@ type resultsRegisterResolver interface {
 }
 
 func openResultsRegisterResolver(ctx context.Context) (resultsRegisterResolver, error) {
-	dsn := strings.TrimSpace(firstEnv("WA_MLWH_DSN"))
 	cachePath := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH"))
 	if cachePath == "" {
 		return nil, errors.New("WA_MLWH_CACHE_PATH is required to resolve --run/--study/--sample/--library")
 	}
 
-	cacheCfg := mlwh.CacheConfig{Path: cachePath, Password: firstEnv("WA_MLWH_CACHE_PASSWORD")}
-
-	var (
-		client *mlwh.Client
-		err    error
-	)
-	if dsn == "" {
-		client, err = mlwh.OpenCacheOnly(ctx, cacheCfg)
-	} else {
-		client, err = mlwh.Open(ctx, mlwh.Config{
-			DSN:      dsn,
-			Password: firstEnv("WA_MLWH_PASSWORD"),
-			Cache:    cacheCfg,
-		})
-	}
+	client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{Path: cachePath, Password: firstEnv("WA_MLWH_CACHE_PASSWORD")})
 	if err != nil {
 		return nil, fmt.Errorf("open mlwh resolver client: %w", err)
 	}
