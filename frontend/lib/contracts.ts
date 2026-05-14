@@ -161,9 +161,14 @@ function normalizeEnrichmentSample(
     };
 }
 
-export const enrichmentSampleSchema = mlwhEnrichmentSampleInputSchema
+const mlwhEnrichmentSampleSchema = mlwhEnrichmentSampleInputSchema
     .transform(normalizeEnrichmentSample)
     .pipe(normalizedEnrichmentSampleSchema);
+
+export const enrichmentSampleSchema = z.union([
+    normalizedEnrichmentSampleSchema,
+    mlwhEnrichmentSampleSchema,
+]);
 export type EnrichmentSample = z.infer<typeof enrichmentSampleSchema>;
 
 const normalizedEnrichmentSamplesSchema = z.array(

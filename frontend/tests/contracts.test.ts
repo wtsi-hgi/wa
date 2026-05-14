@@ -290,6 +290,77 @@ describe("contract schemas", () => {
         expect(parsed.missing?.[0]?.reason).toBe("samples_truncated");
     });
 
+    it("accepts normalized sample enrichment payloads with sample detail lanes", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "WTSI_wEMB10524782",
+            type: "sanger_sample_id",
+            graph: {
+                study: {
+                    id_study_tmp: 42,
+                    id_lims: "SQSCP",
+                    id_study_lims: "5993",
+                    name: "5993",
+                    faculty_sponsor: "Dr Example",
+                    state: "active",
+                    accession_number: "ERP5993",
+                    data_release_strategy: "managed",
+                    study_title: "Example study 5993",
+                    data_access_group: "group-a",
+                    programme: "Cancer",
+                    reference_genome: "GRCh38",
+                    ethically_approved: true,
+                    study_type: "Whole Genome Sequencing",
+                    contains_human_dna: true,
+                    contaminated_human_dna: false,
+                    study_visibility: "Always Open",
+                    ega_dac_accession_number: "EGAC5993",
+                    ega_policy_accession_number: "EGAP5993",
+                    data_release_timing: "Immediate",
+                },
+                sample: {
+                    id_study_lims: "5993",
+                    id_sample_lims: "SMP10524782",
+                    sanger_id: "WTSI_wEMB10524782",
+                    sample_name: "WTSI_wEMB10524782",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "exon",
+                    accession_number: "SAMEA10524782",
+                    id_run: 48522,
+                    lane: 1,
+                    tag_index: 1,
+                    irods_path: "/irods/5993/WTSI_wEMB10524782",
+                    study_accession_number: "ERP5993",
+                },
+                sample_detail: {
+                    sample: {
+                        id_study_lims: "5993",
+                        id_sample_lims: "SMP10524782",
+                        sanger_id: "WTSI_wEMB10524782",
+                        sample_name: "WTSI_wEMB10524782",
+                        taxon_id: 9606,
+                        common_name: "Human",
+                        library_type: "exon",
+                        accession_number: "SAMEA10524782",
+                    },
+                    lanes: [{ id_run: 48522, lane: 1, tag_index: 1 }],
+                },
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+            return;
+        }
+        expect(result.data.graph.sample?.sample_name).toBe("WTSI_wEMB10524782");
+        expect(result.data.graph.sample_detail?.lanes[0]).toEqual({
+            id_run: "48522",
+            lane: "1",
+            tag_index: 1,
+        });
+    });
+
     it("rejects enrichment results that omit the graph envelope", () => {
         const result = enrichmentResultSchema.safeParse({
             identifier: "6568",

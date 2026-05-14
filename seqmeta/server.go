@@ -342,7 +342,7 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := s.loadFreshEnrichCache(identifier, time.Now())
 	if err == nil {
-		if !(entry.Negative && looksLikeLibraryType(identifier)) {
+		if !entry.Negative || !looksLikeLibraryType(identifier) {
 			status := http.StatusOK
 			if entry.Negative {
 				status = http.StatusNotFound
@@ -439,6 +439,38 @@ func decodeWildcardIdentifier(r *http.Request, prefix string) (string, error) {
 	return url.PathUnescape(escaped)
 }
 
+func writeError(w http.ResponseWriter, status int, message string) error {
+	return writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeJSONBytes(w http.ResponseWriter, status int, body []byte) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if _, err := w.Write(body); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func marshalJSON(payload any) ([]byte, error) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) error {
+	body, err := marshalJSON(payload)
+	if err != nil {
+		return err
+	}
+
+	return writeJSONBytes(w, status, body)
+}
+
 func (s *Server) handleDeleteEnrich(w http.ResponseWriter, r *http.Request) {
 	identifier, err := decodeWildcardIdentifier(r, "/enrich/")
 	if err != nil {
@@ -465,38 +497,6 @@ func (s *Server) writeDiffError(w http.ResponseWriter, err error) {
 	}
 
 	_ = writeError(w, status, err.Error())
-}
-
-func marshalJSON(payload any) ([]byte, error) {
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(payload); err != nil {
-		return nil, err
-	}
-
-	return body.Bytes(), nil
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) error {
-	body, err := marshalJSON(payload)
-	if err != nil {
-		return err
-	}
-
-	return writeJSONBytes(w, status, body)
-}
-
-func writeJSONBytes(w http.ResponseWriter, status int, body []byte) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if _, err := w.Write(body); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func writeError(w http.ResponseWriter, status int, message string) error {
-	return writeJSON(w, status, map[string]string{"error": message})
 }
 
 // resolveByAccession looks up studies to find one whose AccessionNumber matches

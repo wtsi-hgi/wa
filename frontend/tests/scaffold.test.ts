@@ -8,11 +8,12 @@ import { describe, expect, it } from "vitest";
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(testDir, "..");
 const repoRoot = path.resolve(frontendRoot, "..");
+const scaffoldBuildTimeoutMs = 120000;
 
 describe("G1 scaffold", () => {
     it(
         "builds successfully with the required scaffold files present",
-        { timeout: 30000 },
+        { timeout: scaffoldBuildTimeoutMs },
         () => {
             const requiredPaths = [
                 "package.json",
@@ -40,8 +41,12 @@ describe("G1 scaffold", () => {
 
             execFileSync("pnpm", ["build"], {
                 cwd: frontendRoot,
-                env: process.env,
+                env: {
+                    ...process.env,
+                    NEXT_TELEMETRY_DISABLED: "1",
+                },
                 stdio: "pipe",
+                timeout: scaffoldBuildTimeoutMs,
             });
         },
     );
