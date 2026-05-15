@@ -212,6 +212,7 @@ var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 }
 
 var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "iseq_product_metrics_mirror_id_run_position_tag_index_idx", Column: "id_run, position, tag_index"},
 	{Name: "ipm_mirror_sample_run_position_tag_idx", Column: "id_sample_tmp, id_run, position, tag_index"},
 }
 
@@ -2109,7 +2110,6 @@ func upsertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialec
 		return nil
 	})
 }
-
 
 func insertIseqProductMetricsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []iseqProductMetricsSyncRow) error {
 	if dialect == "sqlite" {

@@ -574,6 +574,61 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 	})
 
+	convey.Convey("Given --sample is a canonical Sanger sample name, register uses the exact sample-name resolver before the broad sample cascade", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+				return mlwh.Match{Canonical: raw, Sample: &mlwh.Sample{Name: raw}}, nil
+			},
+			sampleFn: func(context.Context, string) (mlwh.Match, error) {
+				return mlwh.Match{}, errors.New("broad sample resolver should not be called for canonical sample names")
+			},
+		})
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "sample-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--nextflow-workflow", workflowPath,
+			"--sample", "7607STDY14643771",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So((<-registrationCh).Metadata["seqmeta_sampleid"], convey.ShouldEqual, "7607STDY14643771")
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+	})
+
 	convey.Convey("E1.2: Given --sample SQSCP, when ResolveSample rejects a LIMS provider constant, then the command fails before registering", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -809,11 +864,20 @@ func mustRegisterCommandJSONBody(t *testing.T, value any) []byte {
 }
 
 type fakeResultsRegisterResolver struct {
-	sampleFn  func(context.Context, string) (mlwh.Match, error)
-	studyFn   func(context.Context, string) (mlwh.Match, error)
-	runFn     func(context.Context, string) (mlwh.Match, error)
-	libraryFn func(context.Context, string) (mlwh.Match, error)
-	closeFn   func() error
+	sampleNameFn func(context.Context, string) (mlwh.Match, error)
+	sampleFn     func(context.Context, string) (mlwh.Match, error)
+	studyFn      func(context.Context, string) (mlwh.Match, error)
+	runFn        func(context.Context, string) (mlwh.Match, error)
+	libraryFn    func(context.Context, string) (mlwh.Match, error)
+	closeFn      func() error
+}
+
+func (f *fakeResultsRegisterResolver) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	if f.sampleNameFn == nil {
+		return mlwh.Match{}, mlwh.ErrNotFound
+	}
+
+	return f.sampleNameFn(ctx, raw)
 }
 
 func (f *fakeResultsRegisterResolver) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {

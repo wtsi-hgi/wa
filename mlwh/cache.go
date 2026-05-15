@@ -659,12 +659,17 @@ func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string
 	case sampleMirrorIndexSet.Table:
 		return stringSlicesEqual(actual, []string{"name"})
 	case iseqProductMetricsMirrorIndexSet.Table:
-		return stringSlicesEqual(actual, []string{"id_sample_tmp,id_run,position,tag_index"})
+		return stringSlicesEqual(actual, iseqProductMetricsSparseReadIndexColumns()) ||
+			stringSlicesEqual(actual, []string{"id_sample_tmp,id_run,position,tag_index"})
 	case seqProductIRODSLocationsMirrorIndexSet.Table:
 		return stringSlicesEqual(actual, []string{"id_sample_tmp", "id_study_lims,id_sample_tmp"})
 	default:
 		return false
 	}
+}
+
+func iseqProductMetricsSparseReadIndexColumns() []string {
+	return []string{"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index"}
 }
 
 func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {
@@ -1258,6 +1263,10 @@ func sqliteSparseMirrorReadIndexesInstalled(ctx context.Context, db *sql.DB, ind
 	indexes, _, err := readSQLiteTableIndexes(ctx, db, indexSet.Table)
 	if err != nil {
 		return false
+	}
+
+	if indexSet.Table == iseqProductMetricsMirrorIndexSet.Table {
+		return stringSlicesEqual(indexes, iseqProductMetricsSparseReadIndexColumns())
 	}
 
 	return sqliteLargeCacheReadIndexShape(indexSet, indexes)

@@ -109,6 +109,10 @@ type resultsRegisterResolver interface {
 	Close() error
 }
 
+type resultsRegisterSampleNameResolver interface {
+	ResolveSampleName(context.Context, string) (mlwh.Match, error)
+}
+
 func openResultsRegisterResolver(ctx context.Context) (resultsRegisterResolver, error) {
 	cachePath := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH"))
 	if cachePath == "" {
@@ -284,6 +288,16 @@ func resolveResultsRegisterStudyID(ctx context.Context, client resultsRegisterRe
 }
 
 func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
+	if nameResolver, ok := client.(resultsRegisterSampleNameResolver); ok {
+		match, err := nameResolver.ResolveSampleName(ctx, value)
+		if err == nil {
+			return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
+		}
+		if !errors.Is(err, mlwh.ErrNotFound) {
+			return "", fmt.Errorf("resolve --sample %q: %w", value, err)
+		}
+	}
+
 	match, err := client.ResolveSample(ctx, value)
 	if err != nil {
 		return "", fmt.Errorf("resolve --sample %q: %w", value, err)
