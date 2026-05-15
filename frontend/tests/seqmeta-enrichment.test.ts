@@ -20,10 +20,32 @@ import {
 } from "@/lib/seqmeta-cache";
 
 const enrichIdentifierMock = vi.fn();
+const enrichIdentifiersMock = vi.fn(async (values: string[]) =>
+    Promise.all(
+        values.map(async (value) => {
+            try {
+                const enrichment = await enrichIdentifierMock(value);
+
+                return {
+                    value,
+                    enrichment,
+                    error: enrichment === null ? "not_found" : undefined,
+                };
+            } catch {
+                return {
+                    value,
+                    enrichment: null,
+                    error: "upstream_impaired" as const,
+                };
+            }
+        }),
+    ),
+);
 const fetchStudyLibrarySamplesMock = vi.fn();
 
 vi.mock("@/app/(results)/actions", () => ({
     enrichIdentifier: enrichIdentifierMock,
+    enrichIdentifiers: enrichIdentifiersMock,
     fetchStudyLibrarySamples: fetchStudyLibrarySamplesMock,
 }));
 
@@ -126,6 +148,7 @@ describe("H3 enrichment state and badge", () => {
     beforeEach(() => {
         vi.resetModules();
         enrichIdentifierMock.mockReset();
+        enrichIdentifiersMock.mockClear();
         fetchStudyLibrarySamplesMock.mockReset();
     });
 

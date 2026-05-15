@@ -8,13 +8,13 @@ import {
     useSyncExternalStore,
 } from "react";
 
-import { enrichIdentifier } from "@/app/(results)/actions";
+import { enrichIdentifiers } from "@/app/(results)/actions";
 import { ResultMetadata } from "@/components/result-metadata";
 import type { EnrichmentResult } from "@/lib/contracts";
 import {
     buildCachedEnrichmentState,
     collectSeqmetaValues,
-    enrichSeqmetaMetadata,
+    enrichSeqmetaMetadataBatch,
     hasUsableSeqmetaCacheEntry,
     mergeSeqmetaEnrichmentState,
     primeSeqmetaCache,
@@ -97,6 +97,7 @@ export function ResultMetadataEnrichment({
             .filter(
                 (value) =>
                     !hasUsableSeqmetaCacheEntry(cache, value) &&
+                    !(value in initialEnrichments) &&
                     !(value in initialErrors) &&
                     !(value in activeLiveErrors) &&
                     !(value in activeLiveEnrichments),
@@ -115,6 +116,7 @@ export function ResultMetadataEnrichment({
             (value) =>
                 !hasUsableSeqmetaCacheEntry(liveCache, value) &&
                 !inFlightValuesRef.current.has(value) &&
+                !(value in initialEnrichments) &&
                 !(value in initialErrors) &&
                 !(value in activeLiveErrors) &&
                 !(value in activeLiveEnrichments),
@@ -128,7 +130,7 @@ export function ResultMetadataEnrichment({
             inFlightValuesRef.current.add(value);
         }
 
-        void enrichSeqmetaMetadata(metadata, liveCache, enrichIdentifier)
+        void enrichSeqmetaMetadataBatch(metadata, liveCache, enrichIdentifiers)
             .then((nextState) => {
                 for (const value of pendingValues) {
                     inFlightValuesRef.current.delete(value);

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EnrichmentResult } from "@/lib/contracts";
 import {
     buildCachedEnrichmentState,
+    enrichSeqmetaMetadataBatch,
     enrichSeqmetaMetadata,
 } from "@/lib/seqmeta-enrichment";
 import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
@@ -87,6 +88,52 @@ describe("enrichSeqmetaMetadata", () => {
 
         releaseLookups();
         await enrichment;
+    });
+
+    it("uses one batch call for multiple uncached metadata values", async () => {
+        const cache = new SeqmetaCache();
+        const metadata: Record<string, string> = {
+            seqmeta_librarytype: "Custom",
+            seqmeta_libraryid: "71046409",
+            seqmeta_runid: "48522",
+            seqmeta_sampleid: "7607STDY14643771",
+            seqmeta_studyid: "7607",
+        };
+        const enrichIdentifiers = vi.fn(async (values: string[]) =>
+            values.map((value) => ({
+                value,
+                enrichment: {
+                    identifier: value,
+                    type: value === "Custom" ? "library_type" : "study_id",
+                    graph: {},
+                    partial: false,
+                } as EnrichmentResult,
+            })),
+        );
+
+        const result = await enrichSeqmetaMetadataBatch(
+            metadata,
+            cache,
+            enrichIdentifiers,
+        );
+
+        expect(enrichIdentifiers).toHaveBeenCalledTimes(1);
+        expect(enrichIdentifiers).toHaveBeenCalledWith([
+            "7607",
+            "7607STDY14643771",
+            "48522",
+            "71046409",
+            "Custom",
+        ]);
+        expect(new Set(Object.keys(result.enrichments))).toEqual(
+            new Set([
+                "7607",
+                "7607STDY14643771",
+                "48522",
+                "71046409",
+                "Custom",
+            ]),
+        );
     });
 
     it("keeps direct study enrichment when a parallel sample lookup primes the same study alias first", async () => {

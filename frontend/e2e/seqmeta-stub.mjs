@@ -171,6 +171,139 @@ const libraryEnrichment = {
     partial: false,
 };
 
+function multiFieldSample(index) {
+    return {
+        id_study_lims: "7607",
+        id_sample_lims: `SMP7607-${String(index).padStart(4, "0")}`,
+        sanger_id:
+            index === 0 ? "7607STDY14643771" : `7607STDY${14643771 + index}`,
+        sample_name: index === 0 ? "7607STDY14643771" : `Sample ${index}`,
+        taxon_id: 9606,
+        common_name: "Human",
+        library_type: "Custom",
+        id_run: 48522,
+        lane: (index % 8) + 1,
+        tag_index: (index % 96) + 1,
+        irods_path: `/irods/7607/sample-${index}`,
+        study_accession_number: "ERP7607",
+        accession_number: `SAMEA7607${index}`,
+    };
+}
+
+const multiFieldSamples = Array.from({ length: 2500 }, (_, index) =>
+    multiFieldSample(index),
+);
+const multiFieldPrimarySample = multiFieldSamples[0];
+const multiFieldStudy = {
+    id_study_tmp: 7607,
+    id_lims: "SQSCP",
+    id_study_lims: "7607",
+    name: "7607",
+    faculty_sponsor: "Dr Repro",
+    state: "active",
+    accession_number: "ERP7607",
+    data_release_strategy: "managed",
+    study_title: "Seqmeta rendering repro study",
+    data_access_group: "seqmeta",
+    programme: "Performance",
+    reference_genome: "GRCh38",
+    ethically_approved: true,
+    study_type: "Whole Genome Sequencing",
+    contains_human_dna: true,
+    contaminated_human_dna: false,
+    study_visibility: "Always Open",
+    ega_dac_accession_number: "EGAC7607",
+    ega_policy_accession_number: "EGAP7607",
+    data_release_timing: "Immediate",
+};
+const multiFieldLibrary = {
+    library_type: "Custom",
+    id_study_lims: "7607",
+    library_id: "71046409",
+    id_library_lims: "LIB7607-71046409",
+};
+const multiFieldMlwhLibrary = {
+    pipeline_id_lims: "Custom",
+    id_study_lims: "7607",
+    library_id: "71046409",
+    id_library_lims: "LIB7607-71046409",
+};
+const multiFieldGraph = {
+    study: multiFieldStudy,
+    sample: multiFieldPrimarySample,
+    samples: multiFieldSamples,
+    library: multiFieldLibrary,
+    libraries: [multiFieldLibrary],
+    study_detail: {
+        study: multiFieldStudy,
+        library_details: [
+            {
+                library: multiFieldMlwhLibrary,
+                samples: multiFieldSamples,
+            },
+        ],
+    },
+    sample_detail: {
+        sample: multiFieldPrimarySample,
+        study: multiFieldStudy,
+        lanes: [
+            {
+                id_run: "48522",
+                lane: "1",
+                tag_index: 1,
+            },
+        ],
+        libraries: [multiFieldMlwhLibrary],
+    },
+};
+const multiFieldEnrichments = new Map([
+    [
+        "7607",
+        {
+            identifier: "7607",
+            type: "study_id",
+            graph: multiFieldGraph,
+            partial: false,
+        },
+    ],
+    [
+        "7607STDY14643771",
+        {
+            identifier: "7607STDY14643771",
+            type: "sanger_sample_id",
+            graph: multiFieldGraph,
+            partial: false,
+        },
+    ],
+    [
+        "48522",
+        {
+            identifier: "48522",
+            type: "run_id",
+            graph: multiFieldGraph,
+            partial: false,
+        },
+    ],
+    [
+        "Custom",
+        {
+            identifier: "Custom",
+            type: "library_type",
+            graph: multiFieldGraph,
+            partial: false,
+        },
+    ],
+    [
+        "71046409",
+        {
+            identifier: "71046409",
+            type: "library_id",
+            graph: multiFieldGraph,
+            partial: false,
+        },
+    ],
+]);
+
 const validations = new Map([
     [
         "WTSI_wEMB10524782",
@@ -198,6 +331,46 @@ const validations = new Map([
                 library_type: "RNA",
                 id_study_lims: "6591",
             },
+        },
+    ],
+    [
+        "7607",
+        {
+            identifier: "7607",
+            type: "study_id",
+            object: multiFieldStudy,
+        },
+    ],
+    [
+        "7607STDY14643771",
+        {
+            identifier: "7607STDY14643771",
+            type: "sanger_sample_id",
+            object: multiFieldPrimarySample,
+        },
+    ],
+    [
+        "48522",
+        {
+            identifier: "48522",
+            type: "run_id",
+            object: multiFieldPrimarySample,
+        },
+    ],
+    [
+        "Custom",
+        {
+            identifier: "Custom",
+            type: "library_type",
+            object: multiFieldLibrary,
+        },
+    ],
+    [
+        "71046409",
+        {
+            identifier: "71046409",
+            type: "library_id",
+            object: multiFieldLibrary,
         },
     ],
 ]);
@@ -242,6 +415,18 @@ const server = http.createServer((request, response) => {
     if (url.pathname === "/enrich/RNA") {
         sendJson(response, 200, libraryEnrichment);
         return;
+    }
+
+    if (url.pathname.startsWith("/enrich/")) {
+        const identifier = decodeURIComponent(
+            url.pathname.slice("/enrich/".length),
+        );
+        const enrichment = multiFieldEnrichments.get(identifier);
+
+        if (enrichment) {
+            sendJson(response, 200, enrichment);
+            return;
+        }
     }
 
     if (url.pathname.startsWith("/validate/")) {

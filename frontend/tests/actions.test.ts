@@ -108,4 +108,96 @@ describe("H2 enrichIdentifier action", () => {
             status: 502,
         });
     });
+
+    it("enriches multiple identifiers through one batched server action result", async () => {
+        const { BackendRequestError } = await import("@/lib/backend-client");
+        seqmetaJsonMock
+            .mockResolvedValueOnce(enrichmentFixture)
+            .mockRejectedValueOnce(
+                new BackendRequestError(404, {
+                    error: "seqmeta: unknown identifier",
+                }),
+            )
+            .mockRejectedValueOnce(
+                new BackendRequestError(502, {
+                    error: "seqmeta: all enrichment hops failed",
+                }),
+            );
+
+        const { enrichIdentifiers } = await import("@/app/(results)/actions");
+
+        await expect(
+            enrichIdentifiers(["6568", "missing-id", "flaky-id", "6568"]),
+        ).resolves.toEqual([
+            {
+                value: "6568",
+                enrichment: enrichmentFixture,
+                error: undefined,
+            },
+            {
+                value: "missing-id",
+                enrichment: null,
+                error: "not_found",
+            },
+            {
+                value: "flaky-id",
+                enrichment: null,
+                error: "upstream_impaired",
+            },
+        ]);
+        expect(seqmetaJsonMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("reuses aliases from the first enrichment inside a batch", async () => {
+        const studyEnrichment: EnrichmentResult = {
+            ...enrichmentFixture,
+            identifier: "7607",
+            graph: {
+                ...enrichmentFixture.graph,
+                study: {
+                    ...enrichmentFixture.graph.study!,
+                    id_study_lims: "7607",
+                    accession_number: "ERP7607",
+                },
+                sample: {
+                    id_study_lims: "7607",
+                    id_sample_lims: "SMP7607-0001",
+                    sanger_id: "7607STDY14643771",
+                    sample_name: "7607STDY14643771",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "Custom",
+                    accession_number: "SAMEA7607",
+                    id_run: 48522,
+                    study_accession_number: "ERP7607",
+                },
+                library: {
+                    library_type: "Custom",
+                    id_study_lims: "7607",
+                    library_id: "71046409",
+                    id_library_lims: "LIB7607-71046409",
+                },
+            },
+        };
+        seqmetaJsonMock.mockResolvedValueOnce(studyEnrichment);
+
+        const { enrichIdentifiers } = await import("@/app/(results)/actions");
+
+        const results = await enrichIdentifiers([
+            "7607",
+            "7607STDY14643771",
+            "48522",
+            "71046409",
+            "Custom",
+        ]);
+
+        expect(seqmetaJsonMock).toHaveBeenCalledTimes(1);
+        expect(seqmetaJsonMock).toHaveBeenCalledWith(
+            "/enrich/7607",
+            expect.anything(),
+        );
+        expect(
+            results.map((result) => [result.value, result.enrichment?.type]),
+        ).toEqual([["7607", "study_id"]]);
+    });
 });

@@ -43,6 +43,27 @@ const fetchResultMock = vi.fn();
 const fetchFilesMock = vi.fn();
 const validateIdentifierMock = vi.fn();
 const enrichIdentifierMock = vi.fn();
+const enrichIdentifiersMock = vi.fn(async (values: string[]) =>
+    Promise.all(
+        values.map(async (value) => {
+            try {
+                const enrichment = await enrichIdentifierMock(value);
+
+                return {
+                    value,
+                    enrichment: enrichment ?? null,
+                    error: enrichment == null ? "not_found" : undefined,
+                };
+            } catch {
+                return {
+                    value,
+                    enrichment: null,
+                    error: "upstream_impaired" as const,
+                };
+            }
+        }),
+    ),
+);
 const fetchLibrarySamplesMock = vi.fn();
 const cookiesMock = vi.fn();
 const originalDocumentCookie = Object.getOwnPropertyDescriptor(
@@ -61,6 +82,7 @@ vi.mock("@/app/(results)/actions", () => ({
     fetchFiles: fetchFilesMock,
     validateIdentifier: validateIdentifierMock,
     enrichIdentifier: enrichIdentifierMock,
+    enrichIdentifiers: enrichIdentifiersMock,
 }));
 
 vi.mock("@/lib/seqmeta-enrichment", async (importOriginal) => {
@@ -709,7 +731,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
-    it("does not start seqmeta enrichments during server detail rendering", async () => {
+    it("leaves seqmeta enrichment to the client during server detail rendering", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
                 metadata: {
@@ -732,7 +754,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(markup).toContain("seqmeta_library");
         expect(markup).toContain("RNA");
     });
@@ -777,7 +799,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         expect(fetchResultMock).toHaveBeenCalledWith("result-42");
         expect(fetchFilesMock).toHaveBeenCalledWith("result-42");
-        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(markup).not.toContain("Explorer");
         expect(markup).not.toContain("Preview focus");
         expect(markup).not.toContain("data-selected-file-path");
@@ -851,6 +873,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
             "SANG001",
         );
+        expect(screen.queryByLabelText("loading enrichment")).toBeNull();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
 
         firstRender.unmount();
@@ -872,6 +896,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
             "SANG001",
         );
+        expect(screen.queryByLabelText("loading enrichment")).toBeNull();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
     });
 
@@ -966,7 +992,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).toHaveBeenCalledTimes(0);
+        expect(enrichIdentifiersMock).toHaveBeenCalledTimes(0);
         expect(firstMarkup).toContain("SANG001");
         expect(firstMarkup).not.toContain("sanger_sample_id: SANG001");
 
@@ -980,7 +1006,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).toHaveBeenCalledTimes(0);
+        expect(enrichIdentifiersMock).toHaveBeenCalledTimes(0);
         expect(secondMarkup).toContain("SANG001");
         expect(secondMarkup).not.toContain("sanger_sample_id: SANG001");
     });
@@ -1019,7 +1045,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(readSeqmetaCookieFromDocument()).toBe(document.cookie);
     });
 
-    it("keeps server detail rendering neutral when seqmeta validation would fail client-side", async () => {
+    it("keeps server detail rendering neutral when seqmeta enrichment would fail client-side", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
                 metadata: {
@@ -1044,7 +1070,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(markup).not.toContain("enrichment backend impaired");
         expect(markup).toContain("SANG001");
     });
