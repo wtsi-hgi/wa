@@ -457,6 +457,59 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.queryByText("Status")).toBeNull();
     });
 
+    it("opens library details quickly without rendering every related sample row", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const samples = Array.from({ length: 1000 }, (_, index) =>
+            buildSample({
+                id_sample_lims: `LIMS${index}`,
+                sanger_id: `SANG${index}`,
+                sample_name: `Sample ${index}`,
+            }),
+        );
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_librarytype",
+                rawValue: "Custom",
+                enrichment: buildEnrichment({
+                    identifier: "Custom",
+                    type: "library_type",
+                    graph: {
+                        study: undefined,
+                        studies: [buildStudy()],
+                        samples,
+                    },
+                    partial: true,
+                    missing: [
+                        {
+                            hop: "samples",
+                            reason: "samples_truncated",
+                            status: 200,
+                        },
+                    ],
+                }),
+            }),
+        );
+
+        const startedAt = performance.now();
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const elapsedMs = performance.now() - startedAt;
+        const sampleRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="sample"]');
+
+        expect(elapsedMs).toBeLessThan(1000);
+        expect(sampleRows.length).toBeLessThanOrEqual(50);
+        expect(screen.getByText("Sample 0 / SANG0")).toBeTruthy();
+        expect(screen.getByText("Showing 50 of 1000 samples")).toBeTruthy();
+    });
+
     it("renders a vertically scrollable body for long seqmeta detail content", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 

@@ -55,6 +55,8 @@ type HierarchicalGroup = {
         | { id_run: string; lane: string; tag_index: number }[];
 };
 
+const RELATED_SAMPLE_RENDER_LIMIT = 50;
+
 function asString(value: unknown): string | null {
     return typeof value === "string" && value.trim() ? value : null;
 }
@@ -150,40 +152,6 @@ function copiedStateKey(fieldKey: string, fieldValue: string): string {
     return `${fieldKey}:${fieldValue}`;
 }
 
-function enrichmentTypeLabel(type: string): string {
-    if (type === "sanger_sample_id") {
-        return "Sanger sample ID";
-    }
-
-    if (type === "study_id") {
-        return "Study identifier";
-    }
-
-    if (type === "study_accession") {
-        return "Study accession";
-    }
-
-    return humanizeToken(type);
-}
-
-function resolvedEnrichmentValue(enrichment: EnrichmentResult): string | null {
-    if (
-        enrichment.type === "study_id" ||
-        enrichment.type === "study_accession"
-    ) {
-        return (
-            asString(enrichment.graph.study?.id_study_lims) ??
-            asString(enrichment.graph.study?.accession_number) ??
-            asString(enrichment.identifier)
-        );
-    }
-
-    return (
-        asString(enrichment.graph.sample?.sanger_id) ??
-        asString(enrichment.identifier)
-    );
-}
-
 function primaryLabel(
     rawValue: string,
     enrichment: EnrichmentResult | null,
@@ -226,6 +194,20 @@ function librarySampleFilters(
     };
 
     return filters.idLibraryLims || filters.libraryId ? filters : undefined;
+}
+
+function visibleRelatedSamples(
+    samples: EnrichmentSample[],
+): EnrichmentSample[] {
+    return samples.slice(0, RELATED_SAMPLE_RENDER_LIMIT);
+}
+
+function relatedSamplesSummary(samples: EnrichmentSample[]): string | null {
+    if (samples.length <= RELATED_SAMPLE_RENDER_LIMIT) {
+        return null;
+    }
+
+    return `Showing ${RELATED_SAMPLE_RENDER_LIMIT} of ${samples.length} samples`;
 }
 
 function sampleCopyStateKey(sample: EnrichmentSample, index?: number): string {
@@ -696,61 +678,6 @@ function buildHierarchicalGroups(
     return groups;
 }
 
-function buildStatusLines(
-    metadataKey: string,
-    rawValue: string,
-    enrichment: EnrichmentResult | null,
-    error: SeqmetaBadgeProps["error"],
-    loading: boolean,
-): string[] {
-    if (loading) {
-        return [`Looking up ${metadataLabelForSentence(metadataKey)}.`];
-    }
-
-    if (error === "not_found") {
-        return [
-            `No enrichment matched this ${metadataLabelForSentence(metadataKey)} value.`,
-        ];
-    }
-
-    if (error === "upstream_impaired") {
-        return [
-            `Upstream services were unavailable while resolving this ${metadataLabelForSentence(metadataKey)} value.`,
-        ];
-    }
-
-    if (!enrichment) {
-        return [];
-    }
-
-    if (isLibraryMetadataKey(metadataKey)) {
-        return [
-            `Selected ${metadataLabelForSentence(metadataKey)}: ${rawValue}.`,
-        ];
-    }
-
-    const lines = [
-        `Selected ${metadataLabelForSentence(metadataKey)}: ${rawValue}.`,
-    ];
-    const resolvedValue = resolvedEnrichmentValue(enrichment);
-
-    if (resolvedValue) {
-        lines.push(
-            `Resolved via ${enrichmentTypeLabel(enrichment.type)} ${resolvedValue}.`,
-        );
-    } else {
-        lines.push(`Resolved via ${enrichmentTypeLabel(enrichment.type)}.`);
-    }
-
-    const studyName = asString(enrichment.graph.study?.name);
-
-    if (studyName) {
-        lines.push(`Study context: ${studyName}.`);
-    }
-
-    return lines;
-}
-
 async function writeClipboard(value: string): Promise<boolean> {
     function fallbackCopyText(text: string): boolean {
         if (
@@ -799,26 +726,6 @@ export function SeqmetaBadge({
     loading = false,
 }: SeqmetaBadgeProps) {
     const inlineLabel = primaryLabel(rawValue, enrichment);
-    const detailFields = useMemo(
-        () => buildDetailFields(metadataKey, rawValue, enrichment),
-        [enrichment, metadataKey, rawValue],
-    );
-    const hierarchicalGroups = useMemo(
-        () => buildHierarchicalGroups(metadataKey, enrichment),
-        [enrichment, metadataKey],
-    );
-    const statusLines = useMemo(
-        () =>
-            buildStatusLines(metadataKey, rawValue, enrichment, error, loading),
-        [enrichment, error, loading, metadataKey, rawValue],
-    );
-    const missingLines = useMemo(
-        () =>
-            enrichment?.partial
-                ? (enrichment.missing ?? []).map(humanizeMissingHop)
-                : [],
-        [enrichment],
-    );
     const [dialogOpen, setDialogOpen] = useState(false);
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
     const [expandedLibraries, setExpandedLibraries] = useState<Set<string>>(
@@ -829,6 +736,25 @@ export function SeqmetaBadge({
     >(new Map());
     const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(
         new Set(),
+    );
+    const detailFields = useMemo(
+        () =>
+            dialogOpen
+                ? buildDetailFields(metadataKey, rawValue, enrichment)
+                : [],
+        [dialogOpen, enrichment, metadataKey, rawValue],
+    );
+    const hierarchicalGroups = useMemo(
+        () =>
+            dialogOpen ? buildHierarchicalGroups(metadataKey, enrichment) : [],
+        [dialogOpen, enrichment, metadataKey],
+    );
+    const missingLines = useMemo(
+        () =>
+            dialogOpen && enrichment?.partial
+                ? (enrichment.missing ?? []).map(humanizeMissingHop)
+                : [],
+        [dialogOpen, enrichment],
     );
 
     // Fetch library samples when a library is expanded
@@ -1283,6 +1209,14 @@ export function SeqmetaBadge({
                                                                                         libraryIdentity,
                                                                                     ) ??
                                                                                     library.samples;
+                                                                                const visibleLoadedSamples =
+                                                                                    visibleRelatedSamples(
+                                                                                        loadedSamples,
+                                                                                    );
+                                                                                const loadedSamplesSummary =
+                                                                                    relatedSamplesSummary(
+                                                                                        loadedSamples,
+                                                                                    );
 
                                                                                 return (
                                                                                     <div
@@ -1430,7 +1364,7 @@ export function SeqmetaBadge({
                                                                                         loadedSamples.length >
                                                                                             0 ? (
                                                                                             <div className="ml-4 space-y-2 border-l-2 border-border/40 pl-4">
-                                                                                                {loadedSamples.map(
+                                                                                                {visibleLoadedSamples.map(
                                                                                                     (
                                                                                                         sample,
                                                                                                         index,
@@ -1526,6 +1460,13 @@ export function SeqmetaBadge({
                                                                                                         );
                                                                                                     },
                                                                                                 )}
+                                                                                                {loadedSamplesSummary ? (
+                                                                                                    <p className="px-1 text-xs font-medium text-muted-foreground">
+                                                                                                        {
+                                                                                                            loadedSamplesSummary
+                                                                                                        }
+                                                                                                    </p>
+                                                                                                ) : null}
                                                                                             </div>
                                                                                         ) : null}
                                                                                     </div>
@@ -1647,6 +1588,14 @@ export function SeqmetaBadge({
                                                         ) {
                                                             const samples =
                                                                 group.items as EnrichmentSample[];
+                                                            const visibleSamples =
+                                                                visibleRelatedSamples(
+                                                                    samples,
+                                                                );
+                                                            const samplesSummary =
+                                                                relatedSamplesSummary(
+                                                                    samples,
+                                                                );
 
                                                             return (
                                                                 <div
@@ -1661,7 +1610,7 @@ export function SeqmetaBadge({
                                                                         }
                                                                     </h5>
                                                                     <div className="space-y-3">
-                                                                        {samples.map(
+                                                                        {visibleSamples.map(
                                                                             (
                                                                                 sample,
                                                                             ) => {
@@ -1752,6 +1701,13 @@ export function SeqmetaBadge({
                                                                                 );
                                                                             },
                                                                         )}
+                                                                        {samplesSummary ? (
+                                                                            <p className="px-1 text-xs font-medium text-muted-foreground">
+                                                                                {
+                                                                                    samplesSummary
+                                                                                }
+                                                                            </p>
+                                                                        ) : null}
                                                                     </div>
                                                                 </div>
                                                             );
