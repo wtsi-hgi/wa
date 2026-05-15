@@ -37,14 +37,6 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-func serverStudySample(studyID, name, libraryType string) mlwh.Sample {
-	return mlwh.Sample{
-		Name:      name,
-		Studies:   []mlwh.Study{{IDStudyLims: studyID}},
-		Libraries: []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
-	}
-}
-
 func TestServerEndpoints(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
@@ -94,6 +86,43 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(samples, convey.ShouldHaveLength, 1)
 		convey.So(samples[0].Libraries, convey.ShouldResemble, []mlwh.Library{{PipelineIDLims: "RNA PolyA", IDStudyLims: "6568"}})
+	})
+
+	convey.Convey("Bug 1: study samples endpoint filters library_type within the requested study", t, func() {
+		provider := &MockProvider{
+			AllSamplesForStudyFunc: func(_ context.Context, studyID string) ([]mlwh.Sample, error) {
+				convey.So(studyID, convey.ShouldEqual, "6568")
+				return []mlwh.Sample{
+					{
+						Name:    "cross-study-library",
+						Studies: []mlwh.Study{{IDStudyLims: "6568"}},
+						Libraries: []mlwh.Library{{
+							PipelineIDLims: "RNA PolyA",
+							IDStudyLims:    "9999",
+						}},
+					},
+					{
+						Name:    "in-study-library",
+						Studies: []mlwh.Study{{IDStudyLims: "6568"}},
+						Libraries: []mlwh.Library{{
+							PipelineIDLims: "RNA PolyA",
+							IDStudyLims:    "6568",
+						}},
+					},
+				}, nil
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/study/6568/samples?library_type=RNA+PolyA", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var samples []mlwh.Sample
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &samples), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].Name, convey.ShouldEqual, "in-study-library")
 	})
 
 	convey.Convey("study diff endpoint returns added samples", t, func() {
@@ -285,4 +314,12 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
 		convey.So(body["error"], convey.ShouldContainSubstring, mlwh.ErrCacheNeverSynced.Error())
 	})
+}
+
+func serverStudySample(studyID, name, libraryType string) mlwh.Sample {
+	return mlwh.Sample{
+		Name:      name,
+		Studies:   []mlwh.Study{{IDStudyLims: studyID}},
+		Libraries: []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
+	}
 }

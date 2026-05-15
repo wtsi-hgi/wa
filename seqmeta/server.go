@@ -47,6 +47,16 @@ const (
 	defaultEnrichNegativeTTL = 15 * time.Minute
 )
 
+type librarySampleFilter struct {
+	libraryType   string
+	libraryID     string
+	idLibraryLims string
+}
+
+func (f librarySampleFilter) empty() bool {
+	return f.libraryType == "" && f.libraryID == "" && f.idLibraryLims == ""
+}
+
 // Server serves the seqmeta REST API.
 type Server struct {
 	provider    Provider
@@ -135,12 +145,15 @@ func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Filter by library_type if query parameter is present
-	libraryType := r.URL.Query().Get("library_type")
-	if libraryType != "" {
+	libraryFilter := librarySampleFilter{
+		libraryType:   r.URL.Query().Get("library_type"),
+		libraryID:     r.URL.Query().Get("library_id"),
+		idLibraryLims: r.URL.Query().Get("id_library_lims"),
+	}
+	if !libraryFilter.empty() {
 		filtered := make([]mlwh.Sample, 0, len(samples))
 		for _, sample := range samples {
-			if sampleHasLibraryType(sample, libraryType) {
+			if sampleMatchesLibrary(sample, studyID, libraryFilter) {
 				filtered = append(filtered, sample)
 			}
 		}
@@ -157,6 +170,27 @@ func looksLikeStudyAccession(s string) bool {
 		if unicode.IsLetter(ch) {
 			return true
 		}
+	}
+
+	return false
+}
+
+func sampleMatchesLibrary(sample mlwh.Sample, studyID string, filter librarySampleFilter) bool {
+	for _, library := range sample.Libraries {
+		if library.IDStudyLims != studyID {
+			continue
+		}
+		if filter.libraryType != "" && library.PipelineIDLims != filter.libraryType {
+			continue
+		}
+		if filter.libraryID != "" && library.LibraryID != filter.libraryID {
+			continue
+		}
+		if filter.idLibraryLims != "" && library.IDLibraryLims != filter.idLibraryLims {
+			continue
+		}
+
+		return true
 	}
 
 	return false

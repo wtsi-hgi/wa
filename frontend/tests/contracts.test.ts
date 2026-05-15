@@ -520,6 +520,8 @@ describe("contract schemas", () => {
                             library: {
                                 pipeline_id_lims: "RNA PolyA",
                                 id_study_lims: "6568",
+                                library_id: "1001",
+                                id_library_lims: "DN111:A1",
                             },
                             samples: [
                                 {
@@ -548,6 +550,12 @@ describe("contract schemas", () => {
             expect(
                 result.data.graph.study_detail?.library_details[0]?.samples,
             ).toHaveLength(1);
+            expect(
+                result.data.graph.study_detail?.library_details[0],
+            ).toMatchObject({
+                library_id: "1001",
+                id_library_lims: "DN111:A1",
+            });
         }
     });
 

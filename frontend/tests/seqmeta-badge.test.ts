@@ -1607,6 +1607,92 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(sampleButtons.length).toBeGreaterThan(2);
     });
 
+    it("expands study libraries by specific library identifiers when a study has repeated library types", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const firstLibrarySample = buildSample({
+            id_sample_lims: "SMP001",
+            sanger_id: "S1",
+            sample_name: "Sample 1",
+        });
+        const secondLibrarySample = buildSample({
+            id_sample_lims: "SMP002",
+            sanger_id: "S2",
+            sample_name: "Sample 2",
+        });
+
+        fetchLibrarySamplesMock.mockImplementation(
+            async (
+                _studyId: string,
+                _libraryType: string,
+                filters?: { idLibraryLims?: string; libraryId?: string },
+            ) =>
+                filters?.idLibraryLims === "DN111:A1"
+                    ? [firstLibrarySample]
+                    : [secondLibrarySample],
+        );
+
+        const libraryDetails = [
+            {
+                library_type: "RNA PolyA",
+                id_study_lims: "6568",
+                library_id: "1001",
+                id_library_lims: "DN111:A1",
+                samples: [],
+            },
+            {
+                library_type: "RNA PolyA",
+                id_study_lims: "6568",
+                library_id: "1002",
+                id_library_lims: "DN222:B1",
+                samples: [],
+            },
+        ] as unknown as LibraryDetail[];
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: buildStudy(),
+                        study_detail: {
+                            study: buildStudy(),
+                            library_details: libraryDetails,
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.getByText("DN111:A1")).toBeTruthy();
+        expect(screen.getByText("DN222:B1")).toBeTruthy();
+
+        const expandButtons = screen.getAllByLabelText("Show samples");
+        fireEvent.click(expandButtons[0]!);
+
+        await waitFor(() => {
+            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+        });
+
+        expect(screen.queryByText("Sample 2 / S2")).toBeNull();
+        expect(fetchLibrarySamplesMock).toHaveBeenCalledWith(
+            "6568",
+            "RNA PolyA",
+            {
+                idLibraryLims: "DN111:A1",
+                libraryId: "1001",
+            },
+        );
+    });
+
     it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 

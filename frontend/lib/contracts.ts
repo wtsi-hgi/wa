@@ -112,6 +112,8 @@ const mlwhLibraryLinkInputSchema = z
     .object({
         pipeline_id_lims: z.string(),
         id_study_lims: z.string(),
+        library_id: z.string().optional(),
+        id_library_lims: z.string().optional(),
     })
     .passthrough();
 
@@ -234,6 +236,8 @@ export type EnrichmentSamples = z.infer<typeof enrichmentSamplesSchema>;
 export const libraryLinkSchema = z.object({
     library_type: z.string(),
     id_study_lims: z.string(),
+    library_id: z.string().optional(),
+    id_library_lims: z.string().optional(),
 });
 export type LibraryLink = z.infer<typeof libraryLinkSchema>;
 
@@ -291,6 +295,8 @@ export const sampleDetailSchema = mlwhSampleDetailInputSchema
             libraries: detail.libraries?.map((library) => ({
                 library_type: library.pipeline_id_lims,
                 id_study_lims: library.id_study_lims,
+                library_id: library.library_id,
+                id_library_lims: library.id_library_lims,
             })),
             irods_paths: detail.irods_paths,
         }),
@@ -306,6 +312,8 @@ const mlwhLibraryDetailInputSchema = z.object({
 const normalizedLibraryDetailSchema = z.object({
     library_type: z.string(),
     id_study_lims: z.string(),
+    library_id: z.string().optional(),
+    id_library_lims: z.string().optional(),
     samples: normalizedEnrichmentSamplesSchema,
 });
 
@@ -315,6 +323,8 @@ function normalizeLibraryDetail(
 ): {
     library_type: string;
     id_study_lims: string;
+    library_id?: string;
+    id_library_lims?: string;
     samples: EnrichmentSamples;
 } {
     const firstSample = detail.samples[0];
@@ -323,6 +333,8 @@ function normalizeLibraryDetail(
         library_type:
             detail.library?.pipeline_id_lims ?? firstSample?.library_type ?? "",
         id_study_lims: fallbackStudyLims ?? firstSample?.id_study_lims ?? "",
+        library_id: detail.library?.library_id,
+        id_library_lims: detail.library?.id_library_lims,
         samples: detail.samples,
     };
 }

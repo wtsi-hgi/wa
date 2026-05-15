@@ -262,6 +262,29 @@ describe("H3 enrichment state and badge", () => {
         expect(fetchStudyLibrarySamplesMock).toHaveBeenCalledTimes(1);
     });
 
+    it("forwards specific library identifiers for study library sample expansion", async () => {
+        const { fetchLibrarySamples } =
+            await import("@/lib/seqmeta-enrichment");
+
+        fetchStudyLibrarySamplesMock.mockResolvedValue([]);
+
+        await expect(
+            fetchLibrarySamples("6568", "RNA", {
+                idLibraryLims: "DN111:A1",
+                libraryId: "1001",
+            }),
+        ).resolves.toEqual([]);
+
+        expect(fetchStudyLibrarySamplesMock).toHaveBeenCalledWith(
+            "6568",
+            "RNA",
+            {
+                idLibraryLims: "DN111:A1",
+                libraryId: "1001",
+            },
+        );
+    });
+
     it("looks up sample identifiers independently so sample details do not reuse study-level enrichment", async () => {
         enrichIdentifierMock
             .mockResolvedValueOnce(buildEnrichmentResult())

@@ -33,24 +33,6 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-func hierarchySample(studyID, sampleLimsID, sangerSampleID, name, libraryType string) mlwh.Sample {
-	sample := mlwh.Sample{
-		IDSampleLims:   sampleLimsID,
-		SangerSampleID: sangerSampleID,
-		Name:           name,
-	}
-
-	if studyID != "" {
-		sample.Studies = []mlwh.Study{{IDStudyLims: studyID}}
-	}
-
-	if studyID != "" || libraryType != "" {
-		sample.Libraries = []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}}
-	}
-
-	return sample
-}
-
 func TestEnrichmentHierarchy(t *testing.T) {
 	ctx := context.Background()
 
@@ -93,6 +75,59 @@ func TestEnrichmentHierarchy(t *testing.T) {
 			convey.So([]string{"A", "B"}, convey.ShouldContain, detail.Library.PipelineIDLims)
 			convey.So(detail.Samples, convey.ShouldNotBeEmpty)
 		}
+	})
+
+	convey.Convey("Bug 1: study enrichment keeps same-type libraries separate by library identifiers", t, func() {
+		study := &mlwh.Study{IDStudyLims: "6568", Name: "Test Study"}
+		samples := []mlwh.Sample{
+			{
+				IDSampleLims:   "SL1",
+				SangerSampleID: "S1",
+				Name:           "Sample 1",
+				Studies:        []mlwh.Study{*study},
+				Libraries: []mlwh.Library{{
+					PipelineIDLims: "RNA PolyA",
+					IDStudyLims:    "6568",
+					LibraryID:      "1001",
+					IDLibraryLims:  "DN111:A1",
+				}},
+			},
+			{
+				IDSampleLims:   "SL2",
+				SangerSampleID: "S2",
+				Name:           "Sample 2",
+				Studies:        []mlwh.Study{*study},
+				Libraries: []mlwh.Library{{
+					PipelineIDLims: "RNA PolyA",
+					IDStudyLims:    "6568",
+					LibraryID:      "1002",
+					IDLibraryLims:  "DN222:B1",
+				}},
+			},
+		}
+
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, _ string) (*mlwh.Study, error) {
+				return study, nil
+			},
+			AllSamplesForStudyFunc: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				return samples, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "6568")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil || result.Graph.StudyDetail == nil {
+			return
+		}
+
+		convey.So(result.Graph.StudyDetail.Libraries, convey.ShouldHaveLength, 2)
+		convey.So(result.Graph.StudyDetail.Libraries[0].Library.IDLibraryLims, convey.ShouldEqual, "DN111:A1")
+		convey.So(result.Graph.StudyDetail.Libraries[0].Samples, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.StudyDetail.Libraries[1].Library.IDLibraryLims, convey.ShouldEqual, "DN222:B1")
+		convey.So(result.Graph.StudyDetail.Libraries[1].Samples, convey.ShouldHaveLength, 1)
 	})
 
 	convey.Convey("H2: sample enrichment preserves sample detail and linked study", t, func() {
@@ -251,4 +286,22 @@ func TestEnrichmentHierarchy(t *testing.T) {
 		convey.So(result.Graph.Studies, convey.ShouldHaveLength, 2)
 		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 2)
 	})
+}
+
+func hierarchySample(studyID, sampleLimsID, sangerSampleID, name, libraryType string) mlwh.Sample {
+	sample := mlwh.Sample{
+		IDSampleLims:   sampleLimsID,
+		SangerSampleID: sangerSampleID,
+		Name:           name,
+	}
+
+	if studyID != "" {
+		sample.Studies = []mlwh.Study{{IDStudyLims: studyID}}
+	}
+
+	if studyID != "" || libraryType != "" {
+		sample.Libraries = []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}}
+	}
+
+	return sample
 }

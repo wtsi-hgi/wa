@@ -184,8 +184,15 @@ export async function fetchStudySamples(studyId: string): Promise<string[]> {
 export async function fetchStudyLibrarySamples(
     studyId: string,
     libraryType: string,
+    filters: { idLibraryLims?: string; libraryId?: string } = {},
 ) {
     const params = new URLSearchParams({ library_type: libraryType });
+    if (filters.libraryId) {
+        params.set("library_id", filters.libraryId);
+    }
+    if (filters.idLibraryLims) {
+        params.set("id_library_lims", filters.idLibraryLims);
+    }
 
     return seqmetaJson(
         `/study/${encodeURIComponent(studyId)}/samples?${params.toString()}`,

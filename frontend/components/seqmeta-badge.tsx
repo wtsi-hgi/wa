@@ -40,6 +40,8 @@ type SeqmetaDetailField = {
 type HierarchicalLibrary = {
     libraryType: string;
     idStudyLims: string;
+    libraryId?: string;
+    idLibraryLims?: string;
     samples: EnrichmentSample[];
 };
 
@@ -170,6 +172,30 @@ function librarySampleKey(sample: EnrichmentSample, index: number): string {
     ];
 
     return `${keyParts.join("|")}|${index}`;
+}
+
+function libraryIdentityKey(library: HierarchicalLibrary): string {
+    return [
+        library.idStudyLims,
+        library.libraryType,
+        library.libraryId ?? "",
+        library.idLibraryLims ?? "",
+    ].join("|");
+}
+
+function libraryDisplayLabel(library: HierarchicalLibrary): string {
+    return library.idLibraryLims ?? library.libraryId ?? library.libraryType;
+}
+
+function librarySampleFilters(
+    library: HierarchicalLibrary,
+): { idLibraryLims?: string; libraryId?: string } | undefined {
+    const filters = {
+        idLibraryLims: library.idLibraryLims,
+        libraryId: library.libraryId,
+    };
+
+    return filters.idLibraryLims || filters.libraryId ? filters : undefined;
 }
 
 function sampleCopyStateKey(sample: EnrichmentSample, index?: number): string {
@@ -428,6 +454,8 @@ function buildHierarchicalGroups(
                 libraryItems.push({
                     libraryType: lib.library_type,
                     idStudyLims: lib.id_study_lims,
+                    libraryId: lib.library_id,
+                    idLibraryLims: lib.id_library_lims,
                     samples: [], // Empty - samples loaded JIT on expansion
                 });
             }
@@ -436,6 +464,8 @@ function buildHierarchicalGroups(
                 libraryItems.push({
                     libraryType: lib.library_type,
                     idStudyLims: lib.id_study_lims,
+                    libraryId: lib.library_id,
+                    idLibraryLims: lib.id_library_lims,
                     samples: [], // Empty - samples loaded JIT on expansion
                 });
             }
@@ -520,6 +550,7 @@ function buildHierarchicalGroups(
         const idStudyLims = enrichment.graph.sample?.id_study_lims || "";
 
         if (libraryType) {
+            const libraryLink = enrichment.graph.library;
             groups.push({
                 type: "library",
                 title: "Library",
@@ -527,6 +558,8 @@ function buildHierarchicalGroups(
                     {
                         libraryType,
                         idStudyLims,
+                        libraryId: libraryLink?.library_id,
+                        idLibraryLims: libraryLink?.id_library_lims,
                         samples: [],
                     },
                 ],
@@ -711,12 +744,15 @@ export function SeqmetaBadge({
         }
 
         const libraries = librariesGroup.items as HierarchicalLibrary[];
-        const toLoad = libraries.filter(
-            (lib) =>
-                expandedLibraries.has(lib.libraryType) &&
-                !loadedLibrarySamples.has(lib.libraryType) &&
-                !loadingLibraries.has(lib.libraryType),
-        );
+        const toLoad = libraries.filter((lib) => {
+            const identity = libraryIdentityKey(lib);
+
+            return (
+                expandedLibraries.has(identity) &&
+                !loadedLibrarySamples.has(identity) &&
+                !loadingLibraries.has(identity)
+            );
+        });
 
         if (toLoad.length === 0) {
             return;
@@ -728,7 +764,7 @@ export function SeqmetaBadge({
             setLoadingLibraries((prev) => {
                 const next = new Set(prev);
                 for (const lib of toLoad) {
-                    next.add(lib.libraryType);
+                    next.add(libraryIdentityKey(lib));
                 }
                 return next;
             });
@@ -737,13 +773,20 @@ export function SeqmetaBadge({
             await Promise.all(
                 toLoad.map(async (lib) => {
                     try {
-                        const samples = await fetchLibrarySamples(
-                            lib.idStudyLims,
-                            lib.libraryType,
-                        );
+                        const filters = librarySampleFilters(lib);
+                        const samples = filters
+                            ? await fetchLibrarySamples(
+                                  lib.idStudyLims,
+                                  lib.libraryType,
+                                  filters,
+                              )
+                            : await fetchLibrarySamples(
+                                  lib.idStudyLims,
+                                  lib.libraryType,
+                              );
                         setLoadedLibrarySamples((prev) => {
                             const next = new Map(prev);
-                            next.set(lib.libraryType, samples ?? []);
+                            next.set(libraryIdentityKey(lib), samples ?? []);
                             return next;
                         });
                     } catch (error) {
@@ -753,7 +796,7 @@ export function SeqmetaBadge({
                         );
                         setLoadedLibrarySamples((prev) => {
                             const next = new Map(prev);
-                            next.set(lib.libraryType, []); // Set empty on error
+                            next.set(libraryIdentityKey(lib), []); // Set empty on error
                             return next;
                         });
                     }
@@ -764,7 +807,7 @@ export function SeqmetaBadge({
             setLoadingLibraries((prev) => {
                 const next = new Set(prev);
                 for (const lib of toLoad) {
-                    next.delete(lib.libraryType);
+                    next.delete(libraryIdentityKey(lib));
                 }
                 return next;
             });
@@ -1112,9 +1155,17 @@ export function SeqmetaBadge({
                                                                                 library,
                                                                                 index,
                                                                             ) => {
+                                                                                const libraryIdentity =
+                                                                                    libraryIdentityKey(
+                                                                                        library,
+                                                                                    );
+                                                                                const libraryLabel =
+                                                                                    libraryDisplayLabel(
+                                                                                        library,
+                                                                                    );
                                                                                 const isExpanded =
                                                                                     expandedLibraries.has(
-                                                                                        library.libraryType,
+                                                                                        libraryIdentity,
                                                                                     );
                                                                                 const libraryDetailKey =
                                                                                     directLibraryMetadataKey(
@@ -1123,21 +1174,21 @@ export function SeqmetaBadge({
                                                                                 const libraryCopyKey =
                                                                                     copiedStateKey(
                                                                                         libraryDetailKey,
-                                                                                        library.libraryType,
+                                                                                        libraryIdentity,
                                                                                     );
                                                                                 const isLoading =
                                                                                     loadingLibraries.has(
-                                                                                        library.libraryType,
+                                                                                        libraryIdentity,
                                                                                     );
                                                                                 const loadedSamples =
                                                                                     loadedLibrarySamples.get(
-                                                                                        library.libraryType,
+                                                                                        libraryIdentity,
                                                                                     ) ??
                                                                                     [];
 
                                                                                 return (
                                                                                     <div
-                                                                                        key={`${library.libraryType}-${index}`}
+                                                                                        key={`${libraryIdentity}-${index}`}
                                                                                         className="space-y-2"
                                                                                     >
                                                                                         <article
@@ -1150,9 +1201,17 @@ export function SeqmetaBadge({
                                                                                                 <div className="min-w-0 flex-1">
                                                                                                     <p className="break-all text-sm leading-6 text-foreground">
                                                                                                         {
-                                                                                                            library.libraryType
+                                                                                                            libraryLabel
                                                                                                         }
                                                                                                     </p>
+                                                                                                    {libraryLabel !==
+                                                                                                    library.libraryType ? (
+                                                                                                        <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">
+                                                                                                            {
+                                                                                                                library.libraryType
+                                                                                                            }
+                                                                                                        </p>
+                                                                                                    ) : null}
                                                                                                 </div>
                                                                                                 <div className="flex flex-wrap gap-2">
                                                                                                     <button
@@ -1161,7 +1220,7 @@ export function SeqmetaBadge({
                                                                                                         className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                                                                                         onClick={() => {
                                                                                                             void writeClipboard(
-                                                                                                                library.libraryType,
+                                                                                                                libraryLabel,
                                                                                                             ).then(
                                                                                                                 (
                                                                                                                     copied,
@@ -1218,11 +1277,11 @@ export function SeqmetaBadge({
                                                                                                                 isExpanded
                                                                                                             ) {
                                                                                                                 newExpanded.delete(
-                                                                                                                    library.libraryType,
+                                                                                                                    libraryIdentity,
                                                                                                                 );
                                                                                                             } else {
                                                                                                                 newExpanded.add(
-                                                                                                                    library.libraryType,
+                                                                                                                    libraryIdentity,
                                                                                                                 );
                                                                                                             }
 
@@ -1624,71 +1683,91 @@ export function SeqmetaBadge({
                                                                             (
                                                                                 library,
                                                                                 index,
-                                                                            ) => (
-                                                                                <article
-                                                                                    key={`${library.libraryType}-${index}`}
-                                                                                    data-seqmeta-detail-key="library"
-                                                                                    className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                                >
-                                                                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                                        <div className="min-w-0 flex-1">
-                                                                                            <p className="break-all text-sm leading-6 text-foreground">
-                                                                                                {
-                                                                                                    library.libraryType
-                                                                                                }
-                                                                                            </p>
+                                                                            ) => {
+                                                                                const libraryLabel =
+                                                                                    libraryDisplayLabel(
+                                                                                        library,
+                                                                                    );
+                                                                                const libraryCopyKey =
+                                                                                    copiedStateKey(
+                                                                                        directLibraryMetadataKey(
+                                                                                            metadataKey,
+                                                                                        ),
+                                                                                        libraryIdentityKey(
+                                                                                            library,
+                                                                                        ),
+                                                                                    );
+
+                                                                                return (
+                                                                                    <article
+                                                                                        key={`${libraryIdentityKey(library)}-${index}`}
+                                                                                        data-seqmeta-detail-key="library"
+                                                                                        className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                    >
+                                                                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                            <div className="min-w-0 flex-1">
+                                                                                                <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                    {
+                                                                                                        libraryLabel
+                                                                                                    }
+                                                                                                </p>
+                                                                                                {libraryLabel !==
+                                                                                                library.libraryType ? (
+                                                                                                    <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">
+                                                                                                        {
+                                                                                                            library.libraryType
+                                                                                                        }
+                                                                                                    </p>
+                                                                                                ) : null}
+                                                                                            </div>
+                                                                                            <div className="flex flex-wrap gap-2">
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    aria-label={`Copy ${directLibraryMetadataKey(metadataKey)}`}
+                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                    onClick={() => {
+                                                                                                        void writeClipboard(
+                                                                                                            libraryLabel,
+                                                                                                        ).then(
+                                                                                                            (
+                                                                                                                copied,
+                                                                                                            ) => {
+                                                                                                                if (
+                                                                                                                    copied
+                                                                                                                ) {
+                                                                                                                    setCopiedKey(
+                                                                                                                        libraryCopyKey,
+                                                                                                                    );
+                                                                                                                }
+                                                                                                            },
+                                                                                                        );
+                                                                                                    }}
+                                                                                                >
+                                                                                                    <Copy
+                                                                                                        className="size-3.5"
+                                                                                                        aria-hidden="true"
+                                                                                                    />
+                                                                                                    {copiedKey ===
+                                                                                                    libraryCopyKey
+                                                                                                        ? "Copied"
+                                                                                                        : "Copy"}
+                                                                                                </button>
+                                                                                                <Link
+                                                                                                    aria-label="Send library to search filter"
+                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                    href={`/?library=${library.libraryType}`}
+                                                                                                >
+                                                                                                    <Search
+                                                                                                        className="size-3.5"
+                                                                                                        aria-hidden="true"
+                                                                                                    />
+                                                                                                    Filter
+                                                                                                </Link>
+                                                                                            </div>
                                                                                         </div>
-                                                                                        <div className="flex flex-wrap gap-2">
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                aria-label={`Copy ${directLibraryMetadataKey(metadataKey)}`}
-                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                onClick={() => {
-                                                                                                    void writeClipboard(
-                                                                                                        library.libraryType,
-                                                                                                    ).then(
-                                                                                                        (
-                                                                                                            copied,
-                                                                                                        ) => {
-                                                                                                            if (
-                                                                                                                copied
-                                                                                                            ) {
-                                                                                                                setCopiedKey(
-                                                                                                                    directLibraryMetadataKey(
-                                                                                                                        metadataKey,
-                                                                                                                    ),
-                                                                                                                );
-                                                                                                            }
-                                                                                                        },
-                                                                                                    );
-                                                                                                }}
-                                                                                            >
-                                                                                                <Copy
-                                                                                                    className="size-3.5"
-                                                                                                    aria-hidden="true"
-                                                                                                />
-                                                                                                {copiedKey ===
-                                                                                                directLibraryMetadataKey(
-                                                                                                    metadataKey,
-                                                                                                )
-                                                                                                    ? "Copied"
-                                                                                                    : "Copy"}
-                                                                                            </button>
-                                                                                            <Link
-                                                                                                aria-label="Send library to search filter"
-                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                href={`/?library=${library.libraryType}`}
-                                                                                            >
-                                                                                                <Search
-                                                                                                    className="size-3.5"
-                                                                                                    aria-hidden="true"
-                                                                                                />
-                                                                                                Filter
-                                                                                            </Link>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                </article>
-                                                                            ),
+                                                                                    </article>
+                                                                                );
+                                                                            },
                                                                         )}
                                                                     </div>
                                                                 </div>

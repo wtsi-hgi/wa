@@ -364,9 +364,12 @@ export async function enrichSeqmetaMetadata(
 export async function fetchLibrarySamples(
     studyId: string,
     libraryType: string,
+    filters?: { idLibraryLims?: string; libraryId?: string },
 ): Promise<EnrichmentResult["graph"]["samples"]> {
     const { fetchStudyLibrarySamples } =
         await import("@/app/(results)/actions");
 
-    return fetchStudyLibrarySamples(studyId, libraryType);
+    return filters === undefined
+        ? fetchStudyLibrarySamples(studyId, libraryType)
+        : fetchStudyLibrarySamples(studyId, libraryType, filters);
 }

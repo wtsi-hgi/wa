@@ -53,16 +53,6 @@ var enrichClassifiers = []enrichClassifier{
 	{classify: classifyLibraryType},
 }
 
-func sampleHasLibraryType(sample mlwh.Sample, libraryType string) bool {
-	for _, library := range sample.Libraries {
-		if library.PipelineIDLims == libraryType {
-			return true
-		}
-	}
-
-	return false
-}
-
 type enrichDetailProvider interface {
 	StudyDetail(ctx context.Context, studyLimsID string) (*mlwh.StudyDetail, error)
 	SampleDetail(ctx context.Context, sampleName string) (*mlwh.SampleDetail, error)
@@ -100,7 +90,7 @@ func buildStudyDetailFromProvider(ctx context.Context, provider Provider, studyL
 }
 
 func buildStudyDetail(study mlwh.Study, samples []mlwh.Sample) mlwh.StudyDetail {
-	grouped := make(map[string][]mlwh.Sample)
+	grouped := make(map[string]mlwh.LibraryDetail)
 	ordered := make([]string, 0)
 
 	for _, sample := range samples {
@@ -112,24 +102,44 @@ func buildStudyDetail(study mlwh.Study, samples []mlwh.Sample) mlwh.StudyDetail 
 				continue
 			}
 
-			if _, seen := grouped[library.PipelineIDLims]; !seen {
-				ordered = append(ordered, library.PipelineIDLims)
+			key := studyLibraryGroupKey(library, study.IDStudyLims)
+			if _, seen := grouped[key]; !seen {
+				ordered = append(ordered, key)
+				if library.IDStudyLims == "" {
+					library.IDStudyLims = study.IDStudyLims
+				}
+				grouped[key] = mlwh.LibraryDetail{Library: library}
 			}
 
-			grouped[library.PipelineIDLims] = append(grouped[library.PipelineIDLims], sample)
+			detail := grouped[key]
+			detail.Samples = append(detail.Samples, sample)
+			grouped[key] = detail
 		}
 	}
 
 	libraries := make([]mlwh.LibraryDetail, 0, len(grouped))
-	for _, libraryType := range ordered {
-		librarySamples := grouped[libraryType]
-		libraries = append(libraries, mlwh.LibraryDetail{
-			Library: mlwh.Library{PipelineIDLims: libraryType, IDStudyLims: study.IDStudyLims},
-			Samples: librarySamples,
-		})
+	for _, key := range ordered {
+		libraries = append(libraries, grouped[key])
 	}
 
 	return mlwh.StudyDetail{Study: study, Libraries: libraries}
+}
+
+func studyLibraryGroupKey(library mlwh.Library, studyID string) string {
+	libraryStudyID := library.IDStudyLims
+	if libraryStudyID == "" {
+		libraryStudyID = studyID
+	}
+
+	return strings.Join(
+		[]string{
+			library.PipelineIDLims,
+			libraryStudyID,
+			library.LibraryID,
+			library.IDLibraryLims,
+		},
+		"\x00",
+	)
 }
 
 func sampleDetailFor(ctx context.Context, provider Provider, sample mlwh.Sample) (*mlwh.SampleDetail, error) {
@@ -302,10 +312,6 @@ func buildStudyDetails(studies []mlwh.Study, samples []mlwh.Sample) []mlwh.Study
 
 type sampleClassifier func(context.Context, Provider, string) ([]mlwh.Sample, error)
 
-type sampleNameResolver interface {
-	ResolveSampleName(context.Context, string) (mlwh.Match, error)
-}
-
 func classifySampleIdentifier(
 	ctx context.Context,
 	provider Provider,
@@ -450,6 +456,37 @@ func enrichSampleStudy(ctx context.Context, provider Provider, sample mlwh.Sampl
 	}
 
 	return nil
+}
+
+type sampleNameResolver interface {
+	ResolveSampleName(context.Context, string) (mlwh.Match, error)
+}
+
+func classifySangerSampleName(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
+	resolver, ok := provider.(sampleNameResolver)
+	if !ok {
+		return nil, false, nil, nil
+	}
+
+	match, err := resolver.ResolveSampleName(ctx, identifier)
+	if err != nil {
+		if isContextError(err) {
+			return nil, false, nil, err
+		}
+		if isClientError(err) {
+			return nil, false, nil, nil
+		}
+
+		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
+	}
+	if match.Sample == nil {
+		return nil, false, nil, nil
+	}
+	if match.Kind != mlwh.KindSangerSampleName {
+		return nil, false, nil, nil
+	}
+
+	return buildSampleEnrichment(ctx, provider, identifier, IdentifierSangerSampleName, []mlwh.Sample{*match.Sample})
 }
 
 // Enrich resolves an identifier into its enrichment graph.
@@ -1029,33 +1066,6 @@ func classifyResolvedSample(ctx context.Context, provider Provider, identifier s
 	}
 
 	return buildSampleEnrichment(ctx, provider, identifier, identifierType, []mlwh.Sample{*match.Sample})
-}
-
-func classifySangerSampleName(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
-	resolver, ok := provider.(sampleNameResolver)
-	if !ok {
-		return nil, false, nil, nil
-	}
-
-	match, err := resolver.ResolveSampleName(ctx, identifier)
-	if err != nil {
-		if isContextError(err) {
-			return nil, false, nil, err
-		}
-		if isClientError(err) {
-			return nil, false, nil, nil
-		}
-
-		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
-	}
-	if match.Sample == nil {
-		return nil, false, nil, nil
-	}
-	if match.Kind != mlwh.KindSangerSampleName {
-		return nil, false, nil, nil
-	}
-
-	return buildSampleEnrichment(ctx, provider, identifier, IdentifierSangerSampleName, []mlwh.Sample{*match.Sample})
 }
 
 func sampleIdentifierType(kind mlwh.IdentifierKind) (IdentifierType, bool) {
