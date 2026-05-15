@@ -375,6 +375,7 @@ func buildSampleEnrichment(
 
 		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
 	}
+	fillSampleDetailLibraryLinks(detail)
 
 	result := &EnrichmentResult{
 		Identifier: identifier,
@@ -394,6 +395,14 @@ func buildSampleEnrichment(
 	}
 
 	return result, true, nil, nil
+}
+
+func fillSampleDetailLibraryLinks(detail *mlwh.SampleDetail) {
+	if detail == nil || len(detail.Sample.Libraries) > 0 || len(detail.Libraries) == 0 {
+		return
+	}
+
+	detail.Sample.Libraries = append([]mlwh.Library(nil), detail.Libraries...)
 }
 
 func libraryLinkForSample(sample mlwh.Sample) *Library {

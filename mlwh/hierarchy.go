@@ -50,7 +50,7 @@ var (
 	findSamplesByAccessionSQL     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
 	findSamplesBySupplierSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
 	findSamplesByLibraryTypeSQL   = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT 2`
-	librariesForStudySQL          = `SELECT pipeline_id_lims, COUNT(DISTINCT id_sample_tmp) FROM library_samples WHERE id_study_lims = ? GROUP BY pipeline_id_lims ORDER BY pipeline_id_lims LIMIT ? OFFSET ?`
+	librariesForStudySQL          = `SELECT pipeline_id_lims, library_id, id_library_lims, COUNT(DISTINCT id_sample_tmp) FROM library_samples WHERE id_study_lims = ? GROUP BY pipeline_id_lims, library_id, id_library_lims ORDER BY pipeline_id_lims, library_id, id_library_lims LIMIT ? OFFSET ?`
 	runsForStudyCacheSQL          = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_study_lims = ? ORDER BY id_run LIMIT ? OFFSET ?`
 	lanesForSampleCacheSQL        = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
 	lanesForSampleStudyCacheSQL   = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? AND id_study_lims = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
@@ -811,7 +811,7 @@ func (c *Client) LibrariesForStudy(ctx context.Context, studyLimsID string, limi
 	for rows.Next() {
 		library := Library{}
 		var sampleCount int
-		if err = rows.Scan(&library.PipelineIDLims, &sampleCount); err != nil {
+		if err = rows.Scan(&library.PipelineIDLims, &library.LibraryID, &library.IDLibraryLims, &sampleCount); err != nil {
 			return nil, fmt.Errorf("%w: scan libraries for study: %w", ErrUpstreamImpaired, err)
 		}
 		library.IDStudyLims = studyLimsID

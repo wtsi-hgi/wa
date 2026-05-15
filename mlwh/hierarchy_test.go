@@ -571,6 +571,45 @@ func TestLibrariesForStudyReturnsDistinctCountsPerPipeline(t *testing.T) {
 	})
 }
 
+func TestLibrariesForStudyKeepsSpecificLibraryIdentifiers(t *testing.T) {
+	convey.Convey("Given a study with repeated library types but distinct library identifiers", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 1, "7607")
+		seedHierarchySample(t, client.cache.DB(), 31, "7607", "7607STDY14643771")
+		seedHierarchySample(t, client.cache.DB(), 32, "7607", "7607STDY14643772")
+		_, err := client.cache.DB().Exec(
+			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`,
+			"Custom", 31, "7607", "71046409", "SQPP-47463-G:B1",
+		)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = client.cache.DB().Exec(
+			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`,
+			"Custom", 32, "7607", "71046410", "SQPP-47464-G:C1",
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		libraries, err := client.LibrariesForStudy(context.Background(), "7607", 100, 0)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(libraries, convey.ShouldResemble, []Library{
+			{
+				PipelineIDLims: "Custom",
+				IDStudyLims:    "7607",
+				LibraryID:      "71046409",
+				IDLibraryLims:  "SQPP-47463-G:B1",
+			},
+			{
+				PipelineIDLims: "Custom",
+				IDStudyLims:    "7607",
+				LibraryID:      "71046410",
+				IDLibraryLims:  "SQPP-47464-G:C1",
+			},
+		})
+	})
+}
+
 func TestRunsForStudyReturnsDistinctRunIDs(t *testing.T) {
 	convey.Convey("Given a cached study with metrics rows spanning two runs", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)

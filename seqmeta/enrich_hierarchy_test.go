@@ -211,6 +211,59 @@ func TestEnrichmentHierarchy(t *testing.T) {
 		convey.So(result.Graph.SampleDetail.Sample.Studies, convey.ShouldResemble, []mlwh.Study{study1, study2})
 	})
 
+	convey.Convey("Bug 5: sample enrichment uses specific library identifiers from sample details", t, func() {
+		study := mlwh.Study{IDStudyLims: "7607", Name: "Study 7607"}
+		sample := mlwh.Sample{
+			IDSampleLims:   "SMP001",
+			SangerSampleID: "7607STDY14643771",
+			Name:           "7607STDY14643771",
+		}
+		library := mlwh.Library{
+			PipelineIDLims: "Custom",
+			IDStudyLims:    "7607",
+			LibraryID:      "71046409",
+			IDLibraryLims:  "SQPP-47463-G:B1",
+		}
+
+		provider := &MockProvider{
+			FindSamplesBySangerIDFn: func(_ context.Context, identifier string) ([]mlwh.Sample, error) {
+				convey.So(identifier, convey.ShouldEqual, "7607STDY14643771")
+
+				return []mlwh.Sample{sample}, nil
+			},
+			SampleDetailFunc: func(_ context.Context, sampleName string) (*mlwh.SampleDetail, error) {
+				convey.So(sampleName, convey.ShouldEqual, "7607STDY14643771")
+
+				return &mlwh.SampleDetail{
+					Sample:    sample,
+					Study:     &study,
+					Libraries: []mlwh.Library{library},
+				}, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "7607STDY14643771")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Graph.Library, convey.ShouldResemble, &Library{
+			LibraryType:   "Custom",
+			IDStudyLims:   "7607",
+			LibraryID:     "71046409",
+			IDLibraryLims: "SQPP-47463-G:B1",
+		})
+		convey.So(result.Graph.Sample, convey.ShouldNotBeNil)
+		if result.Graph.Sample == nil {
+			return
+		}
+
+		convey.So(result.Graph.Sample.Libraries, convey.ShouldResemble, []mlwh.Library{library})
+	})
+
 	convey.Convey("H3: run enrichment groups samples into StudyDetails", t, func() {
 		study1 := mlwh.Study{IDStudyLims: "6568", Name: "Study 1"}
 		study2 := mlwh.Study{IDStudyLims: "7890", Name: "Study 2"}
