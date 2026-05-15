@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -291,6 +292,16 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(strings.Join(os.Args, " "), convey.ShouldNotContainSubstring, secret)
 	})
 
+	convey.Convey("results serve opens the read-only MLWH resolver from cache when a source DSN is present", t, func() {
+		resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
+		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(127.0.0.1:1)/mlwarehouse")
+		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh.sqlite"))
+
+		err := executeServeCommandUntilListeningForTest(t, []string{"results", "serve", "--port", "0", "--db", ":memory:"})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+
 	convey.Convey("E5.3: Given --mlwh-cache with an embedded password, when results serve parses flags, then the error wraps ErrPasswordInDSN and names --mlwh-cache", t, func() {
 		_, err := executeRootCommandForTest(t, []string{"results", "serve", "--db", ":memory:", "--mlwh-cache", "cache_user:secret@tcp(localhost:3306)/wa_cache"})
 
@@ -377,6 +388,42 @@ func postResultsRegistrationForTest(endpoint string, registration *results.Regis
 	}
 
 	return nil, err
+}
+
+func executeServeCommandUntilListeningForTest(t *testing.T, args []string) error {
+	t.Helper()
+
+	addrCh := make(chan string, 1)
+	listenFunc = resultsServeListenFuncForTest(addrCh)
+
+	cmd := NewRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(args)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.ExecuteContext(ctx)
+	}()
+
+	select {
+	case <-addrCh:
+		cancel()
+
+		select {
+		case err := <-errCh:
+			return err
+		case <-time.After(time.Second):
+			return errors.New("timed out waiting for serve command to stop")
+		}
+	case err := <-errCh:
+		return err
+	case <-time.After(time.Second):
+		return errors.New("timed out waiting for serve command to listen")
+	}
 }
 
 func newFakeResultsServeTicker() *fakeResultsServeTicker {

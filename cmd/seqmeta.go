@@ -48,24 +48,13 @@ var listenFunc = net.Listen
 
 const seqmetaProviderFetchLimit = 1_000_000
 
-var openSeqmetaMLWHClient = mlwh.Open
+var openSeqmetaMLWHCacheOnlyClient = mlwh.OpenCacheOnly
 
 var openSeqmetaClientFunc = func(ctx context.Context, cfg seqmetaMLWHConfig) (seqmetaCommandClient, error) {
-	cacheCfg := mlwh.CacheConfig{Path: cfg.CachePath, Password: cfg.CachePassword}
-
-	var (
-		client *mlwh.Client
-		err    error
-	)
-	if strings.TrimSpace(cfg.DSN) == "" {
-		client, err = mlwh.OpenCacheOnly(ctx, cacheCfg)
-	} else {
-		client, err = openSeqmetaMLWHClient(ctx, mlwh.Config{
-			DSN:      cfg.DSN,
-			Password: cfg.Password,
-			Cache:    cacheCfg,
-		})
-	}
+	client, err := openSeqmetaMLWHCacheOnlyClient(ctx, mlwh.CacheConfig{
+		Path:     cfg.CachePath,
+		Password: cfg.CachePassword,
+	})
 	if err != nil {
 		return nil, err
 	}

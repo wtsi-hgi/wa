@@ -412,20 +412,21 @@ func TestServeCommand(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 	})
 
-	convey.Convey("E2.2: seqmeta serve boots with env-based MLWH passwords without exposing them on the CLI", t, func() {
+	convey.Convey("E2.2: seqmeta serve boots with env-based MLWH cache passwords without exposing secrets on the CLI", t, func() {
 		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/warehouse")
 		t.Setenv("WA_MLWH_PASSWORD", "secret")
+		t.Setenv("WA_MLWH_CACHE_PASSWORD", "cache-secret")
 		t.Setenv("WA_MLWH_CACHE_PATH", t.TempDir()+"/mlwh.sqlite")
 
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
 		openSeqmetaClientFunc = originalOpen
 
-		originalOpenMLWH := openSeqmetaMLWHClient
-		defer func() { openSeqmetaMLWHClient = originalOpenMLWH }()
+		originalOpenMLWH := openSeqmetaMLWHCacheOnlyClient
+		defer func() { openSeqmetaMLWHCacheOnlyClient = originalOpenMLWH }()
 
-		captured := mlwh.Config{}
-		openSeqmetaMLWHClient = func(_ context.Context, cfg mlwh.Config) (*mlwh.Client, error) {
+		captured := mlwh.CacheConfig{}
+		openSeqmetaMLWHCacheOnlyClient = func(_ context.Context, cfg mlwh.CacheConfig) (*mlwh.Client, error) {
 			captured = cfg
 
 			return &mlwh.Client{}, nil
@@ -450,23 +451,34 @@ func TestServeCommand(t *testing.T) {
 		<-addrCh
 		cancel()
 		convey.So(<-errCh, convey.ShouldBeNil)
-		convey.So(captured.DSN, convey.ShouldEqual, "mlwh_user@tcp(localhost:3306)/warehouse")
-		convey.So(captured.Password, convey.ShouldEqual, "secret")
-		convey.So(captured.Cache.Path, convey.ShouldContainSubstring, "mlwh.sqlite")
-		convey.So(captured.Cache.Password, convey.ShouldEqual, "")
+		convey.So(captured.Path, convey.ShouldContainSubstring, "mlwh.sqlite")
+		convey.So(captured.Password, convey.ShouldEqual, "cache-secret")
 		convey.So(stdout.String(), convey.ShouldNotContainSubstring, "secret")
+		convey.So(stdout.String(), convey.ShouldNotContainSubstring, "cache-secret")
 		convey.So(stderr.String(), convey.ShouldNotContainSubstring, "secret")
+		convey.So(stderr.String(), convey.ShouldNotContainSubstring, "cache-secret")
 		convey.So(strings.Join(os.Args, " "), convey.ShouldNotContainSubstring, "secret")
+		convey.So(strings.Join(os.Args, " "), convey.ShouldNotContainSubstring, "cache-secret")
+	})
+
+	convey.Convey("seqmeta serve opens the read-only MLWH provider from cache when a source DSN is present", t, func() {
+		openSeqmetaClientFunc = originalOpen
+		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(127.0.0.1:1)/warehouse")
+		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh.sqlite"))
+
+		err := executeServeCommandUntilListeningForTest(t, []string{"seqmeta", "serve", "--port", "0", "--db", t.TempDir() + "/seqmeta.db"})
+
+		convey.So(err, convey.ShouldBeNil)
 	})
 
 	convey.Convey("E2.2a: seqmeta serve returns MLWH open errors", t, func() {
 		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/warehouse")
 		t.Setenv("WA_MLWH_CACHE_PATH", t.TempDir()+"/mlwh.sqlite")
 
-		originalOpenMLWH := openSeqmetaMLWHClient
-		defer func() { openSeqmetaMLWHClient = originalOpenMLWH }()
+		originalOpenMLWH := openSeqmetaMLWHCacheOnlyClient
+		defer func() { openSeqmetaMLWHCacheOnlyClient = originalOpenMLWH }()
 
-		openSeqmetaMLWHClient = func(_ context.Context, _ mlwh.Config) (*mlwh.Client, error) {
+		openSeqmetaMLWHCacheOnlyClient = func(_ context.Context, _ mlwh.CacheConfig) (*mlwh.Client, error) {
 			return nil, errors.New("boom")
 		}
 

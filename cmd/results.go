@@ -141,43 +141,15 @@ type resultsServeSyncClient interface {
 }
 
 func openResultsServeMLWHClientWithConfig(ctx context.Context, cfg resultsServeMLWHConfig) (resultsServeSyncClient, error) {
-	if strings.TrimSpace(cfg.DSN) == "" {
-		client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{
-			Path:     cfg.CachePath,
-			Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		return &resultsServeMLWHRuntime{client: client}, nil
-	}
-
-	sourceDB, err := sql.Open("mysql", cfg.DSN)
-	if err != nil {
-		return nil, fmt.Errorf("open mlwh source db: %w", err)
-	}
-
-	if err = sourceDB.PingContext(ctx); err != nil {
-		_ = sourceDB.Close()
-
-		return nil, fmt.Errorf("ping mlwh source db: %w", err)
-	}
-
-	client, err := mlwh.Open(ctx, mlwh.Config{
-		Cache: mlwh.CacheConfig{
-			Path:     cfg.CachePath,
-			Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
-		},
-		Source: sourceDB,
+	client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{
+		Path:     cfg.CachePath,
+		Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
 	})
 	if err != nil {
-		_ = sourceDB.Close()
-
 		return nil, err
 	}
 
-	return &resultsServeMLWHRuntime{client: client, sourceDB: sourceDB}, nil
+	return &resultsServeMLWHRuntime{client: client}, nil
 }
 
 //nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
