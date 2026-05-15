@@ -81,6 +81,8 @@ const (
 	IdentifierDonorID          IdentifierType = "donor_id"
 	IdentifierRunID            IdentifierType = "run_id"
 	IdentifierLibraryType      IdentifierType = "library_type"
+	IdentifierLibraryID        IdentifierType = "library_id"
+	IdentifierLibraryLimsID    IdentifierType = "id_library_lims"
 )
 
 // Store persists seqmeta watermark state in SQLite.

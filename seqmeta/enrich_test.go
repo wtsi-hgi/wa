@@ -550,14 +550,14 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		convey.So(result.Partial, convey.ShouldBeFalse)
 	})
 
-	convey.Convey("Bug 2: library enrichment resolves library_id values to their canonical library type and filters to the exact library", t, func() {
+	convey.Convey("Bug 2: library enrichment resolves library_id values as library IDs and filters to the exact library", t, func() {
 		provider := &MockProvider{
 			ResolveLibraryFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
 				convey.So(raw, convey.ShouldEqual, "71046409")
 
 				return mlwh.Match{
-					Kind:      mlwh.KindLibraryType,
-					Canonical: "Custom",
+					Kind:      mlwh.KindLibraryID,
+					Canonical: "71046409",
 					Library: &mlwh.Library{
 						PipelineIDLims: "Custom",
 						IDStudyLims:    "7607",
@@ -605,7 +605,7 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 			return
 		}
 
-		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryID)
 		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
 		convey.So(result.Graph.Samples[0].Name, convey.ShouldEqual, "Sample Match")
 		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 1)

@@ -60,6 +60,11 @@ var (
 	qualifiedStudyMirrorSelectSQL = qualifySelectColumns("study_mirror", studyMirrorSelectColumns)
 )
 
+var (
+	sampleStudyPairsForLibraryID     = `SELECT DISTINCT ` + sampleMirrorSelectColumns + `, library_samples.id_study_lims FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.library_id = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp, library_samples.id_study_lims LIMIT ? OFFSET ?`
+	sampleStudyPairsForLibraryLimsID = `SELECT DISTINCT ` + sampleMirrorSelectColumns + `, library_samples.id_study_lims FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_library_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp, library_samples.id_study_lims LIMIT ? OFFSET ?`
+)
+
 func qualifySelectColumns(prefix, columns string) string {
 	parts := strings.Split(columns, ", ")
 	for index, column := range parts {
@@ -457,6 +462,68 @@ func (c *Client) expandSampleStudyPairs(ctx context.Context, base TaggedID, pair
 		Runs:      runValues,
 		Lanes:     laneValues,
 	}, nil
+}
+
+func (c *Client) sampleStudyPairsForLibraryIdentifier(ctx context.Context, query, identifier string) ([]sampleStudyPair, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	rows, err := db.QueryContext(ctx, query, identifier, MaxSamplesPerHop, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query library identifier samples cache: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	pairs := make([]sampleStudyPair, 0)
+	for rows.Next() {
+		sample, studyLimsID, scanErr := scanSampleStudyPairRow(rows.Scan)
+		if scanErr != nil {
+			return nil, fmt.Errorf("%w: scan library identifier samples cache: %w", ErrUpstreamImpaired, scanErr)
+		}
+
+		pairs = append(pairs, sampleStudyPair{Sample: sample, StudyLimsID: studyLimsID})
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query library identifier samples cache: %w", ErrUpstreamImpaired, err)
+	}
+	if len(pairs) == 0 {
+		if err := c.requireResolverSyncState(ctx, syncTableIseqFlowcell); err != nil {
+			return nil, err
+		}
+
+		return nil, ErrNotFound
+	}
+
+	return pairs, nil
+}
+
+func scanSampleStudyPairRow(scan func(dest ...any) error) (Sample, string, error) {
+	var studyLimsID string
+
+	sample := Sample{}
+	nullable := &nullableHierarchySampleFields{}
+	if err := scan(
+		&sample.IDSampleTmp,
+		&nullable.idLims,
+		&nullable.idSampleLims,
+		&nullable.uuidSampleLims,
+		&nullable.name,
+		&nullable.sangerSampleID,
+		&nullable.supplierName,
+		&nullable.accessionNumber,
+		&nullable.donorID,
+		&nullable.taxonID,
+		&nullable.commonName,
+		&nullable.description,
+		&studyLimsID,
+	); err != nil {
+		return Sample{}, "", err
+	}
+	applyNullableHierarchySampleFields(&sample, nullable)
+
+	return sample, studyLimsID, nil
 }
 
 func expandRunIdentifier(base TaggedID, canonical string, samples []Sample) expandedSearchValues {
@@ -1148,6 +1215,20 @@ func (c *Client) expandIdentifierValues(ctx context.Context, kind IdentifierKind
 			for _, sample := range studySamples {
 				pairs = append(pairs, sampleStudyPair{Sample: sample, StudyLimsID: studyLimsID})
 			}
+		}
+
+		return c.expandSampleStudyPairs(ctx, base, pairs)
+	case KindLibraryID:
+		pairs, err := c.sampleStudyPairsForLibraryIdentifier(ctx, sampleStudyPairsForLibraryID, canonical)
+		if err != nil {
+			return expandedSearchValues{}, err
+		}
+
+		return c.expandSampleStudyPairs(ctx, base, pairs)
+	case KindLibraryLimsID:
+		pairs, err := c.sampleStudyPairsForLibraryIdentifier(ctx, sampleStudyPairsForLibraryLimsID, canonical)
+		if err != nil {
+			return expandedSearchValues{}, err
 		}
 
 		return c.expandSampleStudyPairs(ctx, base, pairs)

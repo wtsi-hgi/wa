@@ -8,6 +8,8 @@ export type SeqmetaEnrichmentState = {
 };
 
 type SeqmetaAliasType =
+    | "id_library_lims"
+    | "library_id"
     | "sample_lims"
     | "sanger_sample_id"
     | "study_accession"
@@ -59,6 +61,8 @@ function seqmetaLookupPriority(metadataKey: string): number {
 
     if (
         metadataKey === "seqmeta_library" ||
+        metadataKey === "seqmeta_libraryid" ||
+        metadataKey === "seqmeta_library_lims" ||
         metadataKey === "seqmeta_librarytype"
     ) {
         return 3;
@@ -189,9 +193,13 @@ function collectSeqmetaAliases(
     add(enrichment.graph.study?.id_study_lims, "study_id");
     add(enrichment.graph.study?.accession_number, "study_accession");
     add(enrichment.graph.library?.id_study_lims, "study_id");
+    add(enrichment.graph.library?.library_id, "library_id");
+    add(enrichment.graph.library?.id_library_lims, "id_library_lims");
 
     for (const library of enrichment.graph.libraries ?? []) {
         add(library.id_study_lims, "study_id");
+        add(library.library_id, "library_id");
+        add(library.id_library_lims, "id_library_lims");
     }
 
     function addSampleAliases(sample: {

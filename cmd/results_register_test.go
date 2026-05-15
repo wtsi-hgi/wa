@@ -524,7 +524,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 		})
 	})
 
-	convey.Convey("Bug 2: Given --library is a library_id, when mlwh resolves it, then register stores both the exact library and canonical library type metadata", t, func() {
+	convey.Convey("Bug 2: Given --library is a library_id, when mlwh resolves it, then register stores the library ID metadata key and canonical library type context", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
@@ -586,9 +586,97 @@ func TestResultsRegisterCommand(t *testing.T) {
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
-			"seqmeta_library":     "71046409",
+			"seqmeta_libraryid":   "71046409",
 			"seqmeta_librarytype": "Custom",
 		})
+	})
+
+	convey.Convey("Bug 2: Given a realistic register command with a library_id, when exact library lookup is available, then register does not wait on broad library resolution", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		var broadLibraryCalls int
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			runFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{Kind: mlwh.KindRunID, Canonical: raw, Run: &mlwh.Run{IDRun: 48522}}, nil
+			},
+			studyFn: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{Kind: mlwh.KindStudyLimsID, Canonical: "7607", Study: &mlwh.Study{IDStudyLims: "7607"}}, nil
+			},
+			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{Kind: mlwh.KindSangerSampleName, Canonical: raw, Sample: &mlwh.Sample{Name: raw}}, nil
+			},
+			libraryIdentifierFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "71046409")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindLibraryID,
+					Canonical: "71046409",
+					Library: &mlwh.Library{
+						PipelineIDLims: "Custom",
+						IDStudyLims:    "7607",
+						LibraryID:      "71046409",
+					},
+				}, nil
+			},
+			libraryFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				broadLibraryCalls++
+				time.Sleep(1100 * time.Millisecond)
+
+				return mlwh.Match{Kind: mlwh.KindLibraryType, Canonical: raw, Library: &mlwh.Library{PipelineIDLims: raw}}, nil
+			},
+		})
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "library-id-fast-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		start := time.Now()
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--operator", "alice",
+			"--runid", "48522",
+			"--nextflow-workflow", workflowPath,
+			"--run", "48522",
+			"--study", "7607",
+			"--sample", "7607STDY14643771",
+			"--library", "71046409",
+			outputDir,
+		}, nil)
+		elapsed := time.Since(start)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(elapsed, convey.ShouldBeLessThan, time.Second)
+		convey.So(broadLibraryCalls, convey.ShouldEqual, 0)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.Metadata["seqmeta_libraryid"], convey.ShouldEqual, "71046409")
+		convey.So(registration.Metadata["seqmeta_librarytype"], convey.ShouldEqual, "Custom")
 	})
 
 	convey.Convey("E1.1: Given --sample 7607STDY14643771, when ResolveSample returns a canonical match, then register stores seqmeta_sampleid", t, func() {
@@ -931,12 +1019,13 @@ func mustRegisterCommandJSONBody(t *testing.T, value any) []byte {
 }
 
 type fakeResultsRegisterResolver struct {
-	sampleNameFn func(context.Context, string) (mlwh.Match, error)
-	sampleFn     func(context.Context, string) (mlwh.Match, error)
-	studyFn      func(context.Context, string) (mlwh.Match, error)
-	runFn        func(context.Context, string) (mlwh.Match, error)
-	libraryFn    func(context.Context, string) (mlwh.Match, error)
-	closeFn      func() error
+	sampleNameFn        func(context.Context, string) (mlwh.Match, error)
+	sampleFn            func(context.Context, string) (mlwh.Match, error)
+	studyFn             func(context.Context, string) (mlwh.Match, error)
+	runFn               func(context.Context, string) (mlwh.Match, error)
+	libraryFn           func(context.Context, string) (mlwh.Match, error)
+	libraryIdentifierFn func(context.Context, string) (mlwh.Match, error)
+	closeFn             func() error
 }
 
 func (f *fakeResultsRegisterResolver) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -977,6 +1066,14 @@ func (f *fakeResultsRegisterResolver) ResolveLibrary(ctx context.Context, raw st
 	}
 
 	return f.libraryFn(ctx, raw)
+}
+
+func (f *fakeResultsRegisterResolver) ResolveLibraryIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	if f.libraryIdentifierFn == nil {
+		return mlwh.Match{}, mlwh.ErrNotFound
+	}
+
+	return f.libraryIdentifierFn(ctx, raw)
 }
 
 func (f *fakeResultsRegisterResolver) Close() error {

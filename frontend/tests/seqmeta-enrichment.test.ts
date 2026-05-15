@@ -735,6 +735,37 @@ describe("H3 enrichment state and badge", () => {
         });
     });
 
+    it("describes seqmeta_libraryid enrichment misses as library ID values", async () => {
+        enrichIdentifierMock.mockResolvedValue(null);
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+
+        render(
+            createElement(ResultMetadataEnrichment, {
+                metadata: { seqmeta_libraryid: "71046409" },
+            }),
+            {
+                wrapper: ({ children }) =>
+                    createElement(SeqmetaCacheProvider, null, children),
+            },
+        );
+
+        await openSeqmetaDetails();
+
+        await waitFor(() => {
+            expect(
+                screen.getByText(
+                    "No enrichment matched this library ID value.",
+                ),
+            ).toBeTruthy();
+        });
+        expect(
+            screen.queryByText(
+                "No enrichment matched this library type value.",
+            ),
+        ).toBeNull();
+    });
+
     it("refreshes stale negative cache entries for library-like identifiers", async () => {
         enrichIdentifierMock.mockResolvedValue(
             buildEnrichmentResult({

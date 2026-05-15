@@ -46,6 +46,28 @@ func isUUIDShape(raw string) bool {
 	return uuidShapePattern.MatchString(raw)
 }
 
+func libraryIdentifierQuery(column string) string {
+	switch column {
+	case "library_id":
+		return `SELECT pipeline_id_lims, id_study_lims, library_id, id_library_lims FROM library_samples WHERE library_id = ? ORDER BY pipeline_id_lims, id_study_lims, library_id, id_library_lims LIMIT 1`
+	case "id_library_lims":
+		return `SELECT pipeline_id_lims, id_study_lims, library_id, id_library_lims FROM library_samples WHERE id_library_lims = ? ORDER BY pipeline_id_lims, id_study_lims, library_id, id_library_lims LIMIT 1`
+	default:
+		return ""
+	}
+}
+
+func libraryIdentifierCanonical(library Library, kind IdentifierKind) string {
+	if kind == KindLibraryID {
+		return library.LibraryID
+	}
+	if kind == KindLibraryLimsID {
+		return library.IDLibraryLims
+	}
+
+	return library.PipelineIDLims
+}
+
 // ClassifyIdentifier classifies an identifier by dispatching on shape and
 // applying resolver priority within that shape.
 func (c *Client) ClassifyIdentifier(ctx context.Context, raw string) (Match, error) {
@@ -155,6 +177,21 @@ func (c *Client) ResolveLibrary(ctx context.Context, raw string) (Match, error) 
 	return c.resolveLibraryFromCache(ctx, raw)
 }
 
+// ResolveLibraryIdentifier resolves an exact library_id or id_library_lims
+// match from the cache without falling back to library type lookup.
+func (c *Client) ResolveLibraryIdentifier(ctx context.Context, raw string) (Match, error) {
+	if err := c.requireResolverSyncState(ctx, syncTableIseqFlowcell); err != nil {
+		return Match{}, err
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return Match{}, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	return c.resolveLibraryIdentifierFromCache(ctx, db, raw)
+}
+
 func (c *Client) resolveLibraryFromCache(ctx context.Context, raw string) (Match, error) {
 	db := c.readCacheDB()
 	if db == nil {
@@ -180,11 +217,23 @@ func (c *Client) resolveLibraryFromCache(ctx context.Context, raw string) (Match
 }
 
 func (c *Client) resolveLibraryIdentifierFromCache(ctx context.Context, db *sql.DB, raw string) (Match, error) {
+	match, err := c.resolveLibraryIdentifierColumnFromCache(ctx, db, raw, "library_id", KindLibraryID)
+	if err == nil || !errors.Is(err, ErrNotFound) {
+		return match, err
+	}
+
+	return c.resolveLibraryIdentifierColumnFromCache(ctx, db, raw, "id_library_lims", KindLibraryLimsID)
+}
+
+func (c *Client) resolveLibraryIdentifierColumnFromCache(ctx context.Context, db *sql.DB, raw, column string, kind IdentifierKind) (Match, error) {
+	query := libraryIdentifierQuery(column)
+	if query == "" {
+		return Match{}, fmt.Errorf("%w: unsupported library identifier column %q", ErrUnsupportedIdentifier, column)
+	}
 	var library Library
 	err := db.QueryRowContext(
 		ctx,
-		`SELECT pipeline_id_lims, id_study_lims, library_id, id_library_lims FROM library_samples WHERE library_id = ? OR id_library_lims = ? ORDER BY pipeline_id_lims, id_study_lims, library_id, id_library_lims LIMIT 1`,
-		raw,
+		query,
 		raw,
 	).Scan(&library.PipelineIDLims, &library.IDStudyLims, &library.LibraryID, &library.IDLibraryLims)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -194,7 +243,7 @@ func (c *Client) resolveLibraryIdentifierFromCache(ctx context.Context, db *sql.
 		return Match{}, fmt.Errorf("%w: query library cache: %w", ErrUpstreamImpaired, err)
 	}
 
-	return Match{Kind: KindLibraryType, Canonical: library.PipelineIDLims, Library: &library}, nil
+	return Match{Kind: kind, Canonical: libraryIdentifierCanonical(library, kind), Library: &library}, nil
 }
 
 // ResolveRun resolves a numeric run identifier from the cache-backed

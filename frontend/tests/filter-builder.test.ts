@@ -213,6 +213,31 @@ describe("K1 filter builder component", () => {
         expect(pushMock).toHaveBeenCalledWith("/?library=RNA");
     });
 
+    it("keeps library ID filters on their first-class seqmeta key", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["seqmeta_libraryid"],
+                seqmetaAvailable: true,
+                studies: [],
+                suggestionValues: {
+                    seqmeta_libraryid: ["71046409"],
+                },
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(screen.getByRole("option", { name: /^library id$/i }));
+        fireEvent.change(screen.getByLabelText(/library id value/i), {
+            target: { value: "71046409" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+        expect(pushMock).toHaveBeenCalledWith("/?seqmeta_libraryid=71046409");
+    });
+
     it("shows library filter help warning about the first call and wa mlwh sync", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 

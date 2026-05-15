@@ -80,6 +80,14 @@ function humanizeToken(token: string): string {
 function metadataLabel(metadataKey: string): string {
     const trimmedKey = metadataKey.replace(/^seqmeta_/, "");
 
+    if (trimmedKey === "libraryid") {
+        return "Library ID";
+    }
+
+    if (trimmedKey === "library_lims") {
+        return "Library LIMS ID";
+    }
+
     if (trimmedKey === "library" || trimmedKey === "librarytype") {
         return "Library type";
     }
@@ -103,14 +111,36 @@ function metadataLabel(metadataKey: string): string {
     return humanizeToken(trimmedKey);
 }
 
+function metadataLabelForSentence(metadataKey: string): string {
+    if (metadataKey === "seqmeta_libraryid") {
+        return "library ID";
+    }
+
+    if (metadataKey === "seqmeta_library_lims") {
+        return "library LIMS ID";
+    }
+
+    return metadataLabel(metadataKey).toLowerCase();
+}
+
 function isLibraryMetadataKey(metadataKey: string): boolean {
     return (
         metadataKey === "seqmeta_library" ||
+        metadataKey === "seqmeta_libraryid" ||
+        metadataKey === "seqmeta_library_lims" ||
         metadataKey === "seqmeta_librarytype"
     );
 }
 
 function directLibraryMetadataKey(metadataKey: string): string {
+    if (metadataKey === "seqmeta_libraryid") {
+        return "seqmeta_libraryid";
+    }
+
+    if (metadataKey === "seqmeta_library_lims") {
+        return "seqmeta_library_lims";
+    }
+
     return metadataKey === "seqmeta_librarytype"
         ? "seqmeta_librarytype"
         : "seqmeta_library";
@@ -674,18 +704,18 @@ function buildStatusLines(
     loading: boolean,
 ): string[] {
     if (loading) {
-        return [`Looking up ${metadataLabel(metadataKey).toLowerCase()}.`];
+        return [`Looking up ${metadataLabelForSentence(metadataKey)}.`];
     }
 
     if (error === "not_found") {
         return [
-            `No enrichment matched this ${metadataLabel(metadataKey).toLowerCase()} value.`,
+            `No enrichment matched this ${metadataLabelForSentence(metadataKey)} value.`,
         ];
     }
 
     if (error === "upstream_impaired") {
         return [
-            `Upstream services were unavailable while resolving this ${metadataLabel(metadataKey).toLowerCase()} value.`,
+            `Upstream services were unavailable while resolving this ${metadataLabelForSentence(metadataKey)} value.`,
         ];
     }
 
@@ -695,12 +725,12 @@ function buildStatusLines(
 
     if (isLibraryMetadataKey(metadataKey)) {
         return [
-            `Selected ${metadataLabel(metadataKey).toLowerCase()}: ${rawValue}.`,
+            `Selected ${metadataLabelForSentence(metadataKey)}: ${rawValue}.`,
         ];
     }
 
     const lines = [
-        `Selected ${metadataLabel(metadataKey).toLowerCase()}: ${rawValue}.`,
+        `Selected ${metadataLabelForSentence(metadataKey)}: ${rawValue}.`,
     ];
     const resolvedValue = resolvedEnrichmentValue(enrichment);
 
@@ -1030,18 +1060,18 @@ export function SeqmetaBadge({
                                         {loading ? (
                                             <p className="text-sm text-foreground">
                                                 Looking up{" "}
-                                                {metadataLabel(
+                                                {metadataLabelForSentence(
                                                     metadataKey,
-                                                ).toLowerCase()}
+                                                )}
                                                 .
                                             </p>
                                         ) : null}
                                         {error === "not_found" ? (
                                             <p className="text-sm text-foreground">
                                                 No enrichment matched this{" "}
-                                                {metadataLabel(
+                                                {metadataLabelForSentence(
                                                     metadataKey,
-                                                ).toLowerCase()}{" "}
+                                                )}{" "}
                                                 value.
                                             </p>
                                         ) : null}
@@ -1049,9 +1079,9 @@ export function SeqmetaBadge({
                                             <p className="text-sm text-foreground">
                                                 Upstream services were
                                                 unavailable while resolving this{" "}
-                                                {metadataLabel(
+                                                {metadataLabelForSentence(
                                                     metadataKey,
-                                                ).toLowerCase()}{" "}
+                                                )}{" "}
                                                 value.
                                             </p>
                                         ) : null}

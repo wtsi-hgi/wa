@@ -101,6 +101,22 @@ func TestValidate(t *testing.T) {
 		convey.So(result.Object, convey.ShouldResemble, library)
 	})
 
+	convey.Convey("library ID matches validate as library_id rather than library_type", t, func() {
+		library := &mlwh.Library{PipelineIDLims: "Custom", LibraryID: "71046409"}
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "71046409")
+				return mlwh.Match{Kind: mlwh.KindLibraryID, Canonical: "71046409", Library: library}, nil
+			},
+		}
+
+		result, err := Validate(ctx, provider, "71046409")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Identifier, convey.ShouldEqual, "71046409")
+		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryID)
+		convey.So(result.Object, convey.ShouldResemble, library)
+	})
+
 	convey.Convey("unsupported identifiers preserve the underlying mlwh error and raw value", t, func() {
 		provider := &MockProvider{
 			ClassifyIdentifierFunc: func(context.Context, string) (mlwh.Match, error) {

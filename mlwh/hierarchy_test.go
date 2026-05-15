@@ -1253,6 +1253,34 @@ func TestExpandIdentifierLibraryReturnsOriginalSamplesAndRuns(t *testing.T) {
 	})
 }
 
+func TestExpandIdentifierLibraryIDUsesExactIdentifierIndex(t *testing.T) {
+	convey.Convey("Given synced library samples with different library IDs under the same type", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 1, "7607")
+		seedHierarchySample(t, client.cache.DB(), 31, "7607", "MATCH")
+		seedHierarchySample(t, client.cache.DB(), 32, "7607", "OTHER")
+		_, err := client.cache.DB().Exec(
+			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+			"Custom", 31, "7607", "71046409", "SQPP-47463-G:B1",
+			"Custom", 32, "7607", "99999999", "SQPP-OTHER",
+		)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, client.cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 18, 30, 0, 0, time.UTC))
+
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 7201, 31, 100, 1, 0, "7607")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 7202, 32, 200, 1, 0, "7607")
+
+		samples, runs, lanes, err := client.ExpandSearchValues(context.Background(), KindLibraryID, "71046409")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldResemble, []string{"MATCH"})
+		convey.So(runs, convey.ShouldResemble, []string{"100"})
+		convey.So(lanes, convey.ShouldResemble, []string{})
+	})
+}
+
 func TestExpandIdentifierLibraryPreservesSharedSampleStudyPairings(t *testing.T) {
 	convey.Convey("Given one sample linked to the same library in two studies", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)

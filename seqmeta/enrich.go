@@ -645,7 +645,7 @@ func enrichStudy(ctx context.Context, provider Provider, study *mlwh.Study, resu
 }
 
 func classifyLibraryType(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
-	libraryType, exactLibrary, err := resolvedLibraryType(ctx, provider, identifier)
+	libraryType, exactLibrary, resultType, err := resolvedLibraryType(ctx, provider, identifier)
 	if err != nil {
 		if isContextError(err) {
 			return nil, false, nil, err
@@ -708,7 +708,7 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 
 	result := &EnrichmentResult{
 		Identifier: identifier,
-		Type:       IdentifierLibraryType,
+		Type:       resultType,
 		Graph: EnrichmentGraph{
 			Samples:      flattened,
 			Studies:      studies,
@@ -730,19 +730,35 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 	return result, true, nil, nil
 }
 
-func resolvedLibraryType(ctx context.Context, provider Provider, identifier string) (string, *mlwh.Library, error) {
+func resolvedLibraryType(ctx context.Context, provider Provider, identifier string) (string, *mlwh.Library, IdentifierType, error) {
 	match, err := provider.ResolveLibrary(ctx, identifier)
 	if err == nil {
-		canonical := strings.TrimSpace(match.Canonical)
-		if canonical != "" {
-			return canonical, exactLibraryMatch(match.Library), nil
+		libraryType := strings.TrimSpace(matchLibraryType(match))
+		if libraryType != "" {
+			resultType := IdentifierType(match.Kind)
+			if resultType == "" {
+				resultType = IdentifierLibraryType
+			}
+
+			return libraryType, exactLibraryMatch(match.Library), resultType, nil
 		}
 	}
 	if err != nil && !isClientError(err) {
-		return "", nil, err
+		return "", nil, "", err
 	}
 
-	return identifier, nil, nil
+	return identifier, nil, IdentifierLibraryType, nil
+}
+
+func matchLibraryType(match mlwh.Match) string {
+	if match.Library != nil {
+		return strings.TrimSpace(match.Library.PipelineIDLims)
+	}
+	if match.Kind == mlwh.KindLibraryType {
+		return strings.TrimSpace(match.Canonical)
+	}
+
+	return ""
 }
 
 func exactLibraryMatch(library *mlwh.Library) *mlwh.Library {

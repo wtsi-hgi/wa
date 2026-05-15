@@ -52,6 +52,8 @@ const (
 	KindStudyName        IdentifierKind = "study_name"
 	KindRunID            IdentifierKind = "run_id"
 	KindLibraryType      IdentifierKind = "library_type"
+	KindLibraryID        IdentifierKind = "library_id"
+	KindLibraryLimsID    IdentifierKind = "id_library_lims"
 	MaxSamplesPerHop     int            = 1000
 )
 

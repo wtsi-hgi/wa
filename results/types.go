@@ -57,11 +57,13 @@ var (
 
 // SeqmetaFieldTypes maps metadata key suffixes to expected seqmeta identifier types.
 var SeqmetaFieldTypes = map[string]string{
-	"runid":       "run_id",
-	"studyid":     "study_id",
-	"sampleid":    "sanger_sample_id",
-	"library":     "library_type",
-	"librarytype": "library_type",
+	"runid":        "run_id",
+	"studyid":      "study_id",
+	"sampleid":     "sanger_sample_id",
+	"library":      "library_type",
+	"libraryid":    "library_id",
+	"library_lims": "id_library_lims",
+	"librarytype":  "library_type",
 }
 
 // ResultSet is the core domain object returned by queries.

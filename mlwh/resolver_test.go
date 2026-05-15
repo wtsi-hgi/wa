@@ -151,10 +151,10 @@ func TestResolveLibraryReturnsCacheMatchForLibraryID(t *testing.T) {
 
 		match, err := client.ResolveLibrary(context.Background(), "71046409")
 
-		convey.Convey("when ResolveLibrary executes, then it returns the canonical library type with exact library identifiers", func() {
+		convey.Convey("when ResolveLibrary executes, then it returns the canonical library ID with exact library identifiers", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
-			convey.So(match.Canonical, convey.ShouldEqual, "Custom")
+			convey.So(match.Kind, convey.ShouldEqual, KindLibraryID)
+			convey.So(match.Canonical, convey.ShouldEqual, "71046409")
 			convey.So(match.Library, convey.ShouldResemble, &Library{
 				PipelineIDLims: "Custom",
 				IDStudyLims:    "7607",
@@ -188,10 +188,10 @@ func TestClassifyIdentifierFallsBackToLibraryIDForInteger(t *testing.T) {
 
 		match, err := client.ClassifyIdentifier(context.Background(), "71046409")
 
-		convey.Convey("when ClassifyIdentifier executes, then the library_id resolves as a library type", func() {
+		convey.Convey("when ClassifyIdentifier executes, then the library_id resolves as a library ID", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
-			convey.So(match.Canonical, convey.ShouldEqual, "Custom")
+			convey.So(match.Kind, convey.ShouldEqual, KindLibraryID)
+			convey.So(match.Canonical, convey.ShouldEqual, "71046409")
 			convey.So(match.Library.LibraryID, convey.ShouldEqual, "71046409")
 		})
 	})

@@ -35,6 +35,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -529,6 +530,10 @@ func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 
 		return writeSchemaVersion(ctx, db)
 	case rowCount == 1 && version == CacheSchemaVersion:
+		if err = ensureAdditiveCurrentCacheIndexes(ctx, db, dialect); err != nil {
+			return err
+		}
+
 		if err = validateCurrentCacheSchema(ctx, db, dialect); err != nil {
 			return migrateCacheSchema(ctx, db, dialect, version)
 		}
@@ -566,6 +571,44 @@ func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string)
 	}
 
 	return nil
+}
+
+func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect string) error {
+	switch dialect {
+	case "sqlite":
+		for _, stmt := range []string{
+			`CREATE INDEX IF NOT EXISTS library_samples_library_id_idx ON library_samples(library_id)`,
+			`CREATE INDEX IF NOT EXISTS library_samples_id_library_lims_idx ON library_samples(id_library_lims)`,
+		} {
+			if _, err := db.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("mlwh: create sqlite library identifier index: %w", err)
+			}
+		}
+
+		return nil
+	case "mysql":
+		indexes, _, err := readMySQLTableIndexes(ctx, db, "library_samples")
+		if err != nil {
+			return err
+		}
+
+		for columns, stmt := range map[string]string{
+			"library_id":      `CREATE INDEX library_samples_library_id_idx ON library_samples(library_id)`,
+			"id_library_lims": `CREATE INDEX library_samples_id_library_lims_idx ON library_samples(id_library_lims)`,
+		} {
+			if slices.Contains(indexes, columns) {
+				continue
+			}
+
+			if _, err := db.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("mlwh: create mysql library identifier index: %w", err)
+			}
+		}
+
+		return nil
+	default:
+		return fmt.Errorf("mlwh: unsupported cache schema dialect %q", dialect)
+	}
 }
 
 func expectedCacheSchemaShape(dialect string) (schemaShape, error) {

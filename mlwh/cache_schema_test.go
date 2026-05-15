@@ -222,6 +222,21 @@ func TestSchemaUniqueConstraintsAreSorted(t *testing.T) {
 	})
 }
 
+func TestSchemaIndexesLibraryIdentifiers(t *testing.T) {
+	convey.Convey("Given the embedded SQLite schema", t, func() {
+		stmts, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+
+		shape, err := parseSchemaShape(stmts)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when library_samples indexes are inspected, then exact library identifiers have lookup indexes", func() {
+			convey.So(shape.Index["library_samples"], convey.ShouldContain, "library_id")
+			convey.So(shape.Index["library_samples"], convey.ShouldContain, "id_library_lims")
+		})
+	})
+}
+
 func TestV2SchemaIncludesExpectedMigrationColumns(t *testing.T) {
 	convey.Convey("Given the parsed SQLite v2 schema", t, func() {
 		stmts, err := loadSchema("sqlite")

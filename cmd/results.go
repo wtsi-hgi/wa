@@ -113,6 +113,10 @@ type resultsRegisterSampleNameResolver interface {
 	ResolveSampleName(context.Context, string) (mlwh.Match, error)
 }
 
+type resultsRegisterLibraryIdentifierResolver interface {
+	ResolveLibraryIdentifier(context.Context, string) (mlwh.Match, error)
+}
+
 func openResultsRegisterResolver(ctx context.Context) (resultsRegisterResolver, error) {
 	cachePath := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH"))
 	if cachePath == "" {
@@ -309,34 +313,100 @@ func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterR
 }
 
 func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
-	match, err := client.ResolveLibrary(ctx, value)
+	match, err := resolveResultsRegisterLibrary(ctx, client, value)
 	if err != nil {
 		return nil, fmt.Errorf("resolve --library %q: %w", value, err)
 	}
 
-	resolvedLibraryType, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
-	if err != nil {
-		return nil, err
+	metadata := make(map[string]string, 2)
+	if libraryType := strings.TrimSpace(matchLibraryType(match)); libraryType != "" {
+		metadata["seqmeta_librarytype"] = libraryType
 	}
 
-	metadata := map[string]string{"seqmeta_librarytype": resolvedLibraryType}
-	if exactLibrary := resultsRegisterExactLibraryIdentifier(match.Library); exactLibrary != "" {
-		metadata["seqmeta_library"] = exactLibrary
+	switch match.Kind {
+	case mlwh.KindLibraryID:
+		libraryID, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+		if err != nil {
+			return nil, err
+		}
+		metadata["seqmeta_libraryid"] = libraryID
+	case mlwh.KindLibraryLimsID:
+		libraryLimsID, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+		if err != nil {
+			return nil, err
+		}
+		metadata["seqmeta_library_lims"] = libraryLimsID
+	default:
+		if libraryID := matchingLibraryID(value, match.Library); libraryID != "" {
+			metadata["seqmeta_libraryid"] = libraryID
+
+			return metadata, nil
+		}
+		if libraryLimsID := matchingLibraryLimsID(value, match.Library); libraryLimsID != "" {
+			metadata["seqmeta_library_lims"] = libraryLimsID
+
+			return metadata, nil
+		}
+
+		libraryType, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+		if err != nil {
+			return nil, err
+		}
+		metadata["seqmeta_librarytype"] = libraryType
 	}
 
 	return metadata, nil
 }
 
-func resultsRegisterExactLibraryIdentifier(library *mlwh.Library) string {
+func resolveResultsRegisterLibrary(ctx context.Context, client resultsRegisterResolver, value string) (mlwh.Match, error) {
+	if identifierResolver, ok := client.(resultsRegisterLibraryIdentifierResolver); ok {
+		match, err := identifierResolver.ResolveLibraryIdentifier(ctx, value)
+		if err == nil {
+			return match, nil
+		}
+		if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, err
+		}
+	}
+
+	return client.ResolveLibrary(ctx, value)
+}
+
+func matchingLibraryID(value string, library *mlwh.Library) string {
 	if library == nil {
 		return ""
 	}
 
-	if trimmed := strings.TrimSpace(library.LibraryID); trimmed != "" {
+	trimmed := strings.TrimSpace(library.LibraryID)
+	if strings.EqualFold(strings.TrimSpace(value), trimmed) {
 		return trimmed
 	}
 
-	return strings.TrimSpace(library.IDLibraryLims)
+	return ""
+}
+
+func matchingLibraryLimsID(value string, library *mlwh.Library) string {
+	if library == nil {
+		return ""
+	}
+
+	trimmed := strings.TrimSpace(library.IDLibraryLims)
+	if strings.EqualFold(strings.TrimSpace(value), trimmed) {
+		return trimmed
+	}
+
+	return ""
+}
+
+func matchLibraryType(match mlwh.Match) string {
+	if match.Library != nil {
+		return strings.TrimSpace(match.Library.PipelineIDLims)
+	}
+	if match.Kind == mlwh.KindLibraryType {
+		return strings.TrimSpace(match.Canonical)
+	}
+
+	return ""
 }
 
 type resultSetWithFiles struct {
@@ -759,6 +829,11 @@ func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[strin
 }
 
 func resultsRegisterSeqmetaFlagName(metaKey string) string {
+	switch metaKey {
+	case "seqmeta_libraryid", "seqmeta_library_lims", "seqmeta_librarytype":
+		return "library"
+	}
+
 	for flagName, key := range resultsRegisterSeqmetaFlagMetaKeys {
 		if key == metaKey {
 			return flagName

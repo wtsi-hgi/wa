@@ -991,6 +991,77 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results, convey.ShouldHaveLength, 2)
 	})
 
+	convey.Convey("G1.4: Given seqmeta_libraryid search via mlwh, then it uses library ID expansion and exact library ID metadata", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-id-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_libraryid": "71046409"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-id-expanded-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "LIB-ID-S1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-type-lookalike", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_librarytype": "71046409"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryID)
+				convey.So(canonical, convey.ShouldEqual, "71046409")
+
+				return []string{"LIB-ID-S1"}, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_libraryid=71046409", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		runKeys := make([]string, len(results))
+		for i, result := range results {
+			runKeys[i] = result.RunKey
+		}
+
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(runKeys, convey.ShouldContain, "run-library-id-direct")
+		convey.So(runKeys, convey.ShouldContain, "run-library-id-expanded-sample")
+		convey.So(runKeys, convey.ShouldNotContain, "run-library-type-lookalike")
+	})
+
+	convey.Convey("G1.4: Given library=Custom search via mlwh, then existing library type support still expands by type", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-type-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_librarytype": "Custom"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-type-expanded-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "LIB-TYPE-S1"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
+				convey.So(canonical, convey.ShouldEqual, "Custom")
+
+				return []string{"LIB-TYPE-S1"}, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?library=Custom", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+		convey.So(results, convey.ShouldHaveLength, 2)
+	})
+
 	convey.Convey("G1.5: Given run search via mlwh, then expanded sample matches are returned via OR logic", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-direct-run", func(reg *Registration) {
