@@ -284,6 +284,7 @@ function buildDetailFields(
     const studyMetadata =
         metadataKey === "seqmeta_studyid" ||
         metadataKey === "seqmeta_study_accession";
+    const runMetadata = metadataKey === "seqmeta_runid";
     const sampleMetadata =
         metadataKey === "seqmeta_sampleid" ||
         metadataKey === "seqmeta_sample_lims";
@@ -394,7 +395,7 @@ function buildDetailFields(
     }
 
     // Skip library fields for study metadata.
-    if (!skipSampleFieldsForStudy) {
+    if (!skipSampleFieldsForStudy && !runMetadata) {
         const libraryTypes = [
             enrichment.graph.library?.library_type,
             enrichment.graph.sample?.library_type,
@@ -426,6 +427,59 @@ function buildDetailFields(
     return fields;
 }
 
+function samplesForLibrary(
+    samples: EnrichmentSample[],
+    library: HierarchicalLibrary,
+): EnrichmentSample[] {
+    return samples.filter((sample) => {
+        if (sample.library_type !== library.libraryType) {
+            return false;
+        }
+
+        return (
+            !library.idStudyLims || sample.id_study_lims === library.idStudyLims
+        );
+    });
+}
+
+function runLibraryItems(enrichment: EnrichmentResult): HierarchicalLibrary[] {
+    const libraryItems: HierarchicalLibrary[] = [];
+
+    for (const detail of enrichment.graph.study_details ?? []) {
+        for (const lib of detail.library_details) {
+            libraryItems.push({
+                libraryType: lib.library_type,
+                idStudyLims: lib.id_study_lims,
+                libraryId: lib.library_id,
+                idLibraryLims: lib.id_library_lims,
+                samples: lib.samples,
+            });
+        }
+    }
+
+    if (libraryItems.length > 0) {
+        return libraryItems;
+    }
+
+    const samples = enrichment.graph.samples ?? [];
+    for (const lib of enrichment.graph.libraries ?? []) {
+        const item = {
+            libraryType: lib.library_type,
+            idStudyLims: lib.id_study_lims,
+            libraryId: lib.library_id,
+            idLibraryLims: lib.id_library_lims,
+            samples: [],
+        };
+
+        libraryItems.push({
+            ...item,
+            samples: samplesForLibrary(samples, item),
+        });
+    }
+
+    return libraryItems;
+}
+
 function buildHierarchicalGroups(
     metadataKey: string,
     enrichment: EnrichmentResult | null,
@@ -439,6 +493,7 @@ function buildHierarchicalGroups(
         metadataKey === "seqmeta_studyid" ||
         metadataKey === "seqmeta_study_accession";
     const libraryMetadata = isLibraryMetadataKey(metadataKey);
+    const runMetadata = metadataKey === "seqmeta_runid";
     const sampleMetadata =
         metadataKey === "seqmeta_sampleid" ||
         metadataKey === "seqmeta_sample_lims";
@@ -470,6 +525,18 @@ function buildHierarchicalGroups(
                 });
             }
         }
+
+        if (libraryItems.length > 0) {
+            groups.push({
+                type: "libraries",
+                title: "Libraries",
+                items: libraryItems,
+            });
+        }
+    }
+
+    if (runMetadata) {
+        const libraryItems = runLibraryItems(enrichment);
 
         if (libraryItems.length > 0) {
             groups.push({
@@ -749,6 +816,7 @@ export function SeqmetaBadge({
 
             return (
                 expandedLibraries.has(identity) &&
+                lib.samples.length === 0 &&
                 !loadedLibrarySamples.has(identity) &&
                 !loadingLibraries.has(identity)
             );
@@ -1184,7 +1252,7 @@ export function SeqmetaBadge({
                                                                                     loadedLibrarySamples.get(
                                                                                         libraryIdentity,
                                                                                     ) ??
-                                                                                    [];
+                                                                                    library.samples;
 
                                                                                 return (
                                                                                     <div

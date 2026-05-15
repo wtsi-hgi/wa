@@ -402,7 +402,12 @@ func libraryLinkForSample(sample mlwh.Sample) *Library {
 		return nil
 	}
 
-	return &Library{LibraryType: library.PipelineIDLims, IDStudyLims: library.IDStudyLims}
+	return &Library{
+		LibraryType:   library.PipelineIDLims,
+		IDStudyLims:   library.IDStudyLims,
+		LibraryID:     library.LibraryID,
+		IDLibraryLims: library.IDLibraryLims,
+	}
 }
 
 func samplePrimaryLibrary(sample mlwh.Sample) (mlwh.Library, bool) {
@@ -999,8 +1004,10 @@ func flatLibrariesFromStudyDetail(detail *mlwh.StudyDetail) []Library {
 		}
 
 		libraries = append(libraries, Library{
-			LibraryType: library.Library.PipelineIDLims,
-			IDStudyLims: detail.Study.IDStudyLims,
+			LibraryType:   library.Library.PipelineIDLims,
+			IDStudyLims:   detail.Study.IDStudyLims,
+			LibraryID:     library.Library.LibraryID,
+			IDLibraryLims: library.Library.IDLibraryLims,
 		})
 	}
 
@@ -1098,7 +1105,12 @@ func distinctLibrariesForSamples(samples []mlwh.Sample) []Library {
 				continue
 			}
 
-			library := Library{LibraryType: sampleLibrary.PipelineIDLims, IDStudyLims: sampleLibrary.IDStudyLims}
+			library := Library{
+				LibraryType:   sampleLibrary.PipelineIDLims,
+				IDStudyLims:   sampleLibrary.IDStudyLims,
+				LibraryID:     sampleLibrary.LibraryID,
+				IDLibraryLims: sampleLibrary.IDLibraryLims,
+			}
 			if _, exists := seen[library]; exists {
 				continue
 			}

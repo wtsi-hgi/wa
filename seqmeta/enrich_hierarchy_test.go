@@ -250,6 +250,70 @@ func TestEnrichmentHierarchy(t *testing.T) {
 		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 2)
 	})
 
+	convey.Convey("Bug 3: run enrichment exposes library identifiers and grouped run samples", t, func() {
+		study := mlwh.Study{IDStudyLims: "7607", Name: "Run Study"}
+		samples := []mlwh.Sample{
+			{
+				IDSampleLims:   "SMP001",
+				SangerSampleID: "S1",
+				Name:           "Sample 1",
+				Studies:        []mlwh.Study{study},
+				Libraries: []mlwh.Library{{
+					PipelineIDLims: "Custom",
+					IDStudyLims:    "7607",
+					LibraryID:      "71046409",
+					IDLibraryLims:  "SQPP-47463-G:B1",
+				}},
+			},
+			{
+				IDSampleLims:   "SMP002",
+				SangerSampleID: "S2",
+				Name:           "Sample 2",
+				Studies:        []mlwh.Study{study},
+				Libraries: []mlwh.Library{{
+					PipelineIDLims: "Custom",
+					IDStudyLims:    "7607",
+					LibraryID:      "71046409",
+					IDLibraryLims:  "SQPP-47463-G:B1",
+				}},
+			},
+		}
+
+		provider := &MockProvider{
+			FindSamplesByRunIDFn: func(_ context.Context, idRun int) ([]mlwh.Sample, error) {
+				convey.So(idRun, convey.ShouldEqual, 48522)
+
+				return samples, nil
+			},
+			GetStudyFunc: func(_ context.Context, studyID string) (*mlwh.Study, error) {
+				if studyID == "48522" {
+					return nil, nil
+				}
+				convey.So(studyID, convey.ShouldEqual, "7607")
+
+				return &study, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "48522")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 2)
+		convey.So(result.Graph.Libraries, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.Libraries[0].LibraryID, convey.ShouldEqual, "71046409")
+		convey.So(result.Graph.Libraries[0].IDLibraryLims, convey.ShouldEqual, "SQPP-47463-G:B1")
+		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.StudyDetails[0].Libraries, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.StudyDetails[0].Libraries[0].Library.IDLibraryLims, convey.ShouldEqual, "SQPP-47463-G:B1")
+		convey.So(result.Graph.StudyDetails[0].Libraries[0].Samples, convey.ShouldHaveLength, 2)
+	})
+
 	convey.Convey("H4: library enrichment groups samples into study details", t, func() {
 		study1 := mlwh.Study{IDStudyLims: "6568", Name: "Study 1"}
 		study2 := mlwh.Study{IDStudyLims: "7890", Name: "Study 2"}

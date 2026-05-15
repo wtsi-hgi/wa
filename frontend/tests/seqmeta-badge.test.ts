@@ -1693,6 +1693,79 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
     });
 
+    it("shows run-id related library identifiers with the run samples already in the details payload", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const runSamples = [
+            buildSample({
+                id_study_lims: "7607",
+                id_sample_lims: "SMP001",
+                sanger_id: "S1",
+                sample_name: "Run Sample 1",
+                library_type: "Custom",
+            }),
+            buildSample({
+                id_study_lims: "7607",
+                id_sample_lims: "SMP002",
+                sanger_id: "S2",
+                sample_name: "Run Sample 2",
+                library_type: "Custom",
+            }),
+        ];
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_runid",
+                rawValue: "48522",
+                enrichment: buildEnrichment({
+                    identifier: "48522",
+                    type: "run_id",
+                    graph: {
+                        studies: [buildStudy({ id_study_lims: "7607" })],
+                        samples: runSamples,
+                        libraries: [
+                            {
+                                library_type: "Custom",
+                                id_study_lims: "7607",
+                                library_id: "71046409",
+                                id_library_lims: "SQPP-47463-G:B1",
+                            },
+                        ],
+                        study_details: [
+                            {
+                                study: buildStudy({ id_study_lims: "7607" }),
+                                library_details: [
+                                    {
+                                        library_type: "Custom",
+                                        id_study_lims: "7607",
+                                        library_id: "71046409",
+                                        id_library_lims: "SQPP-47463-G:B1",
+                                        samples: runSamples,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.getByText("SQPP-47463-G:B1")).toBeTruthy();
+        expect(screen.getByText("Custom")).toBeTruthy();
+
+        fireEvent.click(screen.getByLabelText("Show samples"));
+
+        expect(screen.getByText("Run Sample 1 / S1")).toBeTruthy();
+        expect(screen.getByText("Run Sample 2 / S2")).toBeTruthy();
+        expect(screen.getByText("2 samples")).toBeTruthy();
+        expect(fetchLibrarySamplesMock).not.toHaveBeenCalled();
+    });
+
     it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
