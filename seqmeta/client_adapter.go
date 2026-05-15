@@ -207,6 +207,34 @@ func (a *ClientAdapter) SamplesForLibraryType(ctx context.Context, pipelineIDLim
 	return provider.SamplesForLibraryType(ctx, pipelineIDLims, limit, offset)
 }
 
+func (a *ClientAdapter) SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	exactProvider, ok := provider.(exactLibrarySamplesProvider)
+	if !ok {
+		return nil, mlwh.ErrUnsupportedIdentifier
+	}
+
+	return exactProvider.SamplesForLibraryID(ctx, libraryID, limit, offset)
+}
+
+func (a *ClientAdapter) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	exactProvider, ok := provider.(exactLibrarySamplesProvider)
+	if !ok {
+		return nil, mlwh.ErrUnsupportedIdentifier
+	}
+
+	return exactProvider.SamplesForLibraryLimsID(ctx, idLibraryLims, limit, offset)
+}
+
 func (a *ClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
 	provider, err := a.delegate()
 	if err != nil {

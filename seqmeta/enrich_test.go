@@ -31,11 +31,43 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
+
+type cacheBackedEnrichProvider struct {
+	*mlwh.Client
+}
+
+func (p *cacheBackedEnrichProvider) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return p.ReadDB().QueryContext(ctx, query, args...)
+}
+
+func (p *cacheBackedEnrichProvider) GetStudy(ctx context.Context, identifier string) (*mlwh.Study, error) {
+	match, err := p.ResolveStudy(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+
+	return match.Study, nil
+}
+
+func (p *cacheBackedEnrichProvider) AllSamplesForStudy(ctx context.Context, studyLimsID string) ([]mlwh.Sample, error) {
+	return p.SamplesForStudy(ctx, studyLimsID, providerFetchLimit, 0)
+}
+
+func (p *cacheBackedEnrichProvider) FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error) {
+	return p.SamplesForRun(ctx, strconv.Itoa(idRun), providerFetchLimit, 0)
+}
+
+func (p *cacheBackedEnrichProvider) GetSampleFiles(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error) {
+	return p.IRODSPathsForSample(ctx, sangerName, providerFetchLimit, 0)
+}
 
 func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 	ctx := context.Background()
@@ -566,18 +598,19 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 					},
 				}, nil
 			},
-			SamplesForLibraryTypeFunc: func(_ context.Context, libraryType string, limit, offset int) ([]mlwh.Sample, error) {
-				convey.So(libraryType, convey.ShouldEqual, "Custom")
+			SamplesForLibraryIDFunc: func(_ context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(libraryID, convey.ShouldEqual, "71046409")
 				convey.So(limit, convey.ShouldEqual, MaxLibrarySamples+1)
 				convey.So(offset, convey.ShouldEqual, 0)
 
 				matching := detailGraphSample("7607", "SANGER-MATCH", "Sample Match", "Custom")
 				matching.Libraries[0].LibraryID = "71046409"
 				matching.Libraries[0].IDLibraryLims = "SQPP-47463-G:B1"
-				other := detailGraphSample("7607", "SANGER-OTHER", "Sample Other", "Custom")
-				other.Libraries[0].LibraryID = "99999999"
 
-				return []mlwh.Sample{matching, other}, nil
+				return []mlwh.Sample{matching}, nil
+			},
+			SamplesForLibraryTypeFunc: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
+				return nil, errors.New("unexpected broad library-type page for exact library id")
 			},
 			FindSamplesByLibraryTypeFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
 				return nil, errors.New("unexpected unique library-type lookup")
@@ -734,6 +767,50 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		convey.So(allStudiesCalls, convey.ShouldEqual, 0)
 	})
 
+	convey.Convey("Bug 4: one-word library metadata enrichment does not run broad sample scans before the library lookup", t, func() {
+		broadSampleCalls := 0
+		provider := &MockProvider{
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				broadSampleCalls++
+
+				return nil, errors.New("unexpected broad sanger sample scan")
+			},
+			FindSamplesByIDSampleLimsFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				broadSampleCalls++
+
+				return nil, errors.New("unexpected broad sample lims scan")
+			},
+			FindSamplesByAccessionNumberFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				broadSampleCalls++
+
+				return nil, errors.New("unexpected broad sample accession scan")
+			},
+			ResolveSampleFunc: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			SamplesForLibraryTypeFunc: func(_ context.Context, libraryType string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(libraryType, convey.ShouldEqual, "Custom")
+				convey.So(limit, convey.ShouldEqual, MaxLibrarySamples+1)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return []mlwh.Sample{detailGraphSample("7607", "SANGER-LIB", "Library Sample", libraryType)}, nil
+			},
+			GetStudyFunc: func(_ context.Context, identifier string) (*mlwh.Study, error) {
+				if identifier == "7607" {
+					return &mlwh.Study{IDStudyLims: "7607", Name: "Study 7607"}, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "Custom")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		convey.So(broadSampleCalls, convey.ShouldEqual, 0)
+	})
+
 	convey.Convey("Bug 4: study accession enrichment uses indexed ResolveStudy instead of scanning every study", t, func() {
 		allStudiesCalls := 0
 		provider := &MockProvider{
@@ -779,6 +856,172 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		convey.So(result.Graph.Study.AccessionNumber, convey.ShouldEqual, "EGAS00001007607")
 		convey.So(allStudiesCalls, convey.ShouldEqual, 0)
 	})
+
+	convey.Convey("Bug 4: combined result metadata enrichment stays under one second on a cache-backed provider", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "mlwh-cache.sqlite")
+		seedResultMetadataMLWHCache(t, cachePath)
+
+		client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { convey.So(client.Close(), convey.ShouldBeNil) }()
+
+		provider := &cacheBackedEnrichProvider{Client: client}
+		identifiers := []string{"Custom", "71046409", "48522", "7607STDY14643771", "7607"}
+
+		started := time.Now()
+		results := make([]*EnrichmentResult, 0, len(identifiers))
+		for _, identifier := range identifiers {
+			result, enrichErr := Enrich(ctx, provider, identifier)
+			convey.So(enrichErr, convey.ShouldBeNil)
+			convey.So(result, convey.ShouldNotBeNil)
+			results = append(results, result)
+		}
+
+		elapsed := time.Since(started)
+		t.Logf("combined cache-backed result metadata enrichment took %s", elapsed)
+		convey.So(elapsed, convey.ShouldBeLessThan, time.Second)
+		convey.So(results[0].Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(results[1].Type, convey.ShouldEqual, IdentifierLibraryID)
+		convey.So(results[1].Graph.Samples, convey.ShouldHaveLength, 1)
+		convey.So(results[2].Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(results[3].Type, convey.ShouldEqual, IdentifierSangerSampleName)
+		convey.So(results[4].Type, convey.ShouldEqual, IdentifierStudyID)
+	})
+
+	convey.Convey("Bug 4: combined result metadata enrichment avoids the slow broad fallback paths", t, func() {
+		study := mlwh.Study{IDStudyLims: "7607", Name: "Study 7607"}
+		libraryTypeSample := detailGraphSample("7607", "SANGER-LIB", "Library Sample", "Custom")
+		exactLibrarySample := detailGraphSample("7607", "SANGER-EXACT", "Exact Library Sample", "Exact Custom")
+		exactLibrarySample.Libraries[0].LibraryID = "71046409"
+		exactLibrarySample.Libraries[0].IDLibraryLims = "SQPP-47463-G:B1"
+		runSample := detailGraphSample("7607", "SANGER-RUN", "Run Sample", "Run Custom")
+		sample := detailGraphSample("7607", "SANGER-SAMPLE", "7607STDY14643771", "Sample Custom")
+
+		broadSampleCalls := 0
+		broadExactLibraryTypeCalls := 0
+		exactLibraryIDCalls := 0
+		provider := &MockProvider{
+			GetStudyFunc: func(_ context.Context, identifier string) (*mlwh.Study, error) {
+				if identifier == "7607" {
+					return &study, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+			ResolveStudyFunc: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			ResolveRunFunc: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			ResolveSampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "7607STDY14643771" {
+					return mlwh.Match{Kind: mlwh.KindSangerSampleName, Canonical: raw, Sample: &sample}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			ResolveLibraryFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "71046409" {
+					return mlwh.Match{
+						Kind:      mlwh.KindLibraryID,
+						Canonical: "71046409",
+						Library: &mlwh.Library{
+							PipelineIDLims: "Exact Custom",
+							IDStudyLims:    "7607",
+							LibraryID:      "71046409",
+							IDLibraryLims:  "SQPP-47463-G:B1",
+						},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			FindSamplesByRunIDFn: func(_ context.Context, idRun int) ([]mlwh.Sample, error) {
+				if idRun == 48522 {
+					return []mlwh.Sample{runSample}, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+			FindSamplesBySangerIDFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				broadSampleCalls++
+
+				return nil, mlwh.ErrNotFound
+			},
+			FindSamplesByIDSampleLimsFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				broadSampleCalls++
+
+				return nil, mlwh.ErrNotFound
+			},
+			FindSamplesByAccessionNumberFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				broadSampleCalls++
+
+				return nil, mlwh.ErrNotFound
+			},
+			ResolveSampleFunc: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			SamplesForLibraryIDFunc: func(_ context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(libraryID, convey.ShouldEqual, "71046409")
+				convey.So(limit, convey.ShouldEqual, MaxLibrarySamples+1)
+				convey.So(offset, convey.ShouldEqual, 0)
+				exactLibraryIDCalls++
+
+				return []mlwh.Sample{exactLibrarySample}, nil
+			},
+			SamplesForLibraryTypeFunc: func(_ context.Context, libraryType string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(limit, convey.ShouldEqual, MaxLibrarySamples+1)
+				convey.So(offset, convey.ShouldEqual, 0)
+				if libraryType == "Exact Custom" {
+					broadExactLibraryTypeCalls++
+
+					return []mlwh.Sample{exactLibrarySample}, nil
+				}
+				if libraryType == "Custom" {
+					return []mlwh.Sample{libraryTypeSample}, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+			SampleDetailFunc: func(_ context.Context, sampleName string) (*mlwh.SampleDetail, error) {
+				if sampleName == "7607STDY14643771" {
+					return &mlwh.SampleDetail{Sample: sample, Study: &study}, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+			StudyDetailFunc: func(_ context.Context, studyLimsID string) (*mlwh.StudyDetail, error) {
+				if studyLimsID == "7607" {
+					return &mlwh.StudyDetail{Study: study}, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+		}
+
+		identifiers := []string{"Custom", "71046409", "48522", "7607STDY14643771", "7607"}
+		started := time.Now()
+		results := make([]*EnrichmentResult, 0, len(identifiers))
+		for _, identifier := range identifiers {
+			result, err := Enrich(ctx, provider, identifier)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(result, convey.ShouldNotBeNil)
+			results = append(results, result)
+		}
+
+		elapsed := time.Since(started)
+		t.Logf("combined fake-provider result metadata enrichment took %s", elapsed)
+		convey.So(elapsed, convey.ShouldBeLessThan, time.Second)
+		convey.So(results[0].Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(results[1].Type, convey.ShouldEqual, IdentifierLibraryID)
+		convey.So(results[2].Type, convey.ShouldEqual, IdentifierRunID)
+		convey.So(results[3].Type, convey.ShouldEqual, IdentifierSangerSampleName)
+		convey.So(results[4].Type, convey.ShouldEqual, IdentifierStudyID)
+		convey.So(broadSampleCalls, convey.ShouldEqual, 0)
+		convey.So(broadExactLibraryTypeCalls, convey.ShouldEqual, 0)
+		convey.So(exactLibraryIDCalls, convey.ShouldEqual, 1)
+	})
 }
 
 func detailGraphSample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
@@ -788,4 +1031,123 @@ func detailGraphSample(studyID, sangerSampleID, name, libraryType string) mlwh.S
 		Studies:        []mlwh.Study{{IDStudyLims: studyID}},
 		Libraries:      []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
 	}
+}
+
+func seedResultMetadataMLWHCache(t *testing.T, cachePath string) {
+	t.Helper()
+
+	ctx := context.Background()
+	cache, err := mlwh.OpenCache(ctx, mlwh.CacheConfig{Path: cachePath})
+	convey.So(err, convey.ShouldBeNil)
+	defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+	db := cache.DB()
+	seedResultMetadataSyncState(t, db)
+	seedResultMetadataStudy(t, db)
+	seedResultMetadataSample(t, db)
+	seedResultMetadataLibrary(t, db)
+	seedResultMetadataRun(t, db)
+}
+
+func seedResultMetadataSyncState(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	for _, tableName := range []string{"sample", "study", "iseq_flowcell", "iseq_product_metrics", "seq_product_irods_locations"} {
+		_, err := db.Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?)`,
+			tableName,
+			"2026-05-15T12:00:00Z",
+			"2026-05-15T12:01:00Z",
+			nil,
+			0,
+		)
+		convey.So(err, convey.ShouldBeNil)
+	}
+}
+
+func seedResultMetadataStudy(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		7607,
+		"SQSCP",
+		"7607",
+		"study-uuid-7607",
+		"Study 7607",
+		"EGAS00001007607",
+		"Study 7607 title",
+		"Sponsor",
+		"active",
+		"standard",
+		"group",
+		"programme",
+		"GRCh38",
+		1,
+		"genomic sequencing",
+		1,
+		0,
+		"public",
+		"EGAC00001000001",
+		"EGAP00001000001",
+		"standard",
+		"2026-05-15T12:00:00Z",
+	)
+	convey.So(err, convey.ShouldBeNil)
+}
+
+func seedResultMetadataSample(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		31,
+		"SQSCP",
+		"9575305",
+		"sample-uuid-31",
+		"7607STDY14643771",
+		"SANGER-7607",
+		"supplier-31",
+		"SAMEA7607",
+		"donor-31",
+		9606,
+		"human",
+		"sample 31",
+		"2026-05-15T12:00:00Z",
+	)
+	convey.So(err, convey.ShouldBeNil)
+}
+
+func seedResultMetadataLibrary(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`,
+		"Custom",
+		31,
+		"7607",
+		"71046409",
+		"SQPP-47463-G:B1",
+	)
+	convey.So(err, convey.ShouldBeNil)
+}
+
+func seedResultMetadataRun(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO iseq_product_metrics_mirror(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"product-31",
+		31,
+		48522,
+		1,
+		1,
+		31,
+		"7607",
+		1,
+		1,
+		1,
+		"2026-05-15T12:00:00Z",
+	)
+	convey.So(err, convey.ShouldBeNil)
 }

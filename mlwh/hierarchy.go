@@ -464,13 +464,13 @@ func (c *Client) expandSampleStudyPairs(ctx context.Context, base TaggedID, pair
 	}, nil
 }
 
-func (c *Client) sampleStudyPairsForLibraryIdentifier(ctx context.Context, query, identifier string) ([]sampleStudyPair, error) {
+func (c *Client) sampleStudyPairsForLibraryIdentifier(ctx context.Context, query, identifier string, limit, offset int) ([]sampleStudyPair, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	rows, err := db.QueryContext(ctx, query, identifier, MaxSamplesPerHop, 0)
+	rows, err := db.QueryContext(ctx, query, identifier, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query library identifier samples cache: %w", ErrUpstreamImpaired, err)
 	}
@@ -678,6 +678,39 @@ func (c *Client) FindSamplesBySupplierName(ctx context.Context, supplierName str
 // FindSamplesByLibraryType returns the unique sample matching pipeline_id_lims.
 func (c *Client) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error) {
 	return c.findSamplesByQuery(ctx, findSamplesByLibraryTypeSQL, libraryType, "query samples by library type", syncTableSample, syncTableIseqFlowcell)
+}
+
+func (c *Client) samplesForLibraryIdentifier(ctx context.Context, query, identifier string, limit, offset int) ([]Sample, error) {
+	pairs, err := c.sampleStudyPairsForLibraryIdentifier(ctx, query, identifier, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	samples := make([]Sample, 0, len(pairs))
+	seen := make(map[int64]struct{}, len(pairs))
+	for _, pair := range pairs {
+		if _, ok := seen[pair.Sample.IDSampleTmp]; ok {
+			continue
+		}
+
+		seen[pair.Sample.IDSampleTmp] = struct{}{}
+		samples = append(samples, pair.Sample)
+	}
+	if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+		return nil, err
+	}
+
+	return samples, nil
+}
+
+// SamplesForLibraryID returns samples linked to an exact library_id.
+func (c *Client) SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]Sample, error) {
+	return c.samplesForLibraryIdentifier(ctx, sampleStudyPairsForLibraryID, libraryID, limit, offset)
+}
+
+// SamplesForLibraryLimsID returns samples linked to an exact id_library_lims.
+func (c *Client) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]Sample, error) {
+	return c.samplesForLibraryIdentifier(ctx, sampleStudyPairsForLibraryLimsID, idLibraryLims, limit, offset)
 }
 
 // SamplesForStudy returns samples linked to a study.
@@ -1219,14 +1252,14 @@ func (c *Client) expandIdentifierValues(ctx context.Context, kind IdentifierKind
 
 		return c.expandSampleStudyPairs(ctx, base, pairs)
 	case KindLibraryID:
-		pairs, err := c.sampleStudyPairsForLibraryIdentifier(ctx, sampleStudyPairsForLibraryID, canonical)
+		pairs, err := c.sampleStudyPairsForLibraryIdentifier(ctx, sampleStudyPairsForLibraryID, canonical, MaxSamplesPerHop, 0)
 		if err != nil {
 			return expandedSearchValues{}, err
 		}
 
 		return c.expandSampleStudyPairs(ctx, base, pairs)
 	case KindLibraryLimsID:
-		pairs, err := c.sampleStudyPairsForLibraryIdentifier(ctx, sampleStudyPairsForLibraryLimsID, canonical)
+		pairs, err := c.sampleStudyPairsForLibraryIdentifier(ctx, sampleStudyPairsForLibraryLimsID, canonical, MaxSamplesPerHop, 0)
 		if err != nil {
 			return expandedSearchValues{}, err
 		}

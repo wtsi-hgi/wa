@@ -46,11 +46,11 @@ var enrichClassifiers = []enrichClassifier{
 	{classify: classifyStudyAccession},
 	{classify: classifyRunID},
 	{classify: classifySangerSampleName},
+	{classify: classifyResolvedSample},
+	{classify: classifyLibraryType},
 	{classify: classifySangerSampleID},
 	{classify: classifySampleLimsID},
 	{classify: classifySampleAccession},
-	{classify: classifyResolvedSample},
-	{classify: classifyLibraryType},
 }
 
 type enrichDetailProvider interface {
@@ -308,6 +308,31 @@ func buildStudyDetails(studies []mlwh.Study, samples []mlwh.Sample) []mlwh.Study
 	}
 
 	return studyDetails
+}
+
+type exactLibrarySamplesProvider interface {
+	SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error)
+	SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]mlwh.Sample, error)
+}
+
+func samplesForExactLibrary(ctx context.Context, provider Provider, exactLibrary mlwh.Library) ([]mlwh.Sample, error, bool) {
+	exactProvider, ok := provider.(exactLibrarySamplesProvider)
+	if !ok {
+		return nil, nil, false
+	}
+
+	switch {
+	case strings.TrimSpace(exactLibrary.LibraryID) != "":
+		samples, err := exactProvider.SamplesForLibraryID(ctx, exactLibrary.LibraryID, MaxLibrarySamples+1, 0)
+
+		return samples, err, true
+	case strings.TrimSpace(exactLibrary.IDLibraryLims) != "":
+		samples, err := exactProvider.SamplesForLibraryLimsID(ctx, exactLibrary.IDLibraryLims, MaxLibrarySamples+1, 0)
+
+		return samples, err, true
+	default:
+		return nil, nil, false
+	}
 }
 
 type sampleClassifier func(context.Context, Provider, string) ([]mlwh.Sample, error)
@@ -654,7 +679,7 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
 	}
 
-	samples, err := samplesForLibraryType(ctx, provider, libraryType)
+	samples, err := samplesForResolvedLibrary(ctx, provider, libraryType, exactLibrary)
 	if err != nil {
 		if isContextError(err) {
 			return nil, false, nil, err
@@ -771,6 +796,16 @@ func exactLibraryMatch(library *mlwh.Library) *mlwh.Library {
 	}
 
 	return library
+}
+
+func samplesForResolvedLibrary(ctx context.Context, provider Provider, libraryType string, exactLibrary *mlwh.Library) ([]mlwh.Sample, error) {
+	if exactLibrary != nil {
+		if exactSamples, err, ok := samplesForExactLibrary(ctx, provider, *exactLibrary); ok {
+			return exactSamples, err
+		}
+	}
+
+	return samplesForLibraryType(ctx, provider, libraryType)
 }
 
 func samplesForLibraryType(ctx context.Context, provider Provider, identifier string) ([]mlwh.Sample, error) {

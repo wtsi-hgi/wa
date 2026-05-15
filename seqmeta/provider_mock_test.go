@@ -57,6 +57,8 @@ type MockProvider struct {
 	FindSamplesByAccessionNumberFn func(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error)
 	SamplesForRunFunc              func(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error)
 	SamplesForLibraryTypeFunc      func(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error)
+	SamplesForLibraryIDFunc        func(ctx context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error)
+	SamplesForLibraryLimsIDFunc    func(ctx context.Context, idLibraryLims string, limit, offset int) ([]mlwh.Sample, error)
 	SamplesForLibraryFunc          func(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 	LibrariesForStudyFunc          func(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
 	StudiesForSampleFunc           func(ctx context.Context, sangerName string) ([]mlwh.Study, error)
@@ -228,6 +230,22 @@ func (m *MockProvider) SamplesForRun(ctx context.Context, idRun string, limit, o
 func (m *MockProvider) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
 	if m != nil && m.SamplesForLibraryTypeFunc != nil {
 		return m.SamplesForLibraryTypeFunc(ctx, pipelineIDLims, limit, offset)
+	}
+
+	return []mlwh.Sample{}, nil
+}
+
+func (m *MockProvider) SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error) {
+	if m != nil && m.SamplesForLibraryIDFunc != nil {
+		return m.SamplesForLibraryIDFunc(ctx, libraryID, limit, offset)
+	}
+
+	return []mlwh.Sample{}, nil
+}
+
+func (m *MockProvider) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]mlwh.Sample, error) {
+	if m != nil && m.SamplesForLibraryLimsIDFunc != nil {
+		return m.SamplesForLibraryLimsIDFunc(ctx, idLibraryLims, limit, offset)
 	}
 
 	return []mlwh.Sample{}, nil

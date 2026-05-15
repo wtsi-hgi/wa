@@ -203,6 +203,14 @@ func (a *seqmetaMLWHClientAdapter) SamplesForLibraryType(ctx context.Context, pi
 	return a.client.SamplesForLibraryType(ctx, pipelineIDLims, limit, offset)
 }
 
+func (a *seqmetaMLWHClientAdapter) SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error) {
+	return a.client.SamplesForLibraryID(ctx, libraryID, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]mlwh.Sample, error) {
+	return a.client.SamplesForLibraryLimsID(ctx, idLibraryLims, limit, offset)
+}
+
 func (a *seqmetaMLWHClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
 	return a.client.FindSamplesByAccessionNumber(ctx, accessionNumber)
 }
