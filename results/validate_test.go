@@ -71,6 +71,19 @@ func TestSeqmetaValidatorValidateMetadata(t *testing.T) {
 		convey.So(errors.Is(err, ErrSeqmetaRejected), convey.ShouldBeTrue)
 	})
 
+	convey.Convey("Bug 2: ValidateMetadata accepts seqmeta_library when seqmeta resolves it as a library type", t, func() {
+		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
+			"71046409": {status: http.StatusOK, body: `{"identifier":"Custom","type":"library_type","object":{}}`},
+		})
+		defer server.Close()
+
+		validator := NewSeqmetaValidator(server.URL, time.Second)
+
+		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_library": "71046409"})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+
 	convey.Convey("D1.3: ValidateMetadata rejects unknown seqmeta metadata suffixes", t, func() {
 		validator := NewSeqmetaValidator("http://example.test", time.Second)
 

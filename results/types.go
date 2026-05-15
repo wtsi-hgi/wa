@@ -60,6 +60,7 @@ var SeqmetaFieldTypes = map[string]string{
 	"runid":       "run_id",
 	"studyid":     "study_id",
 	"sampleid":    "sanger_sample_id",
+	"library":     "library_type",
 	"librarytype": "library_type",
 }
 

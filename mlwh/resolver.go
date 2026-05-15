@@ -114,7 +114,15 @@ func (c *Client) classifyIntegerIdentifier(ctx context.Context, raw string) (Mat
 		return Match{}, err
 	}
 
-	return c.ResolveRun(ctx, raw)
+	match, err = c.ResolveRun(ctx, raw)
+	if err == nil {
+		return match, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Match{}, err
+	}
+
+	return c.ResolveLibrary(ctx, raw)
 }
 
 func (c *Client) classifyTextIdentifier(ctx context.Context, raw string) (Match, error) {
@@ -137,7 +145,8 @@ func (c *Client) classifyTextIdentifier(ctx context.Context, raw string) (Match,
 	return c.ResolveLibrary(ctx, raw)
 }
 
-// ResolveLibrary resolves an exact pipeline_id_lims match from the cache.
+// ResolveLibrary resolves an exact pipeline_id_lims, library_id or
+// id_library_lims match from the cache.
 func (c *Client) ResolveLibrary(ctx context.Context, raw string) (Match, error) {
 	if err := c.requireResolverSyncState(ctx, syncTableIseqFlowcell); err != nil {
 		return Match{}, err
@@ -147,7 +156,6 @@ func (c *Client) ResolveLibrary(ctx context.Context, raw string) (Match, error) 
 }
 
 func (c *Client) resolveLibraryFromCache(ctx context.Context, raw string) (Match, error) {
-
 	db := c.readCacheDB()
 	if db == nil {
 		return Match{}, fmt.Errorf("mlwh: cache reader not configured")
@@ -160,7 +168,7 @@ func (c *Client) resolveLibraryFromCache(ctx context.Context, raw string) (Match
 		raw,
 	).Scan(&pipelineIDLims)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Match{}, ErrNotFound
+		return c.resolveLibraryIdentifierFromCache(ctx, db, raw)
 	}
 	if err != nil {
 		return Match{}, fmt.Errorf("%w: query library cache: %w", ErrUpstreamImpaired, err)
@@ -169,6 +177,24 @@ func (c *Client) resolveLibraryFromCache(ctx context.Context, raw string) (Match
 	library := &Library{PipelineIDLims: pipelineIDLims}
 
 	return Match{Kind: KindLibraryType, Canonical: pipelineIDLims, Library: library}, nil
+}
+
+func (c *Client) resolveLibraryIdentifierFromCache(ctx context.Context, db *sql.DB, raw string) (Match, error) {
+	var library Library
+	err := db.QueryRowContext(
+		ctx,
+		`SELECT pipeline_id_lims, id_study_lims, library_id, id_library_lims FROM library_samples WHERE library_id = ? OR id_library_lims = ? ORDER BY pipeline_id_lims, id_study_lims, library_id, id_library_lims LIMIT 1`,
+		raw,
+		raw,
+	).Scan(&library.PipelineIDLims, &library.IDStudyLims, &library.LibraryID, &library.IDLibraryLims)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Match{}, ErrNotFound
+	}
+	if err != nil {
+		return Match{}, fmt.Errorf("%w: query library cache: %w", ErrUpstreamImpaired, err)
+	}
+
+	return Match{Kind: KindLibraryType, Canonical: library.PipelineIDLims, Library: &library}, nil
 }
 
 // ResolveRun resolves a numeric run identifier from the cache-backed

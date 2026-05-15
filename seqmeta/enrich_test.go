@@ -550,6 +550,68 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		convey.So(result.Partial, convey.ShouldBeFalse)
 	})
 
+	convey.Convey("Bug 2: library enrichment resolves library_id values to their canonical library type and filters to the exact library", t, func() {
+		provider := &MockProvider{
+			ResolveLibraryFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "71046409")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindLibraryType,
+					Canonical: "Custom",
+					Library: &mlwh.Library{
+						PipelineIDLims: "Custom",
+						IDStudyLims:    "7607",
+						LibraryID:      "71046409",
+						IDLibraryLims:  "SQPP-47463-G:B1",
+					},
+				}, nil
+			},
+			SamplesForLibraryTypeFunc: func(_ context.Context, libraryType string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(libraryType, convey.ShouldEqual, "Custom")
+				convey.So(limit, convey.ShouldEqual, MaxLibrarySamples+1)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				matching := detailGraphSample("7607", "SANGER-MATCH", "Sample Match", "Custom")
+				matching.Libraries[0].LibraryID = "71046409"
+				matching.Libraries[0].IDLibraryLims = "SQPP-47463-G:B1"
+				other := detailGraphSample("7607", "SANGER-OTHER", "Sample Other", "Custom")
+				other.Libraries[0].LibraryID = "99999999"
+
+				return []mlwh.Sample{matching, other}, nil
+			},
+			FindSamplesByLibraryTypeFn: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
+				return nil, errors.New("unexpected unique library-type lookup")
+			},
+			GetStudyFunc: func(_ context.Context, identifier string) (*mlwh.Study, error) {
+				if identifier != "7607" {
+					return nil, mlwh.ErrNotFound
+				}
+
+				return &mlwh.Study{IDStudyLims: "7607", Name: "Study 7607"}, nil
+			},
+			ResolveRunFunc: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			ResolveSampleFunc: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "71046409")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.Samples[0].Name, convey.ShouldEqual, "Sample Match")
+		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 1)
+		convey.So(result.Graph.StudyDetails[0].Libraries, convey.ShouldHaveLength, 1)
+	})
+
 	convey.Convey("Bug 3: library enrichment accepts one-word pipeline_id_lims values stored by results register", t, func() {
 		provider := &MockProvider{
 			FindSamplesByLibraryTypeFn: func(_ context.Context, libraryType string) ([]mlwh.Sample, error) {

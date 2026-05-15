@@ -636,7 +636,16 @@ func enrichStudy(ctx context.Context, provider Provider, study *mlwh.Study, resu
 }
 
 func classifyLibraryType(ctx context.Context, provider Provider, identifier string) (*EnrichmentResult, bool, []MissingHop, error) {
-	samples, err := samplesForLibraryType(ctx, provider, identifier)
+	libraryType, exactLibrary, err := resolvedLibraryType(ctx, provider, identifier)
+	if err != nil {
+		if isContextError(err) {
+			return nil, false, nil, err
+		}
+
+		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
+	}
+
+	samples, err := samplesForLibraryType(ctx, provider, libraryType)
 	if err != nil {
 		if isContextError(err) {
 			return nil, false, nil, err
@@ -653,7 +662,14 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 		return nil, false, nil, nil
 	}
 
-	studyDetails, missing, detailErr := libraryStudyDetails(ctx, provider, identifier, samples)
+	if exactLibrary != nil {
+		samples = filterSamplesForExactLibrary(samples, *exactLibrary)
+		if len(samples) == 0 {
+			return nil, false, nil, nil
+		}
+	}
+
+	studyDetails, missing, detailErr := libraryStudyDetails(ctx, provider, libraryType, samples)
 	if detailErr != nil {
 		if isContextError(detailErr) {
 			return nil, false, nil, detailErr
@@ -705,6 +721,33 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 	return result, true, nil, nil
 }
 
+func resolvedLibraryType(ctx context.Context, provider Provider, identifier string) (string, *mlwh.Library, error) {
+	match, err := provider.ResolveLibrary(ctx, identifier)
+	if err == nil {
+		canonical := strings.TrimSpace(match.Canonical)
+		if canonical != "" {
+			return canonical, exactLibraryMatch(match.Library), nil
+		}
+	}
+	if err != nil && !isClientError(err) {
+		return "", nil, err
+	}
+
+	return identifier, nil, nil
+}
+
+func exactLibraryMatch(library *mlwh.Library) *mlwh.Library {
+	if library == nil {
+		return nil
+	}
+
+	if strings.TrimSpace(library.LibraryID) == "" && strings.TrimSpace(library.IDLibraryLims) == "" {
+		return nil
+	}
+
+	return library
+}
+
 func samplesForLibraryType(ctx context.Context, provider Provider, identifier string) ([]mlwh.Sample, error) {
 	samples, err := provider.SamplesForLibraryType(ctx, identifier, MaxLibrarySamples+1, 0)
 	if err != nil {
@@ -715,6 +758,30 @@ func samplesForLibraryType(ctx context.Context, provider Provider, identifier st
 	}
 
 	return provider.FindSamplesByLibraryType(ctx, identifier)
+}
+
+func filterSamplesForExactLibrary(samples []mlwh.Sample, exact mlwh.Library) []mlwh.Sample {
+	filtered := make([]mlwh.Sample, 0, len(samples))
+	for _, sample := range samples {
+		if sampleHasExactLibrary(sample, exact) {
+			filtered = append(filtered, sample)
+		}
+	}
+
+	return filtered
+}
+
+func sampleHasExactLibrary(sample mlwh.Sample, exact mlwh.Library) bool {
+	for _, library := range sample.Libraries {
+		if exact.LibraryID != "" && library.LibraryID == exact.LibraryID {
+			return true
+		}
+		if exact.IDLibraryLims != "" && library.IDLibraryLims == exact.IDLibraryLims {
+			return true
+		}
+	}
+
+	return false
 }
 
 func libraryStudyDetails(ctx context.Context, provider Provider, libraryType string, samples []mlwh.Sample) ([]mlwh.StudyDetail, []MissingHop, error) {

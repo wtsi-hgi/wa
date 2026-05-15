@@ -131,6 +131,72 @@ func TestResolveLibraryReturnsCacheMatchWithoutMLWHQuery(t *testing.T) {
 	})
 }
 
+func TestResolveLibraryReturnsCacheMatchForLibraryID(t *testing.T) {
+	convey.Convey("Given a warm cache containing the requested library_id", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		_, err := cache.DB().Exec(
+			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`,
+			"Custom",
+			51,
+			"7607",
+			"71046409",
+			"SQPP-47463-G:B1",
+		)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 15, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveLibrary(context.Background(), "71046409")
+
+		convey.Convey("when ResolveLibrary executes, then it returns the canonical library type with exact library identifiers", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
+			convey.So(match.Canonical, convey.ShouldEqual, "Custom")
+			convey.So(match.Library, convey.ShouldResemble, &Library{
+				PipelineIDLims: "Custom",
+				IDStudyLims:    "7607",
+				LibraryID:      "71046409",
+				IDLibraryLims:  "SQPP-47463-G:B1",
+			})
+		})
+	})
+}
+
+func TestClassifyIdentifierFallsBackToLibraryIDForInteger(t *testing.T) {
+	convey.Convey("Given an integer-shaped identifier that matches a library_id but not a study, sample, or run", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		_, err := cache.DB().Exec(
+			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`,
+			"Custom",
+			51,
+			"7607",
+			"71046409",
+			"SQPP-47463-G:B1",
+		)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 15, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 15, 1, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 15, 2, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 15, 3, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ClassifyIdentifier(context.Background(), "71046409")
+
+		convey.Convey("when ClassifyIdentifier executes, then the library_id resolves as a library type", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
+			convey.So(match.Canonical, convey.ShouldEqual, "Custom")
+			convey.So(match.Library.LibraryID, convey.ShouldEqual, "71046409")
+		})
+	})
+}
+
 func TestResolveLibraryColdCacheReturnsNeverSynced(t *testing.T) {
 	convey.Convey("Given a cold cache without a flowcell sync state row", t, func() {
 		cache := openSQLiteSyncTestCache(t)

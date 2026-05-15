@@ -524,6 +524,73 @@ func TestResultsRegisterCommand(t *testing.T) {
 		})
 	})
 
+	convey.Convey("Bug 2: Given --library is a library_id, when mlwh resolves it, then register stores both the exact library and canonical library type metadata", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			libraryFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "71046409")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindLibraryType,
+					Canonical: "Custom",
+					Library: &mlwh.Library{
+						PipelineIDLims: "Custom",
+						IDStudyLims:    "7607",
+						LibraryID:      "71046409",
+						IDLibraryLims:  "SQPP-47463-G:B1",
+					},
+				}, nil
+			},
+		})
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "library-id-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--nextflow-workflow", workflowPath,
+			"--library", "71046409",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
+			"seqmeta_library":     "71046409",
+			"seqmeta_librarytype": "Custom",
+		})
+	})
+
 	convey.Convey("E1.1: Given --sample 7607STDY14643771, when ResolveSample returns a canonical match, then register stores seqmeta_sampleid", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")

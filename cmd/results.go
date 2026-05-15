@@ -258,12 +258,14 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 	}
 
 	if trimmedLibrary := strings.TrimSpace(values.library); trimmedLibrary != "" {
-		resolvedLibraryType, err := resolveResultsRegisterLibraryType(ctx, client, trimmedLibrary)
+		libraryMetadata, err := resolveResultsRegisterLibraryMetadata(ctx, client, trimmedLibrary)
 		if err != nil {
 			return nil, err
 		}
 
-		metadata["seqmeta_librarytype"] = resolvedLibraryType
+		for key, value := range libraryMetadata {
+			metadata[key] = value
+		}
 	}
 
 	return metadata, nil
@@ -306,13 +308,35 @@ func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterR
 	return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
 }
 
-func resolveResultsRegisterLibraryType(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
+func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
 	match, err := client.ResolveLibrary(ctx, value)
 	if err != nil {
-		return "", fmt.Errorf("resolve --library %q: %w", value, err)
+		return nil, fmt.Errorf("resolve --library %q: %w", value, err)
 	}
 
-	return resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+	resolvedLibraryType, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := map[string]string{"seqmeta_librarytype": resolvedLibraryType}
+	if exactLibrary := resultsRegisterExactLibraryIdentifier(match.Library); exactLibrary != "" {
+		metadata["seqmeta_library"] = exactLibrary
+	}
+
+	return metadata, nil
+}
+
+func resultsRegisterExactLibraryIdentifier(library *mlwh.Library) string {
+	if library == nil {
+		return ""
+	}
+
+	if trimmed := strings.TrimSpace(library.LibraryID); trimmed != "" {
+		return trimmed
+	}
+
+	return strings.TrimSpace(library.IDLibraryLims)
 }
 
 type resultSetWithFiles struct {
@@ -533,7 +557,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 			"The --run, --study, --sample and --library shorthands resolve through MLWH and store canonical seqmeta metadata keys.",
 			"--sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID.",
 			"--study accepts LIMS ID, accession, UUID, or name; --run accepts numeric run IDs.",
-			"--library accepts exact pipeline_id_lims values and requires the MLWH cache to have been synced already.",
+			"--library accepts exact pipeline_id_lims, library_id, or id_library_lims values and requires the MLWH cache to have been synced already.",
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -581,7 +605,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric run ID through MLWH and store it as seqmeta_runid")
 	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_studyid")
 	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_sampleid")
-	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims through MLWH and store it as seqmeta_librarytype; requires a previously synced MLWH cache")
+	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 
