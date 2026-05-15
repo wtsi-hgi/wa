@@ -578,7 +578,7 @@ func classifyStudyAccession(ctx context.Context, provider Provider, identifier s
 		return nil, false, nil, nil
 	}
 
-	studies, err := listAllStudies(ctx, provider)
+	match, err := provider.ResolveStudy(ctx, identifier)
 	if err != nil {
 		if isContextError(err) {
 			return nil, false, nil, err
@@ -591,21 +591,16 @@ func classifyStudyAccession(ctx context.Context, provider Provider, identifier s
 		return nil, false, []MissingHop{missingHop(HopClassify, err)}, nil
 	}
 
-	for _, candidate := range studies {
-		if candidate.AccessionNumber != identifier {
-			continue
-		}
-
-		study := candidate
-		result := &EnrichmentResult{Identifier: identifier, Type: IdentifierStudyAccession}
-		if err = enrichStudy(ctx, provider, &study, result); err != nil {
-			return nil, false, nil, err
-		}
-
-		return result, true, nil, nil
+	if match.Study == nil || match.Kind != mlwh.KindStudyAccession {
+		return nil, false, nil, nil
 	}
 
-	return nil, false, nil, nil
+	result := &EnrichmentResult{Identifier: identifier, Type: IdentifierStudyAccession}
+	if err = enrichStudy(ctx, provider, match.Study, result); err != nil {
+		return nil, false, nil, err
+	}
+
+	return result, true, nil, nil
 }
 
 func looksLikeLibraryType(identifier string) bool {

@@ -267,43 +267,9 @@ export async function enrichSeqmetaMetadata(
         return state;
     }
 
-    // Hybrid approach: enrich the first (highest priority) value sequentially
-    // to prime cache aliases, then parallelize remaining lookups
-    const [firstValue, ...remainingValues] = pendingValues;
-
-    // First value enrichment (sequential to populate cache aliases)
-    if (!hasUsableSeqmetaCacheEntry(cache, firstValue)) {
-        try {
-            const result = await enrichIdentifier(firstValue);
-
-            if (result === null) {
-                cache.set(firstValue, null);
-                state.enrichments[firstValue] = null;
-                state.errors[firstValue] = "not_found";
-            } else {
-                primeSeqmetaCacheEntry(cache, result);
-                state.enrichments[firstValue] = cache.get(firstValue) ?? result;
-            }
-        } catch (error) {
-            if (error instanceof BackendRequestError && error.status === 404) {
-                cache.set(firstValue, null);
-                state.enrichments[firstValue] = null;
-                state.errors[firstValue] = "not_found";
-            } else {
-                state.errors[firstValue] = "upstream_impaired";
-            }
-        }
-    }
-
-    // Remaining values in parallel (after cache may be primed)
-    const stillPending = remainingValues.filter(
-        (value) => !hasUsableSeqmetaCacheEntry(cache, value),
-    );
-
-    if (stillPending.length > 0) {
+    if (pendingValues.length > 0) {
         const results = await Promise.all(
-            stillPending.map(async (value) => {
-                // Double-check cache in case first lookup populated it
+            pendingValues.map(async (value) => {
                 if (hasUsableSeqmetaCacheEntry(cache, value)) {
                     const enrichment = cache.get(value) ?? null;
                     return { value, enrichment, error: null };
@@ -321,6 +287,7 @@ export async function enrichSeqmetaMetadata(
                         };
                     }
 
+                    cache.set(value, result);
                     primeSeqmetaCacheEntry(cache, result);
                     const enrichment = cache.get(value) ?? result;
                     return { value, enrichment, error: null };
@@ -346,7 +313,6 @@ export async function enrichSeqmetaMetadata(
             }),
         );
 
-        // Apply results to state
         for (const result of results) {
             state.enrichments[result.value] = result.enrichment;
             if (result.error) {

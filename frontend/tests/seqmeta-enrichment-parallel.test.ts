@@ -45,6 +45,106 @@ describe("enrichSeqmetaMetadata", () => {
         expect(enrichIdentifier).toHaveBeenCalledTimes(5);
     });
 
+    it("starts every uncached lookup before waiting for the first enrichment result", async () => {
+        const cache = new SeqmetaCache();
+        const metadata: Record<string, string> = {
+            seqmeta_librarytype: "Custom",
+            seqmeta_runid: "48522",
+            seqmeta_sampleid: "7607STDY14643771",
+            seqmeta_studyid: "7607",
+        };
+        const started: string[] = [];
+        let releaseLookups!: () => void;
+        const lookupGate = new Promise<void>((resolve) => {
+            releaseLookups = resolve;
+        });
+        const enrichIdentifier = vi.fn(async (value: string) => {
+            started.push(value);
+            await lookupGate;
+
+            return {
+                identifier: value,
+                type: value === "Custom" ? "library_type" : "sanger_sample_id",
+                graph: {},
+                partial: false,
+            } as EnrichmentResult;
+        });
+
+        const enrichment = enrichSeqmetaMetadata(
+            metadata,
+            cache,
+            enrichIdentifier,
+        );
+
+        await Promise.resolve();
+
+        expect(started).toEqual([
+            "7607",
+            "7607STDY14643771",
+            "48522",
+            "Custom",
+        ]);
+
+        releaseLookups();
+        await enrichment;
+    });
+
+    it("keeps direct study enrichment when a parallel sample lookup primes the same study alias first", async () => {
+        const cache = new SeqmetaCache();
+        const metadata: Record<string, string> = {
+            seqmeta_sampleid: "7607STDY14643771",
+            seqmeta_studyid: "7607",
+        };
+        const resolvers = new Map<string, (result: EnrichmentResult) => void>();
+        const enrichIdentifier = vi.fn((value: string) => {
+            return new Promise<EnrichmentResult>((resolve) => {
+                resolvers.set(value, resolve);
+            });
+        });
+
+        const enrichment = enrichSeqmetaMetadata(
+            metadata,
+            cache,
+            enrichIdentifier,
+        );
+
+        await Promise.resolve();
+
+        resolvers.get("7607STDY14643771")?.({
+            identifier: "7607STDY14643771",
+            type: "sanger_sample_id",
+            graph: {
+                sample: {
+                    id_study_lims: "7607",
+                    sanger_id: "SANGER-SAMPLE",
+                    sample_name: "7607STDY14643771",
+                },
+            },
+            partial: false,
+        } as EnrichmentResult);
+        await Promise.resolve();
+
+        resolvers.get("7607")?.({
+            identifier: "7607",
+            type: "study_id",
+            graph: {
+                study: {
+                    id_study_lims: "7607",
+                    name: "Study 7607",
+                },
+            },
+            partial: false,
+        } as EnrichmentResult);
+
+        const result = await enrichment;
+
+        expect(result.enrichments["7607"]?.type).toBe("study_id");
+        expect(cache.get("7607")?.type).toBe("study_id");
+        expect(result.enrichments["7607STDY14643771"]?.type).toBe(
+            "sanger_sample_id",
+        );
+    });
+
     it("should handle parallel enrichment failures gracefully", async () => {
         const cache = new SeqmetaCache();
 

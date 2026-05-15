@@ -642,6 +642,143 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
 		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 1)
 	})
+
+	convey.Convey("Bug 4: run metadata enrichment does not scan every study before resolving a run id", t, func() {
+		allStudiesCalls := 0
+		provider := &MockProvider{
+			AllStudiesFunc: func(_ context.Context, _, _ int) ([]mlwh.Study, error) {
+				allStudiesCalls++
+
+				return nil, nil
+			},
+			FindSamplesByRunIDFn: func(_ context.Context, idRun int) ([]mlwh.Sample, error) {
+				convey.So(idRun, convey.ShouldEqual, 48522)
+
+				return []mlwh.Sample{detailGraphSample("7607", "SANGER-RUN", "Run Sample", "Custom")}, nil
+			},
+			GetStudyFunc: func(_ context.Context, identifier string) (*mlwh.Study, error) {
+				if identifier == "7607" {
+					return &mlwh.Study{IDStudyLims: "7607", Name: "Study 7607"}, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "48522")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		convey.So(allStudiesCalls, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("Bug 4: sample metadata enrichment does not scan every study before resolving a canonical sample name", t, func() {
+		allStudiesCalls := 0
+		sample := detailGraphSample("7607", "SANGER-SAMPLE", "7607STDY14643771", "Custom")
+		provider := &MockProvider{
+			AllStudiesFunc: func(_ context.Context, _, _ int) ([]mlwh.Study, error) {
+				allStudiesCalls++
+
+				return nil, nil
+			},
+			GetStudyFunc: func(_ context.Context, _ string) (*mlwh.Study, error) {
+				return nil, mlwh.ErrNotFound
+			},
+			ResolveSampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+				return mlwh.Match{Kind: mlwh.KindSangerSampleName, Canonical: raw, Sample: &sample}, nil
+			},
+			SampleDetailFunc: func(_ context.Context, sampleName string) (*mlwh.SampleDetail, error) {
+				convey.So(sampleName, convey.ShouldEqual, "7607STDY14643771")
+
+				return &mlwh.SampleDetail{Sample: sample}, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "7607STDY14643771")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		convey.So(allStudiesCalls, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("Bug 4: one-word library metadata enrichment does not scan every study before resolving the library type", t, func() {
+		allStudiesCalls := 0
+		provider := &MockProvider{
+			AllStudiesFunc: func(_ context.Context, _, _ int) ([]mlwh.Study, error) {
+				allStudiesCalls++
+
+				return nil, nil
+			},
+			GetStudyFunc: func(_ context.Context, identifier string) (*mlwh.Study, error) {
+				if identifier == "7607" {
+					return &mlwh.Study{IDStudyLims: "7607", Name: "Study 7607"}, nil
+				}
+
+				return nil, mlwh.ErrNotFound
+			},
+			SamplesForLibraryTypeFunc: func(_ context.Context, libraryType string, limit, offset int) ([]mlwh.Sample, error) {
+				convey.So(libraryType, convey.ShouldEqual, "Custom")
+				convey.So(limit, convey.ShouldEqual, MaxLibrarySamples+1)
+				convey.So(offset, convey.ShouldEqual, 0)
+
+				return []mlwh.Sample{detailGraphSample("7607", "SANGER-LIB", "Library Sample", libraryType)}, nil
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "Custom")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		convey.So(allStudiesCalls, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("Bug 4: study accession enrichment uses indexed ResolveStudy instead of scanning every study", t, func() {
+		allStudiesCalls := 0
+		provider := &MockProvider{
+			AllStudiesFunc: func(_ context.Context, _, _ int) ([]mlwh.Study, error) {
+				allStudiesCalls++
+
+				return nil, nil
+			},
+			ResolveStudyFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "EGAS00001007607")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindStudyAccession,
+					Canonical: "7607",
+					Study: &mlwh.Study{
+						IDStudyLims:     "7607",
+						AccessionNumber: "EGAS00001007607",
+					},
+				}, nil
+			},
+			StudyDetailFunc: func(_ context.Context, studyLimsID string) (*mlwh.StudyDetail, error) {
+				convey.So(studyLimsID, convey.ShouldEqual, "7607")
+
+				return &mlwh.StudyDetail{Study: mlwh.Study{
+					IDStudyLims:     "7607",
+					AccessionNumber: "EGAS00001007607",
+				}}, nil
+			},
+			GetStudyFunc: func(_ context.Context, _ string) (*mlwh.Study, error) {
+				return nil, mlwh.ErrNotFound
+			},
+		}
+
+		result, err := Enrich(ctx, provider, "EGAS00001007607")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result, convey.ShouldNotBeNil)
+		if result == nil {
+			return
+		}
+
+		convey.So(result.Type, convey.ShouldEqual, IdentifierStudyAccession)
+		convey.So(result.Graph.Study.AccessionNumber, convey.ShouldEqual, "EGAS00001007607")
+		convey.So(allStudiesCalls, convey.ShouldEqual, 0)
+	})
 }
 
 func detailGraphSample(studyID, sangerSampleID, name, libraryType string) mlwh.Sample {
