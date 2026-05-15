@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS enrich_cache (
 	body        BLOB    NOT NULL,
 	fetched_at  TEXT    NOT NULL,
 	ttl_seconds INTEGER NOT NULL,
+	cache_version INTEGER NOT NULL DEFAULT 0,
 	negative    INTEGER NOT NULL DEFAULT 0,
 	partial     INTEGER NOT NULL DEFAULT 0
 );`
@@ -58,6 +59,12 @@ CREATE TABLE IF NOT EXISTS enrich_cache (
 const createEnrichCacheFetchedAtIndexSQL = `
 CREATE INDEX IF NOT EXISTS enrich_cache_fetched_at_idx
 	ON enrich_cache(fetched_at);`
+
+const enrichCacheCurrentVersion = 2
+
+const addEnrichCacheVersionColumnSQL = `
+ALTER TABLE enrich_cache
+	ADD COLUMN cache_version INTEGER NOT NULL DEFAULT 0;`
 
 // OpenStore opens a SQLite store and creates the schema on demand.
 func OpenStore(path string) (*Store, error) {
@@ -87,6 +94,13 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
 	}
 
+	if err := ensureEnrichCacheVersionColumn(tx); err != nil {
+		_ = tx.Rollback()
+		_ = db.Close()
+
+		return nil, fmt.Errorf("%w: %w", ErrStoreOpen, err)
+	}
+
 	if _, err := tx.Exec(createEnrichCacheFetchedAtIndexSQL); err != nil {
 		_ = tx.Rollback()
 		_ = db.Close()
@@ -101,6 +115,50 @@ func OpenStore(path string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+func ensureEnrichCacheVersionColumn(tx *sql.Tx) error {
+	rows, err := tx.Query(`PRAGMA table_info(enrich_cache)`)
+	if err != nil {
+		return err
+	}
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+
+		if err = rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
+			_ = rows.Close()
+
+			return err
+		}
+		if name == "cache_version" {
+			closeErr := rows.Close()
+			if err = rows.Err(); err != nil {
+				return err
+			}
+
+			return closeErr
+		}
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(addEnrichCacheVersionColumnSQL)
+
+	return err
 }
 
 func enrichStudyIDBodyPattern(queryID string) (string, error) {
@@ -270,7 +328,7 @@ func (s *Store) LoadEnrichCache(identifier string) (*enrichCacheEntry, error) {
 
 func (s *Store) loadEnrichCache(identifier string) (*enrichCacheEntry, error) {
 	row := s.db.QueryRow(`
-		SELECT identifier, type, body, fetched_at, ttl_seconds, negative, partial
+		SELECT identifier, type, body, fetched_at, ttl_seconds, cache_version, negative, partial
 		FROM enrich_cache
 		WHERE identifier = ?
 	`, identifier)
@@ -283,7 +341,7 @@ func (s *Store) loadEnrichCache(identifier string) (*enrichCacheEntry, error) {
 		ttl       int64
 	)
 
-	err := row.Scan(&entry.Identifier, &entry.Type, &entry.Body, &fetchedAt, &ttl, &negative, &partial)
+	err := row.Scan(&entry.Identifier, &entry.Type, &entry.Body, &fetchedAt, &ttl, &entry.Version, &negative, &partial)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, err
@@ -327,16 +385,17 @@ func (s *Store) saveEnrichCache(entry enrichCacheEntry) error {
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO enrich_cache(identifier, type, body, fetched_at, ttl_seconds, negative, partial)
-		VALUES(?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO enrich_cache(identifier, type, body, fetched_at, ttl_seconds, cache_version, negative, partial)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(identifier) DO UPDATE SET
 			type = excluded.type,
 			body = excluded.body,
 			fetched_at = excluded.fetched_at,
 			ttl_seconds = excluded.ttl_seconds,
+			cache_version = excluded.cache_version,
 			negative = excluded.negative,
 			partial = excluded.partial
-	`, entry.Identifier, entry.Type, entry.Body, entry.FetchedAt.UTC().Format(time.RFC3339Nano), int64(entry.TTL), negative, partial)
+	`, entry.Identifier, entry.Type, entry.Body, entry.FetchedAt.UTC().Format(time.RFC3339Nano), int64(entry.TTL), enrichCacheCurrentVersion, negative, partial)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errStoreOperation, err)
 	}

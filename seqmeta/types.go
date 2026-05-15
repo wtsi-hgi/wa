@@ -102,6 +102,7 @@ type enrichCacheEntry struct {
 	Body       []byte
 	FetchedAt  time.Time
 	TTL        time.Duration
+	Version    int
 	Negative   bool
 	Partial    bool
 }

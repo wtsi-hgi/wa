@@ -107,6 +107,9 @@ func (s *Server) loadFreshEnrichCache(identifier string, now time.Time) (*enrich
 	if entry.FetchedAt.Add(entry.TTL).Before(now) {
 		return nil, sql.ErrNoRows
 	}
+	if entry.Version != enrichCacheCurrentVersion {
+		return nil, sql.ErrNoRows
+	}
 
 	return entry, nil
 }
@@ -438,6 +441,7 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 		Body:       body,
 		FetchedAt:  time.Now(),
 		TTL:        ttl,
+		Version:    enrichCacheCurrentVersion,
 		Partial:    result.Partial,
 	}); err != nil {
 		_ = writeError(w, http.StatusInternalServerError, err.Error())
