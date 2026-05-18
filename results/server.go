@@ -116,6 +116,10 @@ type SearchResolver interface {
 	Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error)
 }
 
+type studySearchCanonicalizer interface {
+	CanonicalStudySearchValue(context.Context, string) (string, error)
+}
+
 // SeqmetaSampleResolver resolves study IDs to seqmeta sample IDs.
 type SeqmetaSampleResolver struct {
 	baseURL string
@@ -631,6 +635,32 @@ func combinedSearchValues(r *http.Request, key string) []string {
 	return nonEmptySearchValues(r.URL.Query()[key])
 }
 
+func canonicalStudySearchValues(ctx context.Context, resolver SearchResolver, values []string) ([]string, []string, error) {
+	searchValues := append([]string{}, nonEmptySearchValues(values)...)
+	expansionValues := append([]string{}, searchValues...)
+
+	canonicalizer, ok := resolver.(studySearchCanonicalizer)
+	if !ok {
+		return searchValues, expansionValues, nil
+	}
+
+	expansionValues = []string{}
+	for _, value := range searchValues {
+		canonical, err := canonicalizer.CanonicalStudySearchValue(ctx, value)
+		if err != nil {
+			return nil, nil, err
+		}
+		if canonical == "" {
+			canonical = value
+		}
+
+		searchValues = mergeSearchValues(searchValues, []string{canonical})
+		expansionValues = mergeSearchValues(expansionValues, []string{canonical})
+	}
+
+	return searchValues, expansionValues, nil
+}
+
 func writeDomainError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
@@ -764,7 +794,15 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			for _, studyValue := range studyValues {
+			studySearchValues, studyExpansionValues, err := canonicalStudySearchValues(r.Context(), s.resolver, studyValues)
+			if err != nil {
+				writeDomainError(w, err)
+
+				return
+			}
+
+			studyValues = studySearchValues
+			for _, studyValue := range studyExpansionValues {
 				samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindStudyLimsID, studyValue)
 				if err != nil {
 					writeDomainError(w, err)

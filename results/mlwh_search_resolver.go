@@ -40,6 +40,10 @@ type mlwhSearchExpander interface {
 	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
 }
 
+type mlwhStudyResolver interface {
+	ResolveStudy(context.Context, string) (mlwh.Match, error)
+}
+
 type mlwhSearchResolvedValues struct {
 	samples []string
 	runs    []string
@@ -50,19 +54,56 @@ type mlwhSearchResolvedValues struct {
 
 // MLWHSearchResolver expands search identifiers through mlwh and caches them for repeated searches.
 type MLWHSearchResolver struct {
-	client   mlwhSearchExpander
-	cacheTTL time.Duration
-	cacheMu  sync.Mutex
-	cache    map[string]mlwhSearchResolvedValues
+	client        mlwhSearchExpander
+	studyResolver mlwhStudyResolver
+	cacheTTL      time.Duration
+	cacheMu       sync.Mutex
+	cache         map[string]mlwhSearchResolvedValues
 }
 
 // NewMLWHSearchResolver constructs a cache-backed resolver for results search expansion.
 func NewMLWHSearchResolver(client mlwhSearchExpander) *MLWHSearchResolver {
-	return &MLWHSearchResolver{
+	resolver := &MLWHSearchResolver{
 		client:   client,
 		cacheTTL: defaultSeqmetaResolverCacheTTL,
 		cache:    map[string]mlwhSearchResolvedValues{},
 	}
+	if studyResolver, ok := client.(mlwhStudyResolver); ok {
+		resolver.studyResolver = studyResolver
+	}
+
+	return resolver
+}
+
+// CanonicalStudySearchValue resolves study accessions, names, and IDs to the
+// canonical study LIMS ID used by stored seqmeta_studyid metadata.
+func (r *MLWHSearchResolver) CanonicalStudySearchValue(ctx context.Context, raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	if r == nil || r.studyResolver == nil {
+		return trimmed, nil
+	}
+
+	match, err := r.studyResolver.ResolveStudy(ctx, trimmed)
+	if err != nil {
+		switch {
+		case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier):
+			return trimmed, nil
+		default:
+			return "", fmt.Errorf("%w: resolve study: %w", ErrSeqmetaFailed, err)
+		}
+	}
+
+	if match.Canonical != "" {
+		return match.Canonical, nil
+	}
+	if match.Study != nil && match.Study.IDStudyLims != "" {
+		return match.Study.IDStudyLims, nil
+	}
+
+	return trimmed, nil
 }
 
 // Expand resolves related search values for a canonical identifier.

@@ -198,6 +198,10 @@ func (r *resultsServeMLWHRuntime) ExpandSearchValues(ctx context.Context, kind m
 	return r.client.ExpandSearchValues(ctx, kind, canonical)
 }
 
+func (r *resultsServeMLWHRuntime) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
+	return r.client.ResolveStudy(ctx, raw)
+}
+
 func (r *resultsServeMLWHRuntime) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
 	return r.client.LanesForSample(ctx, sangerName, limit, offset)
 }

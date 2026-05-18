@@ -76,6 +76,7 @@ func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySample
 type mockSearchExpander struct {
 	expandCalls      int
 	searchValuesFunc func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	resolveStudyFunc func(context.Context, string) (mlwh.Match, error)
 }
 
 func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
@@ -85,6 +86,14 @@ func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.I
 	}
 
 	return m.searchValuesFunc(ctx, kind, canonical)
+}
+
+func (m *mockSearchExpander) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m.resolveStudyFunc != nil {
+		return m.resolveStudyFunc(ctx, raw)
+	}
+
+	return mlwh.Match{Kind: mlwh.KindStudyLimsID, Canonical: raw}, nil
 }
 
 func TestServerPostResults(t *testing.T) {
@@ -957,6 +966,62 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(first.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(second.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
+	})
+
+	convey.Convey("Bug item 4: Given Study search uses accession EGAS00001005445 for study 6568, then direct study-id and related sample fixture results are both returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-rnaseq-accession", func(reg *Registration) {
+			reg.PipelineName = "nf-core/rnaseq"
+			reg.Metadata = map[string]string{"seqmeta_studyid": "6568"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sarek-accession", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.PipelineName = "nf-core/sarek"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "WTSI_wEMB10524782"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-unrelated-accession", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_studyid": "9999"}
+		}))
+
+		expander := &mockSearchExpander{
+			resolveStudyFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "EGAS00001005445")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindStudyAccession,
+					Canonical: "6568",
+					Study: &mlwh.Study{
+						IDStudyLims:     "6568",
+						AccessionNumber: "EGAS00001005445",
+					},
+				}, nil
+			},
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
+				convey.So(canonical, convey.ShouldEqual, "6568")
+
+				return []string{"WTSI_wEMB10524782"}, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=EGAS00001005445", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+
+		runKeys := make([]string, len(results))
+		for i, result := range results {
+			runKeys[i] = result.ResultSet.RunKey
+		}
+
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(runKeys, convey.ShouldContain, "run-rnaseq-accession")
+		convey.So(runKeys, convey.ShouldContain, "run-sarek-accession")
+		convey.So(runKeys, convey.ShouldNotContain, "run-unrelated-accession")
 	})
 
 	convey.Convey("G1.4: Given library search via mlwh and an in-memory fixture, then matching results return within 1 second", t, func() {
