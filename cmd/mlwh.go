@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,8 +44,13 @@ var openMLWHSyncClient = func(ctx context.Context, cfg mlwh.Config) (mlwhSyncCli
 }
 
 type mlwhSyncClient interface {
-	Sync(context.Context, ...string) ([]mlwh.SyncReport, error)
+	Sync(context.Context) ([]mlwh.SyncReport, error)
 	Close() error
+}
+
+type mlwhSyncReportingClient interface {
+	mlwhSyncClient
+	SetSyncReportWriter(io.Writer)
 }
 
 func newMLWHCommand() *cobra.Command {
@@ -54,8 +60,9 @@ func newMLWHCommand() *cobra.Command {
 		Long: strings.Join([]string{
 			"Manage the local cache of Sanger Multi-LIMS Warehouse (MLWH) metadata.",
 			"",
-			"wa keeps a SQLite copy of selected MLWH tables (sample, study,",
-			"iseq_flowcell) so commands such as 'wa results register' and 'wa",
+			"wa keeps a mirrored local cache of five MLWH tables (study, sample,",
+			"iseq_flowcell, iseq_product_metrics and",
+			"seq_product_irods_locations) so commands such as 'wa results register' and 'wa",
 			"seqmeta serve' can resolve sample, study, run and library lookups",
 			"without re-querying the upstream MySQL warehouse on every call.",
 			"Use these subcommands to populate and refresh that cache.",
@@ -95,19 +102,20 @@ func newMLWHCommand() *cobra.Command {
 }
 
 func newMLWHSyncCommand() *cobra.Command {
-	var tables []string
-
 	command := &cobra.Command{
-		Use:   "sync",
-		Short: "Sync upstream MLWH tables into the local SQLite cache",
+		Use:           "sync",
+		Short:         "Sync the five mirrored MLWH tables into the local cache",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		Long: strings.Join([]string{
 			"Sync rows from the upstream Sanger MLWH MySQL database into the",
-			"local SQLite cache used by other wa subcommands.",
+			"local mirrored cache used by other wa subcommands.",
 			"",
 			"Run this command to (re)populate the cache before commands that",
 			"resolve sample, study, run or library lookups, or on a schedule",
 			"to keep the cache fresh. Each run incrementally pulls new and",
-			"updated rows for the sample, study and iseq_flowcell tables and",
+			"updated rows for study, sample, iseq_flowcell,",
+			"iseq_product_metrics and seq_product_irods_locations, and",
 			"prints an inserted/updated/high-water summary per table. The first",
 			"run can be slow because it cold-loads the full table set.",
 			"",
@@ -129,37 +137,40 @@ func newMLWHSyncCommand() *cobra.Command {
 			"  WA_MLWH_CACHE_PASSWORD  Optional. SQLCipher key used to encrypt",
 			"                          the local cache when set.",
 			"",
-			"Use --tables to restrict the sync to one or more of sample, study",
-			"or iseq_flowcell; omit it to sync all three.",
-			"",
 			"Examples:",
-			"  # Full incremental sync of all MLWH tables",
+			"  # Full incremental sync of all supported MLWH tables",
 			"  WA_MLWH_DSN='mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse' \\",
 			"  WA_MLWH_PASSWORD='secret' \\",
 			"      wa --env development mlwh sync",
-			"",
-			"  # Refresh only the sample table",
-			"  wa --env production mlwh sync --tables sample",
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := resolveMLWHSyncConfig()
 			if err != nil {
-				return err
+				return reportMLWHSyncCommandError(cmd, err)
 			}
 
 			client, err := openMLWHSyncClient(cmd.Context(), cfg)
 			if err != nil {
 				if errors.Is(err, mlwh.ErrPasswordInDSN) {
-					return fmt.Errorf("WA_MLWH_DSN: %w", err)
+					return reportMLWHSyncCommandError(cmd, fmt.Errorf("WA_MLWH_DSN: %w", err))
 				}
 
-				return fmt.Errorf("open mlwh client: %w", err)
+				return reportMLWHSyncCommandError(cmd, fmt.Errorf("open mlwh client: %w", err))
 			}
 			defer func() { _ = client.Close() }()
 
-			reports, err := client.Sync(cmd.Context(), tables...)
+			reportingClient, streamsReports := client.(mlwhSyncReportingClient)
+			if streamsReports {
+				reportingClient.SetSyncReportWriter(cmd.OutOrStdout())
+			}
+
+			reports, err := client.Sync(cmd.Context())
 			if err != nil {
-				return err
+				return reportMLWHSyncCommandError(cmd, err)
+			}
+
+			if streamsReports {
+				return nil
 			}
 
 			for _, report := range reports {
@@ -177,9 +188,19 @@ func newMLWHSyncCommand() *cobra.Command {
 		},
 	}
 
-	command.Flags().StringSliceVar(&tables, "tables", nil, "limit the sync to specific tables (sample, study, iseq_flowcell)")
+	command.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return reportMLWHSyncCommandError(cmd, err)
+	})
 
 	return command
+}
+
+func reportMLWHSyncCommandError(cmd *cobra.Command, err error) error {
+	if cmd != nil && err != nil {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+	}
+
+	return err
 }
 
 func resolveMLWHSyncConfig() (mlwh.Config, error) {

@@ -14,6 +14,9 @@ vi.mock("@/app/(results)/actions", () => ({
     enrichIdentifier: vi
         .fn()
         .mockRejectedValue(new Error("Backend unavailable")),
+    enrichIdentifiers: vi
+        .fn()
+        .mockRejectedValue(new Error("Backend unavailable")),
 }));
 
 describe("seqmeta enrichment error recovery", () => {

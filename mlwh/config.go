@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
@@ -87,6 +88,16 @@ func Open(ctx context.Context, cfg Config) (*Client, error) {
 	return client, nil
 }
 
+// OpenCacheOnly constructs a cache-backed MLWH client without opening an upstream source connection.
+func OpenCacheOnly(ctx context.Context, cacheCfg CacheConfig) (*Client, error) {
+	cache, err := OpenCache(ctx, cacheCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{cache: cache, cacheReader: readDBFromCache(cache)}, nil
+}
+
 func readDBFromCache(cache Cache) *sql.DB {
 	if cache == nil {
 		return nil
@@ -102,7 +113,7 @@ func readDBFromCache(cache Cache) *sql.DB {
 
 // ResolveDSN returns a MySQL DSN with any separate password applied.
 func ResolveDSN(dsn string, password string) (string, error) {
-	trimmedDSN := strings.TrimSpace(dsn)
+	trimmedDSN := normalizeMySQLDSNInput(dsn)
 	if trimmedDSN == "" {
 		return "", errors.New("mlwh: dsn must not be empty")
 	}
@@ -120,7 +131,40 @@ func ResolveDSN(dsn string, password string) (string, error) {
 		parsed.Passwd = password
 	}
 
-	return parsed.FormatDSN(), nil
+	parsed.MultiStatements = false
+	parsed.InterpolateParams = false
+
+	resolved := parsed.FormatDSN()
+	resolved = setMySQLDSNBoolParam(resolved, "multiStatements", false)
+	resolved = setMySQLDSNBoolParam(resolved, "interpolateParams", false)
+
+	return resolved, nil
+}
+
+func setMySQLDSNBoolParam(dsn string, key string, value bool) string {
+	parts := strings.SplitN(dsn, "?", 2)
+	params := url.Values{}
+	if len(parts) == 2 {
+		parsed, err := url.ParseQuery(parts[1])
+		if err == nil {
+			params = parsed
+		}
+	}
+
+	params.Set(key, fmt.Sprintf("%t", value))
+
+	return parts[0] + "?" + params.Encode()
+}
+
+func normalizeMySQLDSNInput(dsn string) string {
+	trimmed := strings.TrimSpace(dsn)
+	prefix, params, hasParams := strings.Cut(trimmed, "?")
+	prefix = strings.TrimSuffix(strings.TrimSpace(prefix), ";")
+	if hasParams {
+		return prefix + "?" + params
+	}
+
+	return prefix
 }
 
 // Close releases the cache and source database handles owned by the client.

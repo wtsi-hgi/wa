@@ -70,13 +70,17 @@ func TestMLWHInfoHelpRendersConfigurationDetails(t *testing.T) {
 }
 
 type stubMLWHInfoClient struct {
-	classify       func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveSample  func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveStudy   func(ctx context.Context, raw string, opts ...mlwh.ResolveStudyOption) (mlwh.Match, error)
-	resolveRun     func(ctx context.Context, raw string) (mlwh.Match, error)
-	resolveLibrary func(ctx context.Context, raw string) (mlwh.Match, error)
+	classify        func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveName     func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveSample   func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveStudy    func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveRun      func(ctx context.Context, raw string) (mlwh.Match, error)
+	resolveLibrary  func(ctx context.Context, raw string) (mlwh.Match, error)
+	findBySangerID  func(ctx context.Context, sangerID string) ([]mlwh.Sample, error)
+	findByLimsID    func(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error)
+	findByAccession func(ctx context.Context, accession string) ([]mlwh.Sample, error)
 
-	studyForSample      func(ctx context.Context, name string) (*mlwh.Study, error)
+	studiesForSample    func(ctx context.Context, name string) ([]mlwh.Study, error)
 	lanesForSample      func(ctx context.Context, name string, limit, offset int) ([]mlwh.Lane, error)
 	irodsPathsForSample func(ctx context.Context, name string, limit, offset int) ([]mlwh.IRODSPath, error)
 	librariesForStudy   func(ctx context.Context, id string, limit, offset int) ([]mlwh.Library, error)
@@ -86,6 +90,14 @@ type stubMLWHInfoClient struct {
 	samplesForLibrary   func(ctx context.Context, pipelineID, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 
 	closed bool
+}
+
+func (s *stubMLWHInfoClient) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	if s.resolveName != nil {
+		return s.resolveName(ctx, raw)
+	}
+
+	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
 func (s *stubMLWHInfoClient) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -104,12 +116,12 @@ func (s *stubMLWHInfoClient) ResolveSample(ctx context.Context, raw string) (mlw
 	return mlwh.Match{}, errors.New("resolveSample not stubbed")
 }
 
-func (s *stubMLWHInfoClient) ResolveStudy(ctx context.Context, raw string, opts ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+func (s *stubMLWHInfoClient) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
 	if s.resolveStudy != nil {
-		return s.resolveStudy(ctx, raw, opts...)
+		return s.resolveStudy(ctx, raw)
 	}
 
-	return mlwh.Match{}, errors.New("resolveStudy not stubbed")
+	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
 func (s *stubMLWHInfoClient) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -128,9 +140,33 @@ func (s *stubMLWHInfoClient) ResolveLibrary(ctx context.Context, raw string) (ml
 	return mlwh.Match{}, errors.New("resolveLibrary not stubbed")
 }
 
-func (s *stubMLWHInfoClient) StudyForSample(ctx context.Context, name string) (*mlwh.Study, error) {
-	if s.studyForSample != nil {
-		return s.studyForSample(ctx, name)
+func (s *stubMLWHInfoClient) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
+	if s.findBySangerID != nil {
+		return s.findBySangerID(ctx, sangerID)
+	}
+
+	return nil, mlwh.ErrNotFound
+}
+
+func (s *stubMLWHInfoClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
+	if s.findByLimsID != nil {
+		return s.findByLimsID(ctx, idSampleLims)
+	}
+
+	return nil, mlwh.ErrNotFound
+}
+
+func (s *stubMLWHInfoClient) FindSamplesByAccessionNumber(ctx context.Context, accession string) ([]mlwh.Sample, error) {
+	if s.findByAccession != nil {
+		return s.findByAccession(ctx, accession)
+	}
+
+	return nil, mlwh.ErrNotFound
+}
+
+func (s *stubMLWHInfoClient) StudiesForSample(ctx context.Context, name string) ([]mlwh.Study, error) {
+	if s.studiesForSample != nil {
+		return s.studiesForSample(ctx, name)
 	}
 
 	return nil, mlwh.ErrNotFound
@@ -199,7 +235,7 @@ func (s *stubMLWHInfoClient) Close() error {
 }
 
 func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
-	convey.Convey("Given a sample identifier resolves to a sample with a study, when wa mlwh info runs, then stdout contains the sample, study, and lane fields", t, func() {
+	convey.Convey("Given a sample identifier resolves to a sample with two library-study pairings, when wa mlwh info runs, then stdout contains one library line per pairing", t, func() {
 		stub := &stubMLWHInfoClient{
 			classify: func(_ context.Context, raw string) (mlwh.Match, error) {
 				convey.So(raw, convey.ShouldEqual, "DN1234")
@@ -212,19 +248,26 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 						IDSampleLims:    "8675309",
 						SangerSampleID:  "DN1234",
 						SupplierName:    "vendor-id-1",
-						IDStudyLims:     "5901",
 						AccessionNumber: "EGAS00001005678",
+						Libraries: []mlwh.Library{
+							{PipelineIDLims: "Standard", IDStudyLims: "5901"},
+							{PipelineIDLims: "Chromium", IDStudyLims: "5902"},
+						},
 					},
 				}, nil
 			},
-			studyForSample: func(_ context.Context, name string) (*mlwh.Study, error) {
+			studiesForSample: func(_ context.Context, name string) ([]mlwh.Study, error) {
 				convey.So(name, convey.ShouldEqual, "DN1234")
 
-				return &mlwh.Study{
+				return []mlwh.Study{{
 					IDStudyLims:     "5901",
 					Name:            "Lung cancer GWAS",
 					AccessionNumber: "EGAS00001005678",
-				}, nil
+				}, {
+					IDStudyLims:     "5902",
+					Name:            "Lung cancer scRNA",
+					AccessionNumber: "EGAS00001005679",
+				}}, nil
 			},
 			lanesForSample: func(_ context.Context, _ string, _, _ int) ([]mlwh.Lane, error) {
 				return []mlwh.Lane{{IDRun: 49001, Position: 2, TagIndex: 7}}, nil
@@ -241,10 +284,76 @@ func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "DN1234")
 		convey.So(output, convey.ShouldContainSubstring, "8675309")
 		convey.So(output, convey.ShouldContainSubstring, "vendor-id-1")
-		convey.So(output, convey.ShouldContainSubstring, "Lung cancer GWAS")
-		convey.So(output, convey.ShouldContainSubstring, "5901")
+		convey.So(strings.Count(output, "library:"), convey.ShouldEqual, 2)
+		convey.So(output, convey.ShouldContainSubstring, "library: Standard / 5901")
+		convey.So(output, convey.ShouldContainSubstring, "library: Chromium / 5902")
 		convey.So(output, convey.ShouldContainSubstring, "49001")
 		convey.So(stub.closed, convey.ShouldBeTrue)
+	})
+}
+
+func TestMLWHInfoCommandSampleIncludesLibraryIdentifiersAndIRODSPaths(t *testing.T) {
+	convey.Convey("Given a sample resolves to a library with identifiers and an iRODS path, when wa mlwh info runs, then text and JSON output include those fields", t, func() {
+		newStub := func() *stubMLWHInfoClient {
+			return &stubMLWHInfoClient{
+				classify: func(_ context.Context, raw string) (mlwh.Match, error) {
+					convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: "7607STDY14643771",
+						Sample: &mlwh.Sample{
+							Name:           "7607STDY14643771",
+							IDSampleLims:   "9575305",
+							SangerSampleID: "7607STDY14643771",
+							Libraries: []mlwh.Library{{
+								PipelineIDLims: "Custom",
+								IDStudyLims:    "7607",
+								LibraryID:      "71046409",
+								IDLibraryLims:  "SQPP-47463-G:B1",
+							}},
+						},
+					}, nil
+				},
+				studiesForSample: func(_ context.Context, _ string) ([]mlwh.Study, error) {
+					return []mlwh.Study{{IDStudyLims: "7607", Name: "Target prioritisation"}}, nil
+				},
+				lanesForSample: func(_ context.Context, _ string, _, _ int) ([]mlwh.Lane, error) {
+					return []mlwh.Lane{{IDRun: 48522, Position: 1, TagIndex: 1}}, nil
+				},
+				irodsPathsForSample: func(_ context.Context, _ string, _, _ int) ([]mlwh.IRODSPath, error) {
+					return []mlwh.IRODSPath{{
+						IDProduct:  "5c7e2518e6e4b9f0bff053374d43a2b1f9bbb84625f035148db857b9bb01bfc0",
+						Collection: "/seq/illumina/runs/48/48522/plex1",
+						DataObject: "48522#1.cram",
+						IRODSPath:  "/seq/illumina/runs/48/48522/plex1/48522#1.cram",
+					}}, nil
+				},
+			}
+		}
+
+		withStubMLWHInfoClient(t, newStub())
+		textOutput, textErr := executeRootCommandForTest(t, []string{"mlwh", "info", "7607STDY14643771"})
+
+		convey.So(textErr, convey.ShouldBeNil)
+		convey.So(textOutput, convey.ShouldContainSubstring, "library: Custom / 7607 library_id=71046409 id_library_lims=SQPP-47463-G:B1")
+		convey.So(textOutput, convey.ShouldContainSubstring, "/seq/illumina/runs/48/48522/plex1/48522#1.cram")
+
+		withStubMLWHInfoClient(t, newStub())
+		jsonOutput, jsonErr := executeRootCommandForTest(t, []string{"mlwh", "info", "7607STDY14643771", "--json"})
+
+		convey.So(jsonErr, convey.ShouldBeNil)
+
+		decoded := map[string]any{}
+		convey.So(json.Unmarshal([]byte(jsonOutput), &decoded), convey.ShouldBeNil)
+		sample := decoded["sample"].(map[string]any)
+		libraries := sample["libraries"].([]any)
+		library := libraries[0].(map[string]any)
+		convey.So(library["library_id"], convey.ShouldEqual, "71046409")
+		convey.So(library["id_library_lims"], convey.ShouldEqual, "SQPP-47463-G:B1")
+		paths := decoded["irods_paths"].([]any)
+		path := paths[0].(map[string]any)
+		convey.So(path["irods_path"], convey.ShouldEqual, "/seq/illumina/runs/48/48522/plex1/48522#1.cram")
 	})
 }
 
@@ -264,7 +373,7 @@ func TestMLWHInfoCommandJSONOutput(t *testing.T) {
 			librariesForStudy: func(_ context.Context, id string, _, _ int) ([]mlwh.Library, error) {
 				convey.So(id, convey.ShouldEqual, "5901")
 
-				return []mlwh.Library{{PipelineIDLims: "lib-A", SampleCount: 12}}, nil
+				return []mlwh.Library{{PipelineIDLims: "lib-A", IDStudyLims: "5901"}}, nil
 			},
 			samplesForStudy: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
 				return []mlwh.Sample{{Name: "DN1234", IDSampleLims: "8675309"}}, nil
@@ -320,6 +429,58 @@ func TestMLWHInfoCommandTypeOverride(t *testing.T) {
 	})
 }
 
+func TestMLWHInfoCommandUsesFastSampleNameResolver(t *testing.T) {
+	convey.Convey("Given a canonical sample name, when wa mlwh info runs with and without --type sample, then it avoids the broader sample resolver cascade", t, func() {
+		newStub := func() *stubMLWHInfoClient {
+			return &stubMLWHInfoClient{
+				classify: func(_ context.Context, _ string) (mlwh.Match, error) {
+					t.Fatalf("ClassifyIdentifier must not be called after the sample-name fast path matches")
+
+					return mlwh.Match{}, nil
+				},
+				resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
+					convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+					return mlwh.Match{}, mlwh.ErrNotFound
+				},
+				resolveName: func(_ context.Context, raw string) (mlwh.Match, error) {
+					convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: raw,
+						Sample: &mlwh.Sample{
+							Name: raw,
+							Libraries: []mlwh.Library{{
+								PipelineIDLims: "Custom",
+								IDStudyLims:    "7607",
+							}},
+							Studies: []mlwh.Study{{IDStudyLims: "7607"}},
+						},
+					}, nil
+				},
+				resolveSample: func(_ context.Context, _ string) (mlwh.Match, error) {
+					t.Fatalf("ResolveSample must not be called after the sample-name fast path matches")
+
+					return mlwh.Match{}, nil
+				},
+			}
+		}
+
+		withStubMLWHInfoClient(t, newStub())
+		autoOutput, autoErr := executeRootCommandForTest(t, []string{"mlwh", "info", "7607STDY14643771"})
+
+		convey.So(autoErr, convey.ShouldBeNil)
+		convey.So(autoOutput, convey.ShouldContainSubstring, "7607STDY14643771")
+
+		withStubMLWHInfoClient(t, newStub())
+		typedOutput, typedErr := executeRootCommandForTest(t, []string{"mlwh", "info", "--type", "sample", "7607STDY14643771"})
+
+		convey.So(typedErr, convey.ShouldBeNil)
+		convey.So(typedOutput, convey.ShouldContainSubstring, "7607STDY14643771")
+	})
+}
+
 func TestMLWHInfoCommandNotFound(t *testing.T) {
 	convey.Convey("Given the identifier does not match anything, when wa mlwh info runs, then it exits non-zero with a clear message", t, func() {
 		stub := &stubMLWHInfoClient{
@@ -339,10 +500,10 @@ func TestMLWHInfoCommandNotFound(t *testing.T) {
 }
 
 func TestMLWHInfoCommandSurfacesEmptyCacheHint(t *testing.T) {
-	convey.Convey("Given a non-NotFound resolver error (e.g. cache empty / upstream unavailable), when wa mlwh info runs, then the error suggests running wa mlwh sync", t, func() {
+	convey.Convey("Given a never-synced cache error, when wa mlwh info runs, then stderr contains the actionable sync hint", t, func() {
 		stub := &stubMLWHInfoClient{
 			classify: func(_ context.Context, _ string) (mlwh.Match, error) {
-				return mlwh.Match{}, errors.New("mlwh: cache reader not configured")
+				return mlwh.Match{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
 			},
 		}
 
@@ -351,6 +512,7 @@ func TestMLWHInfoCommandSurfacesEmptyCacheHint(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
 
 		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldContainSubstring, mlwh.ErrCacheNeverSynced.Error())
 		convey.So(output, convey.ShouldContainSubstring, "wa mlwh sync")
 	})
 }

@@ -47,6 +47,16 @@ const (
 	defaultEnrichNegativeTTL = 15 * time.Minute
 )
 
+type librarySampleFilter struct {
+	libraryType   string
+	libraryID     string
+	idLibraryLims string
+}
+
+func (f librarySampleFilter) empty() bool {
+	return f.libraryType == "" && f.libraryID == "" && f.idLibraryLims == ""
+}
+
 // Server serves the seqmeta REST API.
 type Server struct {
 	provider    Provider
@@ -97,6 +107,9 @@ func (s *Server) loadFreshEnrichCache(identifier string, now time.Time) (*enrich
 	if entry.FetchedAt.Add(entry.TTL).Before(now) {
 		return nil, sql.ErrNoRows
 	}
+	if entry.Version != enrichCacheCurrentVersion {
+		return nil, sql.ErrNoRows
+	}
 
 	return entry, nil
 }
@@ -135,12 +148,15 @@ func (s *Server) handleStudySamples(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Filter by library_type if query parameter is present
-	libraryType := r.URL.Query().Get("library_type")
-	if libraryType != "" {
+	libraryFilter := librarySampleFilter{
+		libraryType:   r.URL.Query().Get("library_type"),
+		libraryID:     r.URL.Query().Get("library_id"),
+		idLibraryLims: r.URL.Query().Get("id_library_lims"),
+	}
+	if !libraryFilter.empty() {
 		filtered := make([]mlwh.Sample, 0, len(samples))
 		for _, sample := range samples {
-			if sample.LibraryType == libraryType {
+			if sampleMatchesLibrary(sample, studyID, libraryFilter) {
 				filtered = append(filtered, sample)
 			}
 		}
@@ -157,6 +173,27 @@ func looksLikeStudyAccession(s string) bool {
 		if unicode.IsLetter(ch) {
 			return true
 		}
+	}
+
+	return false
+}
+
+func sampleMatchesLibrary(sample mlwh.Sample, studyID string, filter librarySampleFilter) bool {
+	for _, library := range sample.Libraries {
+		if library.IDStudyLims != studyID {
+			continue
+		}
+		if filter.libraryType != "" && library.PipelineIDLims != filter.libraryType {
+			continue
+		}
+		if filter.libraryID != "" && library.LibraryID != filter.libraryID {
+			continue
+		}
+		if filter.idLibraryLims != "" && library.IDLibraryLims != filter.idLibraryLims {
+			continue
+		}
+
+		return true
 	}
 
 	return false
@@ -318,7 +355,7 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 
 	result, err := Validate(r.Context(), s.provider, identifier)
 	if err != nil {
-		if errors.Is(err, ErrUnknownIdentifier) {
+		if errors.Is(err, ErrUnknownIdentifier) || errors.Is(err, mlwh.ErrCacheNeverSynced) {
 			_ = writeError(w, http.StatusNotFound, err.Error())
 
 			return
@@ -342,13 +379,8 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := s.loadFreshEnrichCache(identifier, time.Now())
 	if err == nil {
-		if !(entry.Negative && looksLikeLibraryType(identifier)) {
-			status := http.StatusOK
-			if entry.Negative {
-				status = http.StatusNotFound
-			}
-
-			_ = writeJSONBytes(w, status, entry.Body)
+		if !entry.Negative {
+			_ = writeJSONBytes(w, http.StatusOK, entry.Body)
 
 			return
 		}
@@ -372,20 +404,6 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 				_ = writeError(w, http.StatusInternalServerError, marshalErr.Error())
 
 				return
-			}
-
-			if !looksLikeLibraryType(identifier) {
-				if saveErr := s.store.SaveEnrichCache(enrichCacheEntry{
-					Identifier: identifier,
-					Body:       body,
-					FetchedAt:  time.Now(),
-					TTL:        s.negativeTTL,
-					Negative:   true,
-				}); saveErr != nil {
-					_ = writeError(w, http.StatusInternalServerError, saveErr.Error())
-
-					return
-				}
 			}
 
 			_ = writeJSONBytes(w, status, body)
@@ -423,6 +441,7 @@ func (s *Server) handleEnrich(w http.ResponseWriter, r *http.Request) {
 		Body:       body,
 		FetchedAt:  time.Now(),
 		TTL:        ttl,
+		Version:    enrichCacheCurrentVersion,
 		Partial:    result.Partial,
 	}); err != nil {
 		_ = writeError(w, http.StatusInternalServerError, err.Error())
@@ -437,6 +456,38 @@ func decodeWildcardIdentifier(r *http.Request, prefix string) (string, error) {
 	escaped := strings.TrimPrefix(r.URL.EscapedPath(), prefix)
 
 	return url.PathUnescape(escaped)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) error {
+	return writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeJSONBytes(w http.ResponseWriter, status int, body []byte) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if _, err := w.Write(body); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func marshalJSON(payload any) ([]byte, error) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) error {
+	body, err := marshalJSON(payload)
+	if err != nil {
+		return err
+	}
+
+	return writeJSONBytes(w, status, body)
 }
 
 func (s *Server) handleDeleteEnrich(w http.ResponseWriter, r *http.Request) {
@@ -465,38 +516,6 @@ func (s *Server) writeDiffError(w http.ResponseWriter, err error) {
 	}
 
 	_ = writeError(w, status, err.Error())
-}
-
-func marshalJSON(payload any) ([]byte, error) {
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(payload); err != nil {
-		return nil, err
-	}
-
-	return body.Bytes(), nil
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) error {
-	body, err := marshalJSON(payload)
-	if err != nil {
-		return err
-	}
-
-	return writeJSONBytes(w, status, body)
-}
-
-func writeJSONBytes(w http.ResponseWriter, status int, body []byte) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if _, err := w.Write(body); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func writeError(w http.ResponseWriter, status int, message string) error {
-	return writeJSON(w, status, map[string]string{"error": message})
 }
 
 // resolveByAccession looks up studies to find one whose AccessionNumber matches

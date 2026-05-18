@@ -29,6 +29,8 @@ import "errors"
 
 var (
 	ErrNotFound              = errors.New("mlwh: identifier not found")
+	ErrCacheNeverSynced      = errors.New("mlwh: cache has never been synced; run \"wa mlwh sync\" first")
+	ErrSyncAlreadyRunning    = errors.New("mlwh sync: another sync is already running against this cache")
 	ErrAmbiguous             = errors.New("mlwh: identifier matches multiple records")
 	ErrUnsupportedIdentifier = errors.New("mlwh: identifier form not supported")
 )
@@ -50,13 +52,17 @@ const (
 	KindStudyName        IdentifierKind = "study_name"
 	KindRunID            IdentifierKind = "run_id"
 	KindLibraryType      IdentifierKind = "library_type"
+	KindLibraryID        IdentifierKind = "library_id"
+	KindLibraryLimsID    IdentifierKind = "id_library_lims"
 	MaxSamplesPerHop     int            = 1000
 )
 
 // Library is the cache-backed library shape mirrored from MLWH.
 type Library struct {
 	PipelineIDLims string `json:"pipeline_id_lims"`
-	SampleCount    int    `json:"sample_count"`
+	IDStudyLims    string `json:"id_study_lims"`
+	LibraryID      string `json:"library_id,omitempty"`
+	IDLibraryLims  string `json:"id_library_lims,omitempty"`
 }
 
 // Run is the run identifier shape resolved from MLWH.

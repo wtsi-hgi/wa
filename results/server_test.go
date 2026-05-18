@@ -74,26 +74,17 @@ func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySample
 }
 
 type mockSearchExpander struct {
-	expandCalls int
-	expandFunc  func(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
-	lanesFunc   func(context.Context, string, int, int) ([]mlwh.Lane, error)
+	expandCalls      int
+	searchValuesFunc func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
 }
 
-func (m *mockSearchExpander) ExpandIdentifier(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 	m.expandCalls++
-	if m.expandFunc == nil {
-		return nil, nil
+	if m.searchValuesFunc == nil {
+		return nil, nil, nil, nil
 	}
 
-	return m.expandFunc(ctx, kind, canonical)
-}
-
-func (m *mockSearchExpander) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
-	if m.lanesFunc == nil {
-		return nil, nil
-	}
-
-	return m.lanesFunc(ctx, sangerName, limit, offset)
+	return m.searchValuesFunc(ctx, kind, canonical)
 }
 
 func TestServerPostResults(t *testing.T) {
@@ -838,6 +829,30 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(runKeys, convey.ShouldContain, "run-sample-lane")
 	})
 
+	convey.Convey("C2.3: Given sample fan-out across studies, sample resolver expansion returns both studies' lanes", t, func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /enrich/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("id") != "S1" {
+				w.WriteHeader(http.StatusNotFound)
+
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"graph":{"sample_detail":{"lanes":[{"id_run":"100","lane":"1","tag_index":1},{"id_run":"101","lane":"2","tag_index":2}]}}}`)
+		})
+		seqmeta := httptest.NewServer(mux)
+		defer seqmeta.Close()
+
+		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
+		samples, runs, lanes, err := resolver.Expand(context.Background(), mlwh.KindSangerSampleName, "S1")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldResemble, []string{"S1"})
+		convey.So(runs, convey.ShouldResemble, []string{"100", "101"})
+		convey.So(lanes, convey.ShouldResemble, []string{"100_1#1", "101_2#2"})
+	})
+
 	convey.Convey("Bug 4: repeated study lookups reuse resolver cache to avoid duplicate upstream requests", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-cache", func(reg *Registration) {
@@ -886,22 +901,17 @@ func TestServerGetResults(t *testing.T) {
 			reg.PipelineIdentifier = "pipe-4"
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "OTHER-SAMPLE"}
 		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-sibling-lane", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-5"
+			reg.Metadata = map[string]string{"seqmeta_lane": "67890_2#11"}
+		}))
 
 		expander := &mockSearchExpander{
-			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []mlwh.TaggedID{
-					{Kind: mlwh.KindStudyLimsID, Canonical: "6568"},
-					{Kind: mlwh.KindSangerSampleName, Canonical: "7607STDY14643771"},
-					{Kind: mlwh.KindRunID, Canonical: "12345"},
-				}, nil
-			},
-			lanesFunc: func(_ context.Context, sangerName string, _, _ int) ([]mlwh.Lane, error) {
-				convey.So(sangerName, convey.ShouldEqual, "7607STDY14643771")
-
-				return []mlwh.Lane{{IDRun: 12345, Position: 1, TagIndex: 10}}, nil
+				return []string{"7607STDY14643771"}, []string{"12345"}, []string{"12345_1#10"}, nil
 			},
 		}
 
@@ -922,6 +932,7 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(runKeys, convey.ShouldContain, "run-study-direct")
 		convey.So(runKeys, convey.ShouldContain, "run-study-sample")
 		convey.So(runKeys, convey.ShouldContain, "run-study-lane")
+		convey.So(runKeys, convey.ShouldNotContain, "run-study-sibling-lane")
 	})
 
 	convey.Convey("G1.3: Given repeated study search within 5 minutes, then mlwh ExpandIdentifier is called at most once", t, func() {
@@ -931,14 +942,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []mlwh.TaggedID{
-					{Kind: mlwh.KindStudyLimsID, Canonical: "6568"},
-					{Kind: mlwh.KindSangerSampleName, Canonical: "SANG-CACHE"},
-				}, nil
+				return []string{"SANG-CACHE"}, nil, nil, nil
 			},
 		}
 
@@ -962,20 +970,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
 				convey.So(canonical, convey.ShouldEqual, "Standard")
 
-				return []mlwh.TaggedID{
-					{Kind: mlwh.KindLibraryType, Canonical: "Standard"},
-					{Kind: mlwh.KindSangerSampleName, Canonical: "LIB-S1"},
-					{Kind: mlwh.KindRunID, Canonical: "100"},
-				}, nil
-			},
-			lanesFunc: func(_ context.Context, sangerName string, _, _ int) ([]mlwh.Lane, error) {
-				convey.So(sangerName, convey.ShouldEqual, "LIB-S1")
-
-				return []mlwh.Lane{{IDRun: 100, Position: 1, TagIndex: 1}}, nil
+				return []string{"LIB-S1"}, []string{"100"}, []string{"100_1#1"}, nil
 			},
 		}
 
@@ -986,6 +985,77 @@ func TestServerGetResults(t *testing.T) {
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(elapsed < time.Second, convey.ShouldBeTrue)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+		convey.So(results, convey.ShouldHaveLength, 2)
+	})
+
+	convey.Convey("G1.4: Given seqmeta_libraryid search via mlwh, then it uses library ID expansion and exact library ID metadata", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-id-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_libraryid": "71046409"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-id-expanded-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "LIB-ID-S1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-type-lookalike", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_librarytype": "71046409"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryID)
+				convey.So(canonical, convey.ShouldEqual, "71046409")
+
+				return []string{"LIB-ID-S1"}, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_libraryid=71046409", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		runKeys := make([]string, len(results))
+		for i, result := range results {
+			runKeys[i] = result.RunKey
+		}
+
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(runKeys, convey.ShouldContain, "run-library-id-direct")
+		convey.So(runKeys, convey.ShouldContain, "run-library-id-expanded-sample")
+		convey.So(runKeys, convey.ShouldNotContain, "run-library-type-lookalike")
+	})
+
+	convey.Convey("G1.4: Given library=Custom search via mlwh, then existing library type support still expands by type", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-type-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_librarytype": "Custom"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-type-expanded-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "LIB-TYPE-S1"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
+				convey.So(canonical, convey.ShouldEqual, "Custom")
+
+				return []string{"LIB-TYPE-S1"}, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?library=Custom", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 
 		var results []ResultSet
 		decodeJSONResponseForTest(t, response, &results)
@@ -1003,14 +1073,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			expandFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindRunID)
 				convey.So(canonical, convey.ShouldEqual, "100")
 
-				return []mlwh.TaggedID{
-					{Kind: mlwh.KindRunID, Canonical: "100"},
-					{Kind: mlwh.KindSangerSampleName, Canonical: "RUN-S1"},
-				}, nil
+				return []string{"RUN-S1"}, []string{"100"}, nil, nil
 			},
 		}
 

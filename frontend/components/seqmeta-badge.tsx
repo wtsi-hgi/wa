@@ -40,6 +40,8 @@ type SeqmetaDetailField = {
 type HierarchicalLibrary = {
     libraryType: string;
     idStudyLims: string;
+    libraryId?: string;
+    idLibraryLims?: string;
     samples: EnrichmentSample[];
 };
 
@@ -52,6 +54,8 @@ type HierarchicalGroup = {
         | { name: string; id: string; accession?: string }[]
         | { id_run: string; lane: string; tag_index: number }[];
 };
+
+const RELATED_SAMPLE_RENDER_LIMIT = 50;
 
 function asString(value: unknown): string | null {
     return typeof value === "string" && value.trim() ? value : null;
@@ -78,6 +82,14 @@ function humanizeToken(token: string): string {
 function metadataLabel(metadataKey: string): string {
     const trimmedKey = metadataKey.replace(/^seqmeta_/, "");
 
+    if (trimmedKey === "libraryid") {
+        return "Library ID";
+    }
+
+    if (trimmedKey === "library_lims") {
+        return "Library LIMS ID";
+    }
+
     if (trimmedKey === "library" || trimmedKey === "librarytype") {
         return "Library type";
     }
@@ -101,14 +113,36 @@ function metadataLabel(metadataKey: string): string {
     return humanizeToken(trimmedKey);
 }
 
+function metadataLabelForSentence(metadataKey: string): string {
+    if (metadataKey === "seqmeta_libraryid") {
+        return "library ID";
+    }
+
+    if (metadataKey === "seqmeta_library_lims") {
+        return "library LIMS ID";
+    }
+
+    return metadataLabel(metadataKey).toLowerCase();
+}
+
 function isLibraryMetadataKey(metadataKey: string): boolean {
     return (
         metadataKey === "seqmeta_library" ||
+        metadataKey === "seqmeta_libraryid" ||
+        metadataKey === "seqmeta_library_lims" ||
         metadataKey === "seqmeta_librarytype"
     );
 }
 
 function directLibraryMetadataKey(metadataKey: string): string {
+    if (metadataKey === "seqmeta_libraryid") {
+        return "seqmeta_libraryid";
+    }
+
+    if (metadataKey === "seqmeta_library_lims") {
+        return "seqmeta_library_lims";
+    }
+
     return metadataKey === "seqmeta_librarytype"
         ? "seqmeta_librarytype"
         : "seqmeta_library";
@@ -116,40 +150,6 @@ function directLibraryMetadataKey(metadataKey: string): string {
 
 function copiedStateKey(fieldKey: string, fieldValue: string): string {
     return `${fieldKey}:${fieldValue}`;
-}
-
-function enrichmentTypeLabel(type: string): string {
-    if (type === "sanger_sample_id") {
-        return "Sanger sample ID";
-    }
-
-    if (type === "study_id") {
-        return "Study identifier";
-    }
-
-    if (type === "study_accession") {
-        return "Study accession";
-    }
-
-    return humanizeToken(type);
-}
-
-function resolvedEnrichmentValue(enrichment: EnrichmentResult): string | null {
-    if (
-        enrichment.type === "study_id" ||
-        enrichment.type === "study_accession"
-    ) {
-        return (
-            asString(enrichment.graph.study?.id_study_lims) ??
-            asString(enrichment.graph.study?.accession_number) ??
-            asString(enrichment.identifier)
-        );
-    }
-
-    return (
-        asString(enrichment.graph.sample?.sanger_id) ??
-        asString(enrichment.identifier)
-    );
 }
 
 function primaryLabel(
@@ -170,6 +170,44 @@ function librarySampleKey(sample: EnrichmentSample, index: number): string {
     ];
 
     return `${keyParts.join("|")}|${index}`;
+}
+
+function libraryIdentityKey(library: HierarchicalLibrary): string {
+    return [
+        library.idStudyLims,
+        library.libraryType,
+        library.libraryId ?? "",
+        library.idLibraryLims ?? "",
+    ].join("|");
+}
+
+function libraryDisplayLabel(library: HierarchicalLibrary): string {
+    return library.idLibraryLims ?? library.libraryId ?? library.libraryType;
+}
+
+function librarySampleFilters(
+    library: HierarchicalLibrary,
+): { idLibraryLims?: string; libraryId?: string } | undefined {
+    const filters = {
+        idLibraryLims: library.idLibraryLims,
+        libraryId: library.libraryId,
+    };
+
+    return filters.idLibraryLims || filters.libraryId ? filters : undefined;
+}
+
+function visibleRelatedSamples(
+    samples: EnrichmentSample[],
+): EnrichmentSample[] {
+    return samples.slice(0, RELATED_SAMPLE_RENDER_LIMIT);
+}
+
+function relatedSamplesSummary(samples: EnrichmentSample[]): string | null {
+    if (samples.length <= RELATED_SAMPLE_RENDER_LIMIT) {
+        return null;
+    }
+
+    return `Showing ${RELATED_SAMPLE_RENDER_LIMIT} of ${samples.length} samples`;
 }
 
 function sampleCopyStateKey(sample: EnrichmentSample, index?: number): string {
@@ -258,6 +296,7 @@ function buildDetailFields(
     const studyMetadata =
         metadataKey === "seqmeta_studyid" ||
         metadataKey === "seqmeta_study_accession";
+    const runMetadata = metadataKey === "seqmeta_runid";
     const sampleMetadata =
         metadataKey === "seqmeta_sampleid" ||
         metadataKey === "seqmeta_sample_lims";
@@ -368,7 +407,7 @@ function buildDetailFields(
     }
 
     // Skip library fields for study metadata.
-    if (!skipSampleFieldsForStudy) {
+    if (!skipSampleFieldsForStudy && !runMetadata) {
         const libraryTypes = [
             enrichment.graph.library?.library_type,
             enrichment.graph.sample?.library_type,
@@ -400,6 +439,59 @@ function buildDetailFields(
     return fields;
 }
 
+function samplesForLibrary(
+    samples: EnrichmentSample[],
+    library: HierarchicalLibrary,
+): EnrichmentSample[] {
+    return samples.filter((sample) => {
+        if (sample.library_type !== library.libraryType) {
+            return false;
+        }
+
+        return (
+            !library.idStudyLims || sample.id_study_lims === library.idStudyLims
+        );
+    });
+}
+
+function runLibraryItems(enrichment: EnrichmentResult): HierarchicalLibrary[] {
+    const libraryItems: HierarchicalLibrary[] = [];
+
+    for (const detail of enrichment.graph.study_details ?? []) {
+        for (const lib of detail.library_details) {
+            libraryItems.push({
+                libraryType: lib.library_type,
+                idStudyLims: lib.id_study_lims,
+                libraryId: lib.library_id,
+                idLibraryLims: lib.id_library_lims,
+                samples: lib.samples,
+            });
+        }
+    }
+
+    if (libraryItems.length > 0) {
+        return libraryItems;
+    }
+
+    const samples = enrichment.graph.samples ?? [];
+    for (const lib of enrichment.graph.libraries ?? []) {
+        const item = {
+            libraryType: lib.library_type,
+            idStudyLims: lib.id_study_lims,
+            libraryId: lib.library_id,
+            idLibraryLims: lib.id_library_lims,
+            samples: [],
+        };
+
+        libraryItems.push({
+            ...item,
+            samples: samplesForLibrary(samples, item),
+        });
+    }
+
+    return libraryItems;
+}
+
 function buildHierarchicalGroups(
     metadataKey: string,
     enrichment: EnrichmentResult | null,
@@ -413,6 +505,7 @@ function buildHierarchicalGroups(
         metadataKey === "seqmeta_studyid" ||
         metadataKey === "seqmeta_study_accession";
     const libraryMetadata = isLibraryMetadataKey(metadataKey);
+    const runMetadata = metadataKey === "seqmeta_runid";
     const sampleMetadata =
         metadataKey === "seqmeta_sampleid" ||
         metadataKey === "seqmeta_sample_lims";
@@ -428,6 +521,8 @@ function buildHierarchicalGroups(
                 libraryItems.push({
                     libraryType: lib.library_type,
                     idStudyLims: lib.id_study_lims,
+                    libraryId: lib.library_id,
+                    idLibraryLims: lib.id_library_lims,
                     samples: [], // Empty - samples loaded JIT on expansion
                 });
             }
@@ -436,10 +531,24 @@ function buildHierarchicalGroups(
                 libraryItems.push({
                     libraryType: lib.library_type,
                     idStudyLims: lib.id_study_lims,
+                    libraryId: lib.library_id,
+                    idLibraryLims: lib.id_library_lims,
                     samples: [], // Empty - samples loaded JIT on expansion
                 });
             }
         }
+
+        if (libraryItems.length > 0) {
+            groups.push({
+                type: "libraries",
+                title: "Libraries",
+                items: libraryItems,
+            });
+        }
+    }
+
+    if (runMetadata) {
+        const libraryItems = runLibraryItems(enrichment);
 
         if (libraryItems.length > 0) {
             groups.push({
@@ -520,6 +629,7 @@ function buildHierarchicalGroups(
         const idStudyLims = enrichment.graph.sample?.id_study_lims || "";
 
         if (libraryType) {
+            const libraryLink = enrichment.graph.library;
             groups.push({
                 type: "library",
                 title: "Library",
@@ -527,6 +637,8 @@ function buildHierarchicalGroups(
                     {
                         libraryType,
                         idStudyLims,
+                        libraryId: libraryLink?.library_id,
+                        idLibraryLims: libraryLink?.id_library_lims,
                         samples: [],
                     },
                 ],
@@ -564,61 +676,6 @@ function buildHierarchicalGroups(
     }
 
     return groups;
-}
-
-function buildStatusLines(
-    metadataKey: string,
-    rawValue: string,
-    enrichment: EnrichmentResult | null,
-    error: SeqmetaBadgeProps["error"],
-    loading: boolean,
-): string[] {
-    if (loading) {
-        return [`Looking up ${metadataLabel(metadataKey).toLowerCase()}.`];
-    }
-
-    if (error === "not_found") {
-        return [
-            `No enrichment matched this ${metadataLabel(metadataKey).toLowerCase()} value.`,
-        ];
-    }
-
-    if (error === "upstream_impaired") {
-        return [
-            `Upstream services were unavailable while resolving this ${metadataLabel(metadataKey).toLowerCase()} value.`,
-        ];
-    }
-
-    if (!enrichment) {
-        return [];
-    }
-
-    if (isLibraryMetadataKey(metadataKey)) {
-        return [
-            `Selected ${metadataLabel(metadataKey).toLowerCase()}: ${rawValue}.`,
-        ];
-    }
-
-    const lines = [
-        `Selected ${metadataLabel(metadataKey).toLowerCase()}: ${rawValue}.`,
-    ];
-    const resolvedValue = resolvedEnrichmentValue(enrichment);
-
-    if (resolvedValue) {
-        lines.push(
-            `Resolved via ${enrichmentTypeLabel(enrichment.type)} ${resolvedValue}.`,
-        );
-    } else {
-        lines.push(`Resolved via ${enrichmentTypeLabel(enrichment.type)}.`);
-    }
-
-    const studyName = asString(enrichment.graph.study?.name);
-
-    if (studyName) {
-        lines.push(`Study context: ${studyName}.`);
-    }
-
-    return lines;
 }
 
 async function writeClipboard(value: string): Promise<boolean> {
@@ -669,26 +726,6 @@ export function SeqmetaBadge({
     loading = false,
 }: SeqmetaBadgeProps) {
     const inlineLabel = primaryLabel(rawValue, enrichment);
-    const detailFields = useMemo(
-        () => buildDetailFields(metadataKey, rawValue, enrichment),
-        [enrichment, metadataKey, rawValue],
-    );
-    const hierarchicalGroups = useMemo(
-        () => buildHierarchicalGroups(metadataKey, enrichment),
-        [enrichment, metadataKey],
-    );
-    const statusLines = useMemo(
-        () =>
-            buildStatusLines(metadataKey, rawValue, enrichment, error, loading),
-        [enrichment, error, loading, metadataKey, rawValue],
-    );
-    const missingLines = useMemo(
-        () =>
-            enrichment?.partial
-                ? (enrichment.missing ?? []).map(humanizeMissingHop)
-                : [],
-        [enrichment],
-    );
     const [dialogOpen, setDialogOpen] = useState(false);
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
     const [expandedLibraries, setExpandedLibraries] = useState<Set<string>>(
@@ -699,6 +736,25 @@ export function SeqmetaBadge({
     >(new Map());
     const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(
         new Set(),
+    );
+    const detailFields = useMemo(
+        () =>
+            dialogOpen
+                ? buildDetailFields(metadataKey, rawValue, enrichment)
+                : [],
+        [dialogOpen, enrichment, metadataKey, rawValue],
+    );
+    const hierarchicalGroups = useMemo(
+        () =>
+            dialogOpen ? buildHierarchicalGroups(metadataKey, enrichment) : [],
+        [dialogOpen, enrichment, metadataKey],
+    );
+    const missingLines = useMemo(
+        () =>
+            dialogOpen && enrichment?.partial
+                ? (enrichment.missing ?? []).map(humanizeMissingHop)
+                : [],
+        [dialogOpen, enrichment],
     );
 
     // Fetch library samples when a library is expanded
@@ -711,12 +767,16 @@ export function SeqmetaBadge({
         }
 
         const libraries = librariesGroup.items as HierarchicalLibrary[];
-        const toLoad = libraries.filter(
-            (lib) =>
-                expandedLibraries.has(lib.libraryType) &&
-                !loadedLibrarySamples.has(lib.libraryType) &&
-                !loadingLibraries.has(lib.libraryType),
-        );
+        const toLoad = libraries.filter((lib) => {
+            const identity = libraryIdentityKey(lib);
+
+            return (
+                expandedLibraries.has(identity) &&
+                lib.samples.length === 0 &&
+                !loadedLibrarySamples.has(identity) &&
+                !loadingLibraries.has(identity)
+            );
+        });
 
         if (toLoad.length === 0) {
             return;
@@ -728,7 +788,7 @@ export function SeqmetaBadge({
             setLoadingLibraries((prev) => {
                 const next = new Set(prev);
                 for (const lib of toLoad) {
-                    next.add(lib.libraryType);
+                    next.add(libraryIdentityKey(lib));
                 }
                 return next;
             });
@@ -737,13 +797,20 @@ export function SeqmetaBadge({
             await Promise.all(
                 toLoad.map(async (lib) => {
                     try {
-                        const samples = await fetchLibrarySamples(
-                            lib.idStudyLims,
-                            lib.libraryType,
-                        );
+                        const filters = librarySampleFilters(lib);
+                        const samples = filters
+                            ? await fetchLibrarySamples(
+                                  lib.idStudyLims,
+                                  lib.libraryType,
+                                  filters,
+                              )
+                            : await fetchLibrarySamples(
+                                  lib.idStudyLims,
+                                  lib.libraryType,
+                              );
                         setLoadedLibrarySamples((prev) => {
                             const next = new Map(prev);
-                            next.set(lib.libraryType, samples ?? []);
+                            next.set(libraryIdentityKey(lib), samples ?? []);
                             return next;
                         });
                     } catch (error) {
@@ -753,7 +820,7 @@ export function SeqmetaBadge({
                         );
                         setLoadedLibrarySamples((prev) => {
                             const next = new Map(prev);
-                            next.set(lib.libraryType, []); // Set empty on error
+                            next.set(libraryIdentityKey(lib), []); // Set empty on error
                             return next;
                         });
                     }
@@ -764,7 +831,7 @@ export function SeqmetaBadge({
             setLoadingLibraries((prev) => {
                 const next = new Set(prev);
                 for (const lib of toLoad) {
-                    next.delete(lib.libraryType);
+                    next.delete(libraryIdentityKey(lib));
                 }
                 return next;
             });
@@ -919,18 +986,18 @@ export function SeqmetaBadge({
                                         {loading ? (
                                             <p className="text-sm text-foreground">
                                                 Looking up{" "}
-                                                {metadataLabel(
+                                                {metadataLabelForSentence(
                                                     metadataKey,
-                                                ).toLowerCase()}
+                                                )}
                                                 .
                                             </p>
                                         ) : null}
                                         {error === "not_found" ? (
                                             <p className="text-sm text-foreground">
                                                 No enrichment matched this{" "}
-                                                {metadataLabel(
+                                                {metadataLabelForSentence(
                                                     metadataKey,
-                                                ).toLowerCase()}{" "}
+                                                )}{" "}
                                                 value.
                                             </p>
                                         ) : null}
@@ -938,9 +1005,9 @@ export function SeqmetaBadge({
                                             <p className="text-sm text-foreground">
                                                 Upstream services were
                                                 unavailable while resolving this{" "}
-                                                {metadataLabel(
+                                                {metadataLabelForSentence(
                                                     metadataKey,
-                                                ).toLowerCase()}{" "}
+                                                )}{" "}
                                                 value.
                                             </p>
                                         ) : null}
@@ -1112,9 +1179,17 @@ export function SeqmetaBadge({
                                                                                 library,
                                                                                 index,
                                                                             ) => {
+                                                                                const libraryIdentity =
+                                                                                    libraryIdentityKey(
+                                                                                        library,
+                                                                                    );
+                                                                                const libraryLabel =
+                                                                                    libraryDisplayLabel(
+                                                                                        library,
+                                                                                    );
                                                                                 const isExpanded =
                                                                                     expandedLibraries.has(
-                                                                                        library.libraryType,
+                                                                                        libraryIdentity,
                                                                                     );
                                                                                 const libraryDetailKey =
                                                                                     directLibraryMetadataKey(
@@ -1123,21 +1198,29 @@ export function SeqmetaBadge({
                                                                                 const libraryCopyKey =
                                                                                     copiedStateKey(
                                                                                         libraryDetailKey,
-                                                                                        library.libraryType,
+                                                                                        libraryIdentity,
                                                                                     );
                                                                                 const isLoading =
                                                                                     loadingLibraries.has(
-                                                                                        library.libraryType,
+                                                                                        libraryIdentity,
                                                                                     );
                                                                                 const loadedSamples =
                                                                                     loadedLibrarySamples.get(
-                                                                                        library.libraryType,
+                                                                                        libraryIdentity,
                                                                                     ) ??
-                                                                                    [];
+                                                                                    library.samples;
+                                                                                const visibleLoadedSamples =
+                                                                                    visibleRelatedSamples(
+                                                                                        loadedSamples,
+                                                                                    );
+                                                                                const loadedSamplesSummary =
+                                                                                    relatedSamplesSummary(
+                                                                                        loadedSamples,
+                                                                                    );
 
                                                                                 return (
                                                                                     <div
-                                                                                        key={`${library.libraryType}-${index}`}
+                                                                                        key={`${libraryIdentity}-${index}`}
                                                                                         className="space-y-2"
                                                                                     >
                                                                                         <article
@@ -1150,9 +1233,17 @@ export function SeqmetaBadge({
                                                                                                 <div className="min-w-0 flex-1">
                                                                                                     <p className="break-all text-sm leading-6 text-foreground">
                                                                                                         {
-                                                                                                            library.libraryType
+                                                                                                            libraryLabel
                                                                                                         }
                                                                                                     </p>
+                                                                                                    {libraryLabel !==
+                                                                                                    library.libraryType ? (
+                                                                                                        <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">
+                                                                                                            {
+                                                                                                                library.libraryType
+                                                                                                            }
+                                                                                                        </p>
+                                                                                                    ) : null}
                                                                                                 </div>
                                                                                                 <div className="flex flex-wrap gap-2">
                                                                                                     <button
@@ -1161,7 +1252,7 @@ export function SeqmetaBadge({
                                                                                                         className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                                                                                         onClick={() => {
                                                                                                             void writeClipboard(
-                                                                                                                library.libraryType,
+                                                                                                                libraryLabel,
                                                                                                             ).then(
                                                                                                                 (
                                                                                                                     copied,
@@ -1218,11 +1309,11 @@ export function SeqmetaBadge({
                                                                                                                 isExpanded
                                                                                                             ) {
                                                                                                                 newExpanded.delete(
-                                                                                                                    library.libraryType,
+                                                                                                                    libraryIdentity,
                                                                                                                 );
                                                                                                             } else {
                                                                                                                 newExpanded.add(
-                                                                                                                    library.libraryType,
+                                                                                                                    libraryIdentity,
                                                                                                                 );
                                                                                                             }
 
@@ -1273,7 +1364,7 @@ export function SeqmetaBadge({
                                                                                         loadedSamples.length >
                                                                                             0 ? (
                                                                                             <div className="ml-4 space-y-2 border-l-2 border-border/40 pl-4">
-                                                                                                {loadedSamples.map(
+                                                                                                {visibleLoadedSamples.map(
                                                                                                     (
                                                                                                         sample,
                                                                                                         index,
@@ -1369,6 +1460,13 @@ export function SeqmetaBadge({
                                                                                                         );
                                                                                                     },
                                                                                                 )}
+                                                                                                {loadedSamplesSummary ? (
+                                                                                                    <p className="px-1 text-xs font-medium text-muted-foreground">
+                                                                                                        {
+                                                                                                            loadedSamplesSummary
+                                                                                                        }
+                                                                                                    </p>
+                                                                                                ) : null}
                                                                                             </div>
                                                                                         ) : null}
                                                                                     </div>
@@ -1490,6 +1588,14 @@ export function SeqmetaBadge({
                                                         ) {
                                                             const samples =
                                                                 group.items as EnrichmentSample[];
+                                                            const visibleSamples =
+                                                                visibleRelatedSamples(
+                                                                    samples,
+                                                                );
+                                                            const samplesSummary =
+                                                                relatedSamplesSummary(
+                                                                    samples,
+                                                                );
 
                                                             return (
                                                                 <div
@@ -1504,7 +1610,7 @@ export function SeqmetaBadge({
                                                                         }
                                                                     </h5>
                                                                     <div className="space-y-3">
-                                                                        {samples.map(
+                                                                        {visibleSamples.map(
                                                                             (
                                                                                 sample,
                                                                             ) => {
@@ -1595,6 +1701,13 @@ export function SeqmetaBadge({
                                                                                 );
                                                                             },
                                                                         )}
+                                                                        {samplesSummary ? (
+                                                                            <p className="px-1 text-xs font-medium text-muted-foreground">
+                                                                                {
+                                                                                    samplesSummary
+                                                                                }
+                                                                            </p>
+                                                                        ) : null}
                                                                     </div>
                                                                 </div>
                                                             );
@@ -1624,71 +1737,91 @@ export function SeqmetaBadge({
                                                                             (
                                                                                 library,
                                                                                 index,
-                                                                            ) => (
-                                                                                <article
-                                                                                    key={`${library.libraryType}-${index}`}
-                                                                                    data-seqmeta-detail-key="library"
-                                                                                    className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                                >
-                                                                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                                        <div className="min-w-0 flex-1">
-                                                                                            <p className="break-all text-sm leading-6 text-foreground">
-                                                                                                {
-                                                                                                    library.libraryType
-                                                                                                }
-                                                                                            </p>
+                                                                            ) => {
+                                                                                const libraryLabel =
+                                                                                    libraryDisplayLabel(
+                                                                                        library,
+                                                                                    );
+                                                                                const libraryCopyKey =
+                                                                                    copiedStateKey(
+                                                                                        directLibraryMetadataKey(
+                                                                                            metadataKey,
+                                                                                        ),
+                                                                                        libraryIdentityKey(
+                                                                                            library,
+                                                                                        ),
+                                                                                    );
+
+                                                                                return (
+                                                                                    <article
+                                                                                        key={`${libraryIdentityKey(library)}-${index}`}
+                                                                                        data-seqmeta-detail-key="library"
+                                                                                        className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+                                                                                    >
+                                                                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                                            <div className="min-w-0 flex-1">
+                                                                                                <p className="break-all text-sm leading-6 text-foreground">
+                                                                                                    {
+                                                                                                        libraryLabel
+                                                                                                    }
+                                                                                                </p>
+                                                                                                {libraryLabel !==
+                                                                                                library.libraryType ? (
+                                                                                                    <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">
+                                                                                                        {
+                                                                                                            library.libraryType
+                                                                                                        }
+                                                                                                    </p>
+                                                                                                ) : null}
+                                                                                            </div>
+                                                                                            <div className="flex flex-wrap gap-2">
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    aria-label={`Copy ${directLibraryMetadataKey(metadataKey)}`}
+                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                    onClick={() => {
+                                                                                                        void writeClipboard(
+                                                                                                            libraryLabel,
+                                                                                                        ).then(
+                                                                                                            (
+                                                                                                                copied,
+                                                                                                            ) => {
+                                                                                                                if (
+                                                                                                                    copied
+                                                                                                                ) {
+                                                                                                                    setCopiedKey(
+                                                                                                                        libraryCopyKey,
+                                                                                                                    );
+                                                                                                                }
+                                                                                                            },
+                                                                                                        );
+                                                                                                    }}
+                                                                                                >
+                                                                                                    <Copy
+                                                                                                        className="size-3.5"
+                                                                                                        aria-hidden="true"
+                                                                                                    />
+                                                                                                    {copiedKey ===
+                                                                                                    libraryCopyKey
+                                                                                                        ? "Copied"
+                                                                                                        : "Copy"}
+                                                                                                </button>
+                                                                                                <Link
+                                                                                                    aria-label="Send library to search filter"
+                                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                                                                    href={`/?library=${library.libraryType}`}
+                                                                                                >
+                                                                                                    <Search
+                                                                                                        className="size-3.5"
+                                                                                                        aria-hidden="true"
+                                                                                                    />
+                                                                                                    Filter
+                                                                                                </Link>
+                                                                                            </div>
                                                                                         </div>
-                                                                                        <div className="flex flex-wrap gap-2">
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                aria-label={`Copy ${directLibraryMetadataKey(metadataKey)}`}
-                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                onClick={() => {
-                                                                                                    void writeClipboard(
-                                                                                                        library.libraryType,
-                                                                                                    ).then(
-                                                                                                        (
-                                                                                                            copied,
-                                                                                                        ) => {
-                                                                                                            if (
-                                                                                                                copied
-                                                                                                            ) {
-                                                                                                                setCopiedKey(
-                                                                                                                    directLibraryMetadataKey(
-                                                                                                                        metadataKey,
-                                                                                                                    ),
-                                                                                                                );
-                                                                                                            }
-                                                                                                        },
-                                                                                                    );
-                                                                                                }}
-                                                                                            >
-                                                                                                <Copy
-                                                                                                    className="size-3.5"
-                                                                                                    aria-hidden="true"
-                                                                                                />
-                                                                                                {copiedKey ===
-                                                                                                directLibraryMetadataKey(
-                                                                                                    metadataKey,
-                                                                                                )
-                                                                                                    ? "Copied"
-                                                                                                    : "Copy"}
-                                                                                            </button>
-                                                                                            <Link
-                                                                                                aria-label="Send library to search filter"
-                                                                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                href={`/?library=${library.libraryType}`}
-                                                                                            >
-                                                                                                <Search
-                                                                                                    className="size-3.5"
-                                                                                                    aria-hidden="true"
-                                                                                                />
-                                                                                                Filter
-                                                                                            </Link>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                </article>
-                                                                            ),
+                                                                                    </article>
+                                                                                );
+                                                                            },
                                                                         )}
                                                                     </div>
                                                                 </div>

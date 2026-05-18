@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS sync_lock (
+	id BIGINT NOT NULL PRIMARY KEY,
+	CHECK(id = 1)
+);

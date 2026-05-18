@@ -29,7 +29,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,8 +37,7 @@ import (
 )
 
 type mlwhSearchExpander interface {
-	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
-	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
+	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
 }
 
 type mlwhSearchResolvedValues struct {
@@ -83,7 +81,7 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 		return cached.samples, cached.runs, cached.lanes, nil
 	}
 
-	taggedIDs, err := r.client.ExpandIdentifier(ctx, kind, trimmed)
+	samples, runs, lanes, err := r.client.ExpandSearchValues(ctx, kind, trimmed)
 	if err != nil {
 		switch {
 		case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier):
@@ -95,52 +93,10 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 		}
 	}
 
-	samples := []string{}
-	runs := []string{}
-	for _, taggedID := range taggedIDs {
-		switch taggedID.Kind {
-		case mlwh.KindSangerSampleName:
-			samples = mergeSearchValues(samples, []string{taggedID.Canonical})
-		case mlwh.KindRunID:
-			runs = mergeSearchValues(runs, []string{taggedID.Canonical})
-		}
-	}
-
-	lanes, err := r.expandLanesForSamples(ctx, samples)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
 	runs = mergeSearchValues(runs, runIDsFromLaneValues(lanes))
 	r.cachePut(cacheKey, samples, runs, lanes)
 
 	return samples, runs, lanes, nil
-}
-
-func (r *MLWHSearchResolver) expandLanesForSamples(ctx context.Context, sampleIDs []string) ([]string, error) {
-	resolved := []string{}
-
-	for _, sampleID := range sampleIDs {
-		lanes, err := r.client.LanesForSample(ctx, sampleID, mlwh.MaxSamplesPerHop, 0)
-		if err != nil {
-			if errors.Is(err, mlwh.ErrNotFound) {
-				continue
-			}
-
-			return nil, fmt.Errorf("%w: expand sample lanes: %w", ErrSeqmetaFailed, err)
-		}
-
-		for _, lane := range lanes {
-			laneID := buildLaneID(strconv.Itoa(lane.IDRun), strconv.Itoa(lane.Position), lane.TagIndex)
-			if laneID == "" {
-				continue
-			}
-
-			resolved = mergeSearchValues(resolved, []string{laneID})
-		}
-	}
-
-	return resolved, nil
 }
 
 func (r *MLWHSearchResolver) cacheGet(key string) (mlwhSearchResolvedValues, bool) {

@@ -26,6 +26,8 @@ import {
     type Study,
 } from "@/lib/contracts";
 import { buildSearchQuery } from "@/lib/search-params";
+import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
+import { primeSeqmetaCacheEntry } from "@/lib/seqmeta-enrichment";
 import { getStudies } from "@/lib/studies-cache";
 
 function buildQueryString(params: Record<string, string[]>): string {
@@ -172,6 +174,69 @@ export async function enrichIdentifier(
     }
 }
 
+export type EnrichmentLookupResult = {
+    enrichment: EnrichmentResult | null;
+    error?: "not_found" | "upstream_impaired";
+    value: string;
+};
+
+export async function enrichIdentifiers(
+    values: string[],
+): Promise<EnrichmentLookupResult[]> {
+    const uniqueValues = Array.from(
+        new Set(values.map((value) => value.trim()).filter(Boolean)),
+    );
+    const cache = new SeqmetaCache();
+    const results: EnrichmentLookupResult[] = [];
+
+    for (const value of uniqueValues) {
+        const cached = cache.get(value);
+        if (cached !== undefined) {
+            if (cached !== null) {
+                continue;
+            }
+
+            results.push({
+                value,
+                enrichment: cached,
+                error: cached === null ? "not_found" : undefined,
+            });
+            continue;
+        }
+
+        try {
+            const enrichment = await enrichIdentifier(value);
+
+            if (enrichment === null) {
+                cache.set(value, null);
+                results.push({ value, enrichment: null, error: "not_found" });
+                continue;
+            }
+
+            cache.set(value, enrichment);
+            primeSeqmetaCacheEntry(cache, enrichment);
+            results.push({
+                value,
+                enrichment: cache.get(value) ?? enrichment,
+            });
+        } catch (error) {
+            if (error instanceof BackendRequestError && error.status === 404) {
+                cache.set(value, null);
+                results.push({ value, enrichment: null, error: "not_found" });
+                continue;
+            }
+
+            results.push({
+                value,
+                enrichment: null,
+                error: "upstream_impaired",
+            });
+        }
+    }
+
+    return results;
+}
+
 export async function fetchStudySamples(studyId: string): Promise<string[]> {
     const samples = await seqmetaJson(
         `/study/${encodeURIComponent(studyId)}/samples`,
@@ -184,8 +249,15 @@ export async function fetchStudySamples(studyId: string): Promise<string[]> {
 export async function fetchStudyLibrarySamples(
     studyId: string,
     libraryType: string,
+    filters: { idLibraryLims?: string; libraryId?: string } = {},
 ) {
     const params = new URLSearchParams({ library_type: libraryType });
+    if (filters.libraryId) {
+        params.set("library_id", filters.libraryId);
+    }
+    if (filters.idLibraryLims) {
+        params.set("id_library_lims", filters.idLibraryLims);
+    }
 
     return seqmetaJson(
         `/study/${encodeURIComponent(studyId)}/samples?${params.toString()}`,

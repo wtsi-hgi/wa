@@ -51,6 +51,8 @@ const combinedSampleMetaKeys = new Set([
 const combinedLibraryMetaKeys = new Set([
     "library",
     "seqmeta_library",
+    "seqmeta_libraryid",
+    "seqmeta_library_lims",
     "seqmeta_librarytype",
 ]);
 
@@ -59,6 +61,12 @@ const coreFieldOptions: FieldOption[] = [
     { key: "operator", label: "Operator", placeholder: "operator-1" },
     { key: "study", label: "Study", placeholder: "6568 or ERP012345" },
     { key: "library", label: "Library", placeholder: "RNA or WGS" },
+    { key: "seqmeta_libraryid", label: "Library ID", placeholder: "71046409" },
+    {
+        key: "seqmeta_library_lims",
+        label: "Library LIMS ID",
+        placeholder: "SQPP-47463-G:B1",
+    },
     { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
     {
         key: "pipeline_name",

@@ -43,6 +43,27 @@ const fetchResultMock = vi.fn();
 const fetchFilesMock = vi.fn();
 const validateIdentifierMock = vi.fn();
 const enrichIdentifierMock = vi.fn();
+const enrichIdentifiersMock = vi.fn(async (values: string[]) =>
+    Promise.all(
+        values.map(async (value) => {
+            try {
+                const enrichment = await enrichIdentifierMock(value);
+
+                return {
+                    value,
+                    enrichment: enrichment ?? null,
+                    error: enrichment == null ? "not_found" : undefined,
+                };
+            } catch {
+                return {
+                    value,
+                    enrichment: null,
+                    error: "upstream_impaired" as const,
+                };
+            }
+        }),
+    ),
+);
 const fetchLibrarySamplesMock = vi.fn();
 const cookiesMock = vi.fn();
 const originalDocumentCookie = Object.getOwnPropertyDescriptor(
@@ -61,6 +82,7 @@ vi.mock("@/app/(results)/actions", () => ({
     fetchFiles: fetchFilesMock,
     validateIdentifier: validateIdentifierMock,
     enrichIdentifier: enrichIdentifierMock,
+    enrichIdentifiers: enrichIdentifiersMock,
 }));
 
 vi.mock("@/lib/seqmeta-enrichment", async (importOriginal) => {
@@ -161,16 +183,11 @@ function buildStudy(overrides: Partial<EnrichmentStudy> = {}): EnrichmentStudy {
         name: "RNA Seq",
         faculty_sponsor: "Dr Example",
         state: "active",
-        abstract: "Study abstract",
-        abbreviation: "RNA",
         accession_number: "ERP123456",
-        description: "Study description",
         data_release_strategy: "managed",
         study_title: "RNA Study",
         data_access_group: "group-a",
-        hmdmc_number: "HMDMC-1",
         programme: "Transcriptomics",
-        created: "2026-04-20T09:00:00Z",
         reference_genome: "GRCh38",
         ethically_approved: true,
         study_type: "Whole Genome Sequencing",
@@ -330,9 +347,26 @@ describe("M1 result detail seqmeta enrichment", () => {
     it("does not render project rows even when legacy project fields are present", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
         const legacyEnrichment = enrichmentResultSchema.parse({
-            ...buildEnrichment(),
+            identifier: "SANG001",
+            type: "sanger_sample_id",
             graph: {
-                ...buildEnrichment().graph,
+                study: buildStudy(),
+                sample: {
+                    id_study_lims: "6568",
+                    id_sample_lims: "LIMS001",
+                    sanger_id: "SANG001",
+                    name: "Sample 1",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "RNA",
+                    accession_number: "ERS123456",
+                },
+                libraries: [
+                    {
+                        library_type: "RNA",
+                        id_study_lims: "6568",
+                    },
+                ],
                 project: {
                     id: 101,
                     name: "Project RNA",
@@ -344,6 +378,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                     },
                 ],
             },
+            partial: false,
         });
 
         render(
@@ -442,6 +477,59 @@ describe("M1 result detail seqmeta enrichment", () => {
         ).toBeGreaterThan(0);
 
         expect(screen.queryByText("Status")).toBeNull();
+    });
+
+    it("opens library details quickly without rendering every related sample row", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const samples = Array.from({ length: 1000 }, (_, index) =>
+            buildSample({
+                id_sample_lims: `LIMS${index}`,
+                sanger_id: `SANG${index}`,
+                sample_name: `Sample ${index}`,
+            }),
+        );
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_librarytype",
+                rawValue: "Custom",
+                enrichment: buildEnrichment({
+                    identifier: "Custom",
+                    type: "library_type",
+                    graph: {
+                        study: undefined,
+                        studies: [buildStudy()],
+                        samples,
+                    },
+                    partial: true,
+                    missing: [
+                        {
+                            hop: "samples",
+                            reason: "samples_truncated",
+                            status: 200,
+                        },
+                    ],
+                }),
+            }),
+        );
+
+        const startedAt = performance.now();
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const elapsedMs = performance.now() - startedAt;
+        const sampleRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="sample"]');
+
+        expect(elapsedMs).toBeLessThan(1000);
+        expect(sampleRows.length).toBeLessThanOrEqual(50);
+        expect(screen.getByText("Sample 0 / SANG0")).toBeTruthy();
+        expect(screen.getByText("Showing 50 of 1000 samples")).toBeTruthy();
     });
 
     it("renders a vertically scrollable body for long seqmeta detail content", async () => {
@@ -643,7 +731,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
-    it("does not start seqmeta enrichments during server detail rendering", async () => {
+    it("leaves seqmeta enrichment to the client during server detail rendering", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
                 metadata: {
@@ -666,7 +754,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(markup).toContain("seqmeta_library");
         expect(markup).toContain("RNA");
     });
@@ -711,7 +799,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         expect(fetchResultMock).toHaveBeenCalledWith("result-42");
         expect(fetchFilesMock).toHaveBeenCalledWith("result-42");
-        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(markup).not.toContain("Explorer");
         expect(markup).not.toContain("Preview focus");
         expect(markup).not.toContain("data-selected-file-path");
@@ -785,6 +873,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
             "SANG001",
         );
+        expect(screen.queryByLabelText("loading enrichment")).toBeNull();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
 
         firstRender.unmount();
@@ -806,6 +896,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
             "SANG001",
         );
+        expect(screen.queryByLabelText("loading enrichment")).toBeNull();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(enrichIdentifierMock).not.toHaveBeenCalled();
     });
 
@@ -900,7 +992,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).toHaveBeenCalledTimes(0);
+        expect(enrichIdentifiersMock).toHaveBeenCalledTimes(0);
         expect(firstMarkup).toContain("SANG001");
         expect(firstMarkup).not.toContain("sanger_sample_id: SANG001");
 
@@ -914,7 +1006,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).toHaveBeenCalledTimes(0);
+        expect(enrichIdentifiersMock).toHaveBeenCalledTimes(0);
         expect(secondMarkup).toContain("SANG001");
         expect(secondMarkup).not.toContain("sanger_sample_id: SANG001");
     });
@@ -953,7 +1045,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(readSeqmetaCookieFromDocument()).toBe(document.cookie);
     });
 
-    it("keeps server detail rendering neutral when seqmeta validation would fail client-side", async () => {
+    it("keeps server detail rendering neutral when seqmeta enrichment would fail client-side", async () => {
         fetchResultMock.mockResolvedValue(
             buildResultSet({
                 metadata: {
@@ -978,7 +1070,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(enrichIdentifierMock).not.toHaveBeenCalled();
+        expect(enrichIdentifiersMock).not.toHaveBeenCalled();
         expect(markup).not.toContain("enrichment backend impaired");
         expect(markup).toContain("SANG001");
     });
@@ -1311,16 +1403,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "RNA Seq",
                             faculty_sponsor: "Dr Example",
                             state: "active",
-                            abstract: "",
-                            abbreviation: "",
                             accession_number: "ERP123456",
-                            description: "",
                             data_release_strategy: "",
                             study_title: "",
                             data_access_group: "",
-                            hmdmc_number: "",
                             programme: "",
-                            created: "2026-04-20T09:00:00Z",
                             reference_genome: "",
                             ethically_approved: false,
                             study_type: "",
@@ -1339,16 +1426,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "RNA Seq",
                                 faculty_sponsor: "Dr Example",
                                 state: "active",
-                                abstract: "",
-                                abbreviation: "",
                                 accession_number: "ERP123456",
-                                description: "",
                                 data_release_strategy: "",
                                 study_title: "",
                                 data_access_group: "",
-                                hmdmc_number: "",
                                 programme: "",
-                                created: "2026-04-20T09:00:00Z",
                                 reference_genome: "",
                                 ethically_approved: false,
                                 study_type: "",
@@ -1512,16 +1594,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "RNA Seq",
                             faculty_sponsor: "Dr Example",
                             state: "active",
-                            abstract: "",
-                            abbreviation: "",
                             accession_number: "ERP123456",
-                            description: "",
                             data_release_strategy: "",
                             study_title: "",
                             data_access_group: "",
-                            hmdmc_number: "",
                             programme: "",
-                            created: "2026-04-20T09:00:00Z",
                             reference_genome: "",
                             ethically_approved: false,
                             study_type: "",
@@ -1540,16 +1617,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "RNA Seq",
                                 faculty_sponsor: "Dr Example",
                                 state: "active",
-                                abstract: "",
-                                abbreviation: "",
                                 accession_number: "ERP123456",
-                                description: "",
                                 data_release_strategy: "",
                                 study_title: "",
                                 data_access_group: "",
-                                hmdmc_number: "",
                                 programme: "",
-                                created: "2026-04-20T09:00:00Z",
                                 reference_genome: "",
                                 ethically_approved: false,
                                 study_type: "",
@@ -1614,6 +1686,165 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(sampleButtons.length).toBeGreaterThan(2);
     });
 
+    it("expands study libraries by specific library identifiers when a study has repeated library types", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const firstLibrarySample = buildSample({
+            id_sample_lims: "SMP001",
+            sanger_id: "S1",
+            sample_name: "Sample 1",
+        });
+        const secondLibrarySample = buildSample({
+            id_sample_lims: "SMP002",
+            sanger_id: "S2",
+            sample_name: "Sample 2",
+        });
+
+        fetchLibrarySamplesMock.mockImplementation(
+            async (
+                _studyId: string,
+                _libraryType: string,
+                filters?: { idLibraryLims?: string; libraryId?: string },
+            ) =>
+                filters?.idLibraryLims === "DN111:A1"
+                    ? [firstLibrarySample]
+                    : [secondLibrarySample],
+        );
+
+        const libraryDetails = [
+            {
+                library_type: "RNA PolyA",
+                id_study_lims: "6568",
+                library_id: "1001",
+                id_library_lims: "DN111:A1",
+                samples: [],
+            },
+            {
+                library_type: "RNA PolyA",
+                id_study_lims: "6568",
+                library_id: "1002",
+                id_library_lims: "DN222:B1",
+                samples: [],
+            },
+        ] as unknown as LibraryDetail[];
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: buildStudy(),
+                        study_detail: {
+                            study: buildStudy(),
+                            library_details: libraryDetails,
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.getByText("DN111:A1")).toBeTruthy();
+        expect(screen.getByText("DN222:B1")).toBeTruthy();
+
+        const expandButtons = screen.getAllByLabelText("Show samples");
+        fireEvent.click(expandButtons[0]!);
+
+        await waitFor(() => {
+            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+        });
+
+        expect(screen.queryByText("Sample 2 / S2")).toBeNull();
+        expect(fetchLibrarySamplesMock).toHaveBeenCalledWith(
+            "6568",
+            "RNA PolyA",
+            {
+                idLibraryLims: "DN111:A1",
+                libraryId: "1001",
+            },
+        );
+    });
+
+    it("shows run-id related library identifiers with the run samples already in the details payload", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const runSamples = [
+            buildSample({
+                id_study_lims: "7607",
+                id_sample_lims: "SMP001",
+                sanger_id: "S1",
+                sample_name: "Run Sample 1",
+                library_type: "Custom",
+            }),
+            buildSample({
+                id_study_lims: "7607",
+                id_sample_lims: "SMP002",
+                sanger_id: "S2",
+                sample_name: "Run Sample 2",
+                library_type: "Custom",
+            }),
+        ];
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_runid",
+                rawValue: "48522",
+                enrichment: buildEnrichment({
+                    identifier: "48522",
+                    type: "run_id",
+                    graph: {
+                        studies: [buildStudy({ id_study_lims: "7607" })],
+                        samples: runSamples,
+                        libraries: [
+                            {
+                                library_type: "Custom",
+                                id_study_lims: "7607",
+                                library_id: "71046409",
+                                id_library_lims: "SQPP-47463-G:B1",
+                            },
+                        ],
+                        study_details: [
+                            {
+                                study: buildStudy({ id_study_lims: "7607" }),
+                                library_details: [
+                                    {
+                                        library_type: "Custom",
+                                        id_study_lims: "7607",
+                                        library_id: "71046409",
+                                        id_library_lims: "SQPP-47463-G:B1",
+                                        samples: runSamples,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.getByText("SQPP-47463-G:B1")).toBeTruthy();
+        expect(screen.getByText("Custom")).toBeTruthy();
+
+        fireEvent.click(screen.getByLabelText("Show samples"));
+
+        expect(screen.getByText("Run Sample 1 / S1")).toBeTruthy();
+        expect(screen.getByText("Run Sample 2 / S2")).toBeTruthy();
+        expect(screen.getByText("2 samples")).toBeTruthy();
+        expect(fetchLibrarySamplesMock).not.toHaveBeenCalled();
+    });
+
     it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
@@ -1671,16 +1902,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "RNA Seq",
                             faculty_sponsor: "Dr Example",
                             state: "active",
-                            abstract: "",
-                            abbreviation: "",
                             accession_number: "ERP123456",
-                            description: "",
                             data_release_strategy: "",
                             study_title: "",
                             data_access_group: "",
-                            hmdmc_number: "",
                             programme: "",
-                            created: "2026-04-20T09:00:00Z",
                             reference_genome: "",
                             ethically_approved: false,
                             study_type: "",
@@ -1699,16 +1925,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "RNA Seq",
                                 faculty_sponsor: "Dr Example",
                                 state: "active",
-                                abstract: "",
-                                abbreviation: "",
                                 accession_number: "ERP123456",
-                                description: "",
                                 data_release_strategy: "",
                                 study_title: "",
                                 data_access_group: "",
-                                hmdmc_number: "",
                                 programme: "",
-                                created: "2026-04-20T09:00:00Z",
                                 reference_genome: "",
                                 ethically_approved: false,
                                 study_type: "",
@@ -1793,16 +2014,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "RNA Seq",
                             faculty_sponsor: "Dr Example",
                             state: "active",
-                            abstract: "",
-                            abbreviation: "",
                             accession_number: "ERP123456",
-                            description: "",
                             data_release_strategy: "",
                             study_title: "",
                             data_access_group: "",
-                            hmdmc_number: "",
                             programme: "",
-                            created: "2026-04-20T09:00:00Z",
                             reference_genome: "",
                             ethically_approved: false,
                             study_type: "",
@@ -1870,16 +2086,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "RNA Seq",
                                 faculty_sponsor: "Dr Example",
                                 state: "active",
-                                abstract: "",
-                                abbreviation: "",
                                 accession_number: "ERP123456",
-                                description: "",
                                 data_release_strategy: "",
                                 study_title: "",
                                 data_access_group: "",
-                                hmdmc_number: "",
                                 programme: "",
-                                created: "2026-04-20T09:00:00Z",
                                 reference_genome: "",
                                 ethically_approved: false,
                                 study_type: "",
@@ -1964,16 +2175,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
                             faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
                             state: "active",
-                            abstract: "Study abstract",
-                            abbreviation: "WTSI_wEMB",
                             accession_number: "EGAS00001005445",
-                            description: "Detailed single cell atlas",
                             data_release_strategy: "managed",
                             study_title: "HCA Embryo",
                             data_access_group: "team205 cellgeni team283",
-                            hmdmc_number: "19/0127",
                             programme: "Cellular Genomics",
-                            created: "2021-07-05T10:08:11Z",
                             reference_genome: "GRCh38_15_plus_hs38d1",
                             ethically_approved: true,
                             study_type: "Transcriptome Analysis",
@@ -2072,16 +2278,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
                             faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
                             state: "active",
-                            abstract: "Study abstract",
-                            abbreviation: "WTSI_wEMB",
                             accession_number: "EGAS00001005445",
-                            description: "Detailed single cell atlas",
                             data_release_strategy: "managed",
                             study_title: "HCA Embryo",
                             data_access_group: "team205 cellgeni team283",
-                            hmdmc_number: "19/0127",
                             programme: "Cellular Genomics",
-                            created: "2021-07-05T10:08:11Z",
                             reference_genome: "GRCh38_15_plus_hs38d1",
                             ethically_approved: true,
                             study_type: "Transcriptome Analysis",
@@ -2181,16 +2382,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "HCA Embryo",
                             faculty_sponsor: "Omer",
                             state: "active",
-                            abstract: "Study abstract",
-                            abbreviation: "WTSI_wEMB",
                             accession_number: "EGAS00001005445",
-                            description: "Detailed single cell atlas",
                             data_release_strategy: "managed",
                             study_title: "HCA Embryo",
                             data_access_group: "team205",
-                            hmdmc_number: "19/0127",
                             programme: "Cellular Genomics",
-                            created: "2021-07-05T10:08:11Z",
                             reference_genome: "GRCh38_15_plus_hs38d1",
                             ethically_approved: true,
                             study_type: "Transcriptome Analysis",
@@ -2326,16 +2522,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
                             faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
                             state: "active",
-                            abstract: "Study abstract",
-                            abbreviation: "WTSI_wEMB",
                             accession_number: "EGAS00001005445",
-                            description: "Detailed single cell atlas",
                             data_release_strategy: "managed",
                             study_title: "HCA Embryo",
                             data_access_group: "team205 cellgeni team283",
-                            hmdmc_number: "19/0127",
                             programme: "Cellular Genomics",
-                            created: "2021-07-05T10:08:11Z",
                             reference_genome: "GRCh38_15_plus_hs38d1",
                             ethically_approved: true,
                             study_type: "Transcriptome Analysis",
@@ -2813,17 +3004,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "Pilot study of dissociation methods for human gut tissues",
                                 faculty_sponsor: "Dr Smith",
                                 state: "active",
-                                abstract: "Comparing dissociation methods",
-                                abbreviation: "GutDiss",
                                 accession_number: "ERP999999",
-                                description:
-                                    "Study to compare dissociation techniques",
                                 data_release_strategy: "managed",
                                 study_title: "Gut Dissociation Pilot",
                                 data_access_group: "gut-team",
-                                hmdmc_number: "HMDMC-999",
                                 programme: "Tissue Methods",
-                                created: "2026-01-15T10:00:00Z",
                                 reference_genome: "GRCh38",
                                 ethically_approved: true,
                                 study_type: "Single Cell RNA Sequencing",
@@ -2938,16 +3123,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "RNA Seq",
                                 faculty_sponsor: "Dr Example",
                                 state: "active",
-                                abstract: "",
-                                abbreviation: "",
                                 accession_number: "ERP123456",
-                                description: "",
                                 data_release_strategy: "",
                                 study_title: "",
                                 data_access_group: "",
-                                hmdmc_number: "",
                                 programme: "",
-                                created: "2026-04-20T09:00:00Z",
                                 reference_genome: "",
                                 ethically_approved: false,
                                 study_type: "",
@@ -2966,16 +3146,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                     name: "RNA Seq",
                                     faculty_sponsor: "Dr Example",
                                     state: "active",
-                                    abstract: "",
-                                    abbreviation: "",
                                     accession_number: "ERP123456",
-                                    description: "",
                                     data_release_strategy: "",
                                     study_title: "",
                                     data_access_group: "",
-                                    hmdmc_number: "",
                                     programme: "",
-                                    created: "2026-04-20T09:00:00Z",
                                     reference_genome: "",
                                     ethically_approved: false,
                                     study_type: "",
@@ -3161,17 +3336,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                     name: "Pilot study of dissociation methods for human gut tissues",
                                     faculty_sponsor: "Dr Smith",
                                     state: "active",
-                                    abstract: "Comparing dissociation methods",
-                                    abbreviation: "GutDiss",
                                     accession_number: "ERP999999",
-                                    description:
-                                        "Study to compare dissociation techniques",
                                     data_release_strategy: "managed",
                                     study_title: "Gut Dissociation Pilot",
                                     data_access_group: "gut-team",
-                                    hmdmc_number: "HMDMC-999",
                                     programme: "Tissue Methods",
-                                    created: "2026-01-15T10:00:00Z",
                                     reference_genome: "GRCh38",
                                     ethically_approved: true,
                                     study_type: "Single Cell RNA Sequencing",
@@ -3259,16 +3428,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "Test Study",
                                 faculty_sponsor: "Dr Test",
                                 state: "active",
-                                abstract: "Test abstract",
-                                abbreviation: "TST",
                                 accession_number: "ERP000001",
-                                description: "Test study description",
                                 data_release_strategy: "managed",
                                 study_title: "Test Study",
                                 data_access_group: "test-team",
-                                hmdmc_number: "HMDMC-001",
                                 programme: "Test Programme",
-                                created: "2026-01-15T10:00:00Z",
                                 reference_genome: "GRCh38",
                                 ethically_approved: true,
                                 study_type: "Single Cell RNA Sequencing",
@@ -3335,16 +3499,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "Test Sample Study",
                             faculty_sponsor: "Dr Sample",
                             state: "active",
-                            abstract: "Test sample abstract",
-                            abbreviation: "TSS",
                             accession_number: "EGAS00001000001",
-                            description: "Test sample study",
                             data_release_strategy: "managed",
                             study_title: "Test Sample Study",
                             data_access_group: "test-group",
-                            hmdmc_number: "19/9999",
                             programme: "Test Programme",
-                            created: "2026-01-01T10:00:00Z",
                             reference_genome: "GRCh38",
                             ethically_approved: true,
                             study_type: "Transcriptome Analysis",
@@ -3458,16 +3617,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "RNA Seq",
                             faculty_sponsor: "Dr Example",
                             state: "active",
-                            abstract: "",
-                            abbreviation: "",
                             accession_number: "ERP123456",
-                            description: "",
                             data_release_strategy: "",
                             study_title: "",
                             data_access_group: "",
-                            hmdmc_number: "",
                             programme: "",
-                            created: "2026-04-20T09:00:00Z",
                             reference_genome: "",
                             ethically_approved: false,
                             study_type: "",
@@ -3519,16 +3673,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "RNA Seq",
                                 faculty_sponsor: "Dr Example",
                                 state: "active",
-                                abstract: "",
-                                abbreviation: "",
                                 accession_number: "ERP123456",
-                                description: "",
                                 data_release_strategy: "",
                                 study_title: "",
                                 data_access_group: "",
-                                hmdmc_number: "",
                                 programme: "",
-                                created: "2026-04-20T09:00:00Z",
                                 reference_genome: "",
                                 ethically_approved: false,
                                 study_type: "",
@@ -3644,16 +3793,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "RNA Seq",
                             faculty_sponsor: "Dr Example",
                             state: "active",
-                            abstract: "",
-                            abbreviation: "",
                             accession_number: "ERP123456",
-                            description: "",
                             data_release_strategy: "",
                             study_title: "",
                             data_access_group: "",
-                            hmdmc_number: "",
                             programme: "",
-                            created: "2026-04-20T09:00:00Z",
                             reference_genome: "",
                             ethically_approved: false,
                             study_type: "",
@@ -3689,16 +3833,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "RNA Seq",
                                 faculty_sponsor: "Dr Example",
                                 state: "active",
-                                abstract: "",
-                                abbreviation: "",
                                 accession_number: "ERP123456",
-                                description: "",
                                 data_release_strategy: "",
                                 study_title: "",
                                 data_access_group: "",
-                                hmdmc_number: "",
                                 programme: "",
-                                created: "2026-04-20T09:00:00Z",
                                 reference_genome: "",
                                 ethically_approved: false,
                                 study_type: "",
@@ -3764,16 +3903,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "RNA Seq",
                             faculty_sponsor: "Dr Example",
                             state: "active",
-                            abstract: "",
-                            abbreviation: "",
                             accession_number: "ERP123456",
-                            description: "",
                             data_release_strategy: "",
                             study_title: "",
                             data_access_group: "",
-                            hmdmc_number: "",
                             programme: "",
-                            created: "2026-04-20T09:00:00Z",
                             reference_genome: "",
                             ethically_approved: false,
                             study_type: "",
@@ -3872,16 +4006,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                             name: "RNA Seq",
                             faculty_sponsor: "Dr Example",
                             state: "active",
-                            abstract: "",
-                            abbreviation: "",
                             accession_number: "ERP123456",
-                            description: "",
                             data_release_strategy: "",
                             study_title: "",
                             data_access_group: "",
-                            hmdmc_number: "",
                             programme: "",
-                            created: "2026-04-20T09:00:00Z",
                             reference_genome: "",
                             ethically_approved: false,
                             study_type: "",
@@ -3900,16 +4029,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                                 name: "RNA Seq",
                                 faculty_sponsor: "Dr Example",
                                 state: "active",
-                                abstract: "",
-                                abbreviation: "",
                                 accession_number: "ERP123456",
-                                description: "",
                                 data_release_strategy: "",
                                 study_title: "",
                                 data_access_group: "",
-                                hmdmc_number: "",
                                 programme: "",
-                                created: "2026-04-20T09:00:00Z",
                                 reference_genome: "",
                                 ethically_approved: false,
                                 study_type: "",

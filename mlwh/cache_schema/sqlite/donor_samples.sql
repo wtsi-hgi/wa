@@ -1,8 +1,5 @@
 CREATE TABLE IF NOT EXISTS donor_samples (
-	donor_id      TEXT    NOT NULL,
+	donor_id      TEXT    NOT NULL COLLATE NOCASE,
 	id_sample_tmp INTEGER NOT NULL,
-	id_study_lims TEXT    NOT NULL
+	UNIQUE(donor_id, id_sample_tmp)
 );
-
-CREATE INDEX IF NOT EXISTS donor_samples_donor_id_idx
-	ON donor_samples(donor_id);

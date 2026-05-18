@@ -14,7 +14,9 @@ const fetchFilesMock = vi.fn();
 const fetchResultMock = vi.fn();
 const validateIdentifierMock = vi.fn();
 const enrichIdentifierMock = vi.fn();
+const enrichIdentifiersMock = vi.fn();
 const enrichSeqmetaMetadataMock = vi.fn();
+const enrichSeqmetaMetadataBatchMock = vi.fn();
 const getRequestSeqmetaCacheMock = vi.fn();
 const buildCachedEnrichmentStateMock = vi.fn();
 const collectSeqmetaValuesMock = vi.fn();
@@ -38,6 +40,7 @@ vi.mock("@/app/(results)/actions", () => ({
     fetchFiles: fetchFilesMock,
     fetchResult: fetchResultMock,
     enrichIdentifier: enrichIdentifierMock,
+    enrichIdentifiers: enrichIdentifiersMock,
     validateIdentifier: validateIdentifierMock,
 }));
 
@@ -45,6 +48,7 @@ vi.mock("@/lib/seqmeta-enrichment", () => ({
     buildCachedEnrichmentState: buildCachedEnrichmentStateMock,
     collectSeqmetaValues: collectSeqmetaValuesMock,
     enrichSeqmetaMetadata: enrichSeqmetaMetadataMock,
+    enrichSeqmetaMetadataBatch: enrichSeqmetaMetadataBatchMock,
     hasUsableSeqmetaCacheEntry: hasUsableSeqmetaCacheEntryMock,
     mergeSeqmetaEnrichmentState: mergeSeqmetaEnrichmentStateMock,
     primeSeqmetaCache: primeSeqmetaCacheMock,
@@ -108,6 +112,7 @@ describe("O1 result detail hydration", () => {
 
     afterEach(() => {
         document.body.innerHTML = "";
+        vi.clearAllMocks();
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
     });
@@ -191,7 +196,7 @@ describe("O1 result detail hydration", () => {
         fetchFilesMock.mockResolvedValue(files);
         fetchResultMock.mockResolvedValue(result);
         validateIdentifierMock.mockResolvedValue(true);
-        enrichSeqmetaMetadataMock.mockResolvedValue({
+        enrichSeqmetaMetadataBatchMock.mockResolvedValue({
             enrichments: {},
             errors: {},
         });
@@ -275,7 +280,10 @@ describe("O1 result detail hydration", () => {
 
         fetchFilesMock.mockResolvedValue(files);
         fetchResultMock.mockResolvedValue(result);
-        enrichSeqmetaMetadataMock.mockReturnValue(pendingEnrichment.promise);
+        collectSeqmetaValuesMock.mockReturnValue(["SANG001"]);
+        enrichSeqmetaMetadataBatchMock.mockReturnValue(
+            pendingEnrichment.promise,
+        );
 
         const pageModule =
             await import("@/app/(results)/results/[id]/page-content");
@@ -283,16 +291,15 @@ describe("O1 result detail hydration", () => {
         const pagePromise = Page({
             id: "result-1",
         });
-
         const renderState = await Promise.race([
             pagePromise.then(() => "resolved" as const),
-            new Promise<"timeout">((resolve) => {
-                setTimeout(() => resolve("timeout"), 25);
-            }),
+            new Promise<"timeout">((resolve) =>
+                setTimeout(() => resolve("timeout"), 100),
+            ),
         ]);
 
         expect(renderState).toBe("resolved");
-        expect(enrichSeqmetaMetadataMock).not.toHaveBeenCalled();
+        expect(enrichSeqmetaMetadataBatchMock).not.toHaveBeenCalled();
 
         pendingEnrichment.resolve({ enrichments: {}, errors: {} });
         await pagePromise;

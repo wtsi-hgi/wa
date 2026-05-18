@@ -62,6 +62,9 @@ const MaxLibrarySamples = mlwh.MaxSamplesPerHop
 // lower than MaxLibrarySamples to account for library types spanning many studies.
 const MaxLibraryTypeSamples = 200
 
+// IdentifierType classifies a sequencing identifier.
+type IdentifierType = mlwh.IdentifierKind
+
 const (
 	IdentifierStudyID IdentifierType = IdentifierStudyLimsID
 
@@ -78,6 +81,8 @@ const (
 	IdentifierDonorID          IdentifierType = "donor_id"
 	IdentifierRunID            IdentifierType = "run_id"
 	IdentifierLibraryType      IdentifierType = "library_type"
+	IdentifierLibraryID        IdentifierType = "library_id"
+	IdentifierLibraryLimsID    IdentifierType = "id_library_lims"
 )
 
 // Store persists seqmeta watermark state in SQLite.
@@ -99,6 +104,7 @@ type enrichCacheEntry struct {
 	Body       []byte
 	FetchedAt  time.Time
 	TTL        time.Duration
+	Version    int
 	Negative   bool
 	Partial    bool
 }
@@ -110,9 +116,6 @@ type DiffResult[T any] struct {
 	Removed  []string `json:"removed"`
 }
 
-// IdentifierType classifies a sequencing identifier.
-type IdentifierType = mlwh.IdentifierKind
-
 // IdentifierResult is returned by Validate.
 type IdentifierResult struct {
 	Identifier string         `json:"identifier"`
@@ -122,8 +125,10 @@ type IdentifierResult struct {
 
 // Library is a (library_type, id_study_lims) tuple scoped to a study.
 type Library struct {
-	LibraryType string `json:"library_type"`
-	IDStudyLims string `json:"id_study_lims"`
+	LibraryType   string `json:"library_type"`
+	IDStudyLims   string `json:"id_study_lims"`
+	LibraryID     string `json:"library_id,omitempty"`
+	IDLibraryLims string `json:"id_library_lims,omitempty"`
 }
 
 // EnrichmentGraph is the flat graph envelope returned under "graph".

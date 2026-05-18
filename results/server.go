@@ -49,11 +49,15 @@ var combinedStudyMetaKeys = []string{
 	"seqmeta_study_accession",
 }
 
-var combinedLibraryMetaKeys = []string{
+var libraryTypeMetaKeys = []string{
 	"library",
 	"seqmeta_library",
 	"seqmeta_librarytype",
 }
+
+var libraryIDMetaKeys = []string{"seqmeta_libraryid"}
+
+var libraryLimsMetaKeys = []string{"seqmeta_library_lims"}
 
 var combinedRunMetaKeys = []string{
 	"run",
@@ -704,16 +708,20 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	params := multiSearchParamsFromRequest(r)
 	studyValues := combinedStudySearchValues(r)
-	libraryValues := combinedSearchValues(r, "library")
+	libraryTypeValues := combinedSearchValues(r, "library")
+	libraryIDValues := []string{}
+	libraryLimsValues := []string{}
 	runValues := mergeSearchValues(combinedSearchValues(r, "run"), combinedSearchValues(r, "run_id"))
 	sampleValues := combinedSearchValues(r, "sample")
 	laneValues := combinedSearchValues(r, "seqmeta_lane")
 	directSampleValues := append([]string{}, sampleValues...)
 	directRunValues := append([]string{}, runValues...)
 
-	libraryValues = mergeSearchValues(libraryValues, params.Meta["library"])
-	libraryValues = mergeSearchValues(libraryValues, params.Meta["seqmeta_library"])
-	libraryValues = mergeSearchValues(libraryValues, params.Meta["seqmeta_librarytype"])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["library"])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["seqmeta_library"])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["seqmeta_librarytype"])
+	libraryIDValues = mergeSearchValues(libraryIDValues, params.Meta["seqmeta_libraryid"])
+	libraryLimsValues = mergeSearchValues(libraryLimsValues, params.Meta["seqmeta_library_lims"])
 	runValues = mergeSearchValues(runValues, params.Meta["seqmeta_runid"])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["seqmeta_sampleid"])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["seqmeta_sample_lims"])
@@ -729,6 +737,8 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 	delete(params.Meta, "seqmeta_study_accession")
 	delete(params.Meta, "library")
 	delete(params.Meta, "seqmeta_library")
+	delete(params.Meta, "seqmeta_libraryid")
+	delete(params.Meta, "seqmeta_library_lims")
 	delete(params.Meta, "seqmeta_librarytype")
 	delete(params.Meta, "seqmeta_runid")
 	delete(params.Meta, "seqmeta_lane")
@@ -741,6 +751,7 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 	delete(params.Meta, "sample")
 
 	legacyStudyIDUsed := len(combinedSearchValues(r, "study_id")) > 0
+	hasLibraryValues := len(libraryTypeValues) > 0 || len(libraryIDValues) > 0 || len(libraryLimsValues) > 0
 
 	resolvedSamples := []string{}
 	resolvedRuns := []string{}
@@ -772,9 +783,39 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(libraryValues) > 0 && s.resolver != nil {
-		for _, libraryValue := range libraryValues {
+	if len(libraryTypeValues) > 0 && s.resolver != nil {
+		for _, libraryValue := range libraryTypeValues {
 			samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindLibraryType, libraryValue)
+			if err != nil {
+				writeDomainError(w, err)
+
+				return
+			}
+
+			sampleValues = mergeSearchValues(sampleValues, samples)
+			runValues = mergeSearchValues(runValues, runs)
+			laneValues = mergeSearchValues(laneValues, lanes)
+		}
+	}
+
+	if len(libraryIDValues) > 0 && s.resolver != nil {
+		for _, libraryValue := range libraryIDValues {
+			samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindLibraryID, libraryValue)
+			if err != nil {
+				writeDomainError(w, err)
+
+				return
+			}
+
+			sampleValues = mergeSearchValues(sampleValues, samples)
+			runValues = mergeSearchValues(runValues, runs)
+			laneValues = mergeSearchValues(laneValues, lanes)
+		}
+	}
+
+	if len(libraryLimsValues) > 0 && s.resolver != nil {
+		for _, libraryValue := range libraryLimsValues {
+			samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindLibraryLimsID, libraryValue)
 			if err != nil {
 				writeDomainError(w, err)
 
@@ -804,7 +845,7 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	if len(directSampleValues) > 0 &&
 		len(studyValues) == 0 &&
-		len(libraryValues) == 0 &&
+		!hasLibraryValues &&
 		len(directRunValues) == 0 &&
 		s.resolver != nil {
 		for _, sampleValue := range directSampleValues {
@@ -833,9 +874,21 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for _, key := range combinedLibraryMetaKeys {
-		if len(libraryValues) > 0 {
-			params.OrMeta = append(params.OrMeta, map[string][]string{key: libraryValues})
+	for _, key := range libraryTypeMetaKeys {
+		if len(libraryTypeValues) > 0 {
+			params.OrMeta = append(params.OrMeta, map[string][]string{key: libraryTypeValues})
+		}
+	}
+
+	for _, key := range libraryIDMetaKeys {
+		if len(libraryIDValues) > 0 {
+			params.OrMeta = append(params.OrMeta, map[string][]string{key: libraryIDValues})
+		}
+	}
+
+	for _, key := range libraryLimsMetaKeys {
+		if len(libraryLimsValues) > 0 {
+			params.OrMeta = append(params.OrMeta, map[string][]string{key: libraryLimsValues})
 		}
 	}
 

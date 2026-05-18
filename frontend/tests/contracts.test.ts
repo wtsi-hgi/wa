@@ -187,16 +187,11 @@ describe("contract schemas", () => {
                     name: "Cancer Programme",
                     faculty_sponsor: "Dr Example",
                     state: "active",
-                    abstract: "Study abstract",
-                    abbreviation: "CP",
                     accession_number: "ERP123456",
-                    description: "Study description",
                     data_release_strategy: "managed",
                     study_title: "Cancer Programme Cohort",
                     data_access_group: "group-a",
-                    hmdmc_number: "HMDMC-1",
                     programme: "Cancer",
-                    created: "2026-04-20T09:00:00Z",
                     reference_genome: "GRCh38",
                     ethically_approved: true,
                     study_type: "Whole Genome Sequencing",
@@ -229,16 +224,11 @@ describe("contract schemas", () => {
                 name: "Cancer Programme",
                 faculty_sponsor: "Dr Example",
                 state: "active",
-                abstract: "Study abstract",
-                abbreviation: "CP",
                 accession_number: "ERP123456",
-                description: "Study description",
                 data_release_strategy: "managed",
                 study_title: "Cancer Programme Cohort",
                 data_access_group: "group-a",
-                hmdmc_number: "HMDMC-1",
                 programme: "Cancer",
-                created: "2026-04-20T09:00:00Z",
                 reference_genome: "GRCh38",
                 ethically_approved: true,
                 study_type: "Whole Genome Sequencing",
@@ -279,15 +269,10 @@ describe("contract schemas", () => {
                         id_study_lims: "6568",
                         id_sample_lims: "SMP001",
                         sanger_id: "SANG001",
-                        sample_name: "sample-1",
+                        name: "sample-1",
                         taxon_id: 9606,
                         common_name: "Human",
                         library_type: "RNA",
-                        id_run: 1234,
-                        lane: 1,
-                        tag_index: 7,
-                        irods_path: "/seq/1234",
-                        study_accession_number: "ERP123456",
                         accession_number: "ERS123456",
                     },
                 ],
@@ -303,6 +288,171 @@ describe("contract schemas", () => {
         });
 
         expect(parsed.missing?.[0]?.reason).toBe("samples_truncated");
+    });
+
+    it("accepts normalized sample enrichment payloads with sample detail lanes", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "WTSI_wEMB10524782",
+            type: "sanger_sample_id",
+            graph: {
+                study: {
+                    id_study_tmp: 42,
+                    id_lims: "SQSCP",
+                    id_study_lims: "5993",
+                    name: "5993",
+                    faculty_sponsor: "Dr Example",
+                    state: "active",
+                    accession_number: "ERP5993",
+                    data_release_strategy: "managed",
+                    study_title: "Example study 5993",
+                    data_access_group: "group-a",
+                    programme: "Cancer",
+                    reference_genome: "GRCh38",
+                    ethically_approved: true,
+                    study_type: "Whole Genome Sequencing",
+                    contains_human_dna: true,
+                    contaminated_human_dna: false,
+                    study_visibility: "Always Open",
+                    ega_dac_accession_number: "EGAC5993",
+                    ega_policy_accession_number: "EGAP5993",
+                    data_release_timing: "Immediate",
+                },
+                sample: {
+                    id_study_lims: "5993",
+                    id_sample_lims: "SMP10524782",
+                    sanger_id: "WTSI_wEMB10524782",
+                    sample_name: "WTSI_wEMB10524782",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "exon",
+                    accession_number: "SAMEA10524782",
+                    id_run: 48522,
+                    lane: 1,
+                    tag_index: 1,
+                    irods_path: "/irods/5993/WTSI_wEMB10524782",
+                    study_accession_number: "ERP5993",
+                },
+                sample_detail: {
+                    sample: {
+                        id_study_lims: "5993",
+                        id_sample_lims: "SMP10524782",
+                        sanger_id: "WTSI_wEMB10524782",
+                        sample_name: "WTSI_wEMB10524782",
+                        taxon_id: 9606,
+                        common_name: "Human",
+                        library_type: "exon",
+                        accession_number: "SAMEA10524782",
+                    },
+                    lanes: [{ id_run: 48522, lane: 1, tag_index: 1 }],
+                },
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+            return;
+        }
+        expect(result.data.graph.sample?.sample_name).toBe("WTSI_wEMB10524782");
+        expect(result.data.graph.sample_detail?.lanes[0]).toEqual({
+            id_run: "48522",
+            lane: "1",
+            tag_index: 1,
+        });
+    });
+
+    it("accepts raw MLWH sample payloads returned by study enrichment", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "6568",
+            type: "study_lims_id",
+            graph: {
+                study: {
+                    id_study_tmp: 6396,
+                    id_lims: "SQSCP",
+                    id_study_lims: "6568",
+                    name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                    faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
+                    state: "active",
+                    accession_number: "EGAS00001005445",
+                    data_release_strategy: "managed",
+                    study_title: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                    data_access_group: "team205 cellgeni team283",
+                    programme: "Cellular Genomics",
+                    reference_genome: "GRCh38",
+                    ethically_approved: true,
+                    study_type: "Transcriptome Analysis",
+                    contains_human_dna: true,
+                    contaminated_human_dna: false,
+                    study_visibility: "Hold",
+                    ega_dac_accession_number: "",
+                    ega_policy_accession_number: "",
+                    data_release_timing: "delayed",
+                },
+                samples: [
+                    {
+                        id_sample_tmp: 5993642,
+                        id_lims: "SQSCP",
+                        id_sample_lims: "6050954",
+                        uuid_sample_lims:
+                            "92210be6-e582-11eb-af21-fa163eac3af7",
+                        name: "WTSI_wEMB10524782",
+                        sanger_sample_id: "WTSI_wEMB10524782",
+                        supplier_name: "C84-WEM-2-FO-1_S2_mA",
+                        accession_number: "EGAN00003258234",
+                        donor_id: "WTSI_wEMB10524782",
+                        taxon_id: 9606,
+                        common_name: "human",
+                        description: "",
+                        studies: [
+                            {
+                                id_study_tmp: 6396,
+                                id_lims: "SQSCP",
+                                id_study_lims: "6568",
+                                name: "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                                faculty_sponsor: "Omer Bayraktar/Muzz Hanniffa",
+                                state: "active",
+                                accession_number: "EGAS00001005445",
+                                data_release_strategy: "managed",
+                                study_title:
+                                    "HCA Embryo Foetal WSSS Dev RNA Sanger",
+                                data_access_group: "team205 cellgeni team283",
+                                programme: "Cellular Genomics",
+                                reference_genome: "GRCh38",
+                                ethically_approved: true,
+                                study_type: "Transcriptome Analysis",
+                                contains_human_dna: true,
+                                contaminated_human_dna: false,
+                                study_visibility: "Hold",
+                                ega_dac_accession_number: "",
+                                ega_policy_accession_number: "",
+                                data_release_timing: "delayed",
+                            },
+                        ],
+                        libraries: [
+                            {
+                                pipeline_id_lims: "Chromium single cell ATAC",
+                                id_study_lims: "6568",
+                                library_id: "44768485",
+                                id_library_lims: "DN829362H:A1",
+                            },
+                        ],
+                    },
+                ],
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+            return;
+        }
+
+        expect(result.data.graph.samples?.[0]).toMatchObject({
+            id_study_lims: "6568",
+            sanger_id: "WTSI_wEMB10524782",
+            sample_name: "WTSI_wEMB10524782",
+            library_type: "Chromium single cell ATAC",
+        });
     });
 
     it("rejects enrichment results that omit the graph envelope", () => {
@@ -327,16 +477,11 @@ describe("contract schemas", () => {
                     name: "Test Study",
                     faculty_sponsor: "Dr Example",
                     state: "active",
-                    abstract: "",
-                    abbreviation: "",
                     accession_number: "ERP001",
-                    description: "",
                     data_release_strategy: "",
                     study_title: "",
                     data_access_group: "",
-                    hmdmc_number: "",
                     programme: "",
-                    created: "2026-04-20T09:00:00Z",
                     reference_genome: "",
                     ethically_approved: false,
                     study_type: "",
@@ -355,16 +500,11 @@ describe("contract schemas", () => {
                         name: "Test Study",
                         faculty_sponsor: "Dr Example",
                         state: "active",
-                        abstract: "",
-                        abbreviation: "",
                         accession_number: "ERP001",
-                        description: "",
                         data_release_strategy: "",
                         study_title: "",
                         data_access_group: "",
-                        hmdmc_number: "",
                         programme: "",
-                        created: "2026-04-20T09:00:00Z",
                         reference_genome: "",
                         ethically_approved: false,
                         study_type: "",
@@ -377,22 +517,21 @@ describe("contract schemas", () => {
                     },
                     library_details: [
                         {
-                            library_type: "RNA PolyA",
-                            id_study_lims: "6568",
+                            library: {
+                                pipeline_id_lims: "RNA PolyA",
+                                id_study_lims: "6568",
+                                library_id: "1001",
+                                id_library_lims: "DN111:A1",
+                            },
                             samples: [
                                 {
                                     id_study_lims: "6568",
                                     id_sample_lims: "SMP001",
                                     sanger_id: "S1",
-                                    sample_name: "Sample 1",
+                                    name: "Sample 1",
                                     taxon_id: 9606,
                                     common_name: "Human",
                                     library_type: "RNA PolyA",
-                                    id_run: 100,
-                                    lane: 1,
-                                    tag_index: 10,
-                                    irods_path: "/seq/100",
-                                    study_accession_number: "ERP001",
                                     accession_number: "ERS001",
                                 },
                             ],
@@ -411,6 +550,12 @@ describe("contract schemas", () => {
             expect(
                 result.data.graph.study_detail?.library_details[0]?.samples,
             ).toHaveLength(1);
+            expect(
+                result.data.graph.study_detail?.library_details[0],
+            ).toMatchObject({
+                library_id: "1001",
+                id_library_lims: "DN111:A1",
+            });
         }
     });
 
@@ -423,33 +568,21 @@ describe("contract schemas", () => {
                     id_study_lims: "6568",
                     id_sample_lims: "SMP001",
                     sanger_id: "S1",
-                    sample_name: "Sample 1",
+                    name: "Sample 1",
                     taxon_id: 9606,
                     common_name: "Human",
                     library_type: "RNA PolyA",
-                    id_run: 100,
-                    lane: 1,
-                    tag_index: 10,
-                    irods_path: "/seq/100",
-                    study_accession_number: "ERP001",
                     accession_number: "ERS001",
                 },
                 sample_detail: {
-                    sanger_id: "S1",
-                    sample_name: "Sample 1",
                     sample: {
                         id_study_lims: "6568",
                         id_sample_lims: "SMP001",
                         sanger_id: "S1",
-                        sample_name: "Sample 1",
+                        name: "Sample 1",
                         taxon_id: 9606,
                         common_name: "Human",
                         library_type: "RNA PolyA",
-                        id_run: 100,
-                        lane: 1,
-                        tag_index: 10,
-                        irods_path: "/seq/100",
-                        study_accession_number: "ERP001",
                         accession_number: "ERS001",
                     },
                     lanes: [
@@ -475,6 +608,51 @@ describe("contract schemas", () => {
         }
     });
 
+    it("preserves per-library study ids in hierarchical sample_detail", () => {
+        const result = enrichmentResultSchema.safeParse({
+            identifier: "S1",
+            type: "sanger_sample_id",
+            graph: {
+                sample: {
+                    id_study_lims: "6568",
+                    id_sample_lims: "SMP001",
+                    sanger_id: "S1",
+                    name: "Sample 1",
+                    taxon_id: 9606,
+                    common_name: "Human",
+                    library_type: "RNA PolyA",
+                    accession_number: "ERS001",
+                },
+                sample_detail: {
+                    sample: {
+                        id_study_lims: "6568",
+                        id_sample_lims: "SMP001",
+                        sanger_id: "S1",
+                        name: "Sample 1",
+                        taxon_id: 9606,
+                        common_name: "Human",
+                        library_type: "RNA PolyA",
+                        accession_number: "ERS001",
+                    },
+                    lanes: [],
+                    libraries: [
+                        { pipeline_id_lims: "RNA", id_study_lims: "6568" },
+                        { pipeline_id_lims: "Chromium", id_study_lims: "6569" },
+                    ],
+                },
+            },
+            partial: false,
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.graph.sample_detail?.libraries).toEqual([
+                { library_type: "RNA", id_study_lims: "6568" },
+                { library_type: "Chromium", id_study_lims: "6569" },
+            ]);
+        }
+    });
+
     it("parses sample-detail iRODS paths with the tightened four-field schema", () => {
         const result = enrichmentResultSchema.safeParse({
             identifier: "S1",
@@ -484,33 +662,21 @@ describe("contract schemas", () => {
                     id_study_lims: "6568",
                     id_sample_lims: "SMP001",
                     sanger_id: "S1",
-                    sample_name: "Sample 1",
+                    name: "Sample 1",
                     taxon_id: 9606,
                     common_name: "Human",
                     library_type: "RNA PolyA",
-                    id_run: 100,
-                    lane: 1,
-                    tag_index: 10,
-                    irods_path: "/seq/100",
-                    study_accession_number: "ERP001",
                     accession_number: "ERS001",
                 },
                 sample_detail: {
-                    sanger_id: "S1",
-                    sample_name: "Sample 1",
                     sample: {
                         id_study_lims: "6568",
                         id_sample_lims: "SMP001",
                         sanger_id: "S1",
-                        sample_name: "Sample 1",
+                        name: "Sample 1",
                         taxon_id: 9606,
                         common_name: "Human",
                         library_type: "RNA PolyA",
-                        id_run: 100,
-                        lane: 1,
-                        tag_index: 10,
-                        irods_path: "/seq/100",
-                        study_accession_number: "ERP001",
                         accession_number: "ERS001",
                     },
                     lanes: [],

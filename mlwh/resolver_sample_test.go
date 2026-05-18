@@ -29,7 +29,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -40,22 +39,24 @@ import (
 )
 
 var (
-	sampleUUIDQuery     = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE uuid_sample_lims = ? LIMIT 1`
-	sampleLimsIDQuery   = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleNameQuery     = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleSangerIDQuery = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleSupplierQuery = `SELECT ` + sampleSelectColumns + ` FROM sample WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`
+	sampleUUIDQuery      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE uuid_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
+	sampleLimsIDQuery    = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
+	sampleNameQuery      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleSangerIDQuery  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleSupplierQuery  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleAccessionQuery = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
 )
 
 func TestResolveSampleUUIDMatch(t *testing.T) {
-	convey.Convey("Given a UUID-shaped identifier with an upstream match", t, func() {
-		client, sourceMock, cleanup := newResolverSampleTestClient(t)
+	convey.Convey("Given a UUID-shaped identifier with a cache match", t, func() {
+		client, _, cleanup := newResolverSampleTestClient(t)
 		defer cleanup()
 
 		const raw = "b7daafb8-c59f-11ee-8fba-024224dd57f4"
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleUUIDQuery)).
-			WithArgs(raw).
-			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).AddRow(sampleResolverRow(1, raw, "9575305", "7607STDY14643771", "sanger-id-1", "supplier-1", "accession-1", "donor-1")...))
+		seedSampleMirrorRow(t, client.cache.DB(), 1, "7607STDY14643771", "supplier-1", "donor-1", time.Date(2026, time.May, 6, 14, 0, 0, 0, time.UTC))
+		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET uuid_sample_lims = ?, id_sample_lims = ? WHERE id_sample_tmp = ?`, raw, "9575305", 1)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 14, 1, 0, 0, time.UTC))
 
 		match, err := client.ResolveSample(context.Background(), raw)
 
@@ -68,15 +69,15 @@ func TestResolveSampleUUIDMatch(t *testing.T) {
 }
 
 func TestResolveSampleLimsIDFallsBackAfterUUIDMiss(t *testing.T) {
-	convey.Convey("Given a pure-integer sample identifier whose UUID step misses", t, func() {
-		client, sourceMock, cleanup := newResolverSampleTestClient(t)
+	convey.Convey("Given a pure-integer sample identifier matching id_sample_lims in cache", t, func() {
+		client, _, cleanup := newResolverSampleTestClient(t)
 		defer cleanup()
 
 		const raw = "9575305"
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleUUIDQuery)).WithArgs(raw).WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleLimsIDQuery)).
-			WithArgs(raw).
-			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).AddRow(sampleResolverRow(2, "sample-uuid-2", raw, "7607STDY14643771", "sanger-id-2", "supplier-2", "accession-2", "donor-2")...))
+		seedSampleMirrorRow(t, client.cache.DB(), 2, "7607STDY14643771", "supplier-2", "donor-2", time.Date(2026, time.May, 6, 14, 0, 0, 0, time.UTC))
+		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET id_sample_lims = ?, uuid_sample_lims = ? WHERE id_sample_tmp = ?`, raw, "sample-uuid-2", 2)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 14, 1, 0, 0, time.UTC))
 
 		match, err := client.ResolveSample(context.Background(), raw)
 
@@ -87,14 +88,15 @@ func TestResolveSampleLimsIDFallsBackAfterUUIDMiss(t *testing.T) {
 }
 
 func TestResolveSampleNameStepUsesSangerNameQuery(t *testing.T) {
-	convey.Convey("Given a text identifier that only matches the name step", t, func() {
-		client, sourceMock, cleanup := newResolverSampleTestClient(t)
+	convey.Convey("Given a text identifier that only matches the name step in cache", t, func() {
+		client, _, cleanup := newResolverSampleTestClient(t)
 		defer cleanup()
 
 		const raw = "7607STDY14643771"
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleNameQuery)).
-			WithArgs(raw).
-			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).AddRow(sampleResolverRow(3, "sample-uuid-3", "9575306", raw, "sanger-id-3", "supplier-3", "accession-3", "donor-3")...))
+		seedSampleMirrorRow(t, client.cache.DB(), 3, raw, "supplier-3", "donor-3", time.Date(2026, time.May, 6, 14, 0, 0, 0, time.UTC))
+		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET id_sample_lims = ?, uuid_sample_lims = ? WHERE id_sample_tmp = ?`, "9575306", "sample-uuid-3", 3)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 14, 1, 0, 0, time.UTC))
 
 		match, err := client.ResolveSample(context.Background(), raw)
 
@@ -104,16 +106,33 @@ func TestResolveSampleNameStepUsesSangerNameQuery(t *testing.T) {
 	})
 }
 
+func TestResolveSampleWarmCacheMissReturnsNotFoundWithoutNeverSynced(t *testing.T) {
+	convey.Convey("Given a fully-synced cache and a missing sample identifier", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 11, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveSample(context.Background(), "missing")
+
+		convey.So(match, convey.ShouldResemble, Match{})
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
+	})
+}
+
 func TestResolveSampleSupplierNameFallback(t *testing.T) {
-	convey.Convey("Given a text identifier that only matches supplier_name", t, func() {
-		client, sourceMock, cleanup := newResolverSampleTestClient(t)
+	convey.Convey("Given a text identifier that only matches supplier_name in cache", t, func() {
+		client, _, cleanup := newResolverSampleTestClient(t)
 		defer cleanup()
 
 		const raw = "Hek_R1"
-		expectSampleTextMiss(sourceMock, raw, sampleNameQuery, sampleSangerIDQuery)
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleSupplierQuery)).
-			WithArgs(raw).
-			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).AddRow(sampleResolverRow(4, "sample-uuid-4", "9575307", "7607STDY14643771", "sanger-id-4", raw, "accession-4", "donor-4")...))
+		seedSampleMirrorRow(t, client.cache.DB(), 4, "7607STDY14643771", raw, "donor-4", time.Date(2026, time.May, 6, 14, 0, 0, 0, time.UTC))
+		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET id_sample_lims = ?, uuid_sample_lims = ?, sanger_sample_id = ? WHERE id_sample_tmp = ?`, "9575307", "sample-uuid-4", "sanger-id-4", 4)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 14, 1, 0, 0, time.UTC))
 
 		match, err := client.ResolveSample(context.Background(), raw)
 
@@ -149,6 +168,57 @@ func TestResolveSampleWarmCacheUsesDonorCacheOnly(t *testing.T) {
 		sourceMock.ExpectClose()
 		convey.So(sourceDB.Close(), convey.ShouldBeNil)
 		convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestResolveSampleDonorStepReturnsAmbiguousForTwoMatches(t *testing.T) {
+	convey.Convey("Given two samples sharing the same donor_id in a warm cache", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "resolver.sqlite")
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorRow(t, cache.DB(), 51, "sample-51", "supplier-51", "DON1", time.Date(2026, time.May, 6, 14, 0, 0, 0, time.UTC))
+		seedSampleMirrorRow(t, cache.DB(), 52, "sample-52", "supplier-52", "DON1", time.Date(2026, time.May, 6, 14, 1, 0, 0, time.UTC))
+		seedDonorSampleRow(t, cache.DB(), "DON1", 51, "study-51")
+		seedDonorSampleRow(t, cache.DB(), "DON1", 52, "study-52")
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 14, 2, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveSample(context.Background(), "DON1")
+
+		convey.So(errors.Is(err, ErrAmbiguous), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "51")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "52")
+		convey.So(match, convey.ShouldResemble, Match{})
+	})
+}
+
+func TestResolveSampleCrossColumnCascadeReturnsAmbiguous(t *testing.T) {
+	convey.Convey("Given different samples matched by different text steps for the same raw input", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "resolver.sqlite")
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorRow(t, cache.DB(), 10, "X", "supplier-10", "donor-10", time.Date(2026, time.May, 6, 14, 0, 0, 0, time.UTC))
+		seedSampleMirrorRow(t, cache.DB(), 20, "sample-20", "supplier-20", "donor-20", time.Date(2026, time.May, 6, 14, 1, 0, 0, time.UTC))
+		_, err = cache.DB().Exec(`UPDATE sample_mirror SET id_sample_lims = ?, uuid_sample_lims = ?, accession_number = ?, sanger_sample_id = ? WHERE id_sample_tmp = ?`, "1010", "sample-uuid-10", "accession-10", "sanger-id-10", 10)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`UPDATE sample_mirror SET id_sample_lims = ?, uuid_sample_lims = ?, accession_number = ?, sanger_sample_id = ? WHERE id_sample_tmp = ?`, "2020", "sample-uuid-20", "accession-20", "X", 20)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 14, 2, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveSample(context.Background(), "X")
+
+		convey.So(errors.Is(err, ErrAmbiguous), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "10")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "20")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "X")
+		convey.So(match, convey.ShouldResemble, Match{})
 	})
 }
 
@@ -193,8 +263,8 @@ func TestResolveSampleRejectsLIMSProviderConstants(t *testing.T) {
 	})
 }
 
-func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTL(t *testing.T) {
-	convey.Convey("Given a warm cache and an upstream miss across every direct step", t, func() {
+func TestResolveSampleWarmCacheMissReturnsNotFoundWithoutNegativeCache(t *testing.T) {
+	convey.Convey("Given a warm cache and a miss across every direct step", t, func() {
 		client, sourceMock, cleanup := newResolverSampleTestClient(t)
 		defer cleanup()
 
@@ -207,12 +277,11 @@ func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTL(t *testing.T) 
 
 		convey.So(errors.Is(firstErr, ErrNotFound), convey.ShouldBeTrue)
 		convey.So(errors.Is(secondErr, ErrNotFound), convey.ShouldBeTrue)
-		convey.So(countRows(t, client.cache.DB(), `SELECT COUNT(*) FROM negative_cache WHERE raw = ?`, raw), convey.ShouldEqual, 1)
 		convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
 }
 
-func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTLForMySQLCache(t *testing.T) {
+func TestResolveSampleWarmCacheMissForMySQLCacheReturnsNotFoundWithoutNegativeCache(t *testing.T) {
 	convey.Convey("Given a warm MySQL cache and a donor miss", t, func() {
 		rwDB, rwMock, err := sqlmock.New()
 		convey.So(err, convey.ShouldBeNil)
@@ -221,43 +290,29 @@ func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTLForMySQLCache(t
 		convey.So(err, convey.ShouldBeNil)
 
 		const raw = "missing-id"
-		cachedAt := time.Now().UTC().Format(time.RFC3339Nano)
-		negativeCacheUpsert := buildUpsertStatement("mysql", "negative_cache", negativeCacheColumns, []string{"raw"})
 		cacheMissRows := sqlmock.NewRows(sampleResolverColumns())
 
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT fetched_at, ttl_seconds FROM negative_cache WHERE raw = ? LIMIT 1`)).
-			WithArgs(raw).
-			WillReturnRows(sqlmock.NewRows([]string{"fetched_at", "ttl_seconds"}))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
-		// Warm-cache direct lookup: text input, so the resolver issues the
-		// four sample_mirror text-step queries before falling through to
-		// the donor_samples join below.
-		for _, query := range []string{
-			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`,
-			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' LIMIT 1`,
-			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' LIMIT 1`,
-			`SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`,
-		} {
-			roMock.ExpectQuery(regexp.QuoteMeta(query)).
+		expectWarmCacheMySQLMiss := func() {
+			for _, query := range []string{
+				sampleNameQuery,
+				sampleSangerIDQuery,
+				sampleSupplierQuery,
+				sampleAccessionQuery,
+			} {
+				roMock.ExpectQuery(regexp.QuoteMeta(query)).
+					WithArgs(raw).
+					WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+			}
+			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+				WithArgs(syncTableSample).
+				WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow("2026-01-02T03:04:05Z", nil, 0))
+			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + sampleMirrorSelectColumns + ` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 2`)).
 				WithArgs(raw).
-				WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+				WillReturnRows(cacheMissRows)
 		}
-		// ensureResolverTableSynced re-checks sync_state before the donor join.
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + sampleMirrorSelectColumns + ` FROM donor_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = donor_samples.id_sample_tmp WHERE donor_samples.donor_id = ? ORDER BY sample_mirror.id_sample_tmp LIMIT 1`)).
-			WithArgs(raw).
-			WillReturnRows(cacheMissRows)
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT fetched_at, ttl_seconds FROM negative_cache WHERE raw = ? LIMIT 1`)).
-			WithArgs(raw).
-			WillReturnRows(sqlmock.NewRows([]string{"fetched_at", "ttl_seconds"}).AddRow(cachedAt, sampleNegativeCacheTTLSeconds))
 
-		rwMock.ExpectExec(regexp.QuoteMeta(negativeCacheUpsert)).
-			WithArgs(raw, "not_found", sqlmock.AnyArg(), sampleNegativeCacheTTLSeconds).
-			WillReturnResult(sqlmock.NewResult(1, 1))
+		expectWarmCacheMySQLMiss()
+		expectWarmCacheMySQLMiss()
 
 		client := &Client{cache: &mysqlCache{rwDB: rwDB, roDB: roDB}, cacheReader: roDB}
 
@@ -277,16 +332,25 @@ func TestResolveSampleMissWritesNegativeCacheAndReusesItWithinTTLForMySQLCache(t
 	})
 }
 
-func TestResolveSampleWrapsUpstreamErrors(t *testing.T) {
-	convey.Convey("Given an upstream database error on the first resolver step", t, func() {
-		client, sourceMock, cleanup := newResolverSampleTestClient(t)
+func TestResolveSampleWrapsCacheErrors(t *testing.T) {
+	convey.Convey("Given a cache database error on the first resolver step", t, func() {
+		client, _, cleanup := newResolverSampleTestClient(t)
 		defer cleanup()
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleNameQuery)).
-			WithArgs("broken-upstream").
-			WillReturnError(fmt.Errorf("network down"))
+		roDB, roMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			roMock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		}()
 
-		_, err := client.ResolveSample(context.Background(), "broken-upstream")
+		client.cacheReader = roDB
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleNameQuery)).
+			WithArgs("broken-upstream").
+			WillReturnError(errors.New("network down"))
+
+		_, err = client.ResolveSample(context.Background(), "broken-upstream")
 
 		convey.So(errors.Is(err, ErrUpstreamImpaired), convey.ShouldBeTrue)
 		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeFalse)
@@ -318,26 +382,17 @@ func newResolverSampleTestClient(t *testing.T) (*Client, sqlmock.Sqlmock, func()
 	return client, sourceMock, cleanup
 }
 
-func expectSampleTextMiss(mock sqlmock.Sqlmock, raw string, queries ...string) {
-	for _, query := range queries {
-		mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(raw).WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-	}
-}
-
 func sampleResolverColumns() []string {
 	return []string{
 		"id_sample_tmp",
 		"id_lims",
 		"id_sample_lims",
 		"uuid_sample_lims",
-		"id_study_lims",
 		"name",
-		"sanger_id",
 		"sanger_sample_id",
 		"supplier_name",
 		"accession_number",
 		"donor_id",
-		"library_type",
 		"taxon_id",
 		"common_name",
 		"description",
@@ -345,5 +400,5 @@ func sampleResolverColumns() []string {
 }
 
 func sampleResolverRow(id int64, uuidSampleLims, idSampleLims, name, sangerSampleID, supplierName, accessionNumber, donorID string) []driver.Value {
-	return []driver.Value{id, "SQSCP", idSampleLims, uuidSampleLims, "study-" + idSampleLims, name, name, sangerSampleID, supplierName, accessionNumber, donorID, "", 9606, "human", "description"}
+	return []driver.Value{id, "SQSCP", idSampleLims, uuidSampleLims, name, sangerSampleID, supplierName, accessionNumber, donorID, 9606, "human", "description"}
 }

@@ -7,7 +7,17 @@ export type SeqmetaEnrichmentState = {
     errors: Record<string, "not_found" | "upstream_impaired">;
 };
 
+export type SeqmetaEnrichmentLookupResult = {
+    enrichment: EnrichmentResult | null;
+    error?: "not_found" | "upstream_impaired";
+    value: string;
+};
+
 type SeqmetaAliasType =
+    | "id_library_lims"
+    | "library_type"
+    | "library_id"
+    | "run_id"
     | "sample_lims"
     | "sanger_sample_id"
     | "study_accession"
@@ -15,10 +25,6 @@ type SeqmetaAliasType =
 
 export function isSeqmetaKey(key: string): boolean {
     return key.startsWith("seqmeta_");
-}
-
-function looksLikeLibraryType(value: string): boolean {
-    return /\s/.test(value);
 }
 
 export function hasUsableSeqmetaCacheEntry(
@@ -31,7 +37,7 @@ export function hasUsableSeqmetaCacheEntry(
 
     const cached = cache.get(value);
 
-    return !(cached === null && looksLikeLibraryType(value));
+    return cached !== null;
 }
 
 export function collectSeqmetaValues(
@@ -64,6 +70,13 @@ function seqmetaLookupPriority(metadataKey: string): number {
     if (
         metadataKey === "seqmeta_library" ||
         metadataKey === "seqmeta_librarytype"
+    ) {
+        return 4;
+    }
+
+    if (
+        metadataKey === "seqmeta_libraryid" ||
+        metadataKey === "seqmeta_library_lims"
     ) {
         return 3;
     }
@@ -193,9 +206,15 @@ function collectSeqmetaAliases(
     add(enrichment.graph.study?.id_study_lims, "study_id");
     add(enrichment.graph.study?.accession_number, "study_accession");
     add(enrichment.graph.library?.id_study_lims, "study_id");
+    add(enrichment.graph.library?.library_type, "library_type");
+    add(enrichment.graph.library?.library_id, "library_id");
+    add(enrichment.graph.library?.id_library_lims, "id_library_lims");
 
     for (const library of enrichment.graph.libraries ?? []) {
         add(library.id_study_lims, "study_id");
+        add(library.library_type, "library_type");
+        add(library.library_id, "library_id");
+        add(library.id_library_lims, "id_library_lims");
     }
 
     function addSampleAliases(sample: {
@@ -205,27 +224,39 @@ function collectSeqmetaAliases(
         library_type?: string;
         sanger_id?: string;
         study_accession_number?: string;
+        id_run?: number;
     }) {
         add(sample.sanger_id, "sanger_sample_id");
         add(sample.id_sample_lims, "sample_lims");
         add(sample.id_study_lims, "study_id");
         add(sample.study_accession_number, "study_accession");
         add(sample.accession_number, "sanger_sample_id");
+        add(sample.library_type, "library_type");
+        add(
+            typeof sample.id_run === "number" ? String(sample.id_run) : null,
+            "run_id",
+        );
     }
 
     if (enrichment.graph.sample) {
         addSampleAliases(enrichment.graph.sample);
     }
 
+    for (const lane of enrichment.graph.sample_detail?.lanes ?? []) {
+        add(lane.id_run, "run_id");
+    }
+
     return Array.from(aliases.entries());
 }
 
-function primeSeqmetaCacheEntry(
+export function primeSeqmetaCacheEntry(
     cache: SeqmetaCacheStore,
     enrichment: EnrichmentResult,
 ): void {
     for (const [value, type] of collectSeqmetaAliases(enrichment)) {
-        if (cache.has(value)) {
+        const cached = cache.get(value);
+
+        if (cached !== null && cached !== undefined) {
             continue;
         }
 
@@ -269,42 +300,10 @@ export async function enrichSeqmetaMetadata(
         return state;
     }
 
-    // Hybrid approach: enrich the first (highest priority) value sequentially
-    // to prime cache aliases, then parallelize remaining lookups
-    const [firstValue, ...remainingValues] = pendingValues;
-
-    // First value enrichment (sequential to populate cache aliases)
-    if (!cache.has(firstValue)) {
-        try {
-            const result = await enrichIdentifier(firstValue);
-
-            if (result === null) {
-                cache.set(firstValue, null);
-                state.enrichments[firstValue] = null;
-                state.errors[firstValue] = "not_found";
-            } else {
-                primeSeqmetaCacheEntry(cache, result);
-                state.enrichments[firstValue] = cache.get(firstValue) ?? result;
-            }
-        } catch (error) {
-            if (error instanceof BackendRequestError && error.status === 404) {
-                cache.set(firstValue, null);
-                state.enrichments[firstValue] = null;
-                state.errors[firstValue] = "not_found";
-            } else {
-                state.errors[firstValue] = "upstream_impaired";
-            }
-        }
-    }
-
-    // Remaining values in parallel (after cache may be primed)
-    const stillPending = remainingValues.filter((value) => !cache.has(value));
-
-    if (stillPending.length > 0) {
+    if (pendingValues.length > 0) {
         const results = await Promise.all(
-            stillPending.map(async (value) => {
-                // Double-check cache in case first lookup populated it
-                if (cache.has(value)) {
+            pendingValues.map(async (value) => {
+                if (hasUsableSeqmetaCacheEntry(cache, value)) {
                     const enrichment = cache.get(value) ?? null;
                     return { value, enrichment, error: null };
                 }
@@ -321,6 +320,7 @@ export async function enrichSeqmetaMetadata(
                         };
                     }
 
+                    cache.set(value, result);
                     primeSeqmetaCacheEntry(cache, result);
                     const enrichment = cache.get(value) ?? result;
                     return { value, enrichment, error: null };
@@ -346,7 +346,6 @@ export async function enrichSeqmetaMetadata(
             }),
         );
 
-        // Apply results to state
         for (const result of results) {
             state.enrichments[result.value] = result.enrichment;
             if (result.error) {
@@ -361,12 +360,54 @@ export async function enrichSeqmetaMetadata(
     );
 }
 
+export async function enrichSeqmetaMetadataBatch(
+    metadata: Record<string, string>,
+    cache: SeqmetaCacheStore,
+    enrichIdentifiers: (
+        values: string[],
+    ) => Promise<SeqmetaEnrichmentLookupResult[]>,
+): Promise<SeqmetaEnrichmentState> {
+    const state = buildCachedEnrichmentState(metadata, cache);
+    const pendingValues = collectSeqmetaLookupValues(metadata).filter(
+        (value) => !hasUsableSeqmetaCacheEntry(cache, value),
+    );
+
+    if (pendingValues.length === 0) {
+        return state;
+    }
+
+    const results = await enrichIdentifiers(pendingValues);
+
+    for (const result of results) {
+        if (result.enrichment === null) {
+            cache.set(result.value, null);
+        } else {
+            cache.set(result.value, result.enrichment);
+            primeSeqmetaCacheEntry(cache, result.enrichment);
+        }
+
+        const enrichment = cache.get(result.value) ?? result.enrichment;
+        state.enrichments[result.value] = enrichment;
+        if (result.error) {
+            state.errors[result.value] = result.error;
+        }
+    }
+
+    return mergeSeqmetaEnrichmentState(
+        state,
+        buildCachedEnrichmentState(metadata, cache),
+    );
+}
+
 export async function fetchLibrarySamples(
     studyId: string,
     libraryType: string,
+    filters?: { idLibraryLims?: string; libraryId?: string },
 ): Promise<EnrichmentResult["graph"]["samples"]> {
     const { fetchStudyLibrarySamples } =
         await import("@/app/(results)/actions");
 
-    return fetchStudyLibrarySamples(studyId, libraryType);
+    return filters === undefined
+        ? fetchStudyLibrarySamples(studyId, libraryType)
+        : fetchStudyLibrarySamples(studyId, libraryType, filters);
 }

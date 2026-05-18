@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -63,6 +64,30 @@ func runDevUnsetSeqmetaEnvForTest() []string {
 
 func runDevSeqmetaStubCommandForTest() string {
 	return `node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(Number(process.env.WA_TEST_SEQMETA_PORT), '127.0.0.1')"`
+}
+
+func TestRunDevSeqmetaDefaultReadinessBudgetAllowsColdMLWHSync(t *testing.T) {
+	convey.Convey("run-dev.sh gives seqmeta studies readiness at least five minutes by default", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
+		convey.So(err, convey.ShouldBeNil)
+
+		match := regexp.MustCompile(`SEQMETA_HEALTH_MAX_ATTEMPTS="\$\{WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-([0-9]+)\}"`).FindSubmatch(contents)
+		convey.So(match, convey.ShouldHaveLength, 2)
+
+		attempts, err := strconv.Atoi(string(match[1]))
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(attempts, convey.ShouldBeGreaterThanOrEqualTo, 1200)
+	})
+}
+
+func TestRunDevScriptSeqmetaBuiltInLaunchDropsLegacySyncFlag(t *testing.T) {
+	convey.Convey("run-dev.sh no longer passes the removed --mlwh-sync-interval flag to built-in seqmeta serve", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(contents), convey.ShouldNotContainSubstring, "--mlwh-sync-interval")
+	})
 }
 
 func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
@@ -125,16 +150,16 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 			fixtures:      true,
 			omitPortFlags: true,
 			env: map[string]string{
-				"WA_ENV":                              "development",
-				"WA_RESULTS_DB_PATH":                  resultsDBPath,
-				"WA_MLWH_DSN":                         "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
-				"WA_DEV_FRONTEND_PORT":                fmt.Sprintf("%d", frontendPort),
-				"WA_DEV_RESULTS_PORT":                 fmt.Sprintf("%d", resultsPort),
-				"WA_DEV_SEQMETA_PORT":                 fmt.Sprintf("%d", seqmetaPort),
-				"WA_RUN_DEV_FRONTEND_DEV_CMD":         fmt.Sprintf(`node -e "require('node:fs').writeFileSync(%q, 'started'); process.exit(1)"`, frontendSentinelPath),
-				"WA_RUN_DEV_FRONTEND_HEALTH_URL":      fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
-				"WA_RUN_DEV_SEQMETA_CMD":              fmt.Sprintf(`node -e "require('node:fs').writeFileSync(%q, 'started'); process.exit(1)"`, seqmetaSentinelPath),
-				"WA_RUN_DEV_SEQMETA_HEALTH_URL":       fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort),
+				"WA_ENV":                                "development",
+				"WA_RESULTS_DB_PATH":                    resultsDBPath,
+				"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+				"WA_DEV_FRONTEND_PORT":                  fmt.Sprintf("%d", frontendPort),
+				"WA_DEV_RESULTS_PORT":                   fmt.Sprintf("%d", resultsPort),
+				"WA_DEV_SEQMETA_PORT":                   fmt.Sprintf("%d", seqmetaPort),
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node -e "require('node:fs').writeFileSync(%q, 'started'); process.exit(1)"`, frontendSentinelPath),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+				"WA_RUN_DEV_SEQMETA_CMD":                fmt.Sprintf(`node -e "require('node:fs').writeFileSync(%q, 'started'); process.exit(1)"`, seqmetaSentinelPath),
+				"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort),
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
 				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
 				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
@@ -165,6 +190,13 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 }
 
 func TestRunDevScript(t *testing.T) {
+	convey.Convey("run-dev.sh synthesizes a reusable .tmp MLWH cache path when seqmeta is auto-managed from WA_MLWH_DSN", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(contents), convey.ShouldContainSubstring, `MLWH_CACHE_PATH="$TMP_DIR/mlwh-$scenario.sqlite"`)
+	})
+
 	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds three fixtures, skips seqmeta when no command or MLWH config is present, and cleans up on SIGINT", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
@@ -1122,12 +1154,12 @@ func waitForTCPPortToCloseForTest(t *testing.T, port int) {
 }
 
 type runDevProcess struct {
-	Command *exec.Cmd
-	stdout  *bytes.Buffer
-	stderr  *bytes.Buffer
-	waitMu  sync.Mutex
-	waitCh  chan error
-	waitErr error
+	Command  *exec.Cmd
+	stdout   *bytes.Buffer
+	stderr   *bytes.Buffer
+	waitMu   sync.Mutex
+	waitCh   chan error
+	waitErr  error
 	waitDone bool
 }
 
@@ -1187,13 +1219,13 @@ func (process *runDevProcess) ExitedWithin(timeout time.Duration) bool {
 type runDevStartOptions struct {
 	mode          string
 	fixtures      bool
-	frontendPort int
-	resultsPort  int
-	seqmetaPort  int
+	frontendPort  int
+	resultsPort   int
+	seqmetaPort   int
 	omitPortFlags bool
-	startDir     string
-	unsetEnv     []string
-	env          map[string]string
+	startDir      string
+	unsetEnv      []string
+	env           map[string]string
 }
 
 func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOptions) *runDevProcess {
@@ -1216,7 +1248,7 @@ func startRunDevForTest(t *testing.T, repoRoot string, options runDevStartOption
 			"--frontend-port", fmt.Sprintf("%d", options.frontendPort),
 			"--results-port", fmt.Sprintf("%d", options.resultsPort),
 		)
-}
+	}
 
 	if !options.omitPortFlags && options.seqmetaPort != 0 {
 		args = append(args, "--seqmeta-port", fmt.Sprintf("%d", options.seqmetaPort))

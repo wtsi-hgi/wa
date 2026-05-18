@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -59,14 +60,13 @@ func TestResultsServeCommandSeqmetaURLFallback(t *testing.T) {
 }
 
 func TestResultsServeCommandHelpIncludesMLWHFlags(t *testing.T) {
-	convey.Convey("E5.1: Given results serve help, then it documents the MLWH cache and sync flags", t, func() {
+	convey.Convey("E5.1: Given results serve help, then it documents the MLWH cache flag but not the removed sync flag", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"results", "serve", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "--mlwh-cache")
 		convey.So(output, convey.ShouldContainSubstring, "MLWH cache")
-		convey.So(output, convey.ShouldContainSubstring, "--mlwh-sync-interval")
-		convey.So(output, convey.ShouldContainSubstring, "sync")
+		convey.So(output, convey.ShouldNotContainSubstring, "--mlwh-sync-interval")
 	})
 }
 
@@ -76,7 +76,7 @@ type fakeResultsServeSyncClient struct {
 	syncCh    chan struct{}
 }
 
-func (f *fakeResultsServeSyncClient) Sync(context.Context, ...string) ([]mlwh.SyncReport, error) {
+func (f *fakeResultsServeSyncClient) Sync(context.Context) ([]mlwh.SyncReport, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -92,6 +92,10 @@ func (f *fakeResultsServeSyncClient) Sync(context.Context, ...string) ([]mlwh.Sy
 
 func (f *fakeResultsServeSyncClient) ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error) {
 	return nil, nil
+}
+
+func (f *fakeResultsServeSyncClient) ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
+	return nil, nil, nil, nil
 }
 
 func (f *fakeResultsServeSyncClient) LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error) {
@@ -129,10 +133,8 @@ func (f *fakeResultsServeSyncClient) WaitForSyncCall(t *testing.T) {
 func TestResultsServeCommand(t *testing.T) {
 	originalListen := listenFunc
 	originalOpenMLWH := resultsServeOpenMLWHClient
-	originalNewTicker := resultsServeNewTicker
 	defer func() { listenFunc = originalListen }()
 	defer func() { resultsServeOpenMLWHClient = originalOpenMLWH }()
-	defer func() { resultsServeNewTicker = originalNewTicker }()
 
 	convey.Convey("results serve rejects password-bearing MySQL DSNs on the command line", t, func() {
 		_, err := resolveResultsServeDBDSN("user:secret@tcp(localhost:3306)/results", true)
@@ -283,11 +285,21 @@ func TestResultsServeCommand(t *testing.T) {
 		cancel()
 
 		convey.So(<-errCh, convey.ShouldBeNil)
-		convey.So(seenConfig.DSN, convey.ShouldEqual, "mlwh_user:"+secret+"@tcp(mlwh-db-ro:3435)/mlwarehouse")
+		convey.So(seenConfig.DSN, convey.ShouldEqual, "mlwh_user:"+secret+"@tcp(mlwh-db-ro:3435)/mlwarehouse?interpolateParams=false&multiStatements=false")
 		convey.So(seenConfig.CachePath, convey.ShouldEqual, os.Getenv("WA_MLWH_CACHE_PATH"))
 		convey.So(stdout.String(), convey.ShouldNotContainSubstring, secret)
 		convey.So(stderr.String(), convey.ShouldNotContainSubstring, secret)
 		convey.So(strings.Join(os.Args, " "), convey.ShouldNotContainSubstring, secret)
+	})
+
+	convey.Convey("results serve opens the read-only MLWH resolver from cache when a source DSN is present", t, func() {
+		resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
+		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(127.0.0.1:1)/mlwarehouse")
+		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh.sqlite"))
+
+		err := executeServeCommandUntilListeningForTest(t, []string{"results", "serve", "--port", "0", "--db", ":memory:"})
+
+		convey.So(err, convey.ShouldBeNil)
 	})
 
 	convey.Convey("E5.3: Given --mlwh-cache with an embedded password, when results serve parses flags, then the error wraps ErrPasswordInDSN and names --mlwh-cache", t, func() {
@@ -298,73 +310,11 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(err.Error(), convey.ShouldContainSubstring, "--mlwh-cache")
 	})
 
-	convey.Convey("results serve rejects --mlwh-sync-interval when MLWH is not configured", t, func() {
-		t.Setenv("WA_MLWH_DSN", "")
-		t.Setenv("WA_MLWH_PASSWORD", "")
-		t.Setenv("WA_MLWH_CACHE_PATH", "")
-		t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
-
+	convey.Convey("E5.4: results serve rejects the removed --mlwh-sync-interval flag", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"results", "serve", "--db", ":memory:", "--mlwh-sync-interval", "5m"})
 
 		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "--mlwh-sync-interval requires MLWH configuration")
-	})
-
-	convey.Convey("E5.4: Given --mlwh-sync-interval=5m, when results serve starts, then one sync loop runs and exits before serve returns", t, func() {
-		addrCh := make(chan string, 1)
-		listenFunc = resultsServeListenFuncForTest(addrCh)
-
-		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(mlwh-db-ro:3435)/mlwarehouse")
-		t.Setenv("WA_MLWH_PASSWORD", "secret")
-		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh.sqlite"))
-
-		fakeClient := &fakeResultsServeSyncClient{}
-		resultsServeOpenMLWHClient = func(_ context.Context, _ resultsServeMLWHConfig) (resultsServeSyncClient, error) {
-			return fakeClient, nil
-		}
-
-		tickerCreated := 0
-		intervalCh := make(chan time.Duration, 1)
-		fakeTicker := newFakeResultsServeTicker()
-		resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
-			tickerCreated++
-			intervalCh <- interval
-
-			return fakeTicker
-		}
-
-		cmd := NewRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"results", "serve", "--port", "0", "--db", ":memory:", "--mlwh-sync-interval", "5m"})
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- cmd.ExecuteContext(ctx)
-		}()
-
-		<-addrCh
-		var interval time.Duration
-		select {
-		case interval = <-intervalCh:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for sync ticker creation")
-		}
-
-		convey.So(tickerCreated, convey.ShouldEqual, 1)
-		convey.So(interval, convey.ShouldEqual, 5*time.Minute)
-		convey.So(fakeClient.SyncCalls(), convey.ShouldEqual, 0)
-
-		fakeTicker.Tick()
-		fakeClient.WaitForSyncCall(t)
-		convey.So(fakeClient.SyncCalls(), convey.ShouldEqual, 1)
-
-		cancel()
-		convey.So(<-errCh, convey.ShouldBeNil)
-		fakeTicker.WaitForStop(t)
+		convey.So(output, convey.ShouldContainSubstring, "unknown flag: --mlwh-sync-interval")
 	})
 
 	convey.Convey("E5.5: Given the default sync interval, when results serve runs, then no MLWH sync loop is started", t, func() {
@@ -438,6 +388,42 @@ func postResultsRegistrationForTest(endpoint string, registration *results.Regis
 	}
 
 	return nil, err
+}
+
+func executeServeCommandUntilListeningForTest(t *testing.T, args []string) error {
+	t.Helper()
+
+	addrCh := make(chan string, 1)
+	listenFunc = resultsServeListenFuncForTest(addrCh)
+
+	cmd := NewRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(args)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.ExecuteContext(ctx)
+	}()
+
+	select {
+	case <-addrCh:
+		cancel()
+
+		select {
+		case err := <-errCh:
+			return err
+		case <-time.After(time.Second):
+			return errors.New("timed out waiting for serve command to stop")
+		}
+	case err := <-errCh:
+		return err
+	case <-time.After(time.Second):
+		return errors.New("timed out waiting for serve command to listen")
+	}
 }
 
 func newFakeResultsServeTicker() *fakeResultsServeTicker {

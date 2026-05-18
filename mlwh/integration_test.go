@@ -62,18 +62,111 @@ func TestLiveMLWHSyncQueriesMatchDevelopmentSchema(t *testing.T) {
 	}
 
 	convey.Convey("Given live MLWH credentials from the development env path", t, func() {
-		err = explainLiveQuery(ctx, sourceDB, `EXPLAIN `+sampleSyncSourceQuery(), formatSyncTime(time.Now().UTC()))
-		convey.So(err, convey.ShouldBeNil)
+		queries, queryErr := liveMLWHColdSyncPerfQueries()
+		convey.So(queryErr, convey.ShouldBeNil)
 
-		err = explainLiveQuery(ctx, sourceDB, `EXPLAIN `+flowcellSyncSourceQuery(), formatSyncTime(time.Now().UTC()))
-		convey.So(err, convey.ShouldBeNil)
+		for _, query := range queries {
+			err = explainLiveQuery(ctx, sourceDB, `EXPLAIN `+query.query, query.args...)
+			convey.So(err, convey.ShouldBeNil)
+		}
 
 		err = explainLiveQuery(ctx, sourceDB, `EXPLAIN SELECT `+sampleSelectColumns+` FROM sample WHERE uuid_sample_lims = ? LIMIT 1`, "00000000-0000-0000-0000-000000000000")
 
-		convey.Convey("when the sync and cold-cache sample queries are explained against the live source, then they compile without schema errors", func() {
+		convey.Convey("when every production sync source query and the cold-cache sample query are explained against the live source, then they compile without schema errors", func() {
 			convey.So(err, convey.ShouldBeNil)
 		})
 	})
+}
+
+func TestLiveMLWHSyncPerTableColdSyncBudgetSkipsWithoutGate(t *testing.T) {
+	t.Setenv("MLWH_SYNC_PERF_TEST", "")
+	t.Setenv("WA_MLWH_DSN", "")
+	t.Setenv("WA_MLWH_PASSWORD", "")
+
+	_, skipReason := loadLiveMLWHPerfConfigForTest(t)
+	if skipReason != "MLWH_SYNC_PERF_TEST not set" {
+		t.Fatalf("loadLiveMLWHPerfConfigForTest() skip = %q, want %q", skipReason, "MLWH_SYNC_PERF_TEST not set")
+	}
+
+	t.Skip(skipReason)
+}
+
+func TestLiveMLWHSyncPerTableColdSyncBudgetSkipsWithoutDSN(t *testing.T) {
+	t.Setenv("MLWH_SYNC_PERF_TEST", "1")
+	t.Setenv("WA_MLWH_DSN", "")
+	t.Setenv("WA_MLWH_PASSWORD", "")
+
+	_, skipReason := loadLiveMLWHPerfConfigForTest(t)
+	if skipReason != "WA_MLWH_DSN not set" {
+		t.Fatalf("loadLiveMLWHPerfConfigForTest() skip = %q, want %q", skipReason, "WA_MLWH_DSN not set")
+	}
+
+	t.Skip(skipReason)
+}
+
+func TestLiveMLWHSyncPerTableColdSyncBudget(t *testing.T) {
+	ctx := context.Background()
+	config, skipReason := loadLiveMLWHPerfConfigForTest(t)
+	if skipReason != "" {
+		t.Skip(skipReason)
+	}
+
+	streamDB, err := openLiveMLWHSourceDBForTest(ctx, config.DSN, config.Password)
+	if err != nil {
+		t.Fatalf("openLiveMLWHSourceDBForTest(): %v", err)
+	}
+	t.Cleanup(func() { _ = streamDB.Close() })
+
+	queries, err := liveMLWHColdSyncPerfQueries()
+	if err != nil {
+		t.Fatalf("liveMLWHColdSyncPerfQueries(): %v", err)
+	}
+
+	streamDurations := make(map[string]time.Duration, len(queries))
+	streamRows := make(map[string]int, len(queries))
+	for _, query := range queries {
+		duration, rows, measureErr := measureLiveQueryStreamDuration(ctx, streamDB, query.query, query.args...)
+		if measureErr != nil {
+			t.Fatalf("measureLiveQueryStreamDuration(%s): %v", query.table, measureErr)
+		}
+
+		streamDurations[query.table] = duration
+		streamRows[query.table] = rows
+		t.Logf("stream %s rows=%d duration=%s", query.table, rows, duration)
+	}
+
+	client, err := Open(ctx, config)
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	reports, err := client.Sync(ctx)
+	if err != nil {
+		t.Fatalf("Sync(): %v", err)
+	}
+	if len(reports) != len(queries) {
+		t.Fatalf("Sync() returned %d reports, want %d", len(reports), len(queries))
+	}
+
+	syncDurations := make(map[string]time.Duration, len(reports))
+	for _, report := range reports {
+		syncDurations[report.Table] = report.Duration
+		t.Logf("sync %s inserted=%d updated=%d duration=%s", report.Table, report.Inserted, report.Updated, report.Duration)
+	}
+
+	for _, query := range queries {
+		streamDuration := streamDurations[query.table]
+		syncDuration, ok := syncDurations[query.table]
+		if !ok {
+			t.Fatalf("Sync() missing report for table %s", query.table)
+		}
+
+		budget := 2 * streamDuration
+		if syncDuration > budget {
+			t.Fatalf("table %s exceeded cold-sync budget: sync=%s stream=%s budget=%s rows=%d", query.table, syncDuration, streamDuration, budget, streamRows[query.table])
+		}
+	}
 }
 
 func explainLiveQuery(ctx context.Context, db *sql.DB, query string, args ...any) error {
@@ -84,6 +177,126 @@ func explainLiveQuery(ctx context.Context, db *sql.DB, query string, args ...any
 	defer func() { _ = rows.Close() }()
 
 	return rows.Err()
+}
+
+type liveMLWHPerfQuery struct {
+	table string
+	query string
+	args  []any
+}
+
+func liveMLWHColdSyncPerfQueries() ([]liveMLWHPerfQuery, error) {
+	sampleQuery, sampleArgs, _, err := sampleSyncQuery(syncStateRecord{})
+	if err != nil {
+		return nil, err
+	}
+
+	studyQuery, studyArgs, err := studySyncQuery(syncStateRecord{})
+	if err != nil {
+		return nil, err
+	}
+
+	flowcellQuery, flowcellArgs, err := flowcellSyncQuery(syncStateRecord{})
+	if err != nil {
+		return nil, err
+	}
+
+	iseqProductMetricsQuery, iseqProductMetricsArgs, _, err := iseqProductMetricsSyncQuery(syncStateRecord{})
+	if err != nil {
+		return nil, err
+	}
+
+	seqProductIRODSLocationsQuery, seqProductIRODSLocationsArgs, _, err := seqProductIRODSLocationsSyncQuery(syncStateRecord{})
+	if err != nil {
+		return nil, err
+	}
+
+	return []liveMLWHPerfQuery{
+		{table: syncTableSample, query: sampleQuery, args: sampleArgs},
+		{table: syncTableStudy, query: studyQuery, args: studyArgs},
+		{table: syncTableIseqFlowcell, query: flowcellQuery, args: flowcellArgs},
+		{table: syncTableIseqProductMetrics, query: iseqProductMetricsQuery, args: iseqProductMetricsArgs},
+		{table: syncTableSeqProductIRODSLocations, query: seqProductIRODSLocationsQuery, args: seqProductIRODSLocationsArgs},
+	}, nil
+}
+
+func measureLiveQueryStreamDuration(ctx context.Context, db *sql.DB, query string, args ...any) (time.Duration, int, error) {
+	started := time.Now()
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	count := 0
+	rawValues := make([]sql.RawBytes, len(columns))
+	dest := make([]any, len(columns))
+	for i := range rawValues {
+		dest[i] = &rawValues[i]
+	}
+
+	for rows.Next() {
+		if err = rows.Scan(dest...); err != nil {
+			return 0, count, err
+		}
+
+		count++
+	}
+
+	if err = rows.Err(); err != nil {
+		return 0, count, err
+	}
+
+	return time.Since(started), count, nil
+}
+
+func loadLiveMLWHPerfConfigForTest(t *testing.T) (Config, string) {
+	t.Helper()
+
+	if strings.TrimSpace(os.Getenv("MLWH_SYNC_PERF_TEST")) != "1" {
+		return Config{}, "MLWH_SYNC_PERF_TEST not set"
+	}
+
+	dsn := strings.TrimSpace(os.Getenv("WA_MLWH_DSN"))
+	if dsn == "" {
+		return Config{}, "WA_MLWH_DSN not set"
+	}
+
+	password := strings.TrimSpace(os.Getenv("WA_MLWH_PASSWORD"))
+	if password == "" {
+		return Config{}, "WA_MLWH_PASSWORD not set"
+	}
+
+	return Config{
+		DSN:      dsn,
+		Password: password,
+		Cache:    CacheConfig{Path: filepath.Join(t.TempDir(), "mlwh-sync-perf.sqlite")},
+	}, ""
+}
+
+func openLiveMLWHSourceDBForTest(ctx context.Context, dsn string, password string) (*sql.DB, error) {
+	resolvedDSN, err := ResolveDSN(dsn, password)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceDB, err := sql.Open("mysql", resolvedDSN)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = sourceDB.PingContext(ctx); err != nil {
+		_ = sourceDB.Close()
+
+		return nil, err
+	}
+
+	return sourceDB, nil
 }
 
 func loadLiveMLWHConfigForTest(t *testing.T) (Config, string) {

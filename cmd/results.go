@@ -55,6 +55,7 @@ var resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
 
 var resultsRegisterResolverOpener = openResultsRegisterResolver
 
+//nolint:unused // Overridden by results serve tests to avoid wall-clock waits.
 var resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
 	return &resultsServeRealTicker{ticker: time.NewTicker(interval)}
 }
@@ -82,12 +83,11 @@ func resolveResultsServeMLWHConfig(flagValue string, flagChanged bool) (resultsS
 		return resultsServeMLWHConfig{}, false, nil
 	}
 
-	if dsn == "" {
-		return resultsServeMLWHConfig{}, false, errors.New("WA_MLWH_DSN must be set")
-	}
-
 	if !hasCachePath {
 		return resultsServeMLWHConfig{}, false, errors.New("WA_MLWH_CACHE_PATH or --mlwh-cache must be set")
+	}
+	if dsn == "" {
+		return resultsServeMLWHConfig{CachePath: cachePath}, true, nil
 	}
 
 	resolvedDSN, err := mlwh.ResolveDSN(dsn, firstEnv("WA_MLWH_PASSWORD"))
@@ -101,60 +101,29 @@ func resolveResultsServeMLWHConfig(flagValue string, flagChanged bool) (resultsS
 	}, true, nil
 }
 
-func startResultsServeMLWHSync(ctx context.Context, client resultsServeSyncClient, interval time.Duration) func() {
-	if interval <= 0 || client == nil {
-		return func() {}
-	}
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-
-		ticker := resultsServeNewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.Chan():
-				_, _ = client.Sync(ctx)
-			}
-		}
-	}()
-
-	return func() {
-		<-done
-	}
-}
-
 type resultsRegisterResolver interface {
 	ResolveSample(context.Context, string) (mlwh.Match, error)
-	ResolveStudy(context.Context, string, ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveStudy(context.Context, string) (mlwh.Match, error)
 	ResolveRun(context.Context, string) (mlwh.Match, error)
 	ResolveLibrary(context.Context, string) (mlwh.Match, error)
 	Close() error
 }
 
-func openResultsRegisterResolver(ctx context.Context) (resultsRegisterResolver, error) {
-	dsn := strings.TrimSpace(firstEnv("WA_MLWH_DSN"))
-	if dsn == "" {
-		return nil, errors.New("WA_MLWH_DSN is required to resolve --run/--study/--sample/--library")
-	}
+type resultsRegisterSampleNameResolver interface {
+	ResolveSampleName(context.Context, string) (mlwh.Match, error)
+}
 
+type resultsRegisterLibraryIdentifierResolver interface {
+	ResolveLibraryIdentifier(context.Context, string) (mlwh.Match, error)
+}
+
+func openResultsRegisterResolver(ctx context.Context) (resultsRegisterResolver, error) {
 	cachePath := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH"))
 	if cachePath == "" {
 		return nil, errors.New("WA_MLWH_CACHE_PATH is required to resolve --run/--study/--sample/--library")
 	}
 
-	client, err := mlwh.Open(ctx, mlwh.Config{
-		DSN:      dsn,
-		Password: firstEnv("WA_MLWH_PASSWORD"),
-		Cache: mlwh.CacheConfig{
-			Path:     cachePath,
-			Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
-		},
-	})
+	client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{Path: cachePath, Password: firstEnv("WA_MLWH_CACHE_PASSWORD")})
 	if err != nil {
 		return nil, fmt.Errorf("open mlwh resolver client: %w", err)
 	}
@@ -172,53 +141,42 @@ func resultsRegisterResolvedCanonical(flagName, value, canonical string) (string
 }
 
 type resultsServeSyncClient interface {
-	Sync(context.Context, ...string) ([]mlwh.SyncReport, error)
+	Sync(context.Context) ([]mlwh.SyncReport, error)
 	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
+	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
 	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
 	Close() error
 }
 
 func openResultsServeMLWHClientWithConfig(ctx context.Context, cfg resultsServeMLWHConfig) (resultsServeSyncClient, error) {
-	sourceDB, err := sql.Open("mysql", cfg.DSN)
-	if err != nil {
-		return nil, fmt.Errorf("open mlwh source db: %w", err)
-	}
-
-	if err = sourceDB.PingContext(ctx); err != nil {
-		_ = sourceDB.Close()
-
-		return nil, fmt.Errorf("ping mlwh source db: %w", err)
-	}
-
-	client, err := mlwh.Open(ctx, mlwh.Config{
-		Cache: mlwh.CacheConfig{
-			Path:     cfg.CachePath,
-			Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
-		},
-		Source: sourceDB,
+	client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{
+		Path:     cfg.CachePath,
+		Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
 	})
 	if err != nil {
-		_ = sourceDB.Close()
-
 		return nil, err
 	}
 
-	return &resultsServeMLWHRuntime{client: client, sourceDB: sourceDB}, nil
+	return &resultsServeMLWHRuntime{client: client}, nil
 }
 
+//nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 type resultsServeTicker interface {
 	Chan() <-chan time.Time
 	Stop()
 }
 
+//nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 type resultsServeRealTicker struct {
 	ticker *time.Ticker
 }
 
+//nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 func (t *resultsServeRealTicker) Chan() <-chan time.Time {
 	return t.ticker.C
 }
 
+//nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 func (t *resultsServeRealTicker) Stop() {
 	t.ticker.Stop()
 }
@@ -228,12 +186,16 @@ type resultsServeMLWHRuntime struct {
 	sourceDB *sql.DB
 }
 
-func (r *resultsServeMLWHRuntime) Sync(ctx context.Context, tables ...string) ([]mlwh.SyncReport, error) {
-	return r.client.Sync(ctx, tables...)
+func (r *resultsServeMLWHRuntime) Sync(ctx context.Context) ([]mlwh.SyncReport, error) {
+	return r.client.Sync(ctx)
 }
 
 func (r *resultsServeMLWHRuntime) ExpandIdentifier(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
 	return r.client.ExpandIdentifier(ctx, kind, canonical)
+}
+
+func (r *resultsServeMLWHRuntime) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+	return r.client.ExpandSearchValues(ctx, kind, canonical)
 }
 
 func (r *resultsServeMLWHRuntime) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
@@ -300,12 +262,14 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 	}
 
 	if trimmedLibrary := strings.TrimSpace(values.library); trimmedLibrary != "" {
-		resolvedLibraryType, err := resolveResultsRegisterLibraryType(ctx, client, trimmedLibrary)
+		libraryMetadata, err := resolveResultsRegisterLibraryMetadata(ctx, client, trimmedLibrary)
 		if err != nil {
 			return nil, err
 		}
 
-		metadata["seqmeta_librarytype"] = resolvedLibraryType
+		for key, value := range libraryMetadata {
+			metadata[key] = value
+		}
 	}
 
 	return metadata, nil
@@ -330,6 +294,16 @@ func resolveResultsRegisterStudyID(ctx context.Context, client resultsRegisterRe
 }
 
 func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
+	if nameResolver, ok := client.(resultsRegisterSampleNameResolver); ok {
+		match, err := nameResolver.ResolveSampleName(ctx, value)
+		if err == nil {
+			return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
+		}
+		if !errors.Is(err, mlwh.ErrNotFound) {
+			return "", fmt.Errorf("resolve --sample %q: %w", value, err)
+		}
+	}
+
 	match, err := client.ResolveSample(ctx, value)
 	if err != nil {
 		return "", fmt.Errorf("resolve --sample %q: %w", value, err)
@@ -338,13 +312,101 @@ func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterR
 	return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
 }
 
-func resolveResultsRegisterLibraryType(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
-	match, err := client.ResolveLibrary(ctx, value)
+func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
+	match, err := resolveResultsRegisterLibrary(ctx, client, value)
 	if err != nil {
-		return "", fmt.Errorf("resolve --library %q: %w", value, err)
+		return nil, fmt.Errorf("resolve --library %q: %w", value, err)
 	}
 
-	return resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+	metadata := make(map[string]string, 2)
+	if libraryType := strings.TrimSpace(matchLibraryType(match)); libraryType != "" {
+		metadata["seqmeta_librarytype"] = libraryType
+	}
+
+	switch match.Kind {
+	case mlwh.KindLibraryID:
+		libraryID, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+		if err != nil {
+			return nil, err
+		}
+		metadata["seqmeta_libraryid"] = libraryID
+	case mlwh.KindLibraryLimsID:
+		libraryLimsID, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+		if err != nil {
+			return nil, err
+		}
+		metadata["seqmeta_library_lims"] = libraryLimsID
+	default:
+		if libraryID := matchingLibraryID(value, match.Library); libraryID != "" {
+			metadata["seqmeta_libraryid"] = libraryID
+
+			return metadata, nil
+		}
+		if libraryLimsID := matchingLibraryLimsID(value, match.Library); libraryLimsID != "" {
+			metadata["seqmeta_library_lims"] = libraryLimsID
+
+			return metadata, nil
+		}
+
+		libraryType, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
+		if err != nil {
+			return nil, err
+		}
+		metadata["seqmeta_librarytype"] = libraryType
+	}
+
+	return metadata, nil
+}
+
+func resolveResultsRegisterLibrary(ctx context.Context, client resultsRegisterResolver, value string) (mlwh.Match, error) {
+	if identifierResolver, ok := client.(resultsRegisterLibraryIdentifierResolver); ok {
+		match, err := identifierResolver.ResolveLibraryIdentifier(ctx, value)
+		if err == nil {
+			return match, nil
+		}
+		if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, err
+		}
+	}
+
+	return client.ResolveLibrary(ctx, value)
+}
+
+func matchingLibraryID(value string, library *mlwh.Library) string {
+	if library == nil {
+		return ""
+	}
+
+	trimmed := strings.TrimSpace(library.LibraryID)
+	if strings.EqualFold(strings.TrimSpace(value), trimmed) {
+		return trimmed
+	}
+
+	return ""
+}
+
+func matchingLibraryLimsID(value string, library *mlwh.Library) string {
+	if library == nil {
+		return ""
+	}
+
+	trimmed := strings.TrimSpace(library.IDLibraryLims)
+	if strings.EqualFold(strings.TrimSpace(value), trimmed) {
+		return trimmed
+	}
+
+	return ""
+}
+
+func matchLibraryType(match mlwh.Match) string {
+	if match.Library != nil {
+		return strings.TrimSpace(match.Library.PipelineIDLims)
+	}
+	if match.Kind == mlwh.KindLibraryType {
+		return strings.TrimSpace(match.Canonical)
+	}
+
+	return ""
 }
 
 type resultSetWithFiles struct {
@@ -565,7 +627,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 			"The --run, --study, --sample and --library shorthands resolve through MLWH and store canonical seqmeta metadata keys.",
 			"--sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID.",
 			"--study accepts LIMS ID, accession, UUID, or name; --run accepts numeric run IDs.",
-			"--library accepts exact pipeline_id_lims values, and the first call may block on a cold-cache sync, so pre-warm with wa mlwh sync.",
+			"--library accepts exact pipeline_id_lims, library_id, or id_library_lims values and requires the MLWH cache to have been synced already.",
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -613,7 +675,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric run ID through MLWH and store it as seqmeta_runid")
 	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_studyid")
 	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_sampleid")
-	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims through MLWH and store it as seqmeta_librarytype; the first call may block on a cold-cache sync, so pre-warm with wa mlwh sync")
+	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 
@@ -767,6 +829,11 @@ func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[strin
 }
 
 func resultsRegisterSeqmetaFlagName(metaKey string) string {
+	switch metaKey {
+	case "seqmeta_libraryid", "seqmeta_library_lims", "seqmeta_librarytype":
+		return "library"
+	}
+
 	for flagName, key := range resultsRegisterSeqmetaFlagMetaKeys {
 		if key == metaKey {
 			return flagName
@@ -1145,7 +1212,6 @@ func newResultsServeCommand() *cobra.Command {
 	var port int
 	var dbPath string
 	var mlwhCache string
-	var mlwhSyncInterval time.Duration
 	var seqmetaURL string
 	var seqmetaTimeout time.Duration
 
@@ -1163,9 +1229,6 @@ func newResultsServeCommand() *cobra.Command {
 			mlwhConfig, enableMLWH, err := resolveResultsServeMLWHConfig(mlwhCache, cmd.Flags().Changed("mlwh-cache"))
 			if err != nil {
 				return err
-			}
-			if mlwhSyncInterval > 0 && !enableMLWH {
-				return errors.New("--mlwh-sync-interval requires MLWH configuration via WA_MLWH_DSN and WA_MLWH_CACHE_PATH or --mlwh-cache")
 			}
 
 			db, err := openResultsDB(dsn)
@@ -1207,7 +1270,6 @@ func newResultsServeCommand() *cobra.Command {
 
 			httpServer := &http.Server{Handler: results.NewServer(store, validator, resolver).Handler()}
 			serveCtx, cancelServe := context.WithCancel(ctx)
-			waitForSync := startResultsServeMLWHSync(serveCtx, mlwhClient, mlwhSyncInterval)
 
 			go func() {
 				<-serveCtx.Done()
@@ -1216,7 +1278,6 @@ func newResultsServeCommand() *cobra.Command {
 
 			err = httpServer.Serve(listener)
 			cancelServe()
-			waitForSync()
 			if errors.Is(err, http.ErrServerClosed) {
 				return nil
 			}
@@ -1228,7 +1289,6 @@ func newResultsServeCommand() *cobra.Command {
 	command.Flags().IntVar(&port, "port", 8080, "Port to bind")
 	command.Flags().StringVar(&dbPath, "db", "results.db", "SQLite database path or MySQL DSN without a password; defaults to WA_RESULTS_DB_PATH when unset")
 	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
-	command.Flags().DurationVar(&mlwhSyncInterval, "mlwh-sync-interval", 0, "Opt-in background MLWH sync interval; zero disables the sync loop")
 	command.Flags().StringVar(&seqmetaURL, "seqmeta-url", firstEnv("WA_SEQMETA_BACKEND_URL"), "Base URL for seqmeta validation (defaults to WA_SEQMETA_BACKEND_URL)")
 	command.Flags().DurationVar(&seqmetaTimeout, "seqmeta-timeout", 30*time.Second, "Timeout for seqmeta validation requests")
 

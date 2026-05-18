@@ -316,9 +316,62 @@ func prepareDiffStudySamples(
 	studyID string,
 	samples []mlwh.Sample,
 ) (*PreparedDiff[mlwh.Sample], error) {
-	return PrepareDiff(store, "study_samples:"+studyID, samples, func(sample mlwh.Sample) string {
+	filtered := make([]mlwh.Sample, 0, len(samples))
+	for _, sample := range samples {
+		filtered = append(filtered, sampleForStudyDiff(sample, studyID))
+	}
+
+	return PrepareDiff(store, "study_samples:"+studyID, filtered, func(sample mlwh.Sample) string {
 		return sample.Name
 	})
+}
+
+func sampleForStudyDiff(sample mlwh.Sample, studyID string) mlwh.Sample {
+	filtered := sample
+	filtered.Studies = filterSampleStudiesForStudy(sample.Studies, studyID)
+	filtered.Libraries = filterSampleLibrariesForStudy(sample.Libraries, studyID)
+
+	return filtered
+}
+
+func filterSampleStudiesForStudy(studies []mlwh.Study, studyID string) []mlwh.Study {
+	if len(studies) == 0 {
+		return nil
+	}
+
+	filtered := make([]mlwh.Study, 0, len(studies))
+	for _, study := range studies {
+		if study.IDStudyLims != studyID {
+			continue
+		}
+
+		filtered = append(filtered, study)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return filtered
+}
+
+func filterSampleLibrariesForStudy(libraries []mlwh.Library, studyID string) []mlwh.Library {
+	if len(libraries) == 0 {
+		return nil
+	}
+
+	filtered := make([]mlwh.Library, 0, len(libraries))
+	for _, library := range libraries {
+		if library.IDStudyLims != studyID {
+			continue
+		}
+
+		filtered = append(filtered, library)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return filtered
 }
 
 // DiffSampleFiles fetches and diffs the files for one sample.
@@ -368,6 +421,15 @@ func PrepareDiffSampleFiles(
 		return nil, err
 	}
 
+	return PrepareDiffSampleFilesForList(store, sangerID, files)
+}
+
+// PrepareDiffSampleFilesForList computes a deferred diff from a pre-fetched file list.
+func PrepareDiffSampleFilesForList(
+	store *Store,
+	sangerID string,
+	files []mlwh.IRODSPath,
+) (*PreparedDiff[mlwh.IRODSPath], error) {
 	return prepareDiffSampleFiles(store, sangerID, files)
 }
 

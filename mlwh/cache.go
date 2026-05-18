@@ -27,11 +27,17 @@ package mlwh
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,10 +48,10 @@ import (
 
 const (
 	defaultMySQLLockTimeoutSeconds = 30
-	mysqlSyncLockName              = "wa_mlwh_sync"
+	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	CacheSchemaVersion = 1
+	CacheSchemaVersion = 3
 )
 
 var (
@@ -54,7 +60,8 @@ var (
 	// ErrUpstreamImpaired reports that a required upstream cache/database operation failed.
 	ErrUpstreamImpaired = errors.New("mlwh: upstream database impaired")
 
-	sqlOpenFunc = sql.Open
+	sqlOpenFunc                    = sql.Open
+	cacheMigrationStderr io.Writer = os.Stderr
 )
 
 // Cache exposes the opened cache database handle.
@@ -79,6 +86,8 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mlwh: open sqlite cache: %w", err)
 	}
+	rwDB.SetMaxOpenConns(1)
+	rwDB.SetMaxIdleConns(1)
 
 	if err = rwDB.PingContext(ctx); err != nil {
 		_ = rwDB.Close()
@@ -91,6 +100,13 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 
 		return nil, err
 	}
+	if err = repairDroppedMirrorIndexes(ctx, rwDB, "sqlite"); err != nil {
+		_ = rwDB.Close()
+
+		return nil, err
+	}
+
+	lockDSN := sqliteLockDSN(cfg.Path)
 
 	roDB := rwDB
 	if cfg.Path != ":memory:" {
@@ -109,7 +125,7 @@ func openSQLiteCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 		}
 	}
 
-	return &sqliteCache{rwDB: rwDB, roDB: roDB}, nil
+	return &sqliteCache{rwDB: rwDB, roDB: roDB, lockDSN: lockDSN, writeMu: &sync.Mutex{}}, nil
 }
 
 func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
@@ -130,6 +146,11 @@ func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 	}
 
 	if err = prepareCacheSchema(ctx, rwDB, "mysql"); err != nil {
+		_ = rwDB.Close()
+
+		return nil, err
+	}
+	if err = repairDroppedMirrorIndexes(ctx, rwDB, "mysql"); err != nil {
 		_ = rwDB.Close()
 
 		return nil, err
@@ -156,7 +177,7 @@ func openMySQLCache(ctx context.Context, cfg CacheConfig) (Cache, error) {
 		return nil, fmt.Errorf("mlwh: ping mysql read-only cache: %w", err)
 	}
 
-	return &mysqlCache{rwDB: rwDB, roDB: roDB}, nil
+	return &mysqlCache{rwDB: rwDB, roDB: roDB, lockDSN: resolvedDSN}, nil
 }
 
 // CacheConfig describes the cache connection to open.
@@ -166,7 +187,7 @@ type CacheConfig struct {
 }
 
 func resolveMySQLDSN(cfg CacheConfig) (string, error) {
-	parsed, err := mysql.ParseDSN(cfg.Path)
+	parsed, err := mysql.ParseDSN(normalizeMySQLDSNInput(cfg.Path))
 	if err != nil {
 		return "", fmt.Errorf("mlwh: parse mysql cache dsn: %w", err)
 	}
@@ -184,16 +205,19 @@ func resolveMySQLDSN(cfg CacheConfig) (string, error) {
 
 // Client owns the cache connections used by sync and read paths.
 type Client struct {
-	cache                   Cache
-	cacheReader             *sql.DB
-	syncSource              Querier
-	sourceDB                *sql.DB
-	syncMu                  *sync.Mutex
-	expandCacheMu           *sync.RWMutex
-	expandCache             map[expandIdentifierCacheKey]expandIdentifierCacheEntry
-	now                     func() time.Time
-	syncRunner              func(context.Context, *sql.Tx, []string) error
-	mySQLLockTimeoutSeconds int
+	cache            Cache
+	cacheReader      *sql.DB
+	syncSource       Querier
+	sourceDB         *sql.DB
+	syncMu           *sync.Mutex
+	expandCacheMu    *sync.RWMutex
+	expandCache      map[expandIdentifierCacheKey]expandIdentifierCacheEntry
+	now              func() time.Time
+	syncRunner       func(context.Context, *sql.Tx, []string) error
+	syncReportWriter io.Writer
+	syncRetryWriter  io.Writer
+	syncRetrySleep   func(context.Context, time.Duration) error
+	disableSyncLock  bool
 }
 
 // ReadDB exposes the client's read-only cache handle.
@@ -205,50 +229,38 @@ func (c *Client) ReadDB() *sql.DB {
 	return c.cacheReader
 }
 
+// SetSyncReportWriter configures an optional writer for per-table sync lines.
+func (c *Client) SetSyncReportWriter(writer io.Writer) {
+	if c == nil {
+		return
+	}
+
+	c.syncReportWriter = writer
+}
+
 func (c *Client) acquireSyncLock(ctx context.Context) (func() error, error) {
-	if c.cache.Dialect() != "mysql" {
+	if c == nil || c.cache == nil {
+		return nil, fmt.Errorf("mlwh: cache client not configured")
+	}
+	if c.disableSyncLock {
 		return nil, nil
 	}
 
-	timeout := c.mySQLLockTimeoutSeconds
-	if timeout <= 0 {
-		timeout = defaultMySQLLockTimeoutSeconds
+	switch cache := c.cache.(type) {
+	case *sqliteCache:
+		return cache.acquireSyncLock(ctx)
+	case *mysqlCache:
+		return cache.acquireSyncLock(ctx)
+	default:
+		return nil, nil
 	}
-
-	var gotLock int
-	err := c.cache.DB().QueryRowContext(
-		ctx,
-		"SELECT GET_LOCK('wa_mlwh_sync', ?)",
-		timeout,
-	).Scan(&gotLock)
-	if err != nil {
-		return nil, fmt.Errorf("%w: acquire mysql cache lock: %w", ErrUpstreamImpaired, err)
-	}
-	if gotLock != 1 {
-		return nil, fmt.Errorf("%w: acquire mysql cache lock", ErrUpstreamImpaired)
-	}
-
-	return func() error {
-		var released int
-
-		err := c.cache.DB().QueryRowContext(
-			ctx,
-			"SELECT RELEASE_LOCK('wa_mlwh_sync')",
-		).Scan(&released)
-		if err != nil {
-			return fmt.Errorf("%w: release mysql cache lock: %w", ErrUpstreamImpaired, err)
-		}
-		if released != 1 {
-			return fmt.Errorf("%w: release mysql cache lock", ErrUpstreamImpaired)
-		}
-
-		return nil
-	}, nil
 }
 
 type sqliteCache struct {
-	rwDB *sql.DB
-	roDB *sql.DB
+	rwDB    *sql.DB
+	roDB    *sql.DB
+	lockDSN string
+	writeMu *sync.Mutex
 }
 
 func (c *sqliteCache) DB() *sql.DB {
@@ -279,9 +291,74 @@ func (c *sqliteCache) Close() error {
 	return nil
 }
 
+func (c *sqliteCache) acquireSyncLock(ctx context.Context) (func() error, error) {
+	if c == nil || c.lockDSN == "" {
+		return nil, nil
+	}
+
+	lockDB, err := sqlOpenFunc("sqlite", c.lockDSN)
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: open sqlite sync lock connection: %w", err)
+	}
+	lockDB.SetMaxOpenConns(1)
+	lockDB.SetMaxIdleConns(1)
+	if err = ensureSQLiteSyncLockSchema(ctx, lockDB); err != nil {
+		_ = lockDB.Close()
+		if isSQLiteSyncLockBusy(err) {
+			return nil, ErrSyncAlreadyRunning
+		}
+
+		return nil, err
+	}
+
+	lockConn, err := lockDB.Conn(ctx)
+	if err != nil {
+		_ = lockDB.Close()
+
+		return nil, fmt.Errorf("mlwh: acquire sqlite sync lock connection: %w", err)
+	}
+
+	if _, err = lockConn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		_ = lockConn.Close()
+		_ = lockDB.Close()
+		if isSQLiteSyncLockBusy(err) {
+			return nil, ErrSyncAlreadyRunning
+		}
+
+		return nil, fmt.Errorf("mlwh: acquire sqlite sync lock: %w", err)
+	}
+
+	if err = ensureSQLiteSyncLockRow(ctx, lockConn); err != nil {
+		_, _ = lockConn.ExecContext(context.Background(), `ROLLBACK`)
+		_ = lockConn.Close()
+		_ = lockDB.Close()
+
+		return nil, err
+	}
+
+	return func() error {
+		_, rollbackErr := lockConn.ExecContext(context.Background(), `ROLLBACK`)
+		closeConnErr := lockConn.Close()
+		closeDBErr := lockDB.Close()
+		if rollbackErr != nil {
+			return fmt.Errorf("mlwh: release sqlite sync lock: %w", rollbackErr)
+		}
+		if closeConnErr != nil {
+			return fmt.Errorf("mlwh: close sqlite sync lock connection: %w", closeConnErr)
+		}
+		if closeDBErr != nil {
+			return fmt.Errorf("mlwh: close sqlite sync lock database: %w", closeDBErr)
+		}
+
+		return nil
+	}, nil
+}
+
 type mysqlCache struct {
-	rwDB *sql.DB
-	roDB *sql.DB
+	rwDB    *sql.DB
+	roDB    *sql.DB
+	lockDB  *sql.DB
+	lockDSN string
 }
 
 func (c *mysqlCache) DB() *sql.DB {
@@ -297,6 +374,19 @@ func (c *mysqlCache) Dialect() string {
 }
 
 func (c *mysqlCache) Close() error {
+	if c.lockDB != nil && c.lockDB != c.rwDB && c.lockDB != c.roDB {
+		if err := c.lockDB.Close(); err != nil {
+			if c.roDB != nil && c.roDB != c.rwDB {
+				_ = c.roDB.Close()
+			}
+			if c.rwDB != nil {
+				_ = c.rwDB.Close()
+			}
+
+			return err
+		}
+	}
+
 	if c.roDB != nil && c.roDB != c.rwDB {
 		if err := c.roDB.Close(); err != nil {
 			_ = c.rwDB.Close()
@@ -310,6 +400,97 @@ func (c *mysqlCache) Close() error {
 	}
 
 	return nil
+}
+
+func (c *mysqlCache) acquireSyncLock(ctx context.Context) (func() error, error) {
+	if c == nil || c.rwDB == nil {
+		return nil, fmt.Errorf("mlwh: mysql cache not configured")
+	}
+
+	lockDB := c.lockDB
+	if lockDB == nil {
+		lockDB = c.rwDB
+	}
+
+	lockConn, err := lockDB.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: acquire mysql cache lock connection: %w", ErrUpstreamImpaired, err)
+	}
+
+	lockName := mysqlSyncLockName(c.lockDSN)
+	var gotLock int
+	err = lockConn.QueryRowContext(ctx, `SELECT GET_LOCK(?, 0)`, lockName).Scan(&gotLock)
+	if err != nil {
+		_ = lockConn.Close()
+
+		return nil, fmt.Errorf("%w: acquire mysql cache lock: %w", ErrUpstreamImpaired, err)
+	}
+	if gotLock != 1 {
+		_ = lockConn.Close()
+
+		return nil, ErrSyncAlreadyRunning
+	}
+
+	return func() error {
+		var released int
+
+		releaseErr := lockConn.QueryRowContext(context.Background(), `SELECT RELEASE_LOCK(?)`, lockName).Scan(&released)
+		closeErr := lockConn.Close()
+		if releaseErr != nil {
+			return fmt.Errorf("%w: release mysql cache lock: %w", ErrUpstreamImpaired, releaseErr)
+		}
+		if released != 1 {
+			return fmt.Errorf("%w: release mysql cache lock", ErrUpstreamImpaired)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("%w: close mysql cache lock connection: %w", ErrUpstreamImpaired, closeErr)
+		}
+
+		return nil
+	}, nil
+}
+
+func mysqlSyncLockName(dsn string) string {
+	trimmed := strings.TrimSpace(dsn)
+	if parsed, err := mysql.ParseDSN(trimmed); err == nil {
+		trimmed = normalizedMySQLLockScope(parsed)
+	}
+
+	sum := sha1.Sum([]byte(trimmed))
+
+	return mysqlSyncLockNamePrefix + hex.EncodeToString(sum[:])[:16]
+}
+
+func normalizedMySQLLockScope(parsed *mysql.Config) string {
+	if parsed == nil {
+		return ""
+	}
+
+	return parsed.Net + "|" + parsed.Addr + "|" + parsed.DBName
+}
+
+func ensureSQLiteSyncLockRow(ctx context.Context, execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}) error {
+	if _, err := execer.ExecContext(ctx, `INSERT OR IGNORE INTO sync_lock(id) VALUES (1)`); err != nil {
+		return fmt.Errorf("mlwh: seed sqlite sync_lock row: %w", err)
+	}
+
+	return nil
+}
+
+func ensureSQLiteSyncLockSchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sync_lock(id INTEGER PRIMARY KEY CHECK(id = 1))`); err != nil {
+		return fmt.Errorf("mlwh: ensure sqlite sync_lock schema: %w", err)
+	}
+
+	return nil
+}
+
+func isSQLiteSyncLockBusy(err error) bool {
+	message := strings.ToLower(err.Error())
+
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "database table is locked")
 }
 
 func mysqlReadOnlyDSN(dsn string) (string, error) {
@@ -327,102 +508,323 @@ func mysqlReadOnlyDSN(dsn string) (string, error) {
 	return parsed.FormatDSN(), nil
 }
 
-func applySQLiteSchema(ctx context.Context, db *sql.DB) error {
-	return applySchema(ctx, db, "sqlite")
-}
-
 func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
-	needsReset, err := cacheSchemaNeedsReset(ctx, db, dialect)
+	rowCount, version, err := querySchemaVersion(ctx, db)
 	if err != nil {
-		return err
+		if isMissingSchemaVersionError(dialect, err) {
+			if err = applySchema(ctx, db, dialect); err != nil {
+				return err
+			}
+
+			return writeSchemaVersion(ctx, db)
+		}
+
+		return fmt.Errorf("mlwh: query schema version: %w", err)
 	}
-	if needsReset {
-		if err = resetSchema(ctx, db, dialect); err != nil {
+
+	switch {
+	case rowCount == 0:
+		if err = applySchema(ctx, db, dialect); err != nil {
 			return err
 		}
-	}
 
-	if err = ensureSchemaVersion(ctx, db, dialect); err != nil {
-		return err
-	}
+		return writeSchemaVersion(ctx, db)
+	case rowCount == 1 && version == CacheSchemaVersion:
+		if err = ensureAdditiveCurrentCacheIndexes(ctx, db, dialect); err != nil {
+			return err
+		}
 
-	needsReset, err = cacheSchemaNeedsReset(ctx, db, dialect)
-	if err != nil {
-		return err
-	}
-	if !needsReset {
+		if err = validateCurrentCacheSchema(ctx, db, dialect); err != nil {
+			return migrateCacheSchema(ctx, db, dialect, version)
+		}
+
 		return nil
+	default:
+		return migrateCacheSchema(ctx, db, dialect, version)
 	}
+}
 
-	if err = resetSchema(ctx, db, dialect); err != nil {
+func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
+	expected, err := expectedCacheSchemaShape(dialect)
+	if err != nil {
 		return err
 	}
 
-	return writeSchemaVersion(ctx, db)
+	actual, err := readCacheSchemaShape(ctx, db, dialect)
+	if err != nil {
+		return err
+	}
+	if dialect == "sqlite" {
+		for _, indexSet := range syncMirrorIndexSets {
+			if allowMissingMirrorIndexesForRecovery(ctx, db, expected, actual, indexSet) {
+				actual.Index[indexSet.Table] = append([]string(nil), expected.Index[indexSet.Table]...)
+			}
+		}
+		allowLargeSQLiteColdLoadIndexShape(ctx, db, expected, actual)
+	}
+	if dialect == "mysql" {
+		allowLargeMySQLColdLoadIndexShape(ctx, db, expected, actual)
+	}
+
+	if err := compareCacheSchemaShapes(expected, actual); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func cacheSchemaNeedsReset(ctx context.Context, db *sql.DB, dialect string) (bool, error) {
-	expectedStatements, err := loadSchema(dialect)
-	if err != nil {
-		return false, err
-	}
+func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect string) error {
+	switch dialect {
+	case "sqlite":
+		for _, stmt := range []string{
+			`CREATE INDEX IF NOT EXISTS library_samples_library_id_idx ON library_samples(library_id)`,
+			`CREATE INDEX IF NOT EXISTS library_samples_id_library_lims_idx ON library_samples(id_library_lims)`,
+		} {
+			if _, err := db.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("mlwh: create sqlite library identifier index: %w", err)
+			}
+		}
 
-	expectedShape, err := parseSchemaShape(expectedStatements)
-	if err != nil {
-		return false, err
-	}
+		return nil
+	case "mysql":
+		indexes, _, err := readMySQLTableIndexes(ctx, db, "library_samples")
+		if err != nil {
+			return err
+		}
 
-	actualShape, err := inspectCacheSchema(ctx, db, dialect, expectedShape)
-	if err != nil {
-		return false, err
-	}
+		for columns, stmt := range map[string]string{
+			"library_id":      `CREATE INDEX library_samples_library_id_idx ON library_samples(library_id)`,
+			"id_library_lims": `CREATE INDEX library_samples_id_library_lims_idx ON library_samples(id_library_lims)`,
+		} {
+			if slices.Contains(indexes, columns) {
+				continue
+			}
 
-	return !schemaShapeMatches(expectedShape, actualShape), nil
+			if _, err := db.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("mlwh: create mysql library identifier index: %w", err)
+			}
+		}
+
+		return nil
+	default:
+		return fmt.Errorf("mlwh: unsupported cache schema dialect %q", dialect)
+	}
 }
 
-func inspectCacheSchema(ctx context.Context, db *sql.DB, dialect string, expected schemaShape) (schemaShape, error) {
-	shape := schemaShape{
-		Tables: make(map[string]map[string]string, len(expected.Tables)),
-		Index:  make(map[string][]string, len(expected.Index)),
+func expectedCacheSchemaShape(dialect string) (schemaShape, error) {
+	stmts, err := loadSchema(dialect)
+	if err != nil {
+		return schemaShape{}, err
 	}
 
-	for _, table := range schemaStatementOrder {
-		columns, err := inspectCacheTableColumns(ctx, db, dialect, table)
-		if err != nil {
-			return schemaShape{}, err
-		}
-		shape.Tables[table] = columns
-
-		indexes, err := inspectCacheTableIndexes(ctx, db, dialect, table)
-		if err != nil {
-			return schemaShape{}, err
-		}
-		shape.Index[table] = indexes
+	shape, err := parseSchemaShape(stmts)
+	if err != nil {
+		return schemaShape{}, err
 	}
 
 	return shape, nil
 }
 
-func inspectCacheTableColumns(ctx context.Context, db *sql.DB, dialect, table string) (map[string]string, error) {
-	if dialect == "sqlite" {
-		return inspectSQLiteTableColumns(ctx, db, table)
+func readCacheSchemaShape(ctx context.Context, db *sql.DB, dialect string) (schemaShape, error) {
+	switch dialect {
+	case "sqlite":
+		return readSQLiteCacheSchemaShape(ctx, db)
+	case "mysql":
+		return readMySQLCacheSchemaShape(ctx, db)
+	default:
+		return schemaShape{}, fmt.Errorf("mlwh: unsupported cache schema dialect %q", dialect)
 	}
-
-	return inspectMySQLTableColumns(ctx, db, table)
 }
 
-func inspectCacheTableIndexes(ctx context.Context, db *sql.DB, dialect, table string) ([]string, error) {
-	if dialect == "sqlite" {
-		return inspectSQLiteTableIndexes(ctx, db, table)
+func compareCacheSchemaShapes(expected, actual schemaShape) error {
+	for table, expectedColumns := range expected.Tables {
+		actualColumns, ok := actual.Tables[table]
+		if !ok {
+			return fmt.Errorf("mlwh: cache schema missing table %s", table)
+		}
+		if len(expectedColumns) != len(actualColumns) {
+			return fmt.Errorf("mlwh: cache schema column mismatch for %s", table)
+		}
+		for column, expectedType := range expectedColumns {
+			actualType, ok := actualColumns[column]
+			if !ok || actualType != expectedType {
+				return fmt.Errorf("mlwh: cache schema column mismatch for %s.%s", table, column)
+			}
+		}
+		if !stringSlicesEqual(expected.Index[table], actual.Index[table]) {
+			return fmt.Errorf("mlwh: cache schema index mismatch for %s", table)
+		}
+		if !stringSlicesEqual(expected.Unique[table], actual.Unique[table]) {
+			return fmt.Errorf("mlwh: cache schema unique constraint mismatch for %s", table)
+		}
 	}
 
-	return inspectMySQLTableIndexes(ctx, db, table)
+	return nil
 }
 
-func inspectSQLiteTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+func allowLargeMySQLColdLoadIndexShape(ctx context.Context, db *sql.DB, expected, actual schemaShape) {
+	for _, indexSet := range []syncMirrorIndexSet{iseqProductMetricsMirrorIndexSet, seqProductIRODSLocationsMirrorIndexSet} {
+		if stringSlicesEqual(expected.Index[indexSet.Table], actual.Index[indexSet.Table]) {
+			continue
+		}
+		if !mysqlSyncStateRecordsDroppedIndexes(ctx, db, indexSet.SyncTable) &&
+			!mysqlTableEstimateExceedsInlineIndexLimit(ctx, db, indexSet.Table, mysqlInlineMirrorIndexRowLimit) {
+			continue
+		}
+
+		actual.Index[indexSet.Table] = append([]string(nil), expected.Index[indexSet.Table]...)
+	}
+
+	if !stringSlicesEqual(expected.Index["sample_mirror"], actual.Index["sample_mirror"]) &&
+		mysqlTableEstimateExceedsInlineIndexLimit(ctx, db, "sample_mirror", mysqlInlineSampleIndexRowLimit) {
+		actual.Index["sample_mirror"] = append([]string(nil), expected.Index["sample_mirror"]...)
+	}
+}
+
+func allowLargeSQLiteColdLoadIndexShape(ctx context.Context, db *sql.DB, expected, actual schemaShape) {
+	for _, indexSet := range []syncMirrorIndexSet{sampleMirrorIndexSet, iseqProductMetricsMirrorIndexSet, seqProductIRODSLocationsMirrorIndexSet} {
+		if stringSlicesEqual(expected.Index[indexSet.Table], actual.Index[indexSet.Table]) {
+			continue
+		}
+		if !sqliteSyncStateRecordsDroppedIndexes(ctx, db, indexSet.SyncTable) {
+			continue
+		}
+		if !sqliteLargeCacheReadIndexShape(indexSet, actual.Index[indexSet.Table]) {
+			continue
+		}
+
+		actual.Index[indexSet.Table] = append([]string(nil), expected.Index[indexSet.Table]...)
+	}
+}
+
+func sqliteLargeCacheReadIndexShape(indexSet syncMirrorIndexSet, actual []string) bool {
+	switch indexSet.Table {
+	case sampleMirrorIndexSet.Table:
+		return stringSlicesEqual(actual, []string{"name"})
+	case iseqProductMetricsMirrorIndexSet.Table:
+		return stringSlicesEqual(actual, iseqProductMetricsSparseReadIndexColumns()) ||
+			stringSlicesEqual(actual, []string{"id_sample_tmp,id_run,position,tag_index"})
+	case seqProductIRODSLocationsMirrorIndexSet.Table:
+		return stringSlicesEqual(actual, []string{"id_sample_tmp", "id_study_lims,id_sample_tmp"})
+	default:
+		return false
+	}
+}
+
+func iseqProductMetricsSparseReadIndexColumns() []string {
+	return []string{"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index"}
+}
+
+func sqliteSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {
+	var indexesDropped int
+	if err := db.QueryRowContext(ctx, `SELECT indexes_dropped FROM sync_state WHERE table_name = ?`, table).Scan(&indexesDropped); err != nil {
+		return false
+	}
+
+	return indexesDropped == 1
+}
+
+func mysqlSyncStateRecordsDroppedIndexes(ctx context.Context, db *sql.DB, table string) bool {
+	var (
+		highWaterRaw   string
+		indexesDropped int
+	)
+	if err := db.QueryRowContext(
+		ctx,
+		`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`,
+		table,
+	).Scan(&highWaterRaw, &indexesDropped); err != nil || indexesDropped != 1 {
+		return false
+	}
+
+	highWater, err := parseSyncTimeString(highWaterRaw)
 	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect sqlite table %s columns: %w", table, err)
+		return false
+	}
+
+	return !highWater.IsZero()
+}
+
+func mysqlTableEstimateExceedsInlineIndexLimit(ctx context.Context, db *sql.DB, table string, limit int) bool {
+	var rows sql.NullInt64
+	if err := db.QueryRowContext(
+		ctx,
+		`SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+		table,
+	).Scan(&rows); err != nil || !rows.Valid {
+		return false
+	}
+
+	return rows.Int64 > int64(limit)
+}
+
+func stringSlicesEqual(expected, actual []string) bool {
+	if len(expected) != len(actual) {
+		return false
+	}
+	for i := range expected {
+		if expected[i] != actual[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func allowMissingMirrorIndexesForRecovery(ctx context.Context, db *sql.DB, expected, actual schemaShape, indexSet syncMirrorIndexSet) bool {
+	if stringSlicesEqual(expected.Index[indexSet.Table], actual.Index[indexSet.Table]) {
+		return false
+	}
+	if len(actual.Index[indexSet.Table]) != 0 {
+		return false
+	}
+
+	var indexesDropped int
+	err := db.QueryRowContext(
+		ctx,
+		`SELECT indexes_dropped FROM sync_state WHERE table_name = ?`,
+		indexSet.SyncTable,
+	).Scan(&indexesDropped)
+	if err != nil || indexesDropped != 1 {
+		return false
+	}
+
+	return true
+}
+
+func readSQLiteCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, error) {
+	shape := schemaShape{
+		Tables: make(map[string]map[string]string, len(schemaStatementOrder)),
+		Index:  make(map[string][]string, len(schemaStatementOrder)),
+		Unique: make(map[string][]string, len(schemaStatementOrder)),
+	}
+
+	for _, table := range schemaStatementOrder {
+		columns, err := readSQLiteTableColumns(ctx, db, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		shape.Tables[table] = columns
+
+		indexes, uniques, err := readSQLiteTableIndexes(ctx, db, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		if len(indexes) > 0 {
+			shape.Index[table] = indexes
+		}
+		if len(uniques) > 0 {
+			shape.Unique[table] = uniques
+		}
+	}
+
+	return shape, nil
+}
+
+func readSQLiteTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info('%s')", table))
+	if err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite table info for %s: %w", table, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -433,30 +835,34 @@ func inspectSQLiteTableColumns(ctx context.Context, db *sql.DB, table string) (m
 			name       string
 			typeName   string
 			notNull    int
-			defaultVal any
-			pk         int
+			defaultV   any
+			primaryKey int
 		)
-		if err = rows.Scan(&cid, &name, &typeName, &notNull, &defaultVal, &pk); err != nil {
-			return nil, fmt.Errorf("mlwh: scan sqlite table %s columns: %w", table, err)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &primaryKey); err != nil {
+			return nil, fmt.Errorf("mlwh: scan sqlite table info for %s: %w", table, err)
 		}
 		columns[name] = normaliseTypeFamily(typeName)
 	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read sqlite table %s columns: %w", table, err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite table info for %s: %w", table, err)
 	}
 
 	return columns, nil
 }
 
-func inspectSQLiteTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_list(%s)", table))
+func readSQLiteTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, []string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_list('%s')", table))
 	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect sqlite table %s indexes: %w", table, err)
+		return nil, nil, fmt.Errorf("mlwh: read sqlite index list for %s: %w", table, err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	var indexes []string
+	type sqliteIndexListEntry struct {
+		name   string
+		unique int
+		origin string
+	}
+	entries := []sqliteIndexListEntry{}
+
 	for rows.Next() {
 		var (
 			seq     int
@@ -465,135 +871,164 @@ func inspectSQLiteTableIndexes(ctx context.Context, db *sql.DB, table string) ([
 			origin  string
 			partial int
 		)
-		if err = rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
-			return nil, fmt.Errorf("mlwh: scan sqlite table %s indexes: %w", table, err)
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			_ = rows.Close()
+			return nil, nil, fmt.Errorf("mlwh: scan sqlite index list for %s: %w", table, err)
 		}
-		if origin != "c" {
-			continue
-		}
-
-		columns, indexErr := inspectSQLiteIndexColumns(ctx, db, name)
-		if indexErr != nil {
-			return nil, indexErr
-		}
-		indexes = append(indexes, strings.Join(columns, ","))
+		entries = append(entries, sqliteIndexListEntry{name: name, unique: unique, origin: origin})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, nil, fmt.Errorf("mlwh: read sqlite index list for %s: %w", table, err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, fmt.Errorf("mlwh: close sqlite index list for %s: %w", table, err)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read sqlite table %s indexes: %w", table, err)
+	indexes := []string{}
+	uniques := []string{}
+	for _, entry := range entries {
+		if entry.origin == "pk" {
+			continue
+		}
+		columns, err := readSQLiteIndexColumns(ctx, db, entry.name)
+		if err != nil {
+			return nil, nil, err
+		}
+		joined := strings.Join(columns, ",")
+		if entry.unique == 1 {
+			uniques = append(uniques, joined)
+			continue
+		}
+		if entry.origin == "c" {
+			indexes = append(indexes, joined)
+		}
 	}
 
 	sort.Strings(indexes)
+	sort.Strings(uniques)
 
-	return indexes, nil
+	return indexes, uniques, nil
 }
 
-func inspectSQLiteIndexColumns(ctx context.Context, db *sql.DB, indexName string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info(%s)", indexName))
+func readSQLiteIndexColumns(ctx context.Context, db *sql.DB, indexName string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info('%s')", indexName))
 	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect sqlite index %s columns: %w", indexName, err)
+		return nil, fmt.Errorf("mlwh: read sqlite index info for %s: %w", indexName, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var columns []string
+	columns := []string{}
 	for rows.Next() {
 		var seqno, cid int
 		var name string
-		if err = rows.Scan(&seqno, &cid, &name); err != nil {
-			return nil, fmt.Errorf("mlwh: scan sqlite index %s columns: %w", indexName, err)
+		if err := rows.Scan(&seqno, &cid, &name); err != nil {
+			return nil, fmt.Errorf("mlwh: scan sqlite index info for %s: %w", indexName, err)
 		}
 		columns = append(columns, name)
 	}
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read sqlite index %s columns: %w", indexName, err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read sqlite index info for %s: %w", indexName, err)
 	}
 
 	return columns, nil
 }
 
-func inspectMySQLTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, table)
+func readMySQLCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, error) {
+	shape := schemaShape{
+		Tables: make(map[string]map[string]string, len(schemaStatementOrder)),
+		Index:  make(map[string][]string, len(schemaStatementOrder)),
+		Unique: make(map[string][]string, len(schemaStatementOrder)),
+	}
+
+	for _, table := range schemaStatementOrder {
+		columns, err := readMySQLTableColumns(ctx, db, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		shape.Tables[table] = columns
+
+		indexes, uniques, err := readMySQLTableIndexes(ctx, db, table)
+		if err != nil {
+			return schemaShape{}, err
+		}
+		if len(indexes) > 0 {
+			shape.Index[table] = indexes
+		}
+		if len(uniques) > 0 {
+			shape.Unique[table] = uniques
+		}
+	}
+
+	return shape, nil
+}
+
+func readMySQLTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`, table)
 	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect mysql table %s columns: %w", table, err)
+		return nil, fmt.Errorf("mlwh: read mysql columns for %s: %w", table, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	columns := make(map[string]string)
 	for rows.Next() {
-		var name, typeName string
-		if err = rows.Scan(&name, &typeName); err != nil {
-			return nil, fmt.Errorf("mlwh: scan mysql table %s columns: %w", table, err)
+		var name, dataType string
+		if err := rows.Scan(&name, &dataType); err != nil {
+			return nil, fmt.Errorf("mlwh: scan mysql columns for %s: %w", table, err)
 		}
-		columns[name] = normaliseTypeFamily(typeName)
+		columns[name] = normaliseTypeFamily(dataType)
 	}
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read mysql table %s columns: %w", table, err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mlwh: read mysql columns for %s: %w", table, err)
 	}
 
 	return columns, nil
 }
 
-func inspectMySQLTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table)
+func readMySQLTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, []string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table)
 	if err != nil {
-		return nil, fmt.Errorf("mlwh: inspect mysql table %s indexes: %w", table, err)
+		return nil, nil, fmt.Errorf("mlwh: read mysql indexes for %s: %w", table, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	grouped := make(map[string][]string)
+	indexesByName := map[string][]string{}
+	uniquesByName := map[string][]string{}
 	for rows.Next() {
 		var indexName, columnName string
-		if err = rows.Scan(&indexName, &columnName); err != nil {
-			return nil, fmt.Errorf("mlwh: scan mysql table %s indexes: %w", table, err)
+		var nonUnique int
+		if err := rows.Scan(&indexName, &nonUnique, &columnName); err != nil {
+			return nil, nil, fmt.Errorf("mlwh: scan mysql indexes for %s: %w", table, err)
 		}
-		if indexName == "PRIMARY" {
+		if nonUnique == 0 {
+			uniquesByName[indexName] = append(uniquesByName[indexName], columnName)
 			continue
 		}
-		grouped[indexName] = append(grouped[indexName], columnName)
+		indexesByName[indexName] = append(indexesByName[indexName], columnName)
 	}
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read mysql table %s indexes: %w", table, err)
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("mlwh: read mysql indexes for %s: %w", table, err)
 	}
 
-	indexes := make([]string, 0, len(grouped))
-	for _, columns := range grouped {
+	indexes := make([]string, 0, len(indexesByName))
+	for _, columns := range indexesByName {
 		indexes = append(indexes, strings.Join(columns, ","))
 	}
-	sort.Strings(indexes)
-
-	return indexes, nil
-}
-
-func schemaShapeMatches(expected, actual schemaShape) bool {
-	for table, expectedColumns := range expected.Tables {
-		actualColumns, ok := actual.Tables[table]
-		if !ok || len(actualColumns) != len(expectedColumns) {
-			return false
-		}
-		for column, expectedType := range expectedColumns {
-			if actualColumns[column] != expectedType {
-				return false
-			}
-		}
-
-		expectedIndexes := append([]string(nil), expected.Index[table]...)
-		actualIndexes := append([]string(nil), actual.Index[table]...)
-		sort.Strings(expectedIndexes)
-		sort.Strings(actualIndexes)
-		if len(expectedIndexes) != len(actualIndexes) {
-			return false
-		}
-		for idx := range expectedIndexes {
-			if expectedIndexes[idx] != actualIndexes[idx] {
-				return false
-			}
-		}
+	uniques := make([]string, 0, len(uniquesByName))
+	for _, columns := range uniquesByName {
+		uniques = append(uniques, strings.Join(columns, ","))
+	}
+	if len(indexes) > 0 {
+		sort.Strings(indexes)
+	}
+	if len(uniques) > 0 {
+		sort.Strings(uniques)
 	}
 
-	return true
+	return indexes, uniques, nil
 }
 
-func ensureSchemaVersion(ctx context.Context, db *sql.DB, dialect string) error {
+func querySchemaVersion(ctx context.Context, db *sql.DB) (int, int, error) {
 	var (
 		rowCount int
 		version  int
@@ -603,22 +1038,23 @@ func ensureSchemaVersion(ctx context.Context, db *sql.DB, dialect string) error 
 		ctx,
 		"SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version",
 	).Scan(&rowCount, &version)
-	if err != nil {
-		return fmt.Errorf("mlwh: query schema version: %w", err)
-	}
 
-	switch {
-	case rowCount == 1 && version == CacheSchemaVersion:
-		return nil
-	case rowCount == 0:
-		return writeSchemaVersion(ctx, db)
-	default:
-		if err = resetSchema(ctx, db, dialect); err != nil {
-			return err
+	return rowCount, version, err
+}
+
+func isMissingSchemaVersionError(dialect string, err error) bool {
+	if err != nil {
+		if dialect == "sqlite" {
+			return strings.Contains(err.Error(), "no such table: schema_version")
 		}
 
-		return writeSchemaVersion(ctx, db)
+		if dialect == "mysql" {
+			var mysqlErr *mysql.MySQLError
+			return errors.As(err, &mysqlErr) && mysqlErr.Number == 1146
+		}
 	}
+
+	return false
 }
 
 func writeSchemaVersion(ctx context.Context, db *sql.DB) error {
@@ -637,23 +1073,131 @@ func writeSchemaVersion(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func resetSchema(ctx context.Context, db *sql.DB, dialect string) error {
-	for idx := len(schemaStatementOrder) - 1; idx >= 0; idx-- {
-		stmt := fmt.Sprintf("DROP TABLE IF EXISTS %s", schemaStatementOrder[idx])
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("mlwh: drop %s cache table %s: %w", dialect, schemaStatementOrder[idx], err)
-		}
+func migrateCacheSchema(ctx context.Context, db *sql.DB, dialect string, fromVersion int) error {
+	if err := dropCacheTables(ctx, db, dialect, cacheMigrationDropTables); err != nil {
+		return err
 	}
 
 	if err := applySchema(ctx, db, dialect); err != nil {
 		return err
 	}
 
+	if err := ensureSyncStateSchema(ctx, db, dialect); err != nil {
+		return err
+	}
+
+	if err := deleteSyncStateRows(ctx, db, cacheMigrationSyncStateTables); err != nil {
+		return err
+	}
+
+	if err := writeSchemaVersion(ctx, db); err != nil {
+		return err
+	}
+
+	return logCacheMigration(fromVersion, CacheSchemaVersion)
+}
+
+func dropCacheTables(ctx context.Context, db *sql.DB, dialect string, tables []string) error {
+	for idx := len(tables) - 1; idx >= 0; idx-- {
+		stmt := fmt.Sprintf("DROP TABLE IF EXISTS %s", tables[idx])
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("mlwh: drop %s cache table %s: %w", dialect, tables[idx], err)
+		}
+	}
+
+	return nil
+}
+
+func ensureSyncStateSchema(ctx context.Context, db *sql.DB, dialect string) error {
+	rows, err := db.QueryContext(ctx, `SELECT * FROM sync_state LIMIT 0`)
+	if err != nil {
+		return fmt.Errorf("mlwh: query sync_state columns: %w", err)
+	}
+
+	columns, err := rows.Columns()
+	closeErr := rows.Close()
+	if err != nil {
+		return fmt.Errorf("mlwh: read sync_state columns: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("mlwh: close sync_state columns: %w", closeErr)
+	}
+
+	available := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		available[column] = struct{}{}
+	}
+
+	missing := make([]string, 0, 2)
+	if _, ok := available["resume_cursor"]; !ok {
+		missing = append(missing, syncStateResumeCursorStatement(dialect))
+	}
+	if _, ok := available["indexes_dropped"]; !ok {
+		missing = append(missing, syncStateIndexesDroppedStatement(dialect))
+	}
+
+	for _, stmt := range missing {
+		if _, err = db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("mlwh: update sync_state schema: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func syncStateResumeCursorStatement(dialect string) string {
+	if dialect == "mysql" {
+		return `ALTER TABLE sync_state ADD COLUMN resume_cursor TEXT NULL`
+	}
+
+	return `ALTER TABLE sync_state ADD COLUMN resume_cursor TEXT`
+}
+
+func syncStateIndexesDroppedStatement(dialect string) string {
+	if dialect == "mysql" {
+		return `ALTER TABLE sync_state ADD COLUMN indexes_dropped INT NOT NULL DEFAULT 0`
+	}
+
+	return `ALTER TABLE sync_state ADD COLUMN indexes_dropped INTEGER NOT NULL DEFAULT 0`
+}
+
+func deleteSyncStateRows(ctx context.Context, db *sql.DB, tables []string) error {
+	if len(tables) == 0 {
+		return nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(tables)), ", ")
+	args := make([]any, len(tables))
+	for index, table := range tables {
+		args[index] = table
+	}
+
+	if _, err := db.ExecContext(ctx, `DELETE FROM sync_state WHERE table_name IN (`+placeholders+`)`, args...); err != nil {
+		return fmt.Errorf("mlwh: clear sync_state rows for recreated tables: %w", err)
+	}
+
+	return nil
+}
+
+func logCacheMigration(fromVersion, toVersion int) error {
+	tables := append([]string(nil), cacheMigrationRecreateTables...)
+	sort.Strings(tables)
+
+	if _, err := fmt.Fprintf(
+		cacheMigrationStderr,
+		"mlwh cache: schema v%d->v%d, recreated tables: [%s]\n",
+		fromVersion,
+		toVersion,
+		strings.Join(tables, ", "),
+	); err != nil {
+		return fmt.Errorf("mlwh: write cache migration log: %w", err)
+	}
+
 	return nil
 }
 
 func applySchema(ctx context.Context, db *sql.DB, dialect string) error {
-	stmts, err := loadSchema(dialect)
+	stmts, err := schemaStatementsForDialect(ctx, db, dialect)
 	if err != nil {
 		return err
 	}
@@ -667,6 +1211,171 @@ func applySchema(ctx context.Context, db *sql.DB, dialect string) error {
 	}
 
 	return nil
+}
+
+func repairDroppedMirrorIndexes(ctx context.Context, db *sql.DB, dialect string) error {
+	for _, indexSet := range syncMirrorIndexSets {
+		if err := repairDroppedMirrorIndexSet(ctx, db, dialect, indexSet); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string, indexSet syncMirrorIndexSet) error {
+	var (
+		highWaterRaw   string
+		resumeCursor   sql.NullString
+		indexesDropped int
+	)
+
+	err := db.QueryRowContext(
+		ctx,
+		`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`,
+		indexSet.SyncTable,
+	).Scan(&highWaterRaw, &resumeCursor, &indexesDropped)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("mlwh: query %s dropped-index recovery state: %w", indexSet.Table, err)
+	}
+	if indexesDropped != 1 {
+		return nil
+	}
+	if resumeCursor.Valid && strings.TrimSpace(resumeCursor.String) != "" {
+		return nil
+	}
+
+	highWater, err := parseSyncTimeString(highWaterRaw)
+	if err != nil {
+		return fmt.Errorf("mlwh: parse %s dropped-index recovery high_water: %w", indexSet.Table, err)
+	}
+	if highWater.IsZero() {
+		return nil
+	}
+	if dialect == "sqlite" && sqliteSparseMirrorReadIndexesInstalled(ctx, db, indexSet) {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mlwh: begin %s dropped-index recovery: %w", indexSet.Table, err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if dialect == "sqlite" {
+		if _, err = tx.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
+			return fmt.Errorf("mlwh: configure sqlite dropped-index recovery: %w", err)
+		}
+	}
+	var repaired bool
+	if indexSet.Table == "sample_mirror" {
+		repaired, err = rebuildSampleMirrorColdLoadIndexes(ctx, tx, dialect)
+		if err != nil {
+			return err
+		}
+	} else {
+		repaired, err = createMirrorDroppedIndexes(ctx, tx, dialect, indexSet)
+		if err != nil {
+			return err
+		}
+	}
+	if repaired {
+		if _, err = tx.ExecContext(ctx, `UPDATE sync_state SET indexes_dropped = 0 WHERE table_name = ?`, indexSet.SyncTable); err != nil {
+			return fmt.Errorf("mlwh: clear %s dropped-index recovery flag: %w", indexSet.Table, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("mlwh: commit %s dropped-index recovery: %w", indexSet.Table, err)
+	}
+
+	committed = true
+
+	return nil
+}
+
+func sqliteSparseMirrorReadIndexesInstalled(ctx context.Context, db *sql.DB, indexSet syncMirrorIndexSet) bool {
+	indexes, _, err := readSQLiteTableIndexes(ctx, db, indexSet.Table)
+	if err != nil {
+		return false
+	}
+
+	if indexSet.Table == iseqProductMetricsMirrorIndexSet.Table {
+		return stringSlicesEqual(indexes, iseqProductMetricsSparseReadIndexColumns())
+	}
+
+	return sqliteLargeCacheReadIndexShape(indexSet, indexes)
+}
+
+func schemaStatementsForDialect(ctx context.Context, db *sql.DB, dialect string) ([]string, error) {
+	if dialect != "mysql" {
+		return loadSchema(dialect)
+	}
+
+	collation, err := mySQLSchemaTextCollation(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+
+	return loadSchemaWithMySQLCollation(dialect, collation)
+}
+
+func mySQLSchemaTextCollation(ctx context.Context, db *sql.DB) (string, error) {
+	version, err := mySQLServerVersion(ctx, db)
+	if err != nil {
+		return "", fmt.Errorf("mlwh: query mysql schema collation: %w", err)
+	}
+
+	if strings.Contains(strings.ToLower(version), "mariadb") {
+		return mySQLLegacyTextCollation, nil
+	}
+
+	major, err := mySQLMajorVersion(version)
+	if err != nil {
+		return "", fmt.Errorf("mlwh: parse mysql version %q: %w", version, err)
+	}
+
+	if major < 8 {
+		return mySQLLegacyTextCollation, nil
+	}
+
+	return mySQLPreferredTextCollation, nil
+}
+
+func mySQLServerVersion(ctx context.Context, db *sql.DB) (string, error) {
+	var version string
+
+	err := db.QueryRowContext(ctx, `SELECT VERSION()`).Scan(&version)
+
+	return version, err
+}
+
+func mySQLMajorVersion(version string) (int, error) {
+	trimmed := strings.TrimSpace(version)
+	if trimmed == "" {
+		return 0, errors.New("empty version")
+	}
+
+	majorField, _, _ := strings.Cut(trimmed, ".")
+	majorField = strings.TrimLeft(majorField, "vV")
+	if majorField == "" {
+		return 0, errors.New("missing major version")
+	}
+
+	major, err := strconv.Atoi(majorField)
+	if err != nil {
+		return 0, err
+	}
+
+	return major, nil
 }
 
 func looksLikeMySQLDSN(path string) bool {
@@ -691,7 +1400,15 @@ func sqliteWritableDSN(path string) string {
 		return path
 	}
 
-	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)", filepath.ToSlash(path))
+	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", filepath.ToSlash(path))
+}
+
+func sqliteLockDSN(path string) string {
+	if path == ":memory:" {
+		return ""
+	}
+
+	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(0)", filepath.ToSlash(path+".sync-lock"))
 }
 
 func sqliteReadOnlyDSN(path string) string {

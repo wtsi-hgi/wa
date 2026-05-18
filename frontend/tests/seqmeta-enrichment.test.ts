@@ -20,10 +20,32 @@ import {
 } from "@/lib/seqmeta-cache";
 
 const enrichIdentifierMock = vi.fn();
+const enrichIdentifiersMock = vi.fn(async (values: string[]) =>
+    Promise.all(
+        values.map(async (value) => {
+            try {
+                const enrichment = await enrichIdentifierMock(value);
+
+                return {
+                    value,
+                    enrichment,
+                    error: enrichment === null ? "not_found" : undefined,
+                };
+            } catch {
+                return {
+                    value,
+                    enrichment: null,
+                    error: "upstream_impaired" as const,
+                };
+            }
+        }),
+    ),
+);
 const fetchStudyLibrarySamplesMock = vi.fn();
 
 vi.mock("@/app/(results)/actions", () => ({
     enrichIdentifier: enrichIdentifierMock,
+    enrichIdentifiers: enrichIdentifiersMock,
     fetchStudyLibrarySamples: fetchStudyLibrarySamplesMock,
 }));
 
@@ -37,16 +59,11 @@ function buildEnrichmentStudy(
         name: "Cancer Programme",
         faculty_sponsor: "Faculty Sponsor",
         state: "active",
-        abstract: "Study abstract",
-        abbreviation: "CP",
         accession_number: "ERP123456",
-        description: "Study description",
         data_release_strategy: "open",
         study_title: "Cancer Programme",
         data_access_group: "public",
-        hmdmc_number: "",
         programme: "Cancer",
-        created: "2026-04-30",
         reference_genome: "GRCh38",
         ethically_approved: true,
         study_type: "Genomic sequencing",
@@ -97,6 +114,24 @@ function buildEnrichmentResult(
     };
 }
 
+function buildEnrichmentSample(index: number) {
+    return {
+        id_study_lims: "7607",
+        id_sample_lims: `LIMS${index}`,
+        sanger_id: `SANG${index}`,
+        sample_name: `Sample ${index}`,
+        taxon_id: 9606,
+        common_name: "Human",
+        library_type: "Custom",
+        id_run: 48522,
+        lane: 1,
+        tag_index: index,
+        irods_path: `/seq/48522/${index}`,
+        study_accession_number: "ERP7607",
+        accession_number: `ERS${index}`,
+    };
+}
+
 function deferred<T>() {
     let resolve!: (value: T) => void;
     let reject!: (reason?: unknown) => void;
@@ -113,6 +148,7 @@ describe("H3 enrichment state and badge", () => {
     beforeEach(() => {
         vi.resetModules();
         enrichIdentifierMock.mockReset();
+        enrichIdentifiersMock.mockClear();
         fetchStudyLibrarySamplesMock.mockReset();
     });
 
@@ -153,6 +189,157 @@ describe("H3 enrichment state and badge", () => {
             );
         });
         expect(screen.queryByText("Some details unavailable")).toBeNull();
+    });
+
+    it("shows multi-field result metadata details within one second after enrichment resolves", async () => {
+        const samples = Array.from({ length: 1000 }, (_, index) =>
+            buildEnrichmentSample(index),
+        );
+        const study = buildEnrichmentStudy({
+            id_study_tmp: 7607,
+            id_study_lims: "7607",
+            name: "Study 7607",
+        });
+
+        enrichIdentifierMock.mockImplementation(async (value: string) => {
+            if (value === "Custom") {
+                return buildEnrichmentResult({
+                    identifier: "Custom",
+                    type: "library_type",
+                    graph: {
+                        studies: [study],
+                        samples,
+                    },
+                    partial: true,
+                    missing: [
+                        {
+                            hop: "samples",
+                            reason: "samples_truncated",
+                            status: 200,
+                        },
+                    ],
+                });
+            }
+
+            if (value === "48522") {
+                return buildEnrichmentResult({
+                    identifier: "48522",
+                    type: "run_id",
+                    graph: {
+                        studies: [study],
+                        study_details: [
+                            {
+                                study,
+                                library_details: [
+                                    {
+                                        library_type: "Custom",
+                                        id_study_lims: "7607",
+                                        library_id: "71046409",
+                                        id_library_lims: "SQPP-47463-G:B1",
+                                        samples: samples.slice(0, 2),
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    partial: false,
+                });
+            }
+
+            if (value === "7607STDY14643771") {
+                const sample = buildEnrichmentSample(0);
+
+                return buildEnrichmentResult({
+                    identifier: value,
+                    type: "sanger_sample_id",
+                    graph: {
+                        study,
+                        sample,
+                        library: {
+                            library_type: "Custom",
+                            id_study_lims: "7607",
+                            library_id: "71046409",
+                            id_library_lims: "SQPP-47463-G:B1",
+                        },
+                        sample_detail: {
+                            sanger_id: sample.sanger_id,
+                            sample_name: sample.sample_name,
+                            sample,
+                            study,
+                            lanes: [
+                                { id_run: "48522", lane: "1", tag_index: 0 },
+                            ],
+                        },
+                    },
+                    partial: false,
+                });
+            }
+
+            return buildEnrichmentResult({
+                identifier: "7607",
+                type: "study_id",
+                graph: {
+                    study,
+                    study_detail: {
+                        study,
+                        library_details: [
+                            {
+                                library_type: "Custom",
+                                id_study_lims: "7607",
+                                library_id: "71046409",
+                                id_library_lims: "SQPP-47463-G:B1",
+                                samples: [],
+                            },
+                        ],
+                    },
+                },
+                partial: false,
+            });
+        });
+
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+
+        const startedAt = performance.now();
+
+        render(
+            createElement(ResultMetadataEnrichment, {
+                metadata: {
+                    seqmeta_librarytype: "Custom",
+                    seqmeta_runid: "48522",
+                    seqmeta_sampleid: "7607STDY14643771",
+                    seqmeta_studyid: "7607",
+                },
+            }),
+            {
+                wrapper: ({ children }) =>
+                    createElement(SeqmetaCacheProvider, null, children),
+            },
+        );
+
+        await waitFor(() => {
+            expect(enrichIdentifierMock).toHaveBeenCalledTimes(4);
+            expect(screen.queryByLabelText("loading enrichment")).toBeNull();
+        });
+
+        fireEvent.click(
+            screen
+                .getAllByTestId("seqmeta-badge-trigger")
+                .find((button) => button.textContent === "Custom")!,
+        );
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const elapsedMs = performance.now() - startedAt;
+        const sampleRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="sample"]');
+
+        expect(elapsedMs).toBeLessThan(1000);
+        expect(sampleRows.length).toBeLessThanOrEqual(50);
+        expect(screen.getByText("Showing 50 of 1000 samples")).toBeTruthy();
     });
 
     it("refreshes a study identifier when the cache only holds an aliased sample result", async () => {
@@ -265,6 +452,29 @@ describe("H3 enrichment state and badge", () => {
             "RNA",
         );
         expect(fetchStudyLibrarySamplesMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("forwards specific library identifiers for study library sample expansion", async () => {
+        const { fetchLibrarySamples } =
+            await import("@/lib/seqmeta-enrichment");
+
+        fetchStudyLibrarySamplesMock.mockResolvedValue([]);
+
+        await expect(
+            fetchLibrarySamples("6568", "RNA", {
+                idLibraryLims: "DN111:A1",
+                libraryId: "1001",
+            }),
+        ).resolves.toEqual([]);
+
+        expect(fetchStudyLibrarySamplesMock).toHaveBeenCalledWith(
+            "6568",
+            "RNA",
+            {
+                idLibraryLims: "DN111:A1",
+                libraryId: "1001",
+            },
+        );
     });
 
     it("looks up sample identifiers independently so sample details do not reuse study-level enrichment", async () => {
@@ -717,6 +927,37 @@ describe("H3 enrichment state and badge", () => {
         });
     });
 
+    it("describes seqmeta_libraryid enrichment misses as library ID values", async () => {
+        enrichIdentifierMock.mockResolvedValue(null);
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+
+        render(
+            createElement(ResultMetadataEnrichment, {
+                metadata: { seqmeta_libraryid: "71046409" },
+            }),
+            {
+                wrapper: ({ children }) =>
+                    createElement(SeqmetaCacheProvider, null, children),
+            },
+        );
+
+        await openSeqmetaDetails();
+
+        await waitFor(() => {
+            expect(
+                screen.getByText(
+                    "No enrichment matched this library ID value.",
+                ),
+            ).toBeTruthy();
+        });
+        expect(
+            screen.queryByText(
+                "No enrichment matched this library type value.",
+            ),
+        ).toBeNull();
+    });
+
     it("refreshes stale negative cache entries for library-like identifiers", async () => {
         enrichIdentifierMock.mockResolvedValue(
             buildEnrichmentResult({
@@ -729,11 +970,9 @@ describe("H3 enrichment state and badge", () => {
                             study: buildEnrichmentStudy(),
                             library_details: [
                                 {
-                                    library: {
-                                        pipeline_id_lims:
-                                            "Chromium single cell 3 prime v3",
-                                        sample_count: 1,
-                                    },
+                                    library_type:
+                                        "Chromium single cell 3 prime v3",
+                                    id_study_lims: "6568",
                                     samples: [
                                         {
                                             id_study_lims: "6568",
@@ -871,7 +1110,6 @@ describe("H3 enrichment state and badge", () => {
                         id_study_tmp: 6568,
                         id_study_lims: "6568",
                         name: "Cancer Programme",
-                        description: "Study description",
                     }),
                     sample: {
                         id_sample_lims: "2153063",

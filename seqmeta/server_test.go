@@ -28,6 +28,7 @@ package seqmeta
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -69,8 +70,8 @@ func TestServerEndpoints(t *testing.T) {
 			AllSamplesForStudyFunc: func(_ context.Context, studyID string) ([]mlwh.Sample, error) {
 				convey.So(studyID, convey.ShouldEqual, "6568")
 				return []mlwh.Sample{
-					{IDStudyLims: "6568", Name: "S1", LibraryType: "RNA PolyA"},
-					{IDStudyLims: "6568", Name: "S2", LibraryType: "PCR free"},
+					serverStudySample("6568", "S1", "RNA PolyA"),
+					serverStudySample("6568", "S2", "PCR free"),
 				}, nil
 			},
 		}
@@ -84,7 +85,44 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(json.Unmarshal(recorder.Body.Bytes(), &samples), convey.ShouldBeNil)
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].LibraryType, convey.ShouldEqual, "RNA PolyA")
+		convey.So(samples[0].Libraries, convey.ShouldResemble, []mlwh.Library{{PipelineIDLims: "RNA PolyA", IDStudyLims: "6568"}})
+	})
+
+	convey.Convey("Bug 1: study samples endpoint filters library_type within the requested study", t, func() {
+		provider := &MockProvider{
+			AllSamplesForStudyFunc: func(_ context.Context, studyID string) ([]mlwh.Sample, error) {
+				convey.So(studyID, convey.ShouldEqual, "6568")
+				return []mlwh.Sample{
+					{
+						Name:    "cross-study-library",
+						Studies: []mlwh.Study{{IDStudyLims: "6568"}},
+						Libraries: []mlwh.Library{{
+							PipelineIDLims: "RNA PolyA",
+							IDStudyLims:    "9999",
+						}},
+					},
+					{
+						Name:    "in-study-library",
+						Studies: []mlwh.Study{{IDStudyLims: "6568"}},
+						Libraries: []mlwh.Library{{
+							PipelineIDLims: "RNA PolyA",
+							IDStudyLims:    "6568",
+						}},
+					},
+				}, nil
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/study/6568/samples?library_type=RNA+PolyA", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var samples []mlwh.Sample
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &samples), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(samples, convey.ShouldHaveLength, 1)
+		convey.So(samples[0].Name, convey.ShouldEqual, "in-study-library")
 	})
 
 	convey.Convey("study diff endpoint returns added samples", t, func() {
@@ -256,4 +294,32 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
 		convey.So(recorder.Body.String(), convey.ShouldContainSubstring, mlwh.ErrUpstreamImpaired.Error())
 	})
+
+	convey.Convey("validate endpoint returns 404 with the never-synced cache hint", t, func() {
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "6568")
+
+				return mlwh.Match{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
+			},
+		}
+		server := NewServer(provider, store)
+
+		request := httptest.NewRequest(http.MethodGet, "/validate/6568", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+
+		var body map[string]string
+		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
+		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
+		convey.So(body["error"], convey.ShouldContainSubstring, mlwh.ErrCacheNeverSynced.Error())
+	})
+}
+
+func serverStudySample(studyID, name, libraryType string) mlwh.Sample {
+	return mlwh.Sample{
+		Name:      name,
+		Studies:   []mlwh.Study{{IDStudyLims: studyID}},
+		Libraries: []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
+	}
 }

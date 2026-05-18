@@ -26,16 +26,17 @@
 package mlwh
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -55,10 +56,14 @@ func TestOpenCacheSQLiteFreshSetsSchemaVersion(t *testing.T) {
 		var version int
 		err = cache.DB().QueryRow(`SELECT version FROM schema_version`).Scan(&version)
 
-		convey.Convey("when OpenCache runs, then it uses sqlite and records schema version 1", func() {
+		var syncStateRows int
+		convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM sync_state`).Scan(&syncStateRows), convey.ShouldBeNil)
+
+		convey.Convey("when OpenCache runs, then it uses sqlite, records the current schema version, and leaves sync_state empty", func() {
 			convey.So(cache.Dialect(), convey.ShouldEqual, "sqlite")
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(version, convey.ShouldEqual, CacheSchemaVersion)
+			convey.So(syncStateRows, convey.ShouldEqual, 0)
 
 			var rows int
 			convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM schema_version`).Scan(&rows), convey.ShouldBeNil)
@@ -73,106 +78,427 @@ func TestOpenCacheSQLiteReopenPreservesExistingData(t *testing.T) {
 
 		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
 		convey.So(err, convey.ShouldBeNil)
-		_, err = cache.DB().Exec(`INSERT INTO negative_cache(raw, reason, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)`, "sample", "miss", "2026-05-06T12:00:00Z", 900)
+		_, err = cache.DB().Exec(`INSERT INTO sample_mirror(
+			id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+			sanger_sample_id, supplier_name, accession_number, donor_id,
+			taxon_id, common_name, description, last_updated
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			1, "SQSCP", "sample-1", "uuid-1", "sample-name",
+			"ssid-1", "supplier-1", "ENA1", "donor-1",
+			9606, "human", "desc", "2026-05-06T12:00:00Z",
+		)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(cache.Close(), convey.ShouldBeNil)
 
-		reopened, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
 
-		var count int
-		err = reopened.DB().QueryRow(`SELECT COUNT(*) FROM negative_cache`).Scan(&count)
-
-		convey.Convey("when re-opened, then the schema is not reset", func() {
+			var count int
+			err = reopened.DB().QueryRow(`SELECT COUNT(*) FROM sample_mirror`).Scan(&count)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("when re-opened at v2, then the cache is not reset and no migration line is emitted", func() {
+			convey.So(output, convey.ShouldEqual, "")
 		})
 	})
 }
 
 func TestOpenCacheSQLiteSchemaMismatchResetsSchema(t *testing.T) {
-	convey.Convey("Given a SQLite cache with an old schema version", t, func() {
+	convey.Convey("Given a SQLite cache with a v1 schema_version row and stale cache tables", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+		seedSQLiteV1Cache(t, cachePath)
 
-		db, err := sql.Open("sqlite", cachePath)
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() { _ = db.Close() })
+		var (
+			version               int
+			sampleRows            int
+			syncStateRows         int
+			remainingSyncState    []string
+			resumeCursorColumns   int
+			indexesDroppedColumns int
+		)
 
-		convey.So(applySQLiteSchema(context.Background(), db), convey.ShouldBeNil)
-		_, err = db.Exec(`INSERT INTO schema_version(version, applied_at) VALUES (?, ?)`, 0, "2026-05-06T12:00:00Z")
-		convey.So(err, convey.ShouldBeNil)
-		_, err = db.Exec(`INSERT INTO negative_cache(raw, reason, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)`, "stale", "old", "2026-05-06T12:00:00Z", 900)
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(db.Close(), convey.ShouldBeNil)
-
-		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() { convey.So(cache.Close(), convey.ShouldBeNil) })
-
-		var version int
-		convey.So(cache.DB().QueryRow(`SELECT version FROM schema_version`).Scan(&version), convey.ShouldBeNil)
-
-		var count int
-		err = cache.DB().QueryRow(`SELECT COUNT(*) FROM negative_cache`).Scan(&count)
-
-		convey.Convey("when OpenCache runs, then it recreates all tables and updates schema_version", func() {
+		output := captureCacheMigrationOutput(t, func() {
+			cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
 			convey.So(err, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(cache.Close(), convey.ShouldBeNil) })
+
+			convey.So(cache.DB().QueryRow(`SELECT version FROM schema_version`).Scan(&version), convey.ShouldBeNil)
+			convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM sample_mirror`).Scan(&sampleRows), convey.ShouldBeNil)
+			convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM sync_state`).Scan(&syncStateRows), convey.ShouldBeNil)
+
+			rows, queryErr := cache.DB().Query(`SELECT table_name FROM sync_state ORDER BY table_name`)
+			convey.So(queryErr, convey.ShouldBeNil)
+			for rows.Next() {
+				var tableName string
+				convey.So(rows.Scan(&tableName), convey.ShouldBeNil)
+				remainingSyncState = append(remainingSyncState, tableName)
+			}
+			convey.So(rows.Err(), convey.ShouldBeNil)
+			convey.So(rows.Close(), convey.ShouldBeNil)
+
+			convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sync_state') WHERE name = 'resume_cursor'`).Scan(&resumeCursorColumns), convey.ShouldBeNil)
+			convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sync_state') WHERE name = 'indexes_dropped'`).Scan(&indexesDroppedColumns), convey.ShouldBeNil)
+		})
+
+		convey.Convey("when OpenCache runs, then it migrates to v2, recreates the affected tables, and clears sync_state", func() {
+			convey.So(output, convey.ShouldEqual, "mlwh cache: schema v1->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
 			convey.So(version, convey.ShouldEqual, CacheSchemaVersion)
-			convey.So(count, convey.ShouldEqual, 0)
+			convey.So(sampleRows, convey.ShouldEqual, 0)
+			convey.So(syncStateRows, convey.ShouldEqual, 1)
+			convey.So(remainingSyncState, convey.ShouldResemble, []string{"unrelated"})
+			convey.So(resumeCursorColumns, convey.ShouldEqual, 1)
+			convey.So(indexesDroppedColumns, convey.ShouldEqual, 1)
 		})
 	})
 }
 
-func TestOpenCacheSQLiteSchemaShapeMismatchResetsSchema(t *testing.T) {
-	convey.Convey("Given a SQLite cache whose schema version matches but whose table shape is stale", t, func() {
+func TestOpenCacheSQLiteCurrentVersionEmitsNoMigrationLine(t *testing.T) {
+	convey.Convey("Given a SQLite cache already at the current schema version", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
-
-		db, err := sql.Open("sqlite", cachePath)
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() { _ = db.Close() })
-
-		_, err = db.Exec(`CREATE TABLE schema_version(version INTEGER NOT NULL PRIMARY KEY, applied_at TEXT NOT NULL)`)
-		convey.So(err, convey.ShouldBeNil)
-		_, err = db.Exec(`INSERT INTO schema_version(version, applied_at) VALUES (?, ?)`, CacheSchemaVersion, "2026-05-10T09:00:00Z")
-		convey.So(err, convey.ShouldBeNil)
-		_, err = db.Exec(`CREATE TABLE sample_mirror (
-			id_sample_tmp INTEGER NOT NULL PRIMARY KEY,
-			id_lims TEXT NOT NULL,
-			id_sample_lims TEXT NOT NULL,
-			uuid_sample_lims TEXT NOT NULL,
-			id_study_lims TEXT NOT NULL,
-			name TEXT NOT NULL,
-			sanger_sample_id TEXT NOT NULL,
-			supplier_name TEXT NOT NULL,
-			accession_number TEXT NOT NULL,
-			donor_id TEXT NOT NULL,
-			taxon_id INTEGER NOT NULL,
-			common_name TEXT NOT NULL,
-			description TEXT NOT NULL
-		)`)
-		convey.So(err, convey.ShouldBeNil)
-		_, err = db.Exec(`CREATE TABLE negative_cache(raw TEXT PRIMARY KEY, reason TEXT, fetched_at TEXT, ttl_seconds INTEGER)`)
-		convey.So(err, convey.ShouldBeNil)
-		_, err = db.Exec(`INSERT INTO negative_cache(raw, reason, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)`, "stale", "old", "2026-05-10T09:00:00Z", 900)
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(db.Close(), convey.ShouldBeNil)
 
 		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
 		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() { convey.So(cache.Close(), convey.ShouldBeNil) })
+		convey.So(cache.Close(), convey.ShouldBeNil)
 
-		var sampleMirrorColumns int
-		convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sample_mirror')`).Scan(&sampleMirrorColumns), convey.ShouldBeNil)
-
-		var count int
-		err = cache.DB().QueryRow(`SELECT COUNT(*) FROM negative_cache`).Scan(&count)
-
-		convey.Convey("when OpenCache runs, then it recreates the embedded cache schema even without a version bump", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleMirrorColumns, convey.ShouldEqual, 16)
-			convey.So(count, convey.ShouldEqual, 0)
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
 		})
+
+		convey.Convey("when OpenCache runs again, then it emits no migration line", func() {
+			convey.So(output, convey.ShouldEqual, "")
+		})
+	})
+}
+
+func TestOpenCacheSQLiteCurrentVersionShapeMismatchResetsSchema(t *testing.T) {
+	convey.Convey("Given a SQLite cache at the current schema version with a drifted table set", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`INSERT INTO sample_mirror(
+			id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+			sanger_sample_id, supplier_name, accession_number, donor_id,
+			taxon_id, common_name, description, last_updated
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			1, "SQSCP", "sample-1", "uuid-1", "sample-name",
+			"ssid-1", "supplier-1", "ENA1", "donor-1",
+			9606, "human", "desc", "2026-05-06T12:00:00Z",
+		)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`DROP TABLE study_mirror`)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+
+			var sampleRows int
+			convey.So(reopened.DB().QueryRow(`SELECT COUNT(*) FROM sample_mirror`).Scan(&sampleRows), convey.ShouldBeNil)
+			convey.So(sampleRows, convey.ShouldEqual, 0)
+		})
+
+		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v3->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+	})
+}
+
+func TestOpenCacheSQLiteCurrentVersionWrongShapeResetsSchema(t *testing.T) {
+	convey.Convey("Given a SQLite cache at the current schema version with a same-name table of the wrong shape", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(db.Close(), convey.ShouldBeNil) })
+
+		_, err = db.Exec(`DROP TABLE study_mirror`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`CREATE TABLE study_mirror(id_study_lims TEXT PRIMARY KEY)`)
+		convey.So(err, convey.ShouldBeNil)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+
+			var columnCount int
+			convey.So(reopened.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('study_mirror')`).Scan(&columnCount), convey.ShouldBeNil)
+			convey.So(columnCount, convey.ShouldBeGreaterThan, 1)
+		})
+
+		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v3->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+	})
+}
+
+func TestOpenCacheSQLiteRepairsDroppedSampleIndexesSilently(t *testing.T) {
+	convey.Convey("B4.4: Given a SQLite cache with sample_mirror indexes missing and sync_state.indexes_dropped=1 plus non-zero high_water, when OpenCache runs again, then it recreates the indexes, clears the flag, and emits no migration line", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(db.Close(), convey.ShouldBeNil) })
+
+		for _, indexName := range sampleMirrorSecondaryIndexNames() {
+			_, err = db.Exec(`DROP INDEX IF EXISTS ` + indexName)
+			convey.So(err, convey.ShouldBeNil)
+		}
+
+		_, err = db.Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?) ON CONFLICT(table_name) DO UPDATE SET high_water = excluded.high_water, last_run = excluded.last_run, resume_cursor = excluded.resume_cursor, indexes_dropped = excluded.indexes_dropped`,
+			syncTableSample,
+			"2026-05-11T19:00:00Z",
+			"2026-05-11T19:00:00Z",
+			nil,
+			1,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		preRepairIndexes := sampleMirrorIndexNames(t, db, "sqlite")
+		convey.So(preRepairIndexes, convey.ShouldHaveLength, 0)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+		})
+
+		convey.So(output, convey.ShouldEqual, "")
+		convey.So(sampleMirrorIndexNames(t, db, "sqlite"), convey.ShouldResemble, sampleMirrorSecondaryIndexNames())
+		convey.So(readSyncStateRow(t, db, syncTableSample).IndexesDropped, convey.ShouldEqual, 0)
+	})
+}
+
+func TestOpenCacheSQLiteSkipsDroppedIndexRepairDuringColdResume(t *testing.T) {
+	convey.Convey("Given a SQLite product mirror with dropped indexes and a cold resume cursor", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(db.Close(), convey.ShouldBeNil) })
+
+		for _, indexName := range iseqProductMetricsMirrorSecondaryIndexNames() {
+			_, err = db.Exec(`DROP INDEX IF EXISTS ` + indexName)
+			convey.So(err, convey.ShouldBeNil)
+		}
+
+		_, err = db.Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?) ON CONFLICT(table_name) DO UPDATE SET high_water = excluded.high_water, last_run = excluded.last_run, resume_cursor = excluded.resume_cursor, indexes_dropped = excluded.indexes_dropped`,
+			syncTableIseqProductMetrics,
+			"2026-05-13T10:47:57Z",
+			"2026-05-13T10:48:00Z",
+			iseqProductMetricsIDResumeMode+"\t2110183853",
+			1,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(mirrorIndexNames(t, db, "sqlite", iseqProductMetricsMirrorIndexSet), convey.ShouldBeEmpty)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+		})
+
+		convey.So(output, convey.ShouldEqual, "")
+		convey.So(mirrorIndexNames(t, db, "sqlite", iseqProductMetricsMirrorIndexSet), convey.ShouldBeEmpty)
+		convey.So(readSyncStateRow(t, db, syncTableIseqProductMetrics).IndexesDropped, convey.ShouldEqual, 1)
+	})
+}
+
+func TestOpenCacheSQLiteSparseSampleReadIndexDoesNotRebuildDonors(t *testing.T) {
+	convey.Convey("Given a completed sparse SQLite sample cache with only the name read index", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(db.Close(), convey.ShouldBeNil) })
+
+		for _, indexName := range sampleMirrorSecondaryIndexNames() {
+			if indexName == "sample_mirror_name_idx" {
+				continue
+			}
+			_, err = db.Exec(`DROP INDEX IF EXISTS ` + indexName)
+			convey.So(err, convey.ShouldBeNil)
+		}
+		_, err = db.Exec(`INSERT INTO donor_samples(donor_id, id_sample_tmp) VALUES (?, ?)`, "donor-1", 1)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?) ON CONFLICT(table_name) DO UPDATE SET high_water = excluded.high_water, last_run = excluded.last_run, resume_cursor = excluded.resume_cursor, indexes_dropped = excluded.indexes_dropped`,
+			syncTableSample,
+			"2026-05-13T11:24:59Z",
+			"2026-05-13T11:25:00Z",
+			nil,
+			1,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		output := captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+		})
+
+		convey.So(output, convey.ShouldEqual, "")
+		convey.So(countRows(t, db, `SELECT COUNT(*) FROM donor_samples`), convey.ShouldEqual, 1)
+		convey.So(sampleMirrorIndexNames(t, db, "sqlite"), convey.ShouldResemble, []string{"sample_mirror_name_idx"})
+		convey.So(readSyncStateRow(t, db, syncTableSample).IndexesDropped, convey.ShouldEqual, 1)
+	})
+}
+
+func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
+	convey.Convey("Given a MySQL cache backend whose schema_version row is still v1", t, func() {
+		originalOpen := sqlOpenFunc
+		defer func() { sqlOpenFunc = originalOpen }()
+
+		rwDB, rwMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		convey.So(err, convey.ShouldBeNil)
+		roDB, roMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		convey.So(err, convey.ShouldBeNil)
+
+		rwMock.ExpectPing()
+		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version`)).WillReturnRows(
+			sqlmock.NewRows([]string{"count", "version"}).AddRow(1, 1),
+		)
+		expectMySQLSchemaMigration(rwMock, 1, CacheSchemaVersion)
+		rwMock.ExpectClose()
+
+		roMock.ExpectPing()
+		roMock.ExpectClose()
+
+		openCount := 0
+		sqlOpenFunc = func(driverName, dataSourceName string) (*sql.DB, error) {
+			convey.So(driverName, convey.ShouldEqual, "mysql")
+			openCount++
+
+			switch openCount {
+			case 1:
+				return rwDB, nil
+			case 2:
+				return roDB, nil
+			default:
+				return nil, fmt.Errorf("unexpected sql.Open call %d", openCount)
+			}
+		}
+
+		output := captureCacheMigrationOutput(t, func() {
+			cache, openErr := OpenCache(context.Background(), CacheConfig{Path: "cache_user@tcp(localhost:3306)/wa_cache"})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.So(cache.Close(), convey.ShouldBeNil)
+		})
+
+		convey.Convey("when OpenCache runs, then it applies the v2 migration and emits the same single stderr line", func() {
+			convey.So(output, convey.ShouldEqual, "mlwh cache: schema v1->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestAllowLargeMySQLColdLoadIndexShapeUsesDroppedSyncState(t *testing.T) {
+	convey.Convey("Given a sparse large MySQL product mirror with dropped indexes recorded in sync_state", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		highWater := time.Date(2026, time.May, 13, 9, 0, 0, 0, time.UTC)
+		expected := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"name"},
+		}}
+		actual := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"name"},
+		}}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableIseqProductMetrics).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "indexes_dropped"}).AddRow(formatSyncTime(highWater), 1))
+
+		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
+
+		convey.So(actual.Index["iseq_product_metrics_mirror"], convey.ShouldResemble, expected.Index["iseq_product_metrics_mirror"])
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestAllowLargeMySQLColdLoadIndexShapeUsesMetadataEstimateWithoutCountingRows(t *testing.T) {
+	convey.Convey("Given an existing sparse MySQL product mirror whose dropped-index flag is absent", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		expected := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+		}}
+		actual := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+		}}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableIseqProductMetrics).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
+			WithArgs("iseq_product_metrics_mirror").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_ROWS"}).AddRow(mysqlInlineMirrorIndexRowLimit + 1))
+
+		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
+
+		convey.So(actual.Index["iseq_product_metrics_mirror"], convey.ShouldResemble, expected.Index["iseq_product_metrics_mirror"])
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestAllowLargeMySQLColdLoadIndexShapeAllowsLargeSampleNameOnlyIndex(t *testing.T) {
+	convey.Convey("Given a large MySQL sample mirror repaired with only the resolver-critical name index", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		expected := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"accession_number", "donor_id", "id_sample_lims", "last_updated", "name", "sanger_sample_id", "supplier_name", "uuid_sample_lims"},
+		}}
+		actual := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"name"},
+		}}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
+			WithArgs("sample_mirror").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_ROWS"}).AddRow(mysqlInlineSampleIndexRowLimit + 1))
+
+		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
+
+		convey.So(actual.Index["sample_mirror"], convey.ShouldResemble, expected.Index["sample_mirror"])
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
 }
 
@@ -204,156 +530,289 @@ func TestOpenCacheSQLiteEnablesWAL(t *testing.T) {
 	})
 }
 
-func TestClientSyncSerializesSQLiteWithMutex(t *testing.T) {
-	convey.Convey("Given a client with a SQLite cache on a single mocked connection", t, func() {
-		rwDB, rwMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		rwDB.SetMaxOpenConns(1)
+func TestClientSyncRejectsConcurrentSQLiteSyncForSameCache(t *testing.T) {
+	convey.Convey("B6.1: Given a SQLite cache and two concurrent syncs against it, when both try to acquire the advisory lock, then the second fails immediately with ErrSyncAlreadyRunning", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
 
-		roDB, roMock, err := sqlmock.New()
+		firstCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
 		convey.So(err, convey.ShouldBeNil)
-		roMock.ExpectClose()
+		convey.Reset(func() { convey.So(firstCache.Close(), convey.ShouldBeNil) })
 
-		releaseFirst := make(chan struct{})
+		secondCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(secondCache.Close(), convey.ShouldBeNil) })
+
 		firstEntered := make(chan struct{}, 1)
 		secondEntered := make(chan struct{}, 1)
-		var enteredCount int32
+		releaseFirst := make(chan struct{})
 
-		rwMock.MatchExpectationsInOrder(true)
-		rwMock.ExpectBegin()
-		rwMock.ExpectCommit()
-		rwMock.ExpectBegin()
-		rwMock.ExpectCommit()
-		rwMock.ExpectClose()
+		firstClient := &Client{
+			cache:       firstCache,
+			cacheReader: readDBFromCache(firstCache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				firstEntered <- struct{}{}
+				<-releaseFirst
 
-		client := &Client{
-			cache:       &sqliteCache{rwDB: rwDB, roDB: roDB},
-			cacheReader: roDB,
-			syncMu:      &sync.Mutex{},
-			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				switch atomic.AddInt32(&enteredCount, 1) {
-				case 1:
-					firstEntered <- struct{}{}
-					<-releaseFirst
-				default:
-					secondEntered <- struct{}{}
-				}
+				return nil
+			},
+		}
+		secondClient := &Client{
+			cache:       secondCache,
+			cacheReader: readDBFromCache(secondCache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				secondEntered <- struct{}{}
 
 				return nil
 			},
 		}
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		var firstErr error
-		var secondErr error
+		firstErrCh := make(chan error, 1)
 		go func() {
-			defer wg.Done()
-			_, firstErr = client.Sync(context.Background(), "sample")
-		}()
-
-		<-firstEntered
-
-		secondDone := make(chan error, 1)
-		go func() {
-			defer wg.Done()
-			_, secondErr = client.Sync(context.Background(), "sample")
-			secondDone <- secondErr
+			_, syncErr := firstClient.Sync(context.Background())
+			firstErrCh <- syncErr
 		}()
 
 		select {
-		case <-secondEntered:
-			convey.So("second sync entered early", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
+		case <-firstEntered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for first sqlite sync to hold the lock")
 		}
 
-		close(releaseFirst)
-		wg.Wait()
+		secondCtx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer cancel()
 
-		convey.Convey("when Sync is called concurrently, then the second transaction starts only after the first commits", func() {
-			convey.So(firstErr, convey.ShouldBeNil)
-			convey.So(<-secondDone, convey.ShouldBeNil)
-			convey.So(secondErr, convey.ShouldBeNil)
-			convey.So(len(secondEntered), convey.ShouldEqual, 1)
-			convey.So(rwDB.Close(), convey.ShouldBeNil)
-			convey.So(roDB.Close(), convey.ShouldBeNil)
-			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
-			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		secondErrCh := make(chan error, 1)
+		go func() {
+			_, syncErr := secondClient.Sync(secondCtx)
+			secondErrCh <- syncErr
+		}()
+
+		var secondErr error
+		select {
+		case secondErr = <-secondErrCh:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for second sqlite sync to fail")
+		}
+
+		convey.So(errors.Is(secondErr, ErrSyncAlreadyRunning), convey.ShouldBeTrue)
+		convey.So(len(secondEntered), convey.ShouldEqual, 0)
+
+		close(releaseFirst)
+		convey.So(<-firstErrCh, convey.ShouldBeNil)
+	})
+}
+
+func TestMySQLSyncLockNameUsesHostAndDatabaseOnly(t *testing.T) {
+	convey.Convey("Given MySQL DSN variants that point at the same host and database", t, func() {
+		lockNames := []string{
+			mysqlSyncLockName("cache_user@tcp(localhost:3306)/wa_mlwh_cache"),
+			mysqlSyncLockName("other_user@tcp(localhost:3306)/wa_mlwh_cache?parseTime=true"),
+			mysqlSyncLockName("third_user@tcp(localhost:3306)/wa_mlwh_cache?multiStatements=true&readTimeout=1s"),
+		}
+
+		convey.Convey("when the sync lock name is derived, then username and query parameters do not change it", func() {
+			convey.So(lockNames[1], convey.ShouldEqual, lockNames[0])
+			convey.So(lockNames[2], convey.ShouldEqual, lockNames[0])
 		})
 	})
 }
 
-func TestClientSyncSerializesMySQLWithGetLock(t *testing.T) {
-	convey.Convey("Given a client with a MySQL cache and ordered GET_LOCK expectations", t, func() {
-		rwDB, rwMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+func TestClientSyncRejectsConcurrentMySQLSyncForSameCache(t *testing.T) {
+	convey.Convey("B6.2: Given a MySQL cache and two concurrent syncs against the same DSN, when both try GET_LOCK with the derived per-cache name, then the second fails immediately with ErrSyncAlreadyRunning", t, func() {
+		const cacheDSN = "cache_user@tcp(localhost:3306)/wa_mlwh_cache"
+		lockName := mysqlSyncLockName(cacheDSN)
+
+		firstRW, firstRWMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		secondRW, secondRWMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		firstLockDB, firstLockMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		secondLockDB, secondLockMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		firstRO, _, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		secondRO, _, err := sqlmock.New()
 		convey.So(err, convey.ShouldBeNil)
 
-		roDB, roMock, err := sqlmock.New()
+		convey.Reset(func() {
+			_ = firstRW.Close()
+			_ = secondRW.Close()
+			_ = firstLockDB.Close()
+			_ = secondLockDB.Close()
+			_ = firstRO.Close()
+			_ = secondRO.Close()
+		})
+
+		firstLockMock.ExpectQuery(regexp.QuoteMeta(`SELECT GET_LOCK(?, 0)`)).WithArgs(lockName).WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(1))
+		firstLockMock.ExpectQuery(regexp.QuoteMeta(`SELECT RELEASE_LOCK(?)`)).WithArgs(lockName).WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+
+		secondLockMock.ExpectQuery(regexp.QuoteMeta(`SELECT GET_LOCK(?, 0)`)).WithArgs(lockName).WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(0))
+
+		firstClient := &Client{
+			cache:       &mysqlCache{rwDB: firstRW, roDB: firstRO, lockDB: firstLockDB, lockDSN: cacheDSN},
+			cacheReader: firstRO,
+		}
+		secondClient := &Client{
+			cache:       &mysqlCache{rwDB: secondRW, roDB: secondRO, lockDB: secondLockDB, lockDSN: cacheDSN},
+			cacheReader: secondRO,
+		}
+
+		firstRelease, err := firstClient.acquireSyncLock(context.Background())
 		convey.So(err, convey.ShouldBeNil)
+		convey.So(firstRelease, convey.ShouldNotBeNil)
 
-		releaseFirst := make(chan struct{})
-		firstLock := make(chan struct{}, 1)
-		secondLock := make(chan struct{}, 1)
-		var enteredCount int32
+		secondRelease, secondErr := secondClient.acquireSyncLock(context.Background())
+		convey.So(secondRelease, convey.ShouldBeNil)
+		convey.So(errors.Is(secondErr, ErrSyncAlreadyRunning), convey.ShouldBeTrue)
 
-		rwMock.MatchExpectationsInOrder(true)
-		rwMock.ExpectQuery("SELECT GET_LOCK\\('wa_mlwh_sync', \\?\\)").WithArgs(defaultMySQLLockTimeoutSeconds).WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(1)).WillDelayFor(5 * time.Millisecond)
-		rwMock.ExpectBegin()
-		rwMock.ExpectCommit()
-		rwMock.ExpectQuery("SELECT RELEASE_LOCK\\('wa_mlwh_sync'\\)").WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1)).WillDelayFor(5 * time.Millisecond)
-		rwMock.ExpectQuery("SELECT GET_LOCK\\('wa_mlwh_sync', \\?\\)").WithArgs(defaultMySQLLockTimeoutSeconds).WillReturnRows(sqlmock.NewRows([]string{"got_lock"}).AddRow(1)).WillDelayFor(5 * time.Millisecond)
-		rwMock.ExpectBegin()
-		rwMock.ExpectCommit()
-		rwMock.ExpectQuery("SELECT RELEASE_LOCK\\('wa_mlwh_sync'\\)").WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+		convey.So(firstRelease(), convey.ShouldBeNil)
+		convey.So(firstRWMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		convey.So(secondRWMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		convey.So(firstLockMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		convey.So(secondLockMock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
 
-		cache := &mysqlCache{rwDB: rwDB, roDB: roDB}
+func TestSQLiteSyncLockIsReleasedAfterKilledProcess(t *testing.T) {
+	if os.Getenv("WA_TEST_SQLITE_SYNC_LOCK_HELPER") == "1" {
+		cachePath := os.Getenv("WA_TEST_SQLITE_SYNC_LOCK_CACHE")
+		readyPath := os.Getenv("WA_TEST_SQLITE_SYNC_LOCK_READY")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		if err != nil {
+			os.Exit(2)
+		}
+
 		client := &Client{
 			cache:       cache,
-			cacheReader: roDB,
-			syncMu:      &sync.Mutex{},
-			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				switch atomic.AddInt32(&enteredCount, 1) {
-				case 1:
-					firstLock <- struct{}{}
-					<-releaseFirst
-				default:
-					secondLock <- struct{}{}
-				}
+			cacheReader: readDBFromCache(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				_ = os.WriteFile(readyPath, []byte("ready"), 0o600)
+
+				select {}
+			},
+		}
+
+		_, _ = client.Sync(context.Background())
+		os.Exit(3)
+	}
+
+	convey.Convey("B6.3: Given a held SQLite sync lock and a killed lock-holder process, when a new sync starts, then it acquires the lock successfully", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+		readyPath := filepath.Join(t.TempDir(), "ready")
+
+		command := exec.Command(os.Args[0], "-test.run=^TestSQLiteSyncLockIsReleasedAfterKilledProcess$")
+		command.Env = append(
+			os.Environ(),
+			"WA_TEST_SQLITE_SYNC_LOCK_HELPER=1",
+			"WA_TEST_SQLITE_SYNC_LOCK_CACHE="+cachePath,
+			"WA_TEST_SQLITE_SYNC_LOCK_READY="+readyPath,
+		)
+
+		convey.So(command.Start(), convey.ShouldBeNil)
+		convey.Reset(func() {
+			if command.Process != nil {
+				_ = command.Process.Kill()
+				_, _ = command.Process.Wait()
+			}
+		})
+
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, err := os.Stat(readyPath); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("timed out waiting for helper process to hold the sqlite sync lock")
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		convey.So(command.Process.Signal(syscall.SIGKILL), convey.ShouldBeNil)
+		_, _ = command.Process.Wait()
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(cache.Close(), convey.ShouldBeNil) })
+
+		client := &Client{
+			cache:       cache,
+			cacheReader: readDBFromCache(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				return nil
+			},
+		}
+
+		_, err = client.Sync(context.Background())
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
+func TestResolveSampleSucceedsWhileSQLiteSyncLockIsHeld(t *testing.T) {
+	convey.Convey("B6.4: Given a read-only resolver call while a SQLite sync lock is held, when ResolveSample runs, then it succeeds and does not take the advisory lock", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+		seedCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(writeSyncState(context.Background(), seedCache.DB(), "sqlite", syncTableSample, time.Date(2026, time.May, 11, 20, 0, 0, 0, time.UTC), nil, false), convey.ShouldBeNil)
+		_, err = seedCache.DB().Exec(`INSERT INTO sample_mirror(
+			id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+			sanger_sample_id, supplier_name, accession_number, donor_id,
+			taxon_id, common_name, description, last_updated
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			1, "SQSCP", "101", "sample-uuid-1", "DN1234",
+			"DN1234", "supplier-1", "acc-1", "donor-1",
+			9606, "human", "desc-1", formatSyncTime(time.Date(2026, time.May, 11, 20, 0, 0, 0, time.UTC)),
+		)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(seedCache.Close(), convey.ShouldBeNil)
+
+		lockCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(lockCache.Close(), convey.ShouldBeNil) })
+
+		readCache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(readCache.Close(), convey.ShouldBeNil) })
+
+		lockEntered := make(chan struct{}, 1)
+		releaseLock := make(chan struct{})
+		lockClient := &Client{
+			cache:       lockCache,
+			cacheReader: readDBFromCache(lockCache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				lockEntered <- struct{}{}
+				<-releaseLock
 
 				return nil
 			},
 		}
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-
+		errCh := make(chan error, 1)
 		go func() {
-			defer wg.Done()
-			_, _ = client.Sync(context.Background(), "sample")
-		}()
-
-		<-firstLock
-
-		go func() {
-			defer wg.Done()
-			_, _ = client.Sync(context.Background(), "sample")
+			_, syncErr := lockClient.Sync(context.Background())
+			errCh <- syncErr
 		}()
 
 		select {
-		case <-secondLock:
-			convey.So("second mysql sync entered early", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
+		case <-lockEntered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for sqlite sync lock to be acquired")
 		}
 
-		close(releaseFirst)
-		wg.Wait()
+		readClient := &Client{cache: readCache, cacheReader: readDBFromCache(readCache)}
+		match, resolveErr := readClient.ResolveSample(context.Background(), "DN1234")
 
-		convey.Convey("when Sync is called concurrently, then GET_LOCK and RELEASE_LOCK serialize the calls", func() {
-			convey.So(len(secondLock), convey.ShouldEqual, 1)
-			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
-			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		})
+		convey.So(resolveErr, convey.ShouldBeNil)
+		convey.So(match.Kind, convey.ShouldEqual, KindSangerSampleName)
+		convey.So(match.Canonical, convey.ShouldEqual, "DN1234")
+		convey.So(match.Sample, convey.ShouldNotBeNil)
+		convey.So(match.Sample.Name, convey.ShouldEqual, "DN1234")
+
+		close(releaseLock)
+		convey.So(<-errCh, convey.ShouldBeNil)
 	})
 }
 
@@ -368,6 +827,11 @@ func TestOpenCacheInjectsMySQLPasswordIntoResolvedDSN(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		expectSchemaBootstrap(rwMock, "mysql")
+		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableSample).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
+		expectNoDroppedMirrorRepairRows(rwMock, syncTableIseqProductMetrics)
+		expectNoDroppedMirrorRepairRows(rwMock, syncTableSeqProductIRODSLocations)
 		roMock.ExpectPing()
 
 		var opened []string
@@ -413,29 +877,108 @@ func TestOpenCacheInjectsMySQLPasswordIntoResolvedDSN(t *testing.T) {
 	})
 }
 
+func TestOpenCacheTrimsTrailingEnvSemicolonFromMySQLDSN(t *testing.T) {
+	convey.Convey("Given a MySQL cache DSN copied from a dotenv line with a trailing semicolon", t, func() {
+		originalOpen := sqlOpenFunc
+		defer func() { sqlOpenFunc = originalOpen }()
+
+		rwDB, rwMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		convey.So(err, convey.ShouldBeNil)
+		roDB, roMock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		convey.So(err, convey.ShouldBeNil)
+
+		expectSchemaBootstrap(rwMock, "mysql")
+		rwMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableSample).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
+		expectNoDroppedMirrorRepairRows(rwMock, syncTableIseqProductMetrics)
+		expectNoDroppedMirrorRepairRows(rwMock, syncTableSeqProductIRODSLocations)
+		roMock.ExpectPing()
+
+		var opened []string
+		openCount := 0
+		sqlOpenFunc = func(driverName, dataSourceName string) (*sql.DB, error) {
+			convey.So(driverName, convey.ShouldEqual, "mysql")
+			opened = append(opened, dataSourceName)
+			openCount++
+
+			switch openCount {
+			case 1:
+				return rwDB, nil
+			case 2:
+				return roDB, nil
+			default:
+				return nil, fmt.Errorf("unexpected sql.Open call %d", openCount)
+			}
+		}
+
+		_, err = OpenCache(context.Background(), CacheConfig{Path: "cache_user@tcp(localhost:3306)/wa_cache;?parseTime=true", Password: "secret"})
+
+		convey.Convey("when OpenCache runs, then both MySQL connections use the normalized database name", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(opened, convey.ShouldHaveLength, 2)
+
+			rwCfg, parseErr := mysql.ParseDSN(opened[0])
+			convey.So(parseErr, convey.ShouldBeNil)
+			roCfg, parseErr := mysql.ParseDSN(opened[1])
+			convey.So(parseErr, convey.ShouldBeNil)
+
+			convey.So(rwCfg.DBName, convey.ShouldEqual, "wa_cache")
+			convey.So(roCfg.DBName, convey.ShouldEqual, "wa_cache")
+			convey.So(rwCfg.ParseTime, convey.ShouldBeTrue)
+			convey.So(roCfg.ParseTime, convey.ShouldBeTrue)
+			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestApplySchemaMySQLPre8FallsBackToGeneralCaseInsensitiveCollation(t *testing.T) {
+	convey.Convey("Given schema application against a pre-8 MySQL server", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() {
+			convey.So(db.Close(), convey.ShouldBeNil)
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+
+		stmts, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT VERSION()`)).WillReturnRows(
+			sqlmock.NewRows([]string{"version"}).AddRow("5.7.44"),
+		)
+
+		for _, group := range stmts {
+			legacyGroup := strings.ReplaceAll(group, "utf8mb4_0900_ai_ci", "utf8mb4_general_ci")
+			for _, stmt := range splitSQLStatements(legacyGroup) {
+				mock.ExpectExec(regexp.QuoteMeta(stmt)).WillReturnResult(sqlmock.NewResult(0, 0))
+			}
+		}
+		mock.ExpectClose()
+
+		err = applySchema(context.Background(), db, "mysql")
+
+		convey.Convey("when applySchema runs, then it substitutes utf8mb4_general_ci into every DDL statement", func() {
+			convey.So(err, convey.ShouldBeNil)
+		})
+	})
+}
+
 func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 	stmts, err := loadSchema(dialect)
 	if err != nil {
 		panic(err)
 	}
-	expectedShape, err := parseSchemaShape(stmts)
-	if err != nil {
-		panic(err)
-	}
 
 	mock.ExpectPing()
-
-	for _, table := range schemaStatementOrder {
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
-			WithArgs(table).
-			WillReturnRows(sqlmock.NewRows([]string{"COLUMN_NAME", "DATA_TYPE"}))
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`)).
-			WithArgs(table).
-			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME", "COLUMN_NAME"}))
-	}
-
-	for idx := len(schemaStatementOrder) - 1; idx >= 0; idx-- {
-		mock.ExpectExec(regexp.QuoteMeta(`DROP TABLE IF EXISTS ` + schemaStatementOrder[idx])).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version`)).WillReturnError(
+		&mysql.MySQLError{Number: 1146, Message: "Table 'wa_cache.schema_version' doesn't exist"},
+	)
+	if dialect == "mysql" {
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT VERSION()`)).WillReturnRows(
+			sqlmock.NewRows([]string{"version"}).AddRow("8.0.36"),
+		)
 	}
 
 	for _, group := range stmts {
@@ -444,37 +987,8 @@ func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 		}
 	}
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_version`)).WillReturnRows(
-		sqlmock.NewRows([]string{"count", "version"}).AddRow(0, 0),
-	)
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(CacheSchemaVersion).WillReturnResult(sqlmock.NewResult(1, 1))
-
-	for _, table := range schemaStatementOrder {
-		columnRows := sqlmock.NewRows([]string{"COLUMN_NAME", "DATA_TYPE"})
-		columnNames := make([]string, 0, len(expectedShape.Tables[table]))
-		for name := range expectedShape.Tables[table] {
-			columnNames = append(columnNames, name)
-		}
-		sort.Strings(columnNames)
-		for _, name := range columnNames {
-			columnRows.AddRow(name, expectedShape.Tables[table][name])
-		}
-
-		indexRows := sqlmock.NewRows([]string{"INDEX_NAME", "COLUMN_NAME"})
-		for indexNumber, indexSpec := range expectedShape.Index[table] {
-			for _, columnName := range strings.Split(indexSpec, ",") {
-				indexRows.AddRow(fmt.Sprintf("%s_idx_%d", table, indexNumber), columnName)
-			}
-		}
-
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
-			WithArgs(table).
-			WillReturnRows(columnRows)
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`)).
-			WithArgs(table).
-			WillReturnRows(indexRows)
-	}
 }
 
 func TestClientReadOnlyHandleRejectsWrites(t *testing.T) {
@@ -520,4 +1034,130 @@ func cacheReadDB(cache Cache) *sql.DB {
 	}
 
 	return reader.ReadDB()
+}
+
+func captureCacheMigrationOutput(t *testing.T, run func()) string {
+	t.Helper()
+
+	original := cacheMigrationStderr
+	var buffer bytes.Buffer
+	cacheMigrationStderr = &buffer
+	t.Cleanup(func() {
+		cacheMigrationStderr = original
+	})
+
+	run()
+
+	return buffer.String()
+}
+
+func seedSQLiteV1Cache(t *testing.T, cachePath string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", cachePath)
+	convey.So(err, convey.ShouldBeNil)
+	t.Cleanup(func() { _ = db.Close() })
+
+	v1Statements := []string{
+		`CREATE TABLE schema_version(version INTEGER NOT NULL PRIMARY KEY, applied_at TEXT NOT NULL)`,
+		`CREATE TABLE sync_state(table_name TEXT NOT NULL PRIMARY KEY, high_water TEXT NOT NULL, last_run TEXT NOT NULL)`,
+		`CREATE TABLE sample_mirror (
+			id_sample_tmp INTEGER NOT NULL PRIMARY KEY,
+			id_lims TEXT NOT NULL,
+			id_sample_lims TEXT NOT NULL,
+			uuid_sample_lims TEXT NOT NULL,
+			id_study_lims TEXT NOT NULL,
+			name TEXT NOT NULL,
+			sanger_id TEXT NOT NULL,
+			sanger_sample_id TEXT NOT NULL,
+			supplier_name TEXT NOT NULL,
+			accession_number TEXT NOT NULL,
+			donor_id TEXT NOT NULL,
+			library_type TEXT NOT NULL,
+			taxon_id INTEGER NOT NULL,
+			common_name TEXT NOT NULL,
+			description TEXT NOT NULL,
+			last_updated TEXT NOT NULL
+		)`,
+		`CREATE TABLE study_mirror(id_study_tmp INTEGER NOT NULL PRIMARY KEY, id_lims TEXT NOT NULL, id_study_lims TEXT NOT NULL, uuid_study_lims TEXT NOT NULL, name TEXT NOT NULL, accession_number TEXT NOT NULL, study_title TEXT NOT NULL, faculty_sponsor TEXT NOT NULL, state TEXT NOT NULL, abstract TEXT NOT NULL, abbreviation TEXT NOT NULL, description TEXT NOT NULL, data_release_strategy TEXT NOT NULL, data_access_group TEXT NOT NULL, hmdmc_number TEXT NOT NULL, programme TEXT NOT NULL, created TEXT NOT NULL, reference_genome TEXT NOT NULL, ethically_approved INTEGER NOT NULL DEFAULT 0, study_type TEXT NOT NULL, contains_human_dna INTEGER NOT NULL DEFAULT 0, contaminated_human_dna INTEGER NOT NULL DEFAULT 0, study_visibility TEXT NOT NULL, egadac_accession_number TEXT NOT NULL, ega_policy_accession_number TEXT NOT NULL, data_release_timing TEXT NOT NULL, last_updated TEXT NOT NULL)`,
+		`CREATE TABLE library_samples(pipeline_id_lims TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL)`,
+		`CREATE TABLE donor_samples(donor_id TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL)`,
+		`CREATE TABLE negative_cache(raw TEXT PRIMARY KEY, reason TEXT, fetched_at TEXT, ttl_seconds INTEGER)`,
+		`CREATE TABLE watermarks(name TEXT PRIMARY KEY, updated_at TEXT NOT NULL)`,
+		`CREATE TABLE enrich_cache(cache_key TEXT PRIMARY KEY, payload TEXT NOT NULL, fetched_at TEXT NOT NULL)`,
+	}
+
+	for _, stmt := range v1Statements {
+		_, err = db.Exec(stmt)
+		convey.So(err, convey.ShouldBeNil)
+	}
+
+	_, err = db.Exec(`INSERT INTO schema_version(version, applied_at) VALUES (?, ?)`, 1, "2026-05-10T09:00:00Z")
+	convey.So(err, convey.ShouldBeNil)
+
+	staleSyncStateTables := []string{
+		"iseq_product_metrics",
+		"seq_product_irods_locations",
+		syncTableIseqFlowcell,
+		syncTableSample,
+		syncTableStudy,
+		"unrelated",
+	}
+	for _, tableName := range staleSyncStateTables {
+		_, err = db.Exec(`INSERT INTO sync_state(table_name, high_water, last_run) VALUES (?, ?, ?)`, tableName, "2026-05-10T09:00:00Z", "2026-05-10T09:00:00Z")
+		convey.So(err, convey.ShouldBeNil)
+	}
+
+	_, err = db.Exec(`INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, id_study_lims, name, sanger_id, sanger_sample_id, supplier_name, accession_number, donor_id, library_type, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 1, "SQSCP", "sample-1", "uuid-1", "study-1", "sample-name", "sample-name", "ssid-1", "supplier-1", "ENA1", "donor-1", "WGS", 9606, "human", "desc", "2026-05-10T09:00:00Z")
+	convey.So(err, convey.ShouldBeNil)
+}
+
+func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int) {
+	for idx := len(cacheMigrationDropTables) - 1; idx >= 0; idx-- {
+		mock.ExpectExec(regexp.QuoteMeta(`DROP TABLE IF EXISTS ` + cacheMigrationDropTables[idx])).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+
+	stmts, err := loadSchema("mysql")
+	if err != nil {
+		panic(err)
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT VERSION()`)).WillReturnRows(
+		sqlmock.NewRows([]string{"version"}).AddRow("8.0.36"),
+	)
+
+	for _, group := range stmts {
+		for _, stmt := range splitSQLStatements(group) {
+			mock.ExpectExec(regexp.QuoteMeta(stmt)).WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM sync_state LIMIT 0`)).WillReturnRows(
+		sqlmock.NewRows([]string{"table_name", "high_water", "last_run"}),
+	)
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE sync_state ADD COLUMN resume_cursor TEXT NULL`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE sync_state ADD COLUMN indexes_dropped INT NOT NULL DEFAULT 0`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM sync_state WHERE table_name IN (?, ?, ?, ?, ?)`)).
+		WithArgs(
+			"iseq_product_metrics",
+			"seq_product_irods_locations",
+			syncTableIseqFlowcell,
+			syncTableSample,
+			syncTableStudy,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(toVersion).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+		WithArgs(syncTableSample).
+		WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
+	expectNoDroppedMirrorRepairRows(mock, syncTableIseqProductMetrics)
+	expectNoDroppedMirrorRepairRows(mock, syncTableSeqProductIRODSLocations)
+}
+
+func expectNoDroppedMirrorRepairRows(mock sqlmock.Sqlmock, table string) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+		WithArgs(table).
+		WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}))
 }

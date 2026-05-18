@@ -85,13 +85,27 @@ func (a *ClientAdapter) ResolveSample(ctx context.Context, raw string) (mlwh.Mat
 	return provider.ResolveSample(ctx, raw)
 }
 
-func (a *ClientAdapter) ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
+func (a *ClientAdapter) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
 	provider, err := a.delegate()
 	if err != nil {
 		return mlwh.Match{}, err
 	}
 
-	return provider.ResolveStudy(ctx, raw, options...)
+	nameResolver, ok := provider.(sampleNameResolver)
+	if !ok {
+		return mlwh.Match{}, mlwh.ErrNotFound
+	}
+
+	return nameResolver.ResolveSampleName(ctx, raw)
+}
+
+func (a *ClientAdapter) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return provider.ResolveStudy(ctx, raw)
 }
 
 func (a *ClientAdapter) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -154,19 +168,16 @@ func (a *ClientAdapter) FindSamplesBySangerID(ctx context.Context, sangerID stri
 		return nil, err
 	}
 
-	match, err := provider.ResolveSample(ctx, sangerID)
-	if err != nil {
-		return nil, err
-	}
-	if match.Sample == nil {
-		return []mlwh.Sample{}, nil
-	}
-
-	return []mlwh.Sample{*match.Sample}, nil
+	return provider.FindSamplesBySangerID(ctx, sangerID)
 }
 
 func (a *ClientAdapter) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
-	return a.FindSamplesBySangerID(ctx, idSampleLims)
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.FindSamplesByIDSampleLims(ctx, idSampleLims)
 }
 
 func (a *ClientAdapter) FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error) {
@@ -184,7 +195,7 @@ func (a *ClientAdapter) FindSamplesByLibraryType(ctx context.Context, libraryTyp
 		return nil, err
 	}
 
-	return provider.SamplesForLibraryType(ctx, libraryType, providerFetchLimit, 0)
+	return provider.FindSamplesByLibraryType(ctx, libraryType)
 }
 
 func (a *ClientAdapter) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
@@ -196,8 +207,41 @@ func (a *ClientAdapter) SamplesForLibraryType(ctx context.Context, pipelineIDLim
 	return provider.SamplesForLibraryType(ctx, pipelineIDLims, limit, offset)
 }
 
+func (a *ClientAdapter) SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	exactProvider, ok := provider.(exactLibrarySamplesProvider)
+	if !ok {
+		return nil, mlwh.ErrUnsupportedIdentifier
+	}
+
+	return exactProvider.SamplesForLibraryID(ctx, libraryID, limit, offset)
+}
+
+func (a *ClientAdapter) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]mlwh.Sample, error) {
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	exactProvider, ok := provider.(exactLibrarySamplesProvider)
+	if !ok {
+		return nil, mlwh.ErrUnsupportedIdentifier
+	}
+
+	return exactProvider.SamplesForLibraryLimsID(ctx, idLibraryLims, limit, offset)
+}
+
 func (a *ClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
-	return a.FindSamplesBySangerID(ctx, accessionNumber)
+	provider, err := a.delegate()
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.FindSamplesByAccessionNumber(ctx, accessionNumber)
 }
 
 func (a *ClientAdapter) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error) {
@@ -227,13 +271,13 @@ func (a *ClientAdapter) LibrariesForStudy(ctx context.Context, studyLimsID strin
 	return provider.LibrariesForStudy(ctx, studyLimsID, limit, offset)
 }
 
-func (a *ClientAdapter) StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error) {
+func (a *ClientAdapter) StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error) {
 	provider, err := a.delegate()
 	if err != nil {
 		return nil, err
 	}
 
-	return provider.StudyForSample(ctx, sangerName)
+	return provider.StudiesForSample(ctx, sangerName)
 }
 
 func (a *ClientAdapter) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {

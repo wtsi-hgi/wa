@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { EnrichmentResult } from "@/lib/contracts";
-import { enrichSeqmetaMetadata } from "@/lib/seqmeta-enrichment";
+import {
+    buildCachedEnrichmentState,
+    enrichSeqmetaMetadataBatch,
+    enrichSeqmetaMetadata,
+} from "@/lib/seqmeta-enrichment";
 import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
 
 describe("enrichSeqmetaMetadata", () => {
@@ -40,6 +44,152 @@ describe("enrichSeqmetaMetadata", () => {
         // Allow some overhead but should be much less than sequential
         expect(duration).toBeLessThan(300);
         expect(enrichIdentifier).toHaveBeenCalledTimes(5);
+    });
+
+    it("starts every uncached lookup before waiting for the first enrichment result", async () => {
+        const cache = new SeqmetaCache();
+        const metadata: Record<string, string> = {
+            seqmeta_librarytype: "Custom",
+            seqmeta_runid: "48522",
+            seqmeta_sampleid: "7607STDY14643771",
+            seqmeta_studyid: "7607",
+        };
+        const started: string[] = [];
+        let releaseLookups!: () => void;
+        const lookupGate = new Promise<void>((resolve) => {
+            releaseLookups = resolve;
+        });
+        const enrichIdentifier = vi.fn(async (value: string) => {
+            started.push(value);
+            await lookupGate;
+
+            return {
+                identifier: value,
+                type: value === "Custom" ? "library_type" : "sanger_sample_id",
+                graph: {},
+                partial: false,
+            } as EnrichmentResult;
+        });
+
+        const enrichment = enrichSeqmetaMetadata(
+            metadata,
+            cache,
+            enrichIdentifier,
+        );
+
+        await Promise.resolve();
+
+        expect(started).toEqual([
+            "7607",
+            "7607STDY14643771",
+            "48522",
+            "Custom",
+        ]);
+
+        releaseLookups();
+        await enrichment;
+    });
+
+    it("uses one batch call for multiple uncached metadata values", async () => {
+        const cache = new SeqmetaCache();
+        const metadata: Record<string, string> = {
+            seqmeta_librarytype: "Custom",
+            seqmeta_libraryid: "71046409",
+            seqmeta_runid: "48522",
+            seqmeta_sampleid: "7607STDY14643771",
+            seqmeta_studyid: "7607",
+        };
+        const enrichIdentifiers = vi.fn(async (values: string[]) =>
+            values.map((value) => ({
+                value,
+                enrichment: {
+                    identifier: value,
+                    type: value === "Custom" ? "library_type" : "study_id",
+                    graph: {},
+                    partial: false,
+                } as EnrichmentResult,
+            })),
+        );
+
+        const result = await enrichSeqmetaMetadataBatch(
+            metadata,
+            cache,
+            enrichIdentifiers,
+        );
+
+        expect(enrichIdentifiers).toHaveBeenCalledTimes(1);
+        expect(enrichIdentifiers).toHaveBeenCalledWith([
+            "7607",
+            "7607STDY14643771",
+            "48522",
+            "71046409",
+            "Custom",
+        ]);
+        expect(new Set(Object.keys(result.enrichments))).toEqual(
+            new Set([
+                "7607",
+                "7607STDY14643771",
+                "48522",
+                "71046409",
+                "Custom",
+            ]),
+        );
+    });
+
+    it("keeps direct study enrichment when a parallel sample lookup primes the same study alias first", async () => {
+        const cache = new SeqmetaCache();
+        const metadata: Record<string, string> = {
+            seqmeta_sampleid: "7607STDY14643771",
+            seqmeta_studyid: "7607",
+        };
+        const resolvers = new Map<string, (result: EnrichmentResult) => void>();
+        const enrichIdentifier = vi.fn((value: string) => {
+            return new Promise<EnrichmentResult>((resolve) => {
+                resolvers.set(value, resolve);
+            });
+        });
+
+        const enrichment = enrichSeqmetaMetadata(
+            metadata,
+            cache,
+            enrichIdentifier,
+        );
+
+        await Promise.resolve();
+
+        resolvers.get("7607STDY14643771")?.({
+            identifier: "7607STDY14643771",
+            type: "sanger_sample_id",
+            graph: {
+                sample: {
+                    id_study_lims: "7607",
+                    sanger_id: "SANGER-SAMPLE",
+                    sample_name: "7607STDY14643771",
+                },
+            },
+            partial: false,
+        } as EnrichmentResult);
+        await Promise.resolve();
+
+        resolvers.get("7607")?.({
+            identifier: "7607",
+            type: "study_id",
+            graph: {
+                study: {
+                    id_study_lims: "7607",
+                    name: "Study 7607",
+                },
+            },
+            partial: false,
+        } as EnrichmentResult);
+
+        const result = await enrichment;
+
+        expect(result.enrichments["7607"]?.type).toBe("study_id");
+        expect(cache.get("7607")?.type).toBe("study_id");
+        expect(result.enrichments["7607STDY14643771"]?.type).toBe(
+            "sanger_sample_id",
+        );
     });
 
     it("should handle parallel enrichment failures gracefully", async () => {
@@ -81,5 +231,48 @@ describe("enrichSeqmetaMetadata", () => {
 
         // Should still be fast (parallel execution)
         expect(enrichIdentifier).toHaveBeenCalledTimes(3);
+    });
+
+    it("retries stale negative cache entries for one-word identifiers that can now resolve", async () => {
+        const cache = new SeqmetaCache({
+            Custom: null,
+            "48522": null,
+            "7607STDY14643771": null,
+        });
+        const metadata: Record<string, string> = {
+            seqmeta_library: "Custom",
+            seqmeta_runid: "48522",
+            seqmeta_sampleid: "7607STDY14643771",
+        };
+        const enrichIdentifier = vi.fn(async (value: string) => {
+            return {
+                identifier: value,
+                type: value === "Custom" ? "library_type" : "sanger_sample_id",
+                graph: {},
+                partial: false,
+            } as EnrichmentResult;
+        });
+
+        expect(buildCachedEnrichmentState(metadata, cache)).toEqual({
+            enrichments: {},
+            errors: {},
+        });
+
+        const result = await enrichSeqmetaMetadata(
+            metadata,
+            cache,
+            enrichIdentifier,
+        );
+
+        expect(enrichIdentifier).toHaveBeenCalledTimes(3);
+        expect(enrichIdentifier).toHaveBeenCalledWith("Custom");
+        expect(enrichIdentifier).toHaveBeenCalledWith("48522");
+        expect(enrichIdentifier).toHaveBeenCalledWith("7607STDY14643771");
+        expect(result.errors).toEqual({});
+        expect(result.enrichments.Custom?.type).toBe("library_type");
+        expect(result.enrichments["48522"]?.identifier).toBe("48522");
+        expect(result.enrichments["7607STDY14643771"]?.identifier).toBe(
+            "7607STDY14643771",
+        );
     });
 });

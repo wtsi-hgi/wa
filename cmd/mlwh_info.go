@@ -43,6 +43,10 @@ const (
 )
 
 var openMLWHInfoClient = func(ctx context.Context, cfg mlwh.Config) (mlwhInfoClient, error) {
+	if strings.TrimSpace(cfg.DSN) == "" {
+		return mlwh.OpenCacheOnly(ctx, cfg.Cache)
+	}
+
 	return mlwh.Open(ctx, cfg)
 }
 
@@ -50,11 +54,14 @@ var openMLWHInfoClient = func(ctx context.Context, cfg mlwh.Config) (mlwhInfoCli
 type mlwhInfoClient interface {
 	ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveSample(ctx context.Context, raw string) (mlwh.Match, error)
-	ResolveStudy(ctx context.Context, raw string, opts ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveRun(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
+	FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error)
+	FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error)
+	FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error)
 
-	StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error)
+	StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error)
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
 	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error)
 	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
@@ -66,9 +73,17 @@ type mlwhInfoClient interface {
 	Close() error
 }
 
+type mlwhInfoSampleNameResolver interface {
+	ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error)
+}
+
 func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag string, jsonOut bool) error {
 	match, err := classifyForInfo(ctx, client, identifier, typeFlag)
 	if err != nil {
+		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+			return fmt.Errorf("resolve %q: %w", identifier, err)
+		}
+
 		if errors.Is(err, mlwh.ErrNotFound) {
 			return fmt.Errorf("no match for identifier %q (run 'wa mlwh sync' if you think the cache is stale)", identifier)
 		}
@@ -145,14 +160,16 @@ func writeInfoReportText(out io.Writer, report infoReport) {
 	if report.Study != nil {
 		writeStudySection(out, report.Study)
 	}
+	writeStudiesSection(out, report.Studies)
 
 	if report.Run != nil {
 		_, _ = fmt.Fprintf(out, "\nRun:\n  id_run: %d\n", report.Run.IDRun)
 	}
 
 	if report.Library != nil {
-		_, _ = fmt.Fprintf(out, "\nLibrary:\n  pipeline_id_lims: %s\n  sample_count:     %d\n",
-			report.Library.PipelineIDLims, report.Library.SampleCount)
+		_, _ = fmt.Fprintf(out, "\nLibrary:\n  pipeline_id_lims: %s\n",
+			report.Library.PipelineIDLims)
+		writeKV(out, "  id_study_lims", report.Library.IDStudyLims)
 	}
 
 	writeLanesSection(out, report.Lanes)
@@ -172,9 +189,25 @@ func writeSampleSection(out io.Writer, sample *mlwh.Sample) {
 	writeKV(out, "  supplier_name", sample.SupplierName)
 	writeKV(out, "  accession_number", sample.AccessionNumber)
 	writeKV(out, "  donor_id", sample.DonorID)
-	writeKV(out, "  id_study_lims", sample.IDStudyLims)
-	writeKV(out, "  library_type", sample.LibraryType)
 	writeKV(out, "  common_name", sample.CommonName)
+	for _, library := range sample.Libraries {
+		if strings.TrimSpace(library.PipelineIDLims) == "" || strings.TrimSpace(library.IDStudyLims) == "" {
+			continue
+		}
+
+		_, _ = fmt.Fprintf(out, "  library: %s / %s", library.PipelineIDLims, library.IDStudyLims)
+		writeLibraryIdentifiers(out, library)
+		_, _ = fmt.Fprintln(out)
+	}
+}
+
+func writeLibraryIdentifiers(out io.Writer, library mlwh.Library) {
+	if strings.TrimSpace(library.LibraryID) != "" {
+		_, _ = fmt.Fprintf(out, " library_id=%s", library.LibraryID)
+	}
+	if strings.TrimSpace(library.IDLibraryLims) != "" {
+		_, _ = fmt.Fprintf(out, " id_library_lims=%s", library.IDLibraryLims)
+	}
 }
 
 func writeKV(out io.Writer, key, value string) {
@@ -192,9 +225,26 @@ func writeStudySection(out io.Writer, study *mlwh.Study) {
 	writeKV(out, "  name", study.Name)
 	writeKV(out, "  accession_number", study.AccessionNumber)
 	writeKV(out, "  study_title", study.StudyTitle)
-	writeKV(out, "  abbreviation", study.Abbreviation)
 	writeKV(out, "  faculty_sponsor", study.FacultySponsor)
 	writeKV(out, "  programme", study.Programme)
+}
+
+func writeStudiesSection(out io.Writer, studies []mlwh.Study) {
+	if len(studies) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nStudies (%d):\n", len(studies))
+	for _, study := range studies {
+		_, _ = fmt.Fprintf(out, "  id_study_lims=%s", study.IDStudyLims)
+		if strings.TrimSpace(study.Name) != "" {
+			_, _ = fmt.Fprintf(out, " name=%s", study.Name)
+		}
+		if strings.TrimSpace(study.AccessionNumber) != "" {
+			_, _ = fmt.Fprintf(out, " accession_number=%s", study.AccessionNumber)
+		}
+		_, _ = fmt.Fprintln(out)
+	}
 }
 
 func writeLanesSection(out io.Writer, lanes []mlwh.Lane) {
@@ -215,7 +265,12 @@ func writeLibrariesSection(out io.Writer, libraries []mlwh.Library) {
 
 	_, _ = fmt.Fprintf(out, "\nLibraries (%d):\n", len(libraries))
 	for _, lib := range libraries {
-		_, _ = fmt.Fprintf(out, "  pipeline_id_lims=%s sample_count=%d\n", lib.PipelineIDLims, lib.SampleCount)
+		_, _ = fmt.Fprintf(out, "  pipeline_id_lims=%s", lib.PipelineIDLims)
+		if strings.TrimSpace(lib.IDStudyLims) != "" {
+			_, _ = fmt.Fprintf(out, " id_study_lims=%s", lib.IDStudyLims)
+		}
+		writeLibraryIdentifiers(out, lib)
+		_, _ = fmt.Fprintln(out)
 	}
 }
 
@@ -267,8 +322,26 @@ func writeWarningsSection(out io.Writer, warnings []string) {
 func classifyForInfo(ctx context.Context, client mlwhInfoClient, identifier, typeFlag string) (mlwh.Match, error) {
 	switch strings.ToLower(strings.TrimSpace(typeFlag)) {
 	case "":
+		if match, err := client.ResolveStudy(ctx, identifier); err == nil {
+			return match, nil
+		} else if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, err
+		}
+
+		if match, err := resolveSampleNameForInfo(ctx, client, identifier); err == nil {
+			return match, nil
+		} else if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, err
+		}
+
 		return client.ClassifyIdentifier(ctx, identifier)
 	case "sample":
+		if match, err := resolveSampleNameForInfo(ctx, client, identifier); err == nil {
+			return match, nil
+		} else if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, err
+		}
+
 		return client.ResolveSample(ctx, identifier)
 	case "study":
 		return client.ResolveStudy(ctx, identifier)
@@ -281,13 +354,43 @@ func classifyForInfo(ctx context.Context, client mlwhInfoClient, identifier, typ
 	}
 }
 
+func resolveSampleNameForInfo(ctx context.Context, client mlwhInfoClient, identifier string) (mlwh.Match, error) {
+	nameResolver, ok := client.(mlwhInfoSampleNameResolver)
+	if !ok {
+		return mlwh.Match{}, mlwh.ErrNotFound
+	}
+
+	return nameResolver.ResolveSampleName(ctx, identifier)
+}
+
 func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *infoReport, sample *mlwh.Sample) {
+	if err := refreshSampleFanOut(ctx, client, sample); err != nil && !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("sample fan-out: %v", err))
+	}
+
 	if report.Study == nil {
-		study, err := client.StudyForSample(ctx, sample.Name)
-		if err == nil {
-			report.Study = study
-		} else if !errors.Is(err, mlwh.ErrNotFound) {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("study for sample: %v", err))
+		studies := append([]mlwh.Study(nil), sample.Studies...)
+		if len(studies) == 0 {
+			var err error
+			studies, err = client.StudiesForSample(ctx, sample.Name)
+			if err != nil {
+				if !errors.Is(err, mlwh.ErrNotFound) {
+					report.Warnings = append(report.Warnings, fmt.Sprintf("studies for sample: %v", err))
+				}
+
+				studies = nil
+			}
+		}
+
+		if len(studies) > 0 {
+			switch len(studies) {
+			case 1:
+				report.Study = &studies[0]
+			case 0:
+				// Nothing to add.
+			default:
+				report.Studies = studies
+			}
 		}
 	}
 
@@ -302,6 +405,53 @@ func populateSampleInfo(ctx context.Context, client mlwhInfoClient, report *info
 	} else if !errors.Is(err, mlwh.ErrNotFound) {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("irods paths for sample: %v", err))
 	}
+}
+
+func refreshSampleFanOut(ctx context.Context, client mlwhInfoClient, sample *mlwh.Sample) error {
+	if sample == nil {
+		return nil
+	}
+	if len(sample.Libraries) > 0 && len(sample.Studies) > 0 {
+		return nil
+	}
+
+	lookups := []func(context.Context) ([]mlwh.Sample, error){}
+	if strings.TrimSpace(sample.SangerSampleID) != "" {
+		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
+			return client.FindSamplesBySangerID(ctx, sample.SangerSampleID)
+		})
+	}
+	if strings.TrimSpace(sample.IDSampleLims) != "" {
+		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
+			return client.FindSamplesByIDSampleLims(ctx, sample.IDSampleLims)
+		})
+	}
+	if strings.TrimSpace(sample.AccessionNumber) != "" {
+		lookups = append(lookups, func(ctx context.Context) ([]mlwh.Sample, error) {
+			return client.FindSamplesByAccessionNumber(ctx, sample.AccessionNumber)
+		})
+	}
+
+	for _, lookup := range lookups {
+		samples, err := lookup(ctx)
+		if err != nil {
+			if errors.Is(err, mlwh.ErrNotFound) {
+				continue
+			}
+
+			return err
+		}
+		if len(samples) == 0 {
+			continue
+		}
+
+		sample.Studies = append([]mlwh.Study(nil), samples[0].Studies...)
+		sample.Libraries = append([]mlwh.Library(nil), samples[0].Libraries...)
+
+		return nil
+	}
+
+	return mlwh.ErrNotFound
 }
 
 func populateStudyInfo(ctx context.Context, client mlwhInfoClient, report *infoReport, studyLimsID string) {
@@ -333,6 +483,7 @@ type infoReport struct {
 	Study      *mlwh.Study      `json:"study,omitempty"`
 	Run        *mlwh.Run        `json:"run,omitempty"`
 	Library    *mlwh.Library    `json:"library,omitempty"`
+	Studies    []mlwh.Study     `json:"studies,omitempty"`
 	Lanes      []mlwh.Lane      `json:"lanes,omitempty"`
 	Libraries  []mlwh.Library   `json:"libraries,omitempty"`
 	Runs       []mlwh.Run       `json:"runs,omitempty"`
@@ -364,9 +515,8 @@ func newMLWHInfoCommand() *cobra.Command {
 			"for piping into jq.",
 			"",
 			"Reads from the local SQLite cache populated by 'wa mlwh sync'.",
-			"If the cache is cold for a needed table the resolver may attempt",
-			"to warm it from upstream MLWH; if that fails the command exits",
-			"with an error suggesting you run 'wa mlwh sync' first.",
+			"If the cache is cold for a needed table the command exits with",
+			"an error suggesting you run 'wa mlwh sync' first.",
 			"",
 			"Configuration is read from the environment (same variables as",
 			"'wa mlwh sync'). Use the persistent --env flag (or",
@@ -374,13 +524,10 @@ func newMLWHInfoCommand() *cobra.Command {
 			".env.<name> / .env.<name>.local files from the working directory",
 			"before resolving:",
 			"",
-			"  WA_MLWH_DSN             Required. Go MySQL DSN for the upstream",
-			"                          MLWH, e.g.",
-			"                          user@tcp(mlwh-db-ro:3435)/mlwarehouse.",
-			"                          Embedded passwords are rejected; use",
-			"                          WA_MLWH_PASSWORD instead.",
-			"  WA_MLWH_PASSWORD        Optional. Password injected into the DSN",
-			"                          at connect time.",
+			"  WA_MLWH_DSN             Optional for cache-backed reads; required",
+			"                          only when running 'wa mlwh sync'.",
+			"  WA_MLWH_PASSWORD        Optional. Password used with",
+			"                          WA_MLWH_DSN when syncing from upstream.",
 			"  WA_MLWH_CACHE_PATH      Optional. Path to the local SQLite cache",
 			"                          file. Defaults to <user-cache-dir>/wa/",
 			"                          mlwh.sqlite (created on first use).",

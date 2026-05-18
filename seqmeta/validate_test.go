@@ -54,7 +54,7 @@ func TestValidate(t *testing.T) {
 	})
 
 	convey.Convey("sample matches preserve the mlwh sample pointer and canonical identifier", t, func() {
-		sample := &mlwh.Sample{Name: "7607STDY14643771", SangerID: "S1"}
+		sample := &mlwh.Sample{Name: "7607STDY14643771", SangerSampleID: "S1"}
 		provider := &MockProvider{
 			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
 				convey.So(raw, convey.ShouldEqual, "S1")
@@ -98,6 +98,22 @@ func TestValidate(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(result.Identifier, convey.ShouldEqual, "Standard")
 		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryType)
+		convey.So(result.Object, convey.ShouldResemble, library)
+	})
+
+	convey.Convey("library ID matches validate as library_id rather than library_type", t, func() {
+		library := &mlwh.Library{PipelineIDLims: "Custom", LibraryID: "71046409"}
+		provider := &MockProvider{
+			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "71046409")
+				return mlwh.Match{Kind: mlwh.KindLibraryID, Canonical: "71046409", Library: library}, nil
+			},
+		}
+
+		result, err := Validate(ctx, provider, "71046409")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Identifier, convey.ShouldEqual, "71046409")
+		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryID)
 		convey.So(result.Object, convey.ShouldResemble, library)
 	})
 

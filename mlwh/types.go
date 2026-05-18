@@ -27,21 +27,20 @@ package mlwh
 
 // Sample is the cache-backed sample shape mirrored from MLWH.
 type Sample struct {
-	IDSampleTmp     int64  `json:"id_sample_tmp"`
-	IDLims          string `json:"id_lims"`
-	IDSampleLims    string `json:"id_sample_lims"`
-	UUIDSampleLims  string `json:"uuid_sample_lims"`
-	IDStudyLims     string `json:"id_study_lims"`
-	Name            string `json:"name"`
-	SangerID        string `json:"sanger_id"`
-	SangerSampleID  string `json:"sanger_sample_id"`
-	SupplierName    string `json:"supplier_name"`
-	AccessionNumber string `json:"accession_number"`
-	DonorID         string `json:"donor_id"`
-	LibraryType     string `json:"library_type"`
-	TaxonID         int    `json:"taxon_id"`
-	CommonName      string `json:"common_name"`
-	Description     string `json:"description"`
+	IDSampleTmp     int64     `json:"id_sample_tmp"`
+	IDLims          string    `json:"id_lims"`
+	IDSampleLims    string    `json:"id_sample_lims"`
+	UUIDSampleLims  string    `json:"uuid_sample_lims"`
+	Name            string    `json:"name"`
+	SangerSampleID  string    `json:"sanger_sample_id"`
+	SupplierName    string    `json:"supplier_name"`
+	AccessionNumber string    `json:"accession_number"`
+	DonorID         string    `json:"donor_id"`
+	TaxonID         int       `json:"taxon_id"`
+	CommonName      string    `json:"common_name"`
+	Description     string    `json:"description"`
+	Studies         []Study   `json:"studies,omitempty"`
+	Libraries       []Library `json:"libraries,omitempty"`
 }
 
 // Study is the cache-backed study shape mirrored from MLWH.
@@ -55,14 +54,9 @@ type Study struct {
 	StudyTitle               string `json:"study_title"`
 	FacultySponsor           string `json:"faculty_sponsor"`
 	State                    string `json:"state"`
-	Abstract                 string `json:"abstract"`
-	Abbreviation             string `json:"abbreviation"`
-	Description              string `json:"description"`
 	DataReleaseStrategy      string `json:"data_release_strategy"`
 	DataAccessGroup          string `json:"data_access_group"`
-	HMDMCNumber              string `json:"hmdmc_number"`
 	Programme                string `json:"programme"`
-	Created                  string `json:"created"`
 	ReferenceGenome          string `json:"reference_genome"`
 	EthicallyApproved        bool   `json:"ethically_approved"`
 	StudyType                string `json:"study_type"`

@@ -37,7 +37,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
@@ -49,16 +48,12 @@ var listenFunc = net.Listen
 
 const seqmetaProviderFetchLimit = 1_000_000
 
-var openSeqmetaMLWHClient = mlwh.Open
+var openSeqmetaMLWHCacheOnlyClient = mlwh.OpenCacheOnly
 
 var openSeqmetaClientFunc = func(ctx context.Context, cfg seqmetaMLWHConfig) (seqmetaCommandClient, error) {
-	client, err := openSeqmetaMLWHClient(ctx, mlwh.Config{
-		DSN:      cfg.DSN,
-		Password: cfg.Password,
-		Cache: mlwh.CacheConfig{
-			Path:     cfg.CachePath,
-			Password: cfg.CachePassword,
-		},
+	client, err := openSeqmetaMLWHCacheOnlyClient(ctx, mlwh.CacheConfig{
+		Path:     cfg.CachePath,
+		Password: cfg.CachePassword,
 	})
 	if err != nil {
 		return nil, err
@@ -66,12 +61,6 @@ var openSeqmetaClientFunc = func(ctx context.Context, cfg seqmetaMLWHConfig) (se
 
 	return &seqmetaMLWHClientAdapter{client: client}, nil
 }
-
-var newSeqmetaSyncTicker = func(interval time.Duration) seqmetaTicker {
-	return &seqmetaRealTicker{ticker: time.NewTicker(interval)}
-}
-
-var seqmetaSyncTables = []string{"sample", "study", "iseq_flowcell"}
 
 type seqmetaMLWHConfig struct {
 	DSN           string
@@ -82,13 +71,13 @@ type seqmetaMLWHConfig struct {
 
 func resolveSeqmetaMLWHConfig(options *seqmetaOptions, cacheFlagChanged bool) (seqmetaMLWHConfig, error) {
 	dsn := strings.TrimSpace(firstEnv("WA_MLWH_DSN"))
-	if dsn == "" {
-		return seqmetaMLWHConfig{}, errors.New("WA_MLWH_DSN must be set")
-	}
-
-	validatedDSN, err := resolveSeqmetaMLWHDSN(dsn)
-	if err != nil {
-		return seqmetaMLWHConfig{}, fmt.Errorf("WA_MLWH_DSN: %w", err)
+	validatedDSN := ""
+	if dsn != "" {
+		var err error
+		validatedDSN, err = resolveSeqmetaMLWHDSN(dsn)
+		if err != nil {
+			return seqmetaMLWHConfig{}, fmt.Errorf("WA_MLWH_DSN: %w", err)
+		}
 	}
 
 	cachePath, err := resolveSeqmetaMLWHCachePath(options.mlwhCachePath, cacheFlagChanged)
@@ -106,7 +95,7 @@ func resolveSeqmetaMLWHConfig(options *seqmetaOptions, cacheFlagChanged bool) (s
 
 type seqmetaCommandClient interface {
 	seqmeta.Provider
-	Sync(context.Context, ...string) ([]mlwh.SyncReport, error)
+	Sync(context.Context) ([]mlwh.SyncReport, error)
 	Close() error
 }
 
@@ -137,58 +126,8 @@ func seqmetaFlagChanged(cmd *cobra.Command, name string) bool {
 	return flag != nil && flag.Changed
 }
 
-func startSeqmetaSyncLoop(ctx context.Context, client seqmetaCommandClient, interval time.Duration) {
-	if interval <= 0 || client == nil {
-		return
-	}
-
-	ticker := newSeqmetaSyncTicker(interval)
-	go func() {
-		defer ticker.Stop()
-
-		_, _ = client.Sync(ctx, seqmetaSyncTables...)
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C():
-				_, _ = client.Sync(ctx, seqmetaSyncTables...)
-			}
-		}
-	}()
-}
-
-type seqmetaTicker interface {
-	C() <-chan time.Time
-	Stop()
-}
-
-type seqmetaRealTicker struct {
-	ticker *time.Ticker
-}
-
-func (t *seqmetaRealTicker) C() <-chan time.Time {
-	return t.ticker.C
-}
-
-func (t *seqmetaRealTicker) Stop() {
-	t.ticker.Stop()
-}
-
 type seqmetaMLWHClientAdapter struct {
 	client *mlwh.Client
-}
-
-type seqmetaLibraryLookup interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
-	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
-}
-
-type seqmetaDirectLibraryLookup interface {
-	seqmetaLibraryLookup
-	SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error)
 }
 
 func (a *seqmetaMLWHClientAdapter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
@@ -207,8 +146,12 @@ func (a *seqmetaMLWHClientAdapter) ResolveSample(ctx context.Context, raw string
 	return a.client.ResolveSample(ctx, raw)
 }
 
-func (a *seqmetaMLWHClientAdapter) ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error) {
-	return a.client.ResolveStudy(ctx, raw, options...)
+func (a *seqmetaMLWHClientAdapter) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	return a.client.ResolveSampleName(ctx, raw)
+}
+
+func (a *seqmetaMLWHClientAdapter) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
+	return a.client.ResolveStudy(ctx, raw)
 }
 
 func (a *seqmetaMLWHClientAdapter) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -241,11 +184,11 @@ func (a *seqmetaMLWHClientAdapter) AllSamplesForStudy(ctx context.Context, study
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
-	return a.findSingleSample(ctx, sangerID)
+	return a.client.FindSamplesBySangerID(ctx, sangerID)
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
-	return a.findSingleSample(ctx, idSampleLims)
+	return a.client.FindSamplesByIDSampleLims(ctx, idSampleLims)
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error) {
@@ -253,15 +196,23 @@ func (a *seqmetaMLWHClientAdapter) FindSamplesByRunID(ctx context.Context, idRun
 }
 
 func (a *seqmetaMLWHClientAdapter) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error) {
-	return findSamplesByLibraryType(ctx, a, libraryType, seqmeta.MaxLibrarySamples)
+	return a.client.FindSamplesByLibraryType(ctx, libraryType)
 }
 
 func (a *seqmetaMLWHClientAdapter) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
 	return a.client.SamplesForLibraryType(ctx, pipelineIDLims, limit, offset)
 }
 
+func (a *seqmetaMLWHClientAdapter) SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error) {
+	return a.client.SamplesForLibraryID(ctx, libraryID, limit, offset)
+}
+
+func (a *seqmetaMLWHClientAdapter) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]mlwh.Sample, error) {
+	return a.client.SamplesForLibraryLimsID(ctx, idLibraryLims, limit, offset)
+}
+
 func (a *seqmetaMLWHClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
-	return a.findSingleSample(ctx, accessionNumber)
+	return a.client.FindSamplesByAccessionNumber(ctx, accessionNumber)
 }
 
 func (a *seqmetaMLWHClientAdapter) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error) {
@@ -276,8 +227,8 @@ func (a *seqmetaMLWHClientAdapter) LibrariesForStudy(ctx context.Context, studyL
 	return a.client.LibrariesForStudy(ctx, studyLimsID, limit, offset)
 }
 
-func (a *seqmetaMLWHClientAdapter) StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error) {
-	return a.client.StudyForSample(ctx, sangerName)
+func (a *seqmetaMLWHClientAdapter) StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error) {
+	return a.client.StudiesForSample(ctx, sangerName)
 }
 
 func (a *seqmetaMLWHClientAdapter) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
@@ -292,96 +243,17 @@ func (a *seqmetaMLWHClientAdapter) GetSampleFiles(ctx context.Context, sangerNam
 	return a.client.IRODSPathsForSample(ctx, sangerName, seqmetaProviderFetchLimit, 0)
 }
 
-func (a *seqmetaMLWHClientAdapter) Sync(ctx context.Context, tables ...string) ([]mlwh.SyncReport, error) {
-	return a.client.Sync(ctx, tables...)
+func (a *seqmetaMLWHClientAdapter) Sync(ctx context.Context) ([]mlwh.SyncReport, error) {
+	return a.client.Sync(ctx)
 }
 
 func (a *seqmetaMLWHClientAdapter) Close() error {
 	return a.client.Close()
 }
 
-func (a *seqmetaMLWHClientAdapter) findSingleSample(ctx context.Context, raw string) ([]mlwh.Sample, error) {
-	match, err := a.client.ResolveSample(ctx, raw)
-	if err != nil {
-		return nil, err
-	}
-	if match.Sample == nil {
-		return []mlwh.Sample{}, nil
-	}
-
-	return []mlwh.Sample{*match.Sample}, nil
-}
-
-func findSamplesByLibraryType(ctx context.Context, lookup seqmetaLibraryLookup, libraryType string, limit int) ([]mlwh.Sample, error) {
-	if lookup == nil {
-		return nil, errors.New("seqmeta: library lookup requires an adapter")
-	}
-
-	match, err := lookup.ResolveLibrary(ctx, libraryType)
-	if err != nil {
-		if errors.Is(err, mlwh.ErrNotFound) {
-			return []mlwh.Sample{}, nil
-		}
-
-		return nil, err
-	}
-
-	canonical := libraryType
-	if match.Canonical != "" {
-		canonical = match.Canonical
-	}
-
-	if directLookup, ok := lookup.(seqmetaDirectLibraryLookup); ok {
-		samples, directErr := directLookup.SamplesForLibraryType(ctx, canonical, limit, 0)
-		if directErr != nil {
-			return nil, directErr
-		}
-
-		if len(samples) > 0 {
-			return samples, nil
-		}
-	}
-
-	rows, err := lookup.QueryContext(
-		ctx,
-		`SELECT DISTINCT id_study_lims FROM library_samples WHERE pipeline_id_lims = ? ORDER BY id_study_lims`,
-		canonical,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	studyLimsIDs := make([]string, 0)
-	for rows.Next() {
-		var studyLimsID string
-		if err = rows.Scan(&studyLimsID); err != nil {
-			return nil, err
-		}
-
-		studyLimsIDs = append(studyLimsIDs, studyLimsID)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-
-	samples := make([]mlwh.Sample, 0)
-	for _, studyLimsID := range studyLimsIDs {
-		studySamples, studyErr := lookup.SamplesForLibrary(ctx, canonical, studyLimsID, limit, 0)
-		if studyErr != nil {
-			return nil, studyErr
-		}
-
-		samples = append(samples, studySamples...)
-	}
-
-	return samples, nil
-}
-
 type seqmetaOptions struct {
-	dbPath           string
-	mlwhCachePath    string
-	mlwhSyncInterval time.Duration
+	dbPath        string
+	mlwhCachePath string
 }
 
 func newSeqmetaCommand() *cobra.Command {
@@ -397,7 +269,6 @@ func newSeqmetaCommand() *cobra.Command {
 
 	command.PersistentFlags().StringVar(&options.dbPath, "db", "seqmeta.db", "SQLite database path")
 	command.PersistentFlags().StringVar(&options.mlwhCachePath, "mlwh-cache", "", "MLWH cache SQLite path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
-	command.PersistentFlags().DurationVar(&options.mlwhSyncInterval, "mlwh-sync-interval", 0, "Periodic MLWH sync interval; zero disables background sync")
 
 	command.AddCommand(newSeqmetaDiffCommand(options))
 	command.AddCommand(newSeqmetaValidateCommand(options))
@@ -463,8 +334,13 @@ func newSeqmetaDiffCommand(options *seqmetaOptions) *cobra.Command {
 				})
 			}
 
+			files, err := provider.GetSampleFiles(ctx, sampleID)
+			if err != nil {
+				return err
+			}
+
 			return store.WithLock(func() error {
-				prepared, err := seqmeta.PrepareDiffSampleFiles(ctx, provider, store, sampleID)
+				prepared, err := seqmeta.PrepareDiffSampleFilesForList(store, sampleID, files)
 				if err != nil {
 					return err
 				}
@@ -568,7 +444,6 @@ func newSeqmetaServeCommand(options *seqmetaOptions) *cobra.Command {
 
 			httpServer := &http.Server{Handler: seqmeta.NewServer(provider, store).Handler()}
 			ctx := commandContext(cmd)
-			startSeqmetaSyncLoop(ctx, provider, options.mlwhSyncInterval)
 
 			go func() {
 				<-ctx.Done()

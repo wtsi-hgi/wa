@@ -36,7 +36,7 @@ type Provider interface {
 	mlwh.Querier
 	ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveSample(ctx context.Context, raw string) (mlwh.Match, error)
-	ResolveStudy(ctx context.Context, raw string, options ...mlwh.ResolveStudyOption) (mlwh.Match, error)
+	ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveRun(ctx context.Context, raw string) (mlwh.Match, error)
 	ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error)
 	AllStudies(ctx context.Context, limit, offset int) ([]mlwh.Study, error)
@@ -52,7 +52,7 @@ type Provider interface {
 	SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error)
 	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error)
-	StudyForSample(ctx context.Context, sangerName string) (*mlwh.Study, error)
+	StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error)
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error)
 	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error)
 	GetSampleFiles(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error)

@@ -85,6 +85,9 @@ function resolvePorts(): ResolvedPorts {
 }
 
 const { frontendPort, resultsPort, seqmetaPort } = resolvePorts();
+process.env.WA_TEST_FRONTEND_PORT = String(frontendPort);
+process.env.WA_TEST_RESULTS_PORT = String(resultsPort);
+process.env.WA_TEST_SEQMETA_PORT = String(seqmetaPort);
 const frontendHealthUrl = `http://127.0.0.1:${frontendPort}/api/health`;
 const seqmetaStubPath = path.join(frontendRoot, "e2e", "seqmeta-stub.mjs");
 const chromiumExecutablePath = resolveChromiumExecutablePath();

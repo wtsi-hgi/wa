@@ -104,6 +104,8 @@ func TestIdentifierTypeConstantsMatchD1(t *testing.T) {
 			string(IdentifierDonorID),
 			string(IdentifierRunID),
 			string(IdentifierLibraryType),
+			string(IdentifierLibraryID),
+			string(IdentifierLibraryLimsID),
 		}
 		sort.Strings(expected)
 

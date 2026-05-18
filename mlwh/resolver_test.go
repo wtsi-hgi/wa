@@ -31,7 +31,9 @@ import (
 	"database/sql/driver"
 	"errors"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,19 +64,12 @@ func TestResolveRunRejectsNonNumericWithoutSQL(t *testing.T) {
 
 func TestResolveRunReturnsCanonicalRunIDForMetricsMatch(t *testing.T) {
 	convey.Convey("Given a numeric run identifier present in iseq_product_metrics", t, func() {
-		sourceDB, sourceMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() {
-			convey.So(sourceDB.Close(), convey.ShouldBeNil)
-			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		})
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 15, 0, 0, 0, time.UTC))
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 1001, 1, 12345, 1, 0, "6568")
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`)).
-			WithArgs(12345).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run"}).AddRow(12345))
-		sourceMock.ExpectClose()
-
-		client := &Client{syncSource: sourceDB}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
 		match, err := client.ResolveRun(context.Background(), "12345")
 
@@ -90,19 +85,11 @@ func TestResolveRunReturnsCanonicalRunIDForMetricsMatch(t *testing.T) {
 
 func TestResolveRunReturnsNotFoundWhenMetricsRowMissing(t *testing.T) {
 	convey.Convey("Given a numeric run identifier absent from iseq_product_metrics", t, func() {
-		sourceDB, sourceMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		convey.Reset(func() {
-			convey.So(sourceDB.Close(), convey.ShouldBeNil)
-			convey.So(sourceMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		})
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 15, 1, 0, 0, time.UTC))
 
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`)).
-			WithArgs(12345).
-			WillReturnRows(sqlmock.NewRows([]string{"id_run"}))
-		sourceMock.ExpectClose()
-
-		client := &Client{syncSource: sourceDB}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
 		match, err := client.ResolveRun(context.Background(), "12345")
 
@@ -144,69 +131,86 @@ func TestResolveLibraryReturnsCacheMatchWithoutMLWHQuery(t *testing.T) {
 	})
 }
 
-func TestResolveLibraryColdCacheSyncsBeforeLookup(t *testing.T) {
-	convey.Convey("Given a cold cache and a library row inserted only during sync", t, func() {
+func TestResolveLibraryReturnsCacheMatchForLibraryID(t *testing.T) {
+	convey.Convey("Given a warm cache containing the requested library_id", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		syncEntered := make(chan struct{}, 1)
-		releaseSync := make(chan struct{})
-		resultCh := make(chan Match, 1)
-		errCh := make(chan error, 1)
+		_, err := cache.DB().Exec(
+			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`,
+			"Custom",
+			51,
+			"7607",
+			"71046409",
+			"SQPP-47463-G:B1",
+		)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 15, 0, 0, 0, time.UTC))
 
-		client := &Client{
-			cache:       cache,
-			cacheReader: cacheReadDB(cache),
-			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				if len(tables) != 1 || tables[0] != syncTableIseqFlowcell {
-					return errors.New("unexpected sync tables")
-				}
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-				_, err := tx.ExecContext(ctx, `INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "Bespoke", 61, "study-61")
-				if err != nil {
-					return err
-				}
+		match, err := client.ResolveLibrary(context.Background(), "71046409")
 
-				syncEntered <- struct{}{}
-				<-releaseSync
-
-				return nil
-			},
-		}
-
-		go func() {
-			match, err := client.ResolveLibrary(context.Background(), "Bespoke")
-			if err != nil {
-				errCh <- err
-				return
-			}
-
-			resultCh <- match
-		}()
-
-		<-syncEntered
-
-		select {
-		case err := <-errCh:
+		convey.Convey("when ResolveLibrary executes, then it returns the canonical library ID with exact library identifiers", func() {
 			convey.So(err, convey.ShouldBeNil)
-		case <-resultCh:
-			convey.So("resolve returned before sync commit", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
-		}
+			convey.So(match.Kind, convey.ShouldEqual, KindLibraryID)
+			convey.So(match.Canonical, convey.ShouldEqual, "71046409")
+			convey.So(match.Library, convey.ShouldResemble, &Library{
+				PipelineIDLims: "Custom",
+				IDStudyLims:    "7607",
+				LibraryID:      "71046409",
+				IDLibraryLims:  "SQPP-47463-G:B1",
+			})
+		})
+	})
+}
 
-		close(releaseSync)
+func TestClassifyIdentifierFallsBackToLibraryIDForInteger(t *testing.T) {
+	convey.Convey("Given an integer-shaped identifier that matches a library_id but not a study, sample, or run", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		select {
-		case err := <-errCh:
+		_, err := cache.DB().Exec(
+			`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)`,
+			"Custom",
+			51,
+			"7607",
+			"71046409",
+			"SQPP-47463-G:B1",
+		)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 15, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 15, 1, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqProductMetrics, time.Date(2026, time.May, 6, 15, 2, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.May, 6, 15, 3, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ClassifyIdentifier(context.Background(), "71046409")
+
+		convey.Convey("when ClassifyIdentifier executes, then the library_id resolves as a library ID", func() {
 			convey.So(err, convey.ShouldBeNil)
-		case match := <-resultCh:
-			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
-			convey.So(match.Canonical, convey.ShouldEqual, "Bespoke")
-			convey.So(match.Library, convey.ShouldNotBeNil)
-			convey.So(match.Library.PipelineIDLims, convey.ShouldEqual, "Bespoke")
-		case <-time.After(time.Second):
-			convey.So("resolve did not complete", convey.ShouldEqual, "")
-		}
+			convey.So(match.Kind, convey.ShouldEqual, KindLibraryID)
+			convey.So(match.Canonical, convey.ShouldEqual, "71046409")
+			convey.So(match.Library.LibraryID, convey.ShouldEqual, "71046409")
+		})
+	})
+}
+
+func TestResolveLibraryColdCacheReturnsNeverSynced(t *testing.T) {
+	convey.Convey("Given a cold cache without a flowcell sync state row", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveLibrary(context.Background(), "Bespoke")
+
+		convey.Convey("when ResolveLibrary executes, then it returns the never-synced sentinel instead of syncing", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(match, convey.ShouldResemble, Match{})
+		})
 	})
 }
 
@@ -220,22 +224,19 @@ func TestResolveLibraryReturnsNotFoundOnWarmCacheMiss(t *testing.T) {
 		client := &Client{
 			cache:       cache,
 			cacheReader: cacheReadDB(cache),
-			syncRunner: func(context.Context, *sql.Tx, []string) error {
-				return nil
-			},
 		}
 
 		match, err := client.ResolveLibrary(context.Background(), "Unknown")
 
-		convey.Convey("when ResolveLibrary executes, then it refreshes once and still returns ErrNotFound", func() {
+		convey.Convey("when ResolveLibrary executes, then it returns ErrNotFound without syncing again", func() {
 			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 			convey.So(match, convey.ShouldResemble, Match{})
 		})
 	})
 }
 
-func TestResolveLibraryWarmCacheMissResyncsOnce(t *testing.T) {
-	convey.Convey("Given a warm cache miss where a refresh repopulates the requested library", t, func() {
+func TestResolveLibraryWarmCacheMissDoesNotResync(t *testing.T) {
+	convey.Convey("Given a warm cache miss and a configured sync runner", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -247,38 +248,32 @@ func TestResolveLibraryWarmCacheMissResyncsOnce(t *testing.T) {
 			cacheReader: cacheReadDB(cache),
 			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
 				syncCalls++
-				convey.So(tables, convey.ShouldResemble, []string{syncTableIseqFlowcell})
-
-				_, err := tx.ExecContext(ctx, `INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`, "Chromium single cell 3 prime v3", 71, "6568")
-				return err
+				return nil
 			},
 		}
 
 		match, err := client.ResolveLibrary(context.Background(), "Chromium single cell 3 prime v3")
 
-		convey.Convey("when ResolveLibrary executes, then it refreshes the flowcell cache once and returns the match", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(syncCalls, convey.ShouldEqual, 1)
-			convey.So(match.Kind, convey.ShouldEqual, KindLibraryType)
-			convey.So(match.Canonical, convey.ShouldEqual, "Chromium single cell 3 prime v3")
-			convey.So(match.Library, convey.ShouldNotBeNil)
-			convey.So(match.Library.PipelineIDLims, convey.ShouldEqual, "Chromium single cell 3 prime v3")
+		convey.Convey("when ResolveLibrary executes, then it returns ErrNotFound and does not resync", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(syncCalls, convey.ShouldEqual, 0)
+			convey.So(match, convey.ShouldResemble, Match{})
 		})
 	})
 }
 
-func TestResolveLibraryDocCommentMentionsColdCacheGuidance(t *testing.T) {
+func TestResolveLibraryDocCommentDoesNotMentionColdCacheSync(t *testing.T) {
 	convey.Convey("Given the resolver source file", t, func() {
 		resolverPath := "resolver.go"
 
 		content, err := os.ReadFile(resolverPath)
 
-		convey.Convey("when the ResolveLibrary doc comment is read, then it mentions first call and wa mlwh sync", func() {
+		convey.Convey("when the ResolveLibrary doc comment is read, then it does not mention first-call sync guidance", func() {
 			convey.So(err, convey.ShouldBeNil)
 			text := string(content)
 			match := regexp.MustCompile(`(?s)// ResolveLibrary.*?func \(c \*Client\) ResolveLibrary`).FindString(text)
-			convey.So(match, convey.ShouldContainSubstring, "first call")
-			convey.So(match, convey.ShouldContainSubstring, "wa mlwh sync")
+			convey.So(match, convey.ShouldNotContainSubstring, "first call")
+			convey.So(match, convey.ShouldNotContainSubstring, "wa mlwh sync")
 		})
 	})
 }
@@ -341,6 +336,25 @@ func TestResolveStudyAccessionFallback(t *testing.T) {
 	})
 }
 
+func TestResolveStudyAccessionReturnsAmbiguousForTwoMatches(t *testing.T) {
+	convey.Convey("Given a study accession shared by exactly two studies", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedStudyMirrorRow(t, cache.DB(), 18, "6518", "study-uuid-18", "Study 18", "EGAS00001001818")
+		seedStudyMirrorRow(t, cache.DB(), 19, "6519", "study-uuid-19", "Study 19", "EGAS00001001818")
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		match, err := client.ResolveStudy(context.Background(), "EGAS00001001818")
+
+		convey.So(errors.Is(err, ErrAmbiguous), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "6518")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "6519")
+		convey.So(match, convey.ShouldResemble, Match{})
+	})
+}
+
 func TestResolveStudyNameReturnsAmbiguousForTwoMatches(t *testing.T) {
 	convey.Convey("Given a study name shared by exactly two studies", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -379,7 +393,7 @@ func TestResolveStudyNameReturnsCanonicalLimsID(t *testing.T) {
 	})
 }
 
-func TestResolveStudyNameIsCaseSensitiveByDefault(t *testing.T) {
+func TestResolveStudyNameIsCaseInsensitiveByDefault(t *testing.T) {
 	convey.Convey("Given a differently cased study name without opts", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -390,122 +404,94 @@ func TestResolveStudyNameIsCaseSensitiveByDefault(t *testing.T) {
 
 		match, err := client.ResolveStudy(context.Background(), "some title")
 
-		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
-		convey.So(match, convey.ShouldResemble, Match{})
-	})
-}
-
-func TestResolveStudyCaseInsensitiveNameOption(t *testing.T) {
-	convey.Convey("Given a differently cased study name with the case-insensitive option", t, func() {
-		cache := openSQLiteSyncTestCache(t)
-		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
-
-		seedStudyMirrorRow(t, cache.DB(), 18, "6518", "study-uuid-18", "Some Title", "EGAS00001001818")
-
-		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
-
-		match, err := client.ResolveStudy(context.Background(), "some title", WithCaseInsensitiveStudyName())
-
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(match.Kind, convey.ShouldEqual, KindStudyName)
-		convey.So(match.Canonical, convey.ShouldEqual, "6518")
+		convey.So(match.Canonical, convey.ShouldEqual, "6517")
 		convey.So(match.Study, convey.ShouldNotBeNil)
 		convey.So(match.Study.Name, convey.ShouldEqual, "Some Title")
 	})
 }
 
-func TestResolveStudyColdCacheSyncsBeforeLookup(t *testing.T) {
-	convey.Convey("Given a cold cache and a study row inserted only during sync", t, func() {
+func TestResolveStudyColdCacheDoesNotSyncBeforeLookup(t *testing.T) {
+	convey.Convey("Given a cold cache and a configured sync runner", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		syncEntered := make(chan struct{}, 1)
-		releaseSync := make(chan struct{})
-		resultCh := make(chan Match, 1)
-		errCh := make(chan error, 1)
+		syncCalls := 0
 
 		client := &Client{
 			cache:       cache,
 			cacheReader: cacheReadDB(cache),
-			syncSource:  cache.DB(),
 			syncRunner: func(ctx context.Context, tx *sql.Tx, tables []string) error {
-				if len(tables) != 1 || tables[0] != syncTableStudy {
-					return errors.New("unexpected sync tables")
-				}
+				syncCalls++
+				return nil
+			},
+		}
 
-				if upsertErr := upsertStudyMirror(ctx, tx, "sqlite", studySyncRow{
-					Study: Study{
-						IDStudyTmp:                19,
-						IDLims:                    "SQSCP",
-						IDStudyLims:               "6519",
-						UUIDStudyLims:             "study-uuid-19",
-						Name:                      "Study 19",
-						AccessionNumber:           "EGAS00001001919",
-						StudyTitle:                "Study title 19",
-						FacultySponsor:            "Faculty sponsor 19",
-						State:                     "active",
-						Abstract:                  "abstract",
-						Abbreviation:              "abbr",
-						Description:               "description",
-						DataReleaseStrategy:       "strategy",
-						DataAccessGroup:           "group",
-						HMDMCNumber:               "hmdmc",
-						Programme:                 "programme",
-						Created:                   "2026-05-06",
-						ReferenceGenome:           "GRCh38",
-						EthicallyApproved:         true,
-						StudyType:                 "study-type",
-						ContainsHumanDNA:          false,
-						ContaminatedHumanDNA:      false,
-						StudyVisibility:           "public",
-						EGADACAccessionNumber:     "EGAD0001",
-						EGAPolicyAccessionNumber:  "EGAP0001",
-						DataReleaseTiming:         "immediate",
-					},
-					LastUpdated: time.Date(2026, time.May, 6, 16, 5, 0, 0, time.UTC),
-				}); upsertErr != nil {
-					return upsertErr
-				}
+		match, err := client.ResolveStudy(context.Background(), "6519")
 
-				syncEntered <- struct{}{}
-				<-releaseSync
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		convey.So(syncCalls, convey.ShouldEqual, 0)
+		convey.So(match, convey.ShouldResemble, Match{})
+	})
+}
+
+func TestResolverReadsNeverInvokeSync(t *testing.T) {
+	convey.Convey("D2.1: Given a never-synced cache and a sync wrapper that records invocations", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		syncCalls := 0
+		client := &Client{
+			cache:       cache,
+			cacheReader: cacheReadDB(cache),
+			syncRunner: func(context.Context, *sql.Tx, []string) error {
+				syncCalls++
 
 				return nil
 			},
 		}
 
-		go func() {
-			match, err := client.ResolveStudy(context.Background(), "6519")
-			if err != nil {
-				errCh <- err
-				return
-			}
-
-			resultCh <- match
-		}()
-
-		<-syncEntered
-
-		select {
-		case err := <-errCh:
-			convey.So(err, convey.ShouldBeNil)
-		case <-resultCh:
-			convey.So("resolve returned before sync commit", convey.ShouldEqual, "")
-		case <-time.After(50 * time.Millisecond):
+		cases := []struct {
+			name string
+			call func() error
+		}{
+			{name: "ResolveLibrary", call: func() error { _, err := client.ResolveLibrary(context.Background(), "Standard"); return err }},
+			{name: "ResolveSample", call: func() error { _, err := client.ResolveSample(context.Background(), "missing-sample"); return err }},
+			{name: "ResolveStudy", call: func() error { _, err := client.ResolveStudy(context.Background(), "missing-study"); return err }},
+			{name: "ResolveRun", call: func() error { _, err := client.ResolveRun(context.Background(), "12345"); return err }},
+			{name: "ClassifyIdentifier", call: func() error {
+				_, err := client.ClassifyIdentifier(context.Background(), "missing-identifier")
+				return err
+			}},
 		}
 
-		close(releaseSync)
+		for _, tc := range cases {
+			err := tc.call()
+			convey.So(err, convey.ShouldNotBeNil)
+		}
 
-		select {
-		case err := <-errCh:
-			convey.So(err, convey.ShouldBeNil)
-		case match := <-resultCh:
-			convey.So(match.Kind, convey.ShouldEqual, KindStudyLimsID)
-			convey.So(match.Canonical, convey.ShouldEqual, "6519")
-			convey.So(match.Study, convey.ShouldNotBeNil)
-			convey.So(match.Study.IDStudyLims, convey.ShouldEqual, "6519")
-		case <-time.After(time.Second):
-			convey.So("resolve did not complete", convey.ShouldEqual, "")
+		convey.Convey("when each resolver-backed read runs once, then none of them invoke Sync", func() {
+			convey.So(syncCalls, convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestResolverPackageDoesNotContainRemovedSyncHelpers(t *testing.T) {
+	convey.Convey("D2.2: Given the mlwh package source files", t, func() {
+		entries, err := os.ReadDir(".")
+		convey.So(err, convey.ShouldBeNil)
+
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+
+			text, readErr := os.ReadFile(entry.Name())
+			convey.So(readErr, convey.ShouldBeNil)
+
+			convey.So(string(text), convey.ShouldNotContainSubstring, "ensureResolverTableSynced")
+			convey.So(string(text), convey.ShouldNotContainSubstring, "hasResolverSyncState")
 		}
 	})
 }
@@ -514,7 +500,7 @@ func seedStudyMirrorRow(t *testing.T, db *sql.DB, id int64, idStudyLims, uuidStu
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, abstract, abbreviation, description, data_release_strategy, data_access_group, hmdmc_number, programme, created, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, egadac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id,
 		"SQSCP",
 		idStudyLims,
@@ -524,14 +510,9 @@ func seedStudyMirrorRow(t *testing.T, db *sql.DB, id int64, idStudyLims, uuidStu
 		"Study title "+idStudyLims,
 		"Faculty sponsor "+idStudyLims,
 		"active",
-		"abstract",
-		"abbr",
-		"description",
 		"strategy",
 		"group",
-		"hmdmc",
 		"programme",
-		"2026-05-06",
 		"GRCh38",
 		true,
 		"study-type",
@@ -550,20 +531,14 @@ func seedStudyMirrorRow(t *testing.T, db *sql.DB, id int64, idStudyLims, uuidStu
 
 func TestClassifyIdentifierUUIDDispatchesOnlyUUIDResolvers(t *testing.T) {
 	convey.Convey("Given a UUID-shaped identifier that misses study and matches sample", t, func() {
-		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
+		client, roMock, _, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
 
 		const raw = "b7daafb8-c59f-11ee-8fba-024224dd57f4"
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE uuid_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableStudy).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleUUIDQuery)).
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleUUIDQuery)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).AddRow(sampleResolverRow(21, raw, "9521", "SANGER-UUID", "sanger-id-21", "supplier-21", "accession-21", "donor-21")...))
 
@@ -579,23 +554,17 @@ func TestClassifyIdentifierUUIDDispatchesOnlyUUIDResolvers(t *testing.T) {
 
 func TestClassifyIdentifierIntegerDispatchesStudyThenSampleThenRun(t *testing.T) {
 	convey.Convey("Given a pure-integer identifier whose run step is the first hit", t, func() {
-		client, roMock, sourceMock, cleanup := newMySQLResolverTestClient(t)
+		client, roMock, _, cleanup := newMySQLResolverTestClient(t)
 		defer cleanup()
 
 		const raw = "12345"
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableStudy).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT 1 FROM sync_state WHERE table_name = ? LIMIT 1`)).
-			WithArgs(syncTableSample).
-			WillReturnRows(sqlmock.NewRows([]string{"found"}))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(sampleLimsIDQuery)).
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleLimsIDQuery)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-		sourceMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_run FROM iseq_product_metrics WHERE id_run = ? LIMIT 1`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT id_run FROM iseq_product_metrics_mirror WHERE id_run = ? LIMIT 1`)).
 			WithArgs(12345).
 			WillReturnRows(sqlmock.NewRows([]string{"id_run"}).AddRow(12345))
 
@@ -615,7 +584,7 @@ func TestClassifyIdentifierTextStopsAtStudyAccessionHit(t *testing.T) {
 		defer cleanup()
 
 		const raw = "EGAS00001005445"
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()).AddRow(studyResolverRow(31, "7031", "study-uuid-31", "Study 31", raw)...))
 
@@ -648,7 +617,7 @@ func TestClassifyIdentifierTextPrefersStudyOverDonorID(t *testing.T) {
 		client.syncSource = nil
 
 		const raw = "Shared Identifier"
-		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' LIMIT 1`)).
+		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(studyResolverColumns()))
 		roMock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + studyMirrorSelectColumns + ` FROM study_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY id_study_tmp LIMIT 2`)).
@@ -736,21 +705,16 @@ func studyResolverColumns() []string {
 		"study_title",
 		"faculty_sponsor",
 		"state",
-		"abstract",
-		"abbreviation",
-		"description",
 		"data_release_strategy",
 		"data_access_group",
-		"hmdmc_number",
 		"programme",
-		"created",
 		"reference_genome",
 		"ethically_approved",
 		"study_type",
 		"contains_human_dna",
 		"contaminated_human_dna",
 		"study_visibility",
-		"egadac_accession_number",
+		"ega_dac_accession_number",
 		"ega_policy_accession_number",
 		"data_release_timing",
 	}
@@ -767,14 +731,9 @@ func studyResolverRow(id int64, idStudyLims, uuidStudyLims, name, accession stri
 		"Study title " + idStudyLims,
 		"Faculty sponsor " + idStudyLims,
 		"active",
-		"abstract",
-		"abbr",
-		"description",
 		"strategy",
 		"group",
-		"hmdmc",
 		"programme",
-		"2026-05-06",
 		"GRCh38",
 		true,
 		"study-type",
