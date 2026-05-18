@@ -1191,9 +1191,25 @@ describe("H3 enrichment state and badge", () => {
 
         expect(relatedText).toContain("name:");
         expect(relatedText).toContain("Cancer Programme");
-        expect(relatedText).toContain("id:");
         expect(relatedText).toContain("6568");
-        expect(relatedText).toContain("type:");
         expect(relatedText).toContain("RNA PolyA");
+
+        const studyRow = relatedDataSection
+            .closest("[data-field-group]")
+            ?.querySelector('[data-seqmeta-detail-key="study"]');
+        const libraryRow = relatedDataSection
+            .closest("[data-field-group]")
+            ?.querySelector('[data-seqmeta-detail-key="library"]');
+
+        expect(
+            studyRow?.querySelector('[data-testid="seqmeta-entity-title"]')
+                ?.textContent,
+        ).toBe("6568");
+        expect(studyRow?.textContent).not.toContain("id:6568");
+        expect(
+            libraryRow?.querySelector('[data-testid="seqmeta-entity-title"]')
+                ?.textContent,
+        ).toBe("RNA PolyA");
+        expect(libraryRow?.textContent).not.toContain("type:RNA PolyA");
     });
 });

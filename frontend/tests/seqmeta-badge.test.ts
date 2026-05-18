@@ -290,6 +290,21 @@ function buildEnrichment(
     };
 }
 
+function entityTitle(row: Element | null | undefined): string {
+    return (
+        row?.querySelector('[data-testid="seqmeta-entity-title"]')
+            ?.textContent ?? ""
+    );
+}
+
+function entityText(row: Element | null | undefined): string {
+    return row?.textContent ?? "";
+}
+
+function expectEntityRowTitle(row: Element | null | undefined, title: string) {
+    expect(entityTitle(row)).toBe(title);
+}
+
 function deferred<T>() {
     let resolve!: (value: T) => void;
     let reject!: (reason?: unknown) => void;
@@ -341,9 +356,10 @@ describe("M1 result detail seqmeta enrichment", () => {
             .querySelectorAll('[data-seqmeta-detail-key="study"]');
 
         expect(studyRows).toHaveLength(1);
+        expectEntityRowTitle(studyRows[0], "6568");
         expect(studyRows[0]?.textContent).toContain("name:");
         expect(studyRows[0]?.textContent).toContain("RNA Seq");
-        expect(studyRows[0]?.textContent).toContain("id:");
+        expect(studyRows[0]?.textContent).not.toContain("id:6568");
         expect(studyRows[0]?.textContent).toContain("6568");
         expect(screen.queryByText("Study name")).toBeNull();
         expect(
@@ -539,7 +555,8 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         expect(elapsedMs).toBeLessThan(1000);
         expect(sampleRows.length).toBeLessThanOrEqual(50);
-        expect(screen.getByText("Sample 0 / SANG0")).toBeTruthy();
+        expect(screen.getByText("SANG0")).toBeTruthy();
+        expect(screen.getByText("Sample 0")).toBeTruthy();
         expect(screen.getByText("Showing 50 of 1000 samples")).toBeTruthy();
     });
 
@@ -1682,7 +1699,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         // Wait for JIT loading to complete and samples to appear
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
 
         // Verify fetchLibrarySamples was called with correct arguments
@@ -1692,7 +1709,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
 
         // Both samples should now be visible
-        expect(screen.getByText("Sample 2 / S2")).toBeTruthy();
+        expect(screen.getByText("S2")).toBeTruthy();
 
         // Button should now show count
         expect(screen.getByText("2 samples")).toBeTruthy();
@@ -1775,10 +1792,10 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(expandButtons[0]!);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
 
-        expect(screen.queryByText("Sample 2 / S2")).toBeNull();
+        expect(screen.queryByText("S2")).toBeNull();
         expect(fetchLibrarySamplesMock).toHaveBeenCalledWith(
             "6568",
             "RNA PolyA",
@@ -1856,8 +1873,8 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         fireEvent.click(screen.getByLabelText("Show samples"));
 
-        expect(screen.getByText("Run Sample 1 / S1")).toBeTruthy();
-        expect(screen.getByText("Run Sample 2 / S2")).toBeTruthy();
+        expect(screen.getByText("S1")).toBeTruthy();
+        expect(screen.getByText("S2")).toBeTruthy();
         expect(screen.getByText("2 samples")).toBeTruthy();
         expect(fetchLibrarySamplesMock).not.toHaveBeenCalled();
     });
@@ -1922,6 +1939,235 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(relatedData?.textContent).not.toContain("Sample LIMS ID");
     });
 
+    it("uses ID titles and omits duplicated identity metadata for run-id related entities", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_runid",
+                rawValue: "48522",
+                enrichment: buildEnrichment({
+                    identifier: "48522",
+                    type: "run_id",
+                    graph: {
+                        study: buildStudy({
+                            id_study_lims: "7607",
+                            name: "7607",
+                            accession_number: "ERP7607",
+                        }),
+                        sample: buildSample({
+                            id_study_lims: "7607",
+                            id_sample_lims: "SMP7607-0000",
+                            sanger_id: "7607STDY14643771",
+                            sample_name: "7607STDY14643771",
+                            accession_number: "SAMEA76070",
+                            library_type: "Custom",
+                        }),
+                        libraries: [
+                            {
+                                library_type: "Custom",
+                                id_study_lims: "7607",
+                                library_id: "71046409",
+                                id_library_lims: "LIB7607-71046409",
+                            },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const relatedData = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="related-data"]');
+        const studyRow = relatedData?.querySelector(
+            '[data-seqmeta-detail-key="study"]',
+        );
+        const sampleRow = relatedData?.querySelector(
+            '[data-seqmeta-detail-key="sample"]',
+        );
+        const libraryRow = relatedData?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_library"]',
+        );
+
+        expectEntityRowTitle(studyRow, "7607");
+        expect(entityText(studyRow)).not.toContain("name:7607");
+        expect(entityText(studyRow)).not.toContain("id:7607");
+        expect(entityText(studyRow)).toContain("accession:ERP7607");
+
+        expectEntityRowTitle(sampleRow, "7607STDY14643771");
+        expect(entityText(sampleRow)).not.toContain("name:7607STDY14643771");
+        expect(entityText(sampleRow)).not.toContain("id:7607STDY14643771");
+        expect(entityText(sampleRow)).toContain("sample_lims:SMP7607-0000");
+        expect(entityText(sampleRow)).toContain("accession:SAMEA76070");
+
+        expectEntityRowTitle(libraryRow, "71046409");
+        expect(entityText(libraryRow)).not.toContain("id:71046409");
+        expect(entityText(libraryRow)).toContain(
+            "library_lims:LIB7607-71046409",
+        );
+        expect(entityText(libraryRow)).toContain("type:Custom");
+    });
+
+    it("uses the same related entity row shape from sample, study, and library detail contexts", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const sharedStudy = buildStudy({
+            id_study_lims: "6568",
+            name: "RNA Seq",
+            accession_number: "ERP123456",
+        });
+        const sharedSample = buildSample({
+            id_study_lims: "6568",
+            id_sample_lims: "LIMS001",
+            sanger_id: "SANG001",
+            sample_name: "Sample 1",
+            accession_number: "ERS123456",
+            library_type: "RNA PolyA",
+        });
+        const sharedLibrary = {
+            library_type: "RNA PolyA",
+            id_study_lims: "6568",
+            library_id: "1001",
+            id_library_lims: "DN111:A1",
+        };
+
+        const cases = [
+            {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG001",
+                enrichment: buildEnrichment({
+                    identifier: "SANG001",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: sharedStudy,
+                        sample: sharedSample,
+                        library: sharedLibrary,
+                        sample_detail: buildSampleDetail({
+                            sample: sharedSample,
+                            libraries: [sharedLibrary],
+                            lanes: [
+                                {
+                                    id_run: "12345",
+                                    lane: "2",
+                                    tag_index: 88,
+                                },
+                            ],
+                        }),
+                    },
+                }),
+                rows: [
+                    {
+                        selector: '[data-seqmeta-detail-key="library"]',
+                        title: "1001",
+                        absent: "id:1001",
+                        present: "type:RNA PolyA",
+                    },
+                    {
+                        selector: '[data-seqmeta-detail-key="study"]',
+                        title: "6568",
+                        absent: "id:6568",
+                        present: "name:RNA Seq",
+                    },
+                    {
+                        selector: '[data-seqmeta-detail-key="lane"]',
+                        title: "12345_2#88",
+                        absent: "id:12345_2#88",
+                        present: "id_run:12345",
+                    },
+                ],
+            },
+            {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: sharedStudy,
+                        study_detail: {
+                            study: sharedStudy,
+                            library_details: [
+                                {
+                                    ...sharedLibrary,
+                                    samples: [],
+                                },
+                            ],
+                        },
+                    },
+                }),
+                rows: [
+                    {
+                        selector: '[data-seqmeta-detail-key="seqmeta_library"]',
+                        title: "1001",
+                        absent: "id:1001",
+                        present: "library_lims:DN111:A1",
+                    },
+                ],
+            },
+            {
+                metadataKey: "seqmeta_libraryid",
+                rawValue: "1001",
+                enrichment: buildEnrichment({
+                    identifier: "1001",
+                    type: "library_id",
+                    graph: {
+                        studies: [sharedStudy],
+                        samples: [sharedSample],
+                        library: sharedLibrary,
+                    },
+                }),
+                rows: [
+                    {
+                        selector: '[data-seqmeta-detail-key="study"]',
+                        title: "6568",
+                        absent: "id:6568",
+                        present: "accession:ERP123456",
+                    },
+                    {
+                        selector: '[data-seqmeta-detail-key="sample"]',
+                        title: "SANG001",
+                        absent: "id:SANG001",
+                        present: "name:Sample 1",
+                    },
+                ],
+            },
+        ];
+
+        for (const testCase of cases) {
+            cleanup();
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: testCase.metadataKey,
+                    rawValue: testCase.rawValue,
+                    enrichment: testCase.enrichment,
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            const relatedData = screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelector('[data-field-group="related-data"]');
+
+            for (const rowExpectation of testCase.rows) {
+                const row = relatedData?.querySelector(rowExpectation.selector);
+
+                expectEntityRowTitle(row, rowExpectation.title);
+                expect(entityText(row)).not.toContain(rowExpectation.absent);
+                expect(entityText(row)).toContain(rowExpectation.present);
+            }
+        }
+    });
+
     it("renders study related libraries as entity rows with metadata pairs", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
@@ -1968,9 +2214,10 @@ describe("M1 result detail seqmeta enrichment", () => {
             .querySelectorAll('[data-seqmeta-detail-key="seqmeta_library"]');
 
         expect(libraryRows).toHaveLength(1);
+        expectEntityRowTitle(libraryRows[0], "1001");
         expect(libraryRows[0]?.textContent).toContain("type:");
         expect(libraryRows[0]?.textContent).toContain("RNA PolyA");
-        expect(libraryRows[0]?.textContent).toContain("id:");
+        expect(libraryRows[0]?.textContent).not.toContain("id:1001");
         expect(libraryRows[0]?.textContent).toContain("1001");
         expect(libraryRows[0]?.textContent).toContain("library_lims:");
         expect(libraryRows[0]?.textContent).toContain("DN111:A1");
@@ -2040,15 +2287,17 @@ describe("M1 result detail seqmeta enrichment", () => {
             .querySelectorAll('[data-seqmeta-detail-key="lane"]');
 
         expect(libraryRows).toHaveLength(1);
+        expectEntityRowTitle(libraryRows[0], "1001");
         expect(libraryRows[0]?.textContent).toContain("type:");
         expect(libraryRows[0]?.textContent).toContain("RNA PolyA");
-        expect(libraryRows[0]?.textContent).toContain("id:");
+        expect(libraryRows[0]?.textContent).not.toContain("id:1001");
         expect(libraryRows[0]?.textContent).toContain("1001");
         expect(libraryRows[0]?.textContent).toContain("library_lims:");
         expect(libraryRows[0]?.textContent).toContain("DN111:A1");
 
         expect(laneRows).toHaveLength(1);
-        expect(laneRows[0]?.textContent).toContain("id:");
+        expectEntityRowTitle(laneRows[0], "12345_2#88");
+        expect(laneRows[0]?.textContent).not.toContain("id:12345_2#88");
         expect(laneRows[0]?.textContent).toContain("12345_2#88");
         expect(laneRows[0]?.textContent).toContain("id_run:");
         expect(laneRows[0]?.textContent).toContain("12345");
@@ -2101,9 +2350,10 @@ describe("M1 result detail seqmeta enrichment", () => {
             .querySelectorAll('[data-seqmeta-detail-key="sample"]');
 
         expect(sampleRows).toHaveLength(1);
+        expectEntityRowTitle(sampleRows[0], "SANG001");
         expect(sampleRows[0]?.textContent).toContain("name:");
         expect(sampleRows[0]?.textContent).toContain("Sample 1");
-        expect(sampleRows[0]?.textContent).toContain("id:");
+        expect(sampleRows[0]?.textContent).not.toContain("id:SANG001");
         expect(sampleRows[0]?.textContent).toContain("SANG001");
         expect(sampleRows[0]?.textContent).toContain("sample_lims:");
         expect(sampleRows[0]?.textContent).toContain("LIMS001");
@@ -2242,7 +2492,8 @@ describe("M1 result detail seqmeta enrichment", () => {
                 .querySelector('[data-seqmeta-detail-key="library"]');
 
             expect(libraryRow).toBeTruthy();
-            expect(libraryRow?.textContent).toContain("id:");
+            expectEntityRowTitle(libraryRow, "71046409");
+            expect(libraryRow?.textContent).not.toContain("id:71046409");
             expect(libraryRow?.textContent).toContain("71046409");
             expect(libraryRow?.textContent).toContain("library_lims:");
             expect(libraryRow?.textContent).toContain("SQPP-47463-G:B1");
@@ -2387,7 +2638,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(screen.getByLabelText("Show samples"));
 
         await waitFor(() => {
-            expect(screen.getAllByText("Sample 1 / S1")).toHaveLength(2);
+            expect(screen.getAllByText("S1")).toHaveLength(2);
         });
 
         const duplicateKeyErrors = consoleErrorSpy.mock.calls.filter((call) =>
@@ -2485,7 +2736,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(showSamplesButton);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
 
         expect(fetchLibrarySamplesMock).toHaveBeenCalledWith("6568", "RNA");
@@ -2574,8 +2825,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("Samples")).toBeTruthy();
 
         // Each sample should be on its own row with display name
-        expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
-        expect(screen.getByText("Sample 2 / S2")).toBeTruthy();
+        expect(screen.getByText("S1")).toBeTruthy();
+        expect(screen.getByText("S2")).toBeTruthy();
 
         // Should have a Study section showing the parent study
         expect(screen.getByText("Study")).toBeTruthy();
@@ -3132,8 +3383,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         });
 
         // But values and buttons should still be present
-        expect(screen.getByText("Sample 1 / SANG001")).toBeTruthy();
-        expect(screen.getByText("Sample 2 / SANG002")).toBeTruthy();
+        expect(screen.getByText("SANG001")).toBeTruthy();
+        expect(screen.getByText("SANG002")).toBeTruthy();
     });
 
     it("does not duplicate 'Library type' label in rows within Library section", async () => {
@@ -3511,8 +3762,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("Samples")).toBeTruthy();
 
         // Both samples should be listed with no duplicate key warnings
-        expect(screen.getByText("Gut tissue A / SANG_SC_001")).toBeTruthy();
-        expect(screen.getByText("Gut tissue B / SANG_SC_002")).toBeTruthy();
+        expect(screen.getByText("SANG_SC_001")).toBeTruthy();
+        expect(screen.getByText("SANG_SC_002")).toBeTruthy();
     });
 
     it("marks only the clicked library row copy button as Copied", async () => {
@@ -3702,7 +3953,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
             });
 
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
 
             const copyButtons = screen.getAllByLabelText(
                 /Copy seqmeta_sampleid/i,
@@ -4175,7 +4426,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(expandButtons[0]);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
     });
 
@@ -4304,9 +4555,9 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(expandButton);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
-            expect(screen.getByText("Sample 2 / S2")).toBeTruthy();
-            expect(screen.getByText("Sample 3 / S3")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
+            expect(screen.getByText("S2")).toBeTruthy();
+            expect(screen.getByText("S3")).toBeTruthy();
         });
     });
 
@@ -4493,7 +4744,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(expandButton);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
 
         // Each sample should appear as ONE row with display name
@@ -4507,11 +4758,13 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         // First sample row should contain both name and ID in one row
         const firstSampleRow = sampleRows[0];
-        expect(firstSampleRow?.textContent).toContain("Sample 1 / S1");
+        expectEntityRowTitle(firstSampleRow, "S1");
+        expect(firstSampleRow?.textContent).toContain("name:Sample 1");
 
         // Second sample row should contain both name and ID in one row
         const secondSampleRow = sampleRows[1];
-        expect(secondSampleRow?.textContent).toContain("Sample 2 / S2");
+        expectEntityRowTitle(secondSampleRow, "S2");
+        expect(secondSampleRow?.textContent).toContain("name:Sample 2");
 
         // Each sample row should have copy and filter buttons
         const copyButtons = screen.getAllByLabelText(/Copy seqmeta_sampleid/i);
