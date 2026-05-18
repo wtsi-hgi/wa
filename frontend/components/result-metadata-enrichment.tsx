@@ -47,12 +47,14 @@ type ResultMetadataEnrichmentProps = {
     initialEnrichments?: Record<string, EnrichmentResult | null>;
     initialErrors?: Record<string, "not_found" | "upstream_impaired">;
     metadata: Record<string, string>;
+    variant?: "section" | "integrated";
 };
 
 export function ResultMetadataEnrichment({
     initialEnrichments = EMPTY_ENRICHMENTS,
     initialErrors = EMPTY_ERRORS,
     metadata,
+    variant = "section",
 }: ResultMetadataEnrichmentProps) {
     const liveCache = useContext(SeqmetaCacheContext);
     const inFlightValuesRef = useRef(new Set<string>());
@@ -181,6 +183,7 @@ export function ResultMetadataEnrichment({
             errors={mergedState.errors}
             loading={loading}
             metadata={metadata}
+            variant={variant}
         />
     );
 }

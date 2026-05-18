@@ -103,8 +103,6 @@ function formatFileCount(count: number): string {
 
 function detailFields(result: ResultSet) {
     return [
-        { label: "Result ID", value: result.id, mono: true },
-        { label: "Pipeline name", value: result.pipeline_name },
         { label: "Pipeline version", value: result.pipeline_version },
         {
             label: "Pipeline identifier",
@@ -176,83 +174,108 @@ export async function ResultDetailPageContent({
     const fileSummary = summarizeFiles(files);
 
     return (
-        <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
-            <section className="overflow-hidden rounded-[2rem] border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_88%,white_12%),color-mix(in_oklab,var(--accent)_12%,var(--card)_88%))] shadow-[0_36px_120px_-72px_rgba(41,58,85,0.85)]">
-                <div className="grid gap-8 px-6 py-8 sm:px-8 lg:grid-cols-[1.35fr_0.85fr] lg:px-10 lg:py-10">
+        <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
+            <section
+                className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_10%,var(--card)_90%))] shadow-[0_28px_90px_-64px_rgba(41,58,85,0.8)]"
+                data-result-detail-summary="true"
+            >
+                <div className="grid gap-5 px-6 py-6 sm:px-8 lg:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.6fr)] lg:px-10 lg:py-8">
                     <div className="space-y-4">
-                        <Link
-                            href={returnHref}
-                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/85 px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
-                            data-return-link="true"
-                        >
-                            <ChevronLeft
-                                className="h-4 w-4"
-                                aria-hidden="true"
-                            />
-                            <span>{returnLabel}</span>
-                        </Link>
-                        <p className="text-sm font-semibold uppercase tracking-[0.32em] text-muted-foreground">
-                            Result detail
-                        </p>
-                        <div className="space-y-3">
-                            <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-                                {result.pipeline_name}
-                            </h1>
+                        <div className="space-y-4">
+                            <Link
+                                href={returnHref}
+                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/85 px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+                                data-return-link="true"
+                            >
+                                <ChevronLeft
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                />
+                                <span>{returnLabel}</span>
+                            </Link>
+                            <p className="text-sm font-semibold uppercase tracking-[0.32em] text-muted-foreground">
+                                Result detail
+                            </p>
+                            <div className="space-y-3">
+                                <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+                                    {result.pipeline_name}
+                                </h1>
+                            </div>
+                            <ResultIdCopyChip resultId={result.id} />
                         </div>
-                        <ResultIdCopyChip resultId={result.id} />
+
+                        <section
+                            className="rounded-lg border border-border/70 bg-background/70 p-4"
+                            data-file-summary="true"
+                        >
+                            <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-semibold text-foreground">
+                                    Registered files
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                    {formatBytes(fileSummary.total.size)}
+                                </p>
+                            </div>
+                            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <div className="rounded-lg border border-border/60 bg-card/75 px-3 py-2 sm:col-span-2">
+                                    <dt className="text-xs text-muted-foreground">
+                                        {fileSummary.total.label}
+                                    </dt>
+                                    <dd className="mt-1 flex items-baseline justify-between gap-3">
+                                        <span className="text-sm font-semibold text-foreground">
+                                            {formatFileCount(
+                                                fileSummary.total.count,
+                                            )}
+                                        </span>
+                                        <span className="text-sm text-muted-foreground">
+                                            {formatBytes(
+                                                fileSummary.total.size,
+                                            )}
+                                        </span>
+                                    </dd>
+                                </div>
+                                {fileSummary.categories.map((group) => (
+                                    <div
+                                        key={group.label}
+                                        className="rounded-lg border border-border/60 bg-card/70 px-3 py-2"
+                                    >
+                                        <dt className="text-xs text-muted-foreground">
+                                            {group.label}
+                                        </dt>
+                                        <dd className="mt-1 flex items-baseline justify-between gap-3">
+                                            <span className="text-sm font-medium text-foreground">
+                                                {formatFileCount(group.count)}
+                                            </span>
+                                            <span className="text-xs text-muted-foreground">
+                                                {formatBytes(group.size)}
+                                            </span>
+                                        </dd>
+                                    </div>
+                                ))}
+                            </dl>
+                        </section>
                     </div>
 
-                    <section className="rounded-[1.75rem] border border-border/70 bg-background/80 p-5">
-                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            Registered files
-                        </p>
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                            <div className="rounded-2xl border border-border/70 bg-card/85 px-4 py-4 sm:col-span-2">
-                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                    {fileSummary.total.label}
-                                </p>
-                                <div className="mt-2 flex items-baseline justify-between gap-3">
-                                    <p className="text-lg font-semibold text-foreground sm:text-xl">
-                                        {formatFileCount(
-                                            fileSummary.total.count,
-                                        )}
-                                    </p>
-                                    <p className="text-sm text-muted-foreground sm:text-base">
-                                        {formatBytes(fileSummary.total.size)}
-                                    </p>
-                                </div>
-                            </div>
-                            {fileSummary.categories.map((group) => (
-                                <div
-                                    key={group.label}
-                                    className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3"
-                                >
-                                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                        {group.label}
-                                    </p>
-                                    <div className="mt-2 flex items-baseline justify-between gap-3">
-                                        <p className="text-sm font-medium text-foreground sm:text-base">
-                                            {formatFileCount(group.count)}
-                                        </p>
-                                        <p className="text-sm text-muted-foreground">
-                                            {formatBytes(group.size)}
-                                        </p>
-                                    </div>
-                                </div>
-                            ))}
+                    <div className="grid content-start gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.75fr)]">
+                        <div className="rounded-lg border border-border/70 bg-card/65 p-4">
+                            <ResultRegistrationSummary
+                                fields={detailFields(result)}
+                                variant="integrated"
+                            />
                         </div>
-                    </section>
+
+                        <div className="rounded-lg border border-border/70 bg-card/65 p-4">
+                            <ResultMetadataEnrichment
+                                key={result.id}
+                                metadata={result.metadata}
+                                variant="integrated"
+                            />
+                        </div>
+                    </div>
                 </div>
             </section>
 
-            <ResultRegistrationSummary fields={detailFields(result)} />
-
             <ResultDetailFiles files={files} resultId={result.id} />
-
-            <ResultMetadataEnrichment
-                key={result.id}
-                metadata={result.metadata}
-            />
         </main>
     );
 }

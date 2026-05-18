@@ -806,22 +806,21 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(markup).not.toContain("Path");
         expect(markup).not.toContain("Kind");
         expect(markup).not.toContain("Updated");
-        expect(markup).toContain("Result metadata");
+        expect(markup).toContain('data-result-detail-summary="true"');
+        expect(markup).toContain('data-registration-layout="integrated"');
+        expect(markup).toContain('data-result-metadata-layout="integrated"');
         expect(markup).toContain("SANG001");
         expect(markup).not.toContain("sanger_sample_id: SANG001");
         expect(markup).toContain("Registered files");
-        expect(markup).toContain('data-registration-layout="compact"');
-        expect(markup).toContain("Key details");
+        expect(markup).not.toContain('data-registration-layout="compact"');
+        expect(markup).not.toContain('data-registration-field="Result ID"');
+        expect(markup).not.toContain('data-registration-field="Pipeline name"');
+        expect(markup).not.toMatch(/>Registration</);
+        expect(markup).not.toMatch(/>Result metadata</);
+        expect(markup).not.toMatch(/>Key details</);
         expect(markup).not.toContain("Registration summary");
-        expect(
-            countOccurrences(markup, 'class="border-b border-border/60 pb-3"'),
-        ).toBe(9);
-        expect(
-            countOccurrences(
-                markup,
-                'class="rounded-[1.25rem] border border-border/70 bg-background/60 px-4 py-3"',
-            ),
-        ).toBe(2);
+        expect(countOccurrences(markup, "nf-core/rnaseq")).toBe(1);
+        expect(countOccurrences(markup, "data-metadata-row=")).toBe(2);
         expect(markup).toContain("2 files");
         expect(markup).toContain("2.0 KB");
         expect(markup).toContain("Output");

@@ -426,11 +426,37 @@ test.describe("Q1 critical results flows", () => {
         await expect(
             page.getByRole("heading", { level: 1, name: rnaseqPipelineName }),
         ).toBeVisible();
+        const detailSummary = page.locator(
+            '[data-result-detail-summary="true"]',
+        );
+
+        await expect(detailSummary).toBeVisible();
         await expect(
-            page.locator('[data-metadata-row="seqmeta_studyid"]'),
+            detailSummary.locator('[data-registration-layout="integrated"]'),
+        ).toBeVisible();
+        await expect(
+            detailSummary.locator('[data-result-metadata-layout="integrated"]'),
+        ).toBeVisible();
+        await expect(
+            page.locator('[data-registration-layout="compact"]'),
+        ).toHaveCount(0);
+        await expect(
+            detailSummary.locator('[data-registration-field="Result ID"]'),
+        ).toHaveCount(0);
+        await expect(
+            detailSummary.locator('[data-registration-field="Pipeline name"]'),
+        ).toHaveCount(0);
+        await expect(
+            page.getByText("Registration", { exact: true }),
+        ).toHaveCount(0);
+        await expect(
+            page.getByText("Result metadata", { exact: true }),
+        ).toHaveCount(0);
+        await expect(
+            detailSummary.locator('[data-metadata-row="seqmeta_studyid"]'),
         ).toContainText("6568");
         await expect(
-            page.locator('[data-metadata-row="library"]'),
+            detailSummary.locator('[data-metadata-row="library"]'),
         ).toContainText("exon");
     });
 
