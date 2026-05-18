@@ -134,6 +134,10 @@ make test
 make prod
 ```
 
+`make test` skips live MLWH integration tests by default. Set
+`WA_LIVE_MLWH_TESTS=1` explicitly to run live MLWH checks; real cold-sync
+performance tests also require `MLWH_SYNC_PERF_TEST=1`.
+
 ## Licence
 
 [MIT](LICENSE)

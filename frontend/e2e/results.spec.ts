@@ -3,7 +3,9 @@ import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 function recentRows(page: Page): Locator {
-    return page.locator('tbody tr[data-result-row="true"]');
+    return page
+        .locator('tbody tr[data-result-row="true"]')
+        .filter({ hasNotText: "seqmeta/rendering-repro" });
 }
 
 type SortIconMetric = {
@@ -18,7 +20,7 @@ async function collectRecentSortIconMetrics(
 ): Promise<SortIconMetric[]> {
     const sortButtons = page.locator("button[data-column-sort]");
 
-    await expect(sortButtons).toHaveCount(4);
+    await expect(sortButtons).toHaveCount(5);
 
     return sortButtons.evaluateAll((elements) =>
         elements.map((element) => {
@@ -320,6 +322,7 @@ test.describe("Q1 critical results flows", () => {
 
         expect(metrics.map((metric) => metric.columnId)).toEqual([
             "pipeline_name",
+            "registration_unique",
             "requester",
             "created_at",
             "output_directory",

@@ -7,7 +7,9 @@ test.describe("bug 2 result ID copy chip", () => {
         await page.goto("/");
         await expect(page.getByText("Recent registrations")).toBeVisible();
         await expect(
-            page.locator('tbody tr[data-result-row="true"]'),
+            page
+                .locator('tbody tr[data-result-row="true"]')
+                .filter({ hasNotText: "seqmeta/rendering-repro" }),
         ).toHaveCount(4);
 
         const resultLink = page
