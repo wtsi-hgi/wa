@@ -61,6 +61,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                     id_sample_lims: "12345",
                     sanger_id: "WTSI_TEST_SAMPLE",
                     sample_name: "Test_Sample_Name",
+                    supplier_name: "Supplier_Sample_Name",
                     taxon_id: 9606,
                     common_name: "human",
                     library_type: "Test Library Type",
@@ -84,6 +85,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                         id_sample_lims: "12345",
                         sanger_id: "WTSI_TEST_SAMPLE",
                         sample_name: "Test_Sample_Name",
+                        supplier_name: "Supplier_Sample_Name",
                         taxon_id: 9606,
                         common_name: "human",
                         library_type: "Test Library Type",
@@ -168,6 +170,20 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
         expect(
             within(directMetadataSection as HTMLElement).getByText("12345"),
         ).toBeTruthy();
+
+        // Should show supplier_name from the MLWH sample record
+        const supplierRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_supplier_name"]',
+        );
+        expect(supplierRow).toBeTruthy();
+        expect(supplierRow?.textContent).toContain("Sample supplier name");
+        expect(supplierRow?.textContent).toContain("Supplier_Sample_Name");
+        expect(supplierRow?.textContent).not.toContain("seqmeta_supplier_name");
+        expect(
+            supplierRow
+                ?.querySelector('[data-testid="seqmeta-direct-metadata-label"]')
+                ?.getAttribute("title"),
+        ).toBe("MLWH seqmeta key: seqmeta_supplier_name");
 
         // Should show sample accession
         expect(

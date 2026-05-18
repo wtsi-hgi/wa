@@ -149,6 +149,10 @@ function metadataLabel(metadataKey: string): string {
         return "Sanger sample ID";
     }
 
+    if (trimmedKey === "supplier_name") {
+        return "Sample supplier name";
+    }
+
     if (trimmedKey === "id_sample_lims") {
         return "Sample LIMS ID";
     }
@@ -921,13 +925,17 @@ function buildDetailFields(
 
         // Skip individual sample fields for study metadata.
         if (!skipSampleFieldsForStudy) {
+            const sampleRecord =
+                enrichment.graph.sample ??
+                enrichment.graph.sample_detail?.sample;
+
             appendDetailField(
                 fields,
-                enrichment.graph.sample?.sample_name
+                sampleRecord?.sample_name
                     ? {
                           key: "seqmeta_name",
                           label: "Sample name",
-                          value: enrichment.graph.sample.sample_name,
+                          value: sampleRecord.sample_name,
                           group: sampleMetadata ? "direct" : "related",
                       }
                     : null,
@@ -936,12 +944,12 @@ function buildDetailFields(
             );
             appendDetailField(
                 fields,
-                enrichment.graph.sample?.sanger_id
+                sampleRecord?.sanger_id
                     ? {
                           key: "seqmeta_sanger_sample_id",
                           label: "Sanger sample ID",
                           searchKey: "sample",
-                          value: enrichment.graph.sample.sanger_id,
+                          value: sampleRecord.sanger_id,
                           group: sampleMetadata ? "direct" : "related",
                       }
                     : null,
@@ -950,12 +958,25 @@ function buildDetailFields(
             );
             appendDetailField(
                 fields,
-                enrichment.graph.sample?.id_sample_lims
+                sampleRecord?.supplier_name
+                    ? {
+                          key: "seqmeta_supplier_name",
+                          label: "Sample supplier name",
+                          value: sampleRecord.supplier_name,
+                          group: sampleMetadata ? "direct" : "related",
+                      }
+                    : null,
+                rawValue,
+                metadataKey,
+            );
+            appendDetailField(
+                fields,
+                sampleRecord?.id_sample_lims
                     ? {
                           key: "seqmeta_id_sample_lims",
                           label: "Sample LIMS ID",
                           searchKey: "sample",
-                          value: enrichment.graph.sample.id_sample_lims,
+                          value: sampleRecord.id_sample_lims,
                           group: sampleMetadata ? "direct" : "related",
                       }
                     : null,
@@ -964,11 +985,11 @@ function buildDetailFields(
             );
             appendDetailField(
                 fields,
-                enrichment.graph.sample?.accession_number
+                sampleRecord?.accession_number
                     ? {
                           key: "seqmeta_accession_number",
                           label: "Sample accession",
-                          value: enrichment.graph.sample.accession_number,
+                          value: sampleRecord.accession_number,
                           group: sampleMetadata ? "direct" : "related",
                       }
                     : null,

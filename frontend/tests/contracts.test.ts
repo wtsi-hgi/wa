@@ -451,6 +451,7 @@ describe("contract schemas", () => {
             id_study_lims: "6568",
             sanger_id: "WTSI_wEMB10524782",
             sample_name: "WTSI_wEMB10524782",
+            supplier_name: "C84-WEM-2-FO-1_S2_mA",
             library_type: "Chromium single cell ATAC",
         });
     });
