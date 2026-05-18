@@ -639,6 +639,12 @@ func TestEnrichUsesMLWHDetailGraphs(t *testing.T) {
 		}
 
 		convey.So(result.Type, convey.ShouldEqual, IdentifierLibraryID)
+		convey.So(result.Graph.Library, convey.ShouldNotBeNil)
+		if result.Graph.Library != nil {
+			convey.So(result.Graph.Library.LibraryType, convey.ShouldEqual, "Custom")
+			convey.So(result.Graph.Library.LibraryID, convey.ShouldEqual, "71046409")
+			convey.So(result.Graph.Library.IDLibraryLims, convey.ShouldEqual, "SQPP-47463-G:B1")
+		}
 		convey.So(result.Graph.Samples, convey.ShouldHaveLength, 1)
 		convey.So(result.Graph.Samples[0].Name, convey.ShouldEqual, "Sample Match")
 		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 1)

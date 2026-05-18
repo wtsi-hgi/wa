@@ -60,6 +60,18 @@ type EntityMetadataPair = {
     value: string;
 };
 
+type LibrarySearchTarget = {
+    key: string;
+    value: string;
+};
+
+type LibraryLinkLike = {
+    library_type?: string;
+    id_study_lims?: string;
+    library_id?: string;
+    id_library_lims?: string;
+};
+
 const RELATED_SAMPLE_RENDER_LIMIT = 50;
 
 function asString(value: unknown): string | null {
@@ -187,7 +199,29 @@ function libraryIdentityKey(library: HierarchicalLibrary): string {
 }
 
 function libraryDisplayLabel(library: HierarchicalLibrary): string {
-    return library.idLibraryLims ?? library.libraryId ?? library.libraryType;
+    return librarySearchTarget(library).value;
+}
+
+function librarySearchTarget(
+    library: HierarchicalLibrary,
+): LibrarySearchTarget {
+    const libraryId = asString(library.libraryId);
+    if (libraryId) {
+        return { key: "seqmeta_libraryid", value: libraryId };
+    }
+
+    const libraryLimsId = asString(library.idLibraryLims);
+    if (libraryLimsId) {
+        return { key: "seqmeta_library_lims", value: libraryLimsId };
+    }
+
+    return { key: "library", value: library.libraryType };
+}
+
+function libraryFilterHref(library: HierarchicalLibrary): string {
+    const target = librarySearchTarget(library);
+
+    return `/?${new URLSearchParams({ [target.key]: target.value }).toString()}`;
 }
 
 function librarySampleFilters(
@@ -287,12 +321,171 @@ function libraryMetadataPairs(
     const libraryLimsId = asString(library.idLibraryLims);
 
     return entityMetadataPairs([
+        libraryId ? { label: "id", value: libraryId } : null,
+        libraryLimsId ? { label: "library_lims", value: libraryLimsId } : null,
         asString(library.libraryType)
             ? { label: "type", value: library.libraryType }
             : null,
-        libraryId ? { label: "id", value: libraryId } : null,
-        libraryLimsId ? { label: "library_lims", value: libraryLimsId } : null,
     ]);
+}
+
+function libraryFromLink(
+    link: LibraryLinkLike | null | undefined,
+    samples: EnrichmentSample[] = [],
+): HierarchicalLibrary | null {
+    const libraryType = asString(link?.library_type);
+    if (!libraryType) {
+        return null;
+    }
+
+    return {
+        libraryType,
+        idStudyLims: asString(link?.id_study_lims) ?? "",
+        libraryId: asString(link?.library_id) ?? undefined,
+        idLibraryLims: asString(link?.id_library_lims) ?? undefined,
+        samples,
+    };
+}
+
+function addLibraryCandidate(
+    candidates: HierarchicalLibrary[],
+    seen: Set<string>,
+    candidate: HierarchicalLibrary | null,
+) {
+    if (!candidate) {
+        return;
+    }
+
+    const key = libraryIdentityKey(candidate);
+    if (seen.has(key)) {
+        return;
+    }
+
+    seen.add(key);
+    candidates.push(candidate);
+}
+
+function libraryCandidates(
+    enrichment: EnrichmentResult | null,
+): HierarchicalLibrary[] {
+    if (!enrichment) {
+        return [];
+    }
+
+    const candidates: HierarchicalLibrary[] = [];
+    const seen = new Set<string>();
+
+    addLibraryCandidate(
+        candidates,
+        seen,
+        libraryFromLink(enrichment.graph.library),
+    );
+
+    for (const library of enrichment.graph.sample_detail?.libraries ?? []) {
+        addLibraryCandidate(candidates, seen, libraryFromLink(library));
+    }
+
+    for (const library of enrichment.graph.libraries ?? []) {
+        addLibraryCandidate(candidates, seen, libraryFromLink(library));
+    }
+
+    for (const detail of enrichment.graph.study_detail?.library_details ?? []) {
+        addLibraryCandidate(
+            candidates,
+            seen,
+            libraryFromLink(detail, detail.samples),
+        );
+    }
+
+    for (const studyDetail of enrichment.graph.study_details ?? []) {
+        for (const detail of studyDetail.library_details) {
+            addLibraryCandidate(
+                candidates,
+                seen,
+                libraryFromLink(detail, detail.samples),
+            );
+        }
+    }
+
+    const sampleLibrary = enrichment.graph.sample?.library_type
+        ? {
+              libraryType: enrichment.graph.sample.library_type,
+              idStudyLims: enrichment.graph.sample.id_study_lims,
+              samples: [],
+          }
+        : null;
+    addLibraryCandidate(candidates, seen, sampleLibrary);
+
+    return candidates;
+}
+
+function libraryMatchesMetadataValue(
+    library: HierarchicalLibrary,
+    metadataKey: string,
+    rawValue: string,
+): boolean {
+    const value = rawValue.trim().toLowerCase();
+    if (!value) {
+        return false;
+    }
+
+    if (metadataKey === "seqmeta_libraryid") {
+        return library.libraryId?.toLowerCase() === value;
+    }
+
+    if (metadataKey === "seqmeta_library_lims") {
+        return library.idLibraryLims?.toLowerCase() === value;
+    }
+
+    return library.libraryType.toLowerCase() === value;
+}
+
+function bestLibraryForMetadata(
+    metadataKey: string,
+    rawValue: string,
+    enrichment: EnrichmentResult | null,
+): HierarchicalLibrary | null {
+    const candidates = libraryCandidates(enrichment);
+
+    return (
+        candidates.find((library) =>
+            libraryMatchesMetadataValue(library, metadataKey, rawValue),
+        ) ??
+        candidates.find(
+            (library) => library.libraryId || library.idLibraryLims,
+        ) ??
+        candidates[0] ??
+        null
+    );
+}
+
+function sampleLibraryForGroups(
+    enrichment: EnrichmentResult,
+): HierarchicalLibrary | null {
+    const libraryType = asString(enrichment.graph.sample?.library_type);
+    const idStudyLims = asString(enrichment.graph.sample?.id_study_lims) ?? "";
+    const candidates = libraryCandidates(enrichment);
+    const matchesSample = (library: HierarchicalLibrary) =>
+        (!libraryType || library.libraryType === libraryType) &&
+        (!idStudyLims ||
+            !library.idStudyLims ||
+            library.idStudyLims === idStudyLims);
+
+    return (
+        candidates.find(
+            (library) =>
+                matchesSample(library) &&
+                (library.libraryId || library.idLibraryLims),
+        ) ??
+        candidates.find(matchesSample) ??
+        (libraryType
+            ? {
+                  libraryType,
+                  idStudyLims,
+                  samples: [],
+              }
+            : null)
+    );
 }
 
 function laneMetadataPairs(lane: {
@@ -526,29 +719,82 @@ function buildDetailFields(
         }
     }
 
+    if (libraryMetadata) {
+        const library = bestLibraryForMetadata(
+            metadataKey,
+            rawValue,
+            enrichment,
+        );
+        const rawLibraryValue = rawValue.trim().toLowerCase();
+        const showExactLibraryFields =
+            metadataKey === "seqmeta_libraryid" ||
+            metadataKey === "seqmeta_library_lims" ||
+            library?.libraryId?.toLowerCase() === rawLibraryValue ||
+            library?.idLibraryLims?.toLowerCase() === rawLibraryValue;
+
+        appendDetailField(
+            fields,
+            library?.libraryType
+                ? {
+                      key: "seqmeta_librarytype",
+                      label: "Library type",
+                      searchKey: "library",
+                      value: library.libraryType,
+                      group: "direct",
+                  }
+                : null,
+            rawValue,
+            metadataKey,
+        );
+        appendDetailField(
+            fields,
+            showExactLibraryFields && library?.libraryId
+                ? {
+                      key: "seqmeta_libraryid",
+                      label: "Library ID",
+                      searchKey: "seqmeta_libraryid",
+                      value: library.libraryId,
+                      group: "direct",
+                  }
+                : null,
+            rawValue,
+            metadataKey,
+        );
+        appendDetailField(
+            fields,
+            showExactLibraryFields && library?.idLibraryLims
+                ? {
+                      key: "seqmeta_library_lims",
+                      label: "Library LIMS ID",
+                      searchKey: "seqmeta_library_lims",
+                      value: library.idLibraryLims,
+                      group: "direct",
+                  }
+                : null,
+            rawValue,
+            metadataKey,
+        );
+    }
+
     // Skip library fields for study metadata.
-    if (!skipSampleFieldsForStudy && !runMetadata) {
+    if (!libraryMetadata && !skipSampleFieldsForStudy && !runMetadata) {
         const libraryTypes = [
             enrichment.graph.library?.library_type,
             enrichment.graph.sample?.library_type,
-            ...(!libraryMetadata
-                ? (enrichment.graph.libraries ?? []).map((library) =>
-                      asString(library.library_type),
-                  )
-                : []),
+            ...(enrichment.graph.libraries ?? []).map((library) =>
+                asString(library.library_type),
+            ),
         ].filter((value): value is string => Boolean(value));
 
         for (const libraryType of libraryTypes) {
             appendDetailField(
                 fields,
                 {
-                    key: libraryMetadata
-                        ? directLibraryMetadataKey(metadataKey)
-                        : "seqmeta_library",
+                    key: "seqmeta_library",
                     label: "Library type",
                     searchKey: "library",
                     value: libraryType,
-                    group: libraryMetadata ? "direct" : "related",
+                    group: "related",
                 },
                 rawValue,
                 metadataKey,
@@ -771,23 +1017,13 @@ function buildHierarchicalGroups(
     // For sample details with hierarchy, show library parent, study grandparent, and lanes
     if (sampleMetadata && enrichment.graph.sample_detail) {
         // Show parent library
-        const libraryType = enrichment.graph.sample?.library_type;
-        const idStudyLims = enrichment.graph.sample?.id_study_lims || "";
+        const library = sampleLibraryForGroups(enrichment);
 
-        if (libraryType) {
-            const libraryLink = enrichment.graph.library;
+        if (library) {
             groups.push({
                 type: "library",
                 title: "Library",
-                items: [
-                    {
-                        libraryType,
-                        idStudyLims,
-                        libraryId: libraryLink?.library_id,
-                        idLibraryLims: libraryLink?.id_library_lims,
-                        samples: [],
-                    },
-                ],
+                items: [{ ...library, samples: [] }],
             });
         }
 
@@ -827,36 +1063,13 @@ function buildHierarchicalGroups(
         !hasGroup("library") &&
         !hasGroup("libraries")
     ) {
-        const libraryLink =
-            enrichment.graph.library ??
-            enrichment.graph.sample_detail?.libraries?.[0] ??
-            enrichment.graph.libraries?.find(
-                (library) =>
-                    library.library_type ===
-                        enrichment.graph.sample?.library_type &&
-                    (!enrichment.graph.sample?.id_study_lims ||
-                        library.id_study_lims ===
-                            enrichment.graph.sample.id_study_lims),
-            );
-        const libraryType =
-            libraryLink?.library_type ?? enrichment.graph.sample?.library_type;
+        const library = sampleLibraryForGroups(enrichment);
 
-        if (libraryType) {
+        if (library) {
             groups.push({
                 type: "library",
                 title: "Library",
-                items: [
-                    {
-                        libraryType,
-                        idStudyLims:
-                            libraryLink?.id_study_lims ??
-                            enrichment.graph.sample?.id_study_lims ??
-                            "",
-                        libraryId: libraryLink?.library_id,
-                        idLibraryLims: libraryLink?.id_library_lims,
-                        samples: [],
-                    },
-                ],
+                items: [{ ...library, samples: [] }],
             });
         }
     }
@@ -1492,7 +1705,9 @@ export function SeqmetaBadge({
                                                                                                     <Link
                                                                                                         aria-label="Send library to search filter"
                                                                                                         className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                        href={`/?library=${library.libraryType}`}
+                                                                                                        href={libraryFilterHref(
+                                                                                                            library,
+                                                                                                        )}
                                                                                                     >
                                                                                                         <Search
                                                                                                             className="size-3.5"
@@ -2027,7 +2242,9 @@ export function SeqmetaBadge({
                                                                                                 <Link
                                                                                                     aria-label="Send library to search filter"
                                                                                                     className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                                    href={`/?library=${library.libraryType}`}
+                                                                                                    href={libraryFilterHref(
+                                                                                                        library,
+                                                                                                    )}
                                                                                                 >
                                                                                                     <Search
                                                                                                         className="size-3.5"

@@ -247,6 +247,7 @@ function buildSampleDetail(
         sample_name?: string;
         sample?: Partial<EnrichmentSample>;
         lanes?: Array<Partial<LaneDetail>>;
+        libraries?: SampleDetail["libraries"];
         irods_paths?: Array<Partial<IRODSPath>>;
     } = {},
 ): SampleDetail {
@@ -257,6 +258,7 @@ function buildSampleDetail(
         sample_name: overrides.sample_name ?? sample.sample_name,
         sample,
         lanes: (overrides.lanes ?? []).map((lane) => buildLaneDetail(lane)),
+        ...(overrides.libraries ? { libraries: overrides.libraries } : {}),
         ...(overrides.irods_paths
             ? {
                   irods_paths: overrides.irods_paths.map((path) =>
@@ -2107,6 +2109,165 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(sampleRows[0]?.textContent).toContain("LIMS001");
         expect(sampleRows[0]?.textContent).toContain("accession:");
         expect(sampleRows[0]?.textContent).toContain("ERS123456");
+    });
+
+    it("renders direct metadata for exact library-id details from related library identifiers", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_libraryid",
+                rawValue: "71046409",
+                enrichment: buildEnrichment({
+                    identifier: "71046409",
+                    type: "library_id",
+                    graph: {
+                        studies: [buildStudy({ id_study_lims: "7607" })],
+                        samples: [
+                            buildSample({
+                                id_study_lims: "7607",
+                                id_sample_lims: "9575305",
+                                sanger_id: "7607STDY14643771",
+                                sample_name: "7607STDY14643771",
+                                library_type: "Custom",
+                            }),
+                        ],
+                        libraries: [
+                            {
+                                library_type: "Custom",
+                                id_study_lims: "7607",
+                                library_id: "71046409",
+                                id_library_lims: "SQPP-47463-G:B1",
+                            },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const directMetadata = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+
+        expect(directMetadata).toBeTruthy();
+        expect(
+            directMetadata?.querySelectorAll(
+                '[data-seqmeta-detail-key="seqmeta_libraryid"]',
+            ),
+        ).toHaveLength(1);
+        expect(
+            directMetadata?.querySelectorAll(
+                '[data-seqmeta-detail-key="seqmeta_library_lims"]',
+            ),
+        ).toHaveLength(1);
+        expect(directMetadata?.textContent).toContain("71046409");
+        expect(directMetadata?.textContent).toContain("SQPP-47463-G:B1");
+        expect(directMetadata?.textContent).toContain("Custom");
+    });
+
+    it("filters sample related library rows by library id when the id is only on sample detail libraries", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
+            globalThis,
+            "navigator",
+        );
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
+
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: {
+                clipboard: {
+                    writeText: writeTextMock,
+                },
+            },
+        });
+
+        try {
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: "seqmeta_sampleid",
+                    rawValue: "7607STDY14643771",
+                    enrichment: buildEnrichment({
+                        identifier: "7607STDY14643771",
+                        type: "sanger_sample_id",
+                        graph: {
+                            study: buildStudy({
+                                id_study_lims: "7607",
+                                name: "Study 7607",
+                            }),
+                            sample: buildSample({
+                                id_study_lims: "7607",
+                                id_sample_lims: "9575305",
+                                sanger_id: "7607STDY14643771",
+                                sample_name: "7607STDY14643771",
+                                library_type: "Custom",
+                            }),
+                            sample_detail: buildSampleDetail({
+                                sample: {
+                                    id_study_lims: "7607",
+                                    id_sample_lims: "9575305",
+                                    sanger_id: "7607STDY14643771",
+                                    sample_name: "7607STDY14643771",
+                                    library_type: "Custom",
+                                },
+                                libraries: [
+                                    {
+                                        library_type: "Custom",
+                                        id_study_lims: "7607",
+                                        library_id: "71046409",
+                                        id_library_lims: "SQPP-47463-G:B1",
+                                    },
+                                ],
+                                lanes: [],
+                            }),
+                        },
+                    }),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            const libraryRow = screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelector('[data-seqmeta-detail-key="library"]');
+
+            expect(libraryRow).toBeTruthy();
+            expect(libraryRow?.textContent).toContain("id:");
+            expect(libraryRow?.textContent).toContain("71046409");
+            expect(libraryRow?.textContent).toContain("library_lims:");
+            expect(libraryRow?.textContent).toContain("SQPP-47463-G:B1");
+            expect(
+                screen
+                    .getByRole("link", {
+                        name: /send library to search filter/i,
+                    })
+                    .getAttribute("href"),
+            ).toBe("/?seqmeta_libraryid=71046409");
+
+            fireEvent.click(screen.getByLabelText(/Copy seqmeta_library/i));
+
+            await waitFor(() => {
+                expect(writeTextMock).toHaveBeenCalledWith("71046409");
+            });
+        } finally {
+            if (originalNavigatorDescriptor) {
+                Object.defineProperty(
+                    globalThis,
+                    "navigator",
+                    originalNavigatorDescriptor,
+                );
+            }
+        }
     });
 
     it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {
