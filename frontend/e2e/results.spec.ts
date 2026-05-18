@@ -6,6 +6,44 @@ function recentRows(page: Page): Locator {
     return page.locator('tbody tr[data-result-row="true"]');
 }
 
+type SortIconMetric = {
+    columnId: string;
+    flexShrink: string;
+    height: number;
+    width: number;
+};
+
+async function collectRecentSortIconMetrics(
+    page: Page,
+): Promise<SortIconMetric[]> {
+    const sortButtons = page.locator("button[data-column-sort]");
+
+    await expect(sortButtons).toHaveCount(4);
+
+    return sortButtons.evaluateAll((elements) =>
+        elements.map((element) => {
+            const button = element as HTMLElement;
+            const svg = button.querySelector("svg");
+
+            if (!(svg instanceof SVGElement)) {
+                throw new Error(
+                    `Missing sort icon for ${button.dataset.columnSort ?? "unknown column"}`,
+                );
+            }
+
+            const rect = svg.getBoundingClientRect();
+            const computed = window.getComputedStyle(svg);
+
+            return {
+                columnId: button.dataset.columnSort ?? "",
+                flexShrink: computed.flexShrink,
+                height: rect.height,
+                width: rect.width,
+            };
+        }),
+    );
+}
+
 async function addRequesterFilter(
     page: Page,
     requester: string,
@@ -267,6 +305,40 @@ test.describe("Q1 critical results flows", () => {
 
         const rows = recentRows(page);
         await expect(rows).toHaveCount(4);
+    });
+
+    test("keeps recent registration sort icons at a stable size on narrow screens", async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 390, height: 900 });
+        await page.goto("/");
+
+        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(recentRows(page)).toHaveCount(4);
+
+        const metrics = await collectRecentSortIconMetrics(page);
+
+        expect(metrics.map((metric) => metric.columnId)).toEqual([
+            "pipeline_name",
+            "requester",
+            "created_at",
+            "output_directory",
+        ]);
+
+        for (const metric of metrics) {
+            expect(metric.width, `${metric.columnId} icon width`).toBeCloseTo(
+                14,
+                1,
+            );
+            expect(metric.height, `${metric.columnId} icon height`).toBeCloseTo(
+                14,
+                1,
+            );
+            expect(
+                metric.flexShrink,
+                `${metric.columnId} icon flex-shrink`,
+            ).toBe("0");
+        }
     });
 
     test("filters results by requester through the search builder", async ({
