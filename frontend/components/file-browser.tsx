@@ -1470,12 +1470,14 @@ export function FileBrowser({
             const showsChildRows = isStructurallyExpanded && hasChildren;
             const isExpanded =
                 hasPreviewControls || showsDirectoryFiles || showsChildRows;
-            const directoryRow = (
+            const renderDirectoryRow = (groupedContent: ReactNode) => (
                 <div
                     key={`dir-${node.path}`}
                     className={cn(
                         "grid w-full grid-cols-1 gap-3 rounded-[1.25rem] border transition",
-                        hasPreviewControls ? "p-2" : "grid-cols-1 p-0",
+                        hasPreviewControls || groupedContent
+                            ? "p-2"
+                            : "grid-cols-1 p-0",
                         isSelected
                             ? "border-primary/45 bg-primary/10"
                             : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
@@ -1600,6 +1602,7 @@ export function FileBrowser({
                               inlineSubdirPreviewKinds,
                           )
                         : null}
+                    {groupedContent}
                 </div>
             );
             const contentRows: ReactNode[] = [];
@@ -1701,6 +1704,16 @@ export function FileBrowser({
             }
 
             const showsGroupedContent = contentRows.length > 0;
+            const directoryRow = renderDirectoryRow(
+                showsGroupedContent ? (
+                    <div
+                        className="space-y-3 px-3 pb-3 pt-1"
+                        data-directory-group-content={node.path}
+                    >
+                        {contentRows}
+                    </div>
+                ) : null,
+            );
 
             return [
                 <div
@@ -1709,31 +1722,6 @@ export function FileBrowser({
                     data-directory-group={node.path}
                 >
                     {directoryRow}
-                    {showsGroupedContent ? (
-                        <div
-                            className="relative pl-4"
-                            data-directory-group-content={node.path}
-                        >
-                            <div
-                                aria-hidden="true"
-                                className="pointer-events-none absolute left-1.5 top-0 h-0 w-0"
-                            />
-                            <div
-                                aria-hidden="true"
-                                className="pointer-events-none absolute inset-y-3 left-1.5 w-px rounded-full bg-gradient-to-b from-primary/30 via-primary/16 to-transparent"
-                            />
-                            <div
-                                className={cn(
-                                    "relative space-y-3 rounded-[1.35rem] border px-3 py-3 shadow-[0_18px_60px_-54px_rgba(48,67,98,0.85)]",
-                                    isSelected
-                                        ? "border-primary/20 bg-gradient-to-br from-primary/[0.11] via-background/92 to-background/78"
-                                        : "border-border/50 bg-gradient-to-br from-background/92 via-background/78 to-muted/25",
-                                )}
-                            >
-                                {contentRows}
-                            </div>
-                        </div>
-                    ) : null}
                 </div>,
             ];
         });

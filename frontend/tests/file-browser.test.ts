@@ -227,7 +227,7 @@ describe("N1 file browser", () => {
         expect(resultsButton?.textContent).toContain("/results");
     });
 
-    it("wraps an expanded nested directory's files and child folders in the parent group shell", async () => {
+    it("renders expanded nested directory contents inside the directory row box", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
         await act(async () => {
@@ -253,12 +253,18 @@ describe("N1 file browser", () => {
         const alphaRow = container.querySelector(
             '[data-directory-row="/results/root/alpha"]',
         );
+        const alphaButton = container.querySelector(
+            'button[data-directory-path="/results/root/alpha"]',
+        ) as HTMLButtonElement | null;
         const alphaFiles = container.querySelector(
             '[data-file-browser-directory-files="/results/root/alpha"]',
         );
         const alphaChildGroup = container.querySelector(
             '[data-directory-group="/results/root/alpha/sub"]',
         );
+        const alphaChildButton = container.querySelector(
+            'button[data-directory-path="/results/root/alpha/sub"]',
+        ) as HTMLButtonElement | null;
         const betaGroup = container.querySelector(
             '[data-directory-group="/results/root/beta"]',
         );
@@ -266,17 +272,29 @@ describe("N1 file browser", () => {
         expect(alphaGroup).toBeTruthy();
         expect(alphaContent).toBeTruthy();
         expect(alphaRow).toBeTruthy();
+        expect(alphaButton).toBeTruthy();
         expect(alphaFiles).toBeTruthy();
         expect(alphaChildGroup).toBeTruthy();
+        expect(alphaChildButton).toBeTruthy();
         expect(betaGroup).toBeTruthy();
         expect(alphaGroup?.contains(alphaRow ?? null)).toBe(true);
         expect(alphaGroup?.contains(alphaContent ?? null)).toBe(true);
+        expect(alphaRow?.contains(alphaContent ?? null)).toBe(true);
+        expect(alphaContent?.parentElement).toBe(alphaRow);
         expect(alphaContent?.contains(alphaFiles ?? null)).toBe(true);
         expect(alphaContent?.contains(alphaChildGroup ?? null)).toBe(true);
         expect(alphaContent?.contains(betaGroup ?? null)).toBe(false);
+        expect(Number(alphaChildButton?.dataset.depth)).toBe(
+            Number(alphaButton?.dataset.depth) + 1,
+        );
+        expect(
+            Number.parseFloat(alphaChildButton?.style.paddingLeft ?? "0"),
+        ).toBeGreaterThan(
+            Number.parseFloat(alphaButton?.style.paddingLeft ?? "0"),
+        );
     });
 
-    it("does not render a leftover bottom-left corner elbow under grouped folder shells", async () => {
+    it("does not render decorative connector rails beside expanded directory contents", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
         await act(async () => {
@@ -298,7 +316,7 @@ describe("N1 file browser", () => {
 
         expect(alphaContent).toBeTruthy();
 
-        const decorativeChildren = Array.from(
+        const directDecorativeChildren = Array.from(
             alphaContent?.children ?? [],
         ).filter(
             (element) =>
@@ -306,10 +324,7 @@ describe("N1 file browser", () => {
                 element.getAttribute("aria-hidden") === "true",
         ) as HTMLElement[];
 
-        expect(decorativeChildren).toHaveLength(2);
-        expect(decorativeChildren[0]?.className).not.toContain("border-b");
-        expect(decorativeChildren[0]?.className).not.toContain("border-l");
-        expect(decorativeChildren[1]?.className).toContain("w-px");
+        expect(directDecorativeChildren).toHaveLength(0);
     });
 
     it("renders grid previews beside the current page of file rows", async () => {
@@ -2574,14 +2589,20 @@ describe("N1 file browser", () => {
         const folderControls = directoryRow?.querySelector(
             '[data-file-browser-folder-controls="/results"]',
         ) as HTMLElement | null;
+        const groupContent = directoryRow?.querySelector(
+            '[data-directory-group-content="/results"]',
+        ) as HTMLElement | null;
 
         expect(directoryRow).toBeTruthy();
         expect(directoryButton).toBeTruthy();
         expect(folderControls).toBeTruthy();
+        expect(groupContent).toBeTruthy();
         expect(Array.from(directoryRow?.children ?? [])).toEqual([
             directoryButton,
             folderControls,
+            groupContent,
         ]);
+        expect(groupContent?.parentElement).toBe(directoryRow);
         expect(directoryRow?.className).not.toMatch(/lg:grid-cols-\[/);
         expect(folderControls?.className).toContain("justify-start");
         expect(folderControls?.className).not.toContain("justify-end");
