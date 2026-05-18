@@ -5,15 +5,22 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 describe("ResultRegistrationSummary", () => {
-    it("renders registration details in a compact summary layout", async () => {
+    it("renders registration details as an integrated compact grid without identity duplicates", async () => {
         const { ResultRegistrationSummary } =
             await import("@/components/result-registration-summary");
 
         const { container } = render(
             createElement(ResultRegistrationSummary, {
                 fields: [
-                    { label: "Result ID", value: "result-42", mono: true },
-                    { label: "Pipeline name", value: "RNA pipeline" },
+                    { label: "Pipeline version", value: "3.18.0" },
+                    {
+                        label: "Pipeline identifier",
+                        value: "gh://repo/workflow.nf",
+                        mono: true,
+                    },
+                    { label: "Run key", value: "runid=1001", mono: true },
+                    { label: "Requester", value: "alice" },
+                    { label: "Operator", value: "bob" },
                     { label: "Registered", value: "23 Apr 2026, 09:15" },
                     {
                         label: "Output directory",
@@ -28,13 +35,17 @@ describe("ResultRegistrationSummary", () => {
                         wide: true,
                     },
                 ],
+                variant: "integrated",
             }),
         );
 
-        expect(screen.getByText("Registration")).toBeTruthy();
-        expect(screen.getByText("Key details")).toBeTruthy();
+        expect(screen.queryByText("Registration")).toBeNull();
+        expect(screen.queryByText("Key details")).toBeNull();
+        expect(screen.queryByText("Result ID")).toBeNull();
+        expect(screen.queryByText("Pipeline name")).toBeNull();
+
         const compactLayout = container.querySelector(
-            '[data-registration-layout="compact"]',
+            '[data-registration-layout="integrated"]',
         );
         const compactFields = Array.from(
             container.querySelectorAll<HTMLElement>(
@@ -48,19 +59,29 @@ describe("ResultRegistrationSummary", () => {
         );
 
         expect(compactLayout).toBeTruthy();
-        expect(compactLayout?.children).toHaveLength(3);
-        expect(compactFields).toHaveLength(3);
+        expect(compactFields).toHaveLength(6);
         expect(wideFields).toHaveLength(2);
+        expect(
+            compactFields.map((field) =>
+                field.getAttribute("data-registration-field"),
+            ),
+        ).toEqual([
+            "Pipeline version",
+            "Pipeline identifier",
+            "Run key",
+            "Requester",
+            "Operator",
+            "Registered",
+        ]);
 
         for (const field of compactFields) {
-            expect(field.className).toContain("border-b");
-            expect(field.className).not.toContain("rounded-[1.25rem]");
-            expect(field.className).not.toContain("bg-background/60");
+            expect(field.className).toContain("rounded-lg");
+            expect(field.className).toContain("bg-background/65");
         }
 
         for (const field of wideFields) {
-            expect(field.className).toContain("rounded-[1.25rem]");
-            expect(field.className).toContain("bg-background/60");
+            expect(field.className).toContain("rounded-lg");
+            expect(field.className).toContain("bg-background/65");
         }
     });
 });

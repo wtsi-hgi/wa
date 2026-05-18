@@ -18,38 +18,28 @@ type PreviewBorderSurfaceMetrics = {
     }[];
 };
 
-type GroupedShellVisualMetrics = {
+type RectMetrics = {
+    height: number;
+    width: number;
+    x: number;
+    y: number;
+};
+
+type ExpandedDirectoryBoxMetrics = {
     childGroupRect: {
         height: number;
         width: number;
         x: number;
         y: number;
     } | null;
-    connectorElbow: {
-        borderBottomStyle: string;
-        borderBottomWidth: number;
-        borderLeftStyle: string;
-        borderLeftWidth: number;
-        height: number;
-        width: number;
-    } | null;
-    connectorRail: {
-        backgroundImage: string;
-        height: number;
-        width: number;
-    } | null;
-    fileRowsRect: {
-        height: number;
-        width: number;
-        x: number;
-        y: number;
-    } | null;
-    shellRect: { height: number; width: number; x: number; y: number } | null;
-    shellSurface: {
-        backgroundImage: string;
-        borderStyle: string;
-        borderWidth: number;
-    } | null;
+    childIndentMarkerRect: RectMetrics | null;
+    contentBelongsToDirectoryRow: boolean;
+    contentRect: RectMetrics | null;
+    decorativeRailCount: number;
+    fileRowsRect: RectMetrics | null;
+    parentButtonRect: RectMetrics | null;
+    parentIndentMarkerRect: RectMetrics | null;
+    rowRect: RectMetrics | null;
 };
 
 async function openResultFileBrowser(page: Page) {
@@ -308,89 +298,98 @@ async function measurePreviewBorderSurfaces(
     });
 }
 
-async function measureGroupedShellVisuals(
-    groupContent: Locator,
-): Promise<GroupedShellVisualMetrics> {
-    return groupContent.evaluate((root) => {
-        const [connectorElbow, connectorRail, shellSurface] = Array.from(
-            root.children,
-        );
-        const fileRows = root.querySelector(
-            "[data-file-browser-directory-files]",
-        );
-        const childGroup = root.querySelector("[data-directory-group]");
-
-        function rectMetrics(element: Element | null) {
-            if (!(element instanceof HTMLElement)) {
-                return null;
+async function measureExpandedDirectoryBox(
+    page: Page,
+    directoryPath: string,
+    childDirectoryPath: string,
+): Promise<ExpandedDirectoryBoxMetrics> {
+    return page.evaluate(
+        ({ childDirectoryPath, directoryPath }) => {
+            function byData(attributeName: string, value: string) {
+                return document.querySelector(
+                    `[${attributeName}="${CSS.escape(value)}"]`,
+                );
             }
 
-            const rect = element.getBoundingClientRect();
+            const row = byData("data-directory-row", directoryPath);
+            const content = byData(
+                "data-directory-group-content",
+                directoryPath,
+            );
+            const parentButton = byData("data-directory-path", directoryPath);
+            const childButton = byData(
+                "data-directory-path",
+                childDirectoryPath,
+            );
+            const fileRows = byData(
+                "data-file-browser-directory-files",
+                directoryPath,
+            );
+            const childGroup = byData(
+                "data-directory-group",
+                childDirectoryPath,
+            );
 
-            return {
-                height: rect.height,
-                width: rect.width,
-                x: rect.x,
-                y: rect.y,
-            };
-        }
+            function rectMetrics(element: Element | null) {
+                if (!(element instanceof HTMLElement)) {
+                    return null;
+                }
 
-        function borderMetrics(element: Element | null) {
-            if (!(element instanceof HTMLElement)) {
-                return null;
+                const rect = element.getBoundingClientRect();
+
+                return {
+                    height: rect.height,
+                    width: rect.width,
+                    x: rect.x,
+                    y: rect.y,
+                };
             }
 
-            const styles = window.getComputedStyle(element);
-            const rect = element.getBoundingClientRect();
+            const decorativeRailCount = content
+                ? Array.from(content.querySelectorAll('[aria-hidden="true"]'))
+                      .filter((element) => element instanceof HTMLElement)
+                      .filter((element) => {
+                          const rect = element.getBoundingClientRect();
+                          const styles = window.getComputedStyle(element);
+                          const hasVisiblePaint =
+                              styles.backgroundImage !== "none" ||
+                              (Number.parseFloat(styles.borderLeftWidth) > 0 &&
+                                  styles.borderLeftStyle !== "none") ||
+                              (Number.parseFloat(styles.borderBottomWidth) >
+                                  0 &&
+                                  styles.borderBottomStyle !== "none");
+
+                          return (
+                              styles.display !== "none" &&
+                              styles.visibility !== "hidden" &&
+                              rect.height > 24 &&
+                              rect.width <= 2 &&
+                              hasVisiblePaint
+                          );
+                      }).length
+                : 0;
 
             return {
-                borderBottomStyle: styles.borderBottomStyle,
-                borderBottomWidth: Number.parseFloat(styles.borderBottomWidth),
-                borderLeftStyle: styles.borderLeftStyle,
-                borderLeftWidth: Number.parseFloat(styles.borderLeftWidth),
-                height: rect.height,
-                width: rect.width,
+                childGroupRect: rectMetrics(childGroup),
+                childIndentMarkerRect: rectMetrics(
+                    childButton?.children.item(0) ?? null,
+                ),
+                contentBelongsToDirectoryRow:
+                    row instanceof HTMLElement &&
+                    content instanceof HTMLElement &&
+                    row.contains(content),
+                contentRect: rectMetrics(content),
+                decorativeRailCount,
+                fileRowsRect: rectMetrics(fileRows),
+                parentButtonRect: rectMetrics(parentButton),
+                parentIndentMarkerRect: rectMetrics(
+                    parentButton?.children.item(0) ?? null,
+                ),
+                rowRect: rectMetrics(row),
             };
-        }
-
-        function shellSurfaceMetrics(element: Element | null) {
-            if (!(element instanceof HTMLElement)) {
-                return null;
-            }
-
-            const styles = window.getComputedStyle(element);
-
-            return {
-                backgroundImage: styles.backgroundImage,
-                borderStyle: styles.borderTopStyle,
-                borderWidth: Number.parseFloat(styles.borderTopWidth),
-            };
-        }
-
-        function railMetrics(element: Element | null) {
-            if (!(element instanceof HTMLElement)) {
-                return null;
-            }
-
-            const styles = window.getComputedStyle(element);
-            const rect = element.getBoundingClientRect();
-
-            return {
-                backgroundImage: styles.backgroundImage,
-                height: rect.height,
-                width: rect.width,
-            };
-        }
-
-        return {
-            childGroupRect: rectMetrics(childGroup),
-            connectorElbow: borderMetrics(connectorElbow ?? null),
-            connectorRail: railMetrics(connectorRail ?? null),
-            fileRowsRect: rectMetrics(fileRows),
-            shellRect: rectMetrics(root),
-            shellSurface: shellSurfaceMetrics(shellSurface ?? null),
-        };
-    });
+        },
+        { childDirectoryPath, directoryPath },
+    );
 }
 
 test.describe("File Browser single preview layout", () => {
@@ -633,12 +632,15 @@ test.describe("File Browser single preview layout", () => {
         expect(radiusMetrics?.imageRadius).toBe(radiusMetrics?.shellRadius);
     });
 
-    test("renders a visible grouped shell around an expanded nested folder's files and child folders", async ({
+    test("expands a directory as one enlarged row box without a left connector rail", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
         await selectDirectory(page, rnaseqImagesPath);
 
+        const directoryRow = page.locator(
+            `[data-directory-row="${rnaseqImagesPath}"]`,
+        );
         const groupContent = page.locator(
             `[data-directory-group-content="${rnaseqImagesPath}"]`,
         );
@@ -653,51 +655,64 @@ test.describe("File Browser single preview layout", () => {
         await expect(fileRows).toBeVisible();
         await expect(childGroup).toBeVisible();
 
-        const metrics = await measureGroupedShellVisuals(groupContent);
+        const metrics = await measureExpandedDirectoryBox(
+            page,
+            rnaseqImagesPath,
+            rnaseqGalleryPath,
+        );
 
         if (
-            !metrics.shellRect ||
-            !metrics.shellSurface ||
-            !metrics.connectorElbow ||
-            !metrics.connectorRail ||
+            !metrics.rowRect ||
+            !metrics.contentRect ||
             !metrics.fileRowsRect ||
-            !metrics.childGroupRect
+            !metrics.childGroupRect ||
+            !metrics.parentButtonRect ||
+            !metrics.parentIndentMarkerRect ||
+            !metrics.childIndentMarkerRect
         ) {
             throw new Error(
-                "Missing grouped shell metrics for browser assertion",
+                "Missing expanded directory metrics for browser assertion",
             );
         }
 
-        expect(metrics.shellSurface.borderWidth).toBeGreaterThan(0);
-        expect(metrics.shellSurface.borderStyle).not.toBe("none");
-        expect(metrics.shellSurface.backgroundImage).not.toBe("none");
+        expect(metrics.contentBelongsToDirectoryRow).toBe(true);
+        expect(metrics.decorativeRailCount).toBe(0);
 
-        expect(metrics.connectorElbow.borderLeftWidth).toBe(0);
-        expect(metrics.connectorElbow.borderBottomWidth).toBe(0);
-        expect(metrics.connectorElbow.width).toBe(0);
-        expect(metrics.connectorElbow.height).toBe(0);
+        expect(metrics.contentRect.x).toBeGreaterThanOrEqual(
+            metrics.rowRect.x + 8,
+        );
+        expect(metrics.contentRect.y).toBeGreaterThan(
+            metrics.parentButtonRect.y,
+        );
+        expect(
+            metrics.contentRect.y + metrics.contentRect.height,
+        ).toBeLessThanOrEqual(metrics.rowRect.y + metrics.rowRect.height + 1);
 
-        expect(metrics.connectorRail.width).toBeLessThanOrEqual(2);
-        expect(metrics.connectorRail.height).toBeGreaterThan(24);
-        expect(metrics.connectorRail.backgroundImage).not.toBe("none");
-
-        expect(metrics.fileRowsRect.x).toBeGreaterThan(metrics.shellRect.x);
-        expect(metrics.fileRowsRect.y).toBeGreaterThan(metrics.shellRect.y);
+        expect(metrics.fileRowsRect.x).toBeGreaterThanOrEqual(
+            metrics.contentRect.x - 1,
+        );
+        expect(metrics.fileRowsRect.y).toBeGreaterThan(metrics.contentRect.y);
         expect(
             metrics.fileRowsRect.x + metrics.fileRowsRect.width,
-        ).toBeLessThanOrEqual(metrics.shellRect.x + metrics.shellRect.width);
+        ).toBeLessThanOrEqual(
+            metrics.contentRect.x + metrics.contentRect.width + 1,
+        );
 
-        expect(metrics.childGroupRect.x).toBeGreaterThan(metrics.shellRect.x);
+        expect(metrics.childGroupRect.x).toBeGreaterThanOrEqual(
+            metrics.contentRect.x - 1,
+        );
         expect(metrics.childGroupRect.y).toBeGreaterThan(
             metrics.fileRowsRect.y,
         );
         expect(
             metrics.childGroupRect.x + metrics.childGroupRect.width,
-        ).toBeLessThanOrEqual(metrics.shellRect.x + metrics.shellRect.width);
+        ).toBeLessThanOrEqual(
+            metrics.contentRect.x + metrics.contentRect.width + 1,
+        );
 
-        expect(
-            metrics.shellRect.width - metrics.fileRowsRect.width,
-        ).toBeLessThan(96);
+        expect(metrics.childIndentMarkerRect.x).toBeGreaterThan(
+            metrics.parentIndentMarkerRect.x + 12,
+        );
     });
 
     test("places folder controls beneath the directory heading while keeping compact widgets on the same row surface", async ({
@@ -715,9 +730,9 @@ test.describe("File Browser single preview layout", () => {
             });
 
         const folderControls = filePreviewFolderControls.first();
-        const directoryRow = page.locator("[data-directory-row]").filter({
-            has: folderControls,
-        });
+        const directoryRow = page
+            .locator(`[data-directory-row="${rnaseqGalleryPath}"]`)
+            .first();
         const directoryButton = directoryRow
             .locator("button[data-directory-path]")
             .first();

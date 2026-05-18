@@ -6,6 +6,7 @@ type ResultMetadataProps = {
     errors?: Record<string, "not_found" | "upstream_impaired">;
     loading?: Record<string, boolean>;
     metadata: Record<string, string>;
+    variant?: "section" | "integrated";
 };
 
 function isSeqmetaKey(key: string): boolean {
@@ -21,8 +22,69 @@ export function ResultMetadata({
     errors = {},
     loading = {},
     metadata,
+    variant = "section",
 }: ResultMetadataProps) {
     const entries = Object.entries(metadata);
+
+    if (variant === "integrated") {
+        return (
+            <div className="space-y-3" data-result-metadata-layout="integrated">
+                <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-foreground">
+                        Metadata
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                        {entries.length} {entries.length === 1 ? "key" : "keys"}
+                    </p>
+                </div>
+
+                {entries.length === 0 ? (
+                    <p className="rounded-lg border border-border/60 bg-background/65 px-3 py-2 text-sm text-muted-foreground">
+                        No metadata
+                    </p>
+                ) : (
+                    <dl className="grid max-h-72 gap-2 overflow-auto pr-1">
+                        {entries.map(([key, value]) => (
+                            <div
+                                key={key}
+                                className="min-w-0 rounded-lg border border-border/60 bg-background/65 px-3 py-2"
+                                data-metadata-row={key}
+                            >
+                                <dt className="break-all font-mono text-xs text-muted-foreground">
+                                    {key}
+                                </dt>
+                                <dd className="mt-1 min-w-0">
+                                    {isSeqmetaKey(key) ? (
+                                        <SeqmetaBadge
+                                            metadataKey={key}
+                                            rawValue={value}
+                                            enrichment={
+                                                enrichments[
+                                                    seqmetaLookupKey(value)
+                                                ] ?? null
+                                            }
+                                            error={
+                                                errors[seqmetaLookupKey(value)]
+                                            }
+                                            loading={Boolean(
+                                                loading[
+                                                    seqmetaLookupKey(value)
+                                                ],
+                                            )}
+                                        />
+                                    ) : (
+                                        <span className="break-all text-sm text-foreground">
+                                            {value}
+                                        </span>
+                                    )}
+                                </dd>
+                            </div>
+                        ))}
+                    </dl>
+                )}
+            </div>
+        );
+    }
 
     return (
         <section className="rounded-[1.75rem] border border-border/70 bg-card/85 p-6 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">

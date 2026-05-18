@@ -3,7 +3,7 @@
 import { createElement } from "react";
 import { act } from "react";
 import { hydrateRoot } from "react-dom/client";
-import { renderToString } from "react-dom/server";
+import { renderToStaticMarkup, renderToString } from "react-dom/server";
 import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -268,6 +268,110 @@ describe("O1 result detail hydration", () => {
         await act(async () => {
             root?.unmount();
         });
+    });
+
+    it("integrates registration and metadata in the top result detail summary without duplicated identity fields", async () => {
+        const result = {
+            ...buildResultSet(),
+            metadata: {
+                library: "exon",
+                seqmeta_studyid: "6568",
+                study: "study-alpha",
+            },
+        };
+
+        fetchFilesMock.mockResolvedValue([buildFile("/results/a/report.csv")]);
+        fetchResultMock.mockResolvedValue(result);
+        enrichSeqmetaMetadataBatchMock.mockResolvedValue({
+            enrichments: {},
+            errors: {},
+        });
+        buildCachedEnrichmentStateMock.mockReturnValue({
+            enrichments: {},
+            errors: {},
+        });
+        collectSeqmetaValuesMock.mockReturnValue(["6568"]);
+        hasUsableSeqmetaCacheEntryMock.mockReturnValue(false);
+        mergeSeqmetaEnrichmentStateMock.mockImplementation(
+            (base, override) => ({
+                enrichments: {
+                    ...base.enrichments,
+                    ...override?.enrichments,
+                },
+                errors: {
+                    ...base.errors,
+                    ...override?.errors,
+                },
+            }),
+        );
+
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
+        const Page = pageModule.ResultDetailPageContent;
+        const markup = renderToStaticMarkup(
+            await Page({
+                id: "result-1",
+            }),
+        );
+        const container = document.createElement("div");
+
+        container.innerHTML = markup;
+
+        const detailSummary = container.querySelector<HTMLElement>(
+            '[data-result-detail-summary="true"]',
+        );
+        const registrationLabels = Array.from(
+            detailSummary?.querySelectorAll<HTMLElement>(
+                "[data-registration-field], [data-registration-wide-field]",
+            ) ?? [],
+        ).map(
+            (field) =>
+                field.getAttribute("data-registration-field") ??
+                field.getAttribute("data-registration-wide-field"),
+        );
+        const metadataKeys = Array.from(
+            detailSummary?.querySelectorAll<HTMLElement>(
+                "[data-metadata-row]",
+            ) ?? [],
+        ).map((row) => row.getAttribute("data-metadata-row"));
+
+        expect(detailSummary).not.toBeNull();
+        expect(
+            detailSummary?.querySelector(
+                '[data-registration-layout="integrated"]',
+            ),
+        ).not.toBeNull();
+        expect(
+            detailSummary?.querySelector(
+                '[data-result-metadata-layout="integrated"]',
+            ),
+        ).not.toBeNull();
+        expect(registrationLabels).toEqual([
+            "Pipeline version",
+            "Pipeline identifier",
+            "Run key",
+            "Requester",
+            "Operator",
+            "Registered",
+            "Last updated",
+            "Output directory",
+            "Command",
+        ]);
+        expect(registrationLabels).not.toContain("Result ID");
+        expect(registrationLabels).not.toContain("Pipeline name");
+        expect(metadataKeys).toEqual(["library", "seqmeta_studyid", "study"]);
+        expect(detailSummary?.textContent).toContain("exon");
+        expect(detailSummary?.textContent).toContain("6568");
+        expect(detailSummary?.textContent).toContain("study-alpha");
+        expect(container.querySelector("[data-result-id-copy]")).not.toBeNull();
+        expect(container.querySelector("h1")?.textContent).toContain(
+            "nf-core/rnaseq",
+        );
+        expect(
+            container.querySelector('[data-registration-layout="compact"]'),
+        ).toBeNull();
+        expect(markup).not.toMatch(/>Registration</);
+        expect(markup).not.toMatch(/>Result metadata</);
     });
 
     it("renders the detail page without waiting for server-side seqmeta enrichment", async () => {

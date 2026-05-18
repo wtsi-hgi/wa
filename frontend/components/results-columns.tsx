@@ -26,7 +26,7 @@ function SortableHeader({ columnId, label, onSort }: SortableHeaderProps) {
             onClick={onSort}
         >
             <span>{label}</span>
-            <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
+            <ArrowUpDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         </button>
     );
 }

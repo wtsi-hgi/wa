@@ -6,6 +6,44 @@ function recentRows(page: Page): Locator {
     return page.locator('tbody tr[data-result-row="true"]');
 }
 
+type SortIconMetric = {
+    columnId: string;
+    flexShrink: string;
+    height: number;
+    width: number;
+};
+
+async function collectRecentSortIconMetrics(
+    page: Page,
+): Promise<SortIconMetric[]> {
+    const sortButtons = page.locator("button[data-column-sort]");
+
+    await expect(sortButtons).toHaveCount(4);
+
+    return sortButtons.evaluateAll((elements) =>
+        elements.map((element) => {
+            const button = element as HTMLElement;
+            const svg = button.querySelector("svg");
+
+            if (!(svg instanceof SVGElement)) {
+                throw new Error(
+                    `Missing sort icon for ${button.dataset.columnSort ?? "unknown column"}`,
+                );
+            }
+
+            const rect = svg.getBoundingClientRect();
+            const computed = window.getComputedStyle(svg);
+
+            return {
+                columnId: button.dataset.columnSort ?? "",
+                flexShrink: computed.flexShrink,
+                height: rect.height,
+                width: rect.width,
+            };
+        }),
+    );
+}
+
 async function addRequesterFilter(
     page: Page,
     requester: string,
@@ -269,6 +307,40 @@ test.describe("Q1 critical results flows", () => {
         await expect(rows).toHaveCount(4);
     });
 
+    test("keeps recent registration sort icons at a stable size on narrow screens", async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 390, height: 900 });
+        await page.goto("/");
+
+        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(recentRows(page)).toHaveCount(4);
+
+        const metrics = await collectRecentSortIconMetrics(page);
+
+        expect(metrics.map((metric) => metric.columnId)).toEqual([
+            "pipeline_name",
+            "requester",
+            "created_at",
+            "output_directory",
+        ]);
+
+        for (const metric of metrics) {
+            expect(metric.width, `${metric.columnId} icon width`).toBeCloseTo(
+                14,
+                1,
+            );
+            expect(metric.height, `${metric.columnId} icon height`).toBeCloseTo(
+                14,
+                1,
+            );
+            expect(
+                metric.flexShrink,
+                `${metric.columnId} icon flex-shrink`,
+            ).toBe("0");
+        }
+    });
+
     test("filters results by requester through the search builder", async ({
         page,
     }) => {
@@ -354,11 +426,37 @@ test.describe("Q1 critical results flows", () => {
         await expect(
             page.getByRole("heading", { level: 1, name: rnaseqPipelineName }),
         ).toBeVisible();
+        const detailSummary = page.locator(
+            '[data-result-detail-summary="true"]',
+        );
+
+        await expect(detailSummary).toBeVisible();
         await expect(
-            page.locator('[data-metadata-row="seqmeta_studyid"]'),
+            detailSummary.locator('[data-registration-layout="integrated"]'),
+        ).toBeVisible();
+        await expect(
+            detailSummary.locator('[data-result-metadata-layout="integrated"]'),
+        ).toBeVisible();
+        await expect(
+            page.locator('[data-registration-layout="compact"]'),
+        ).toHaveCount(0);
+        await expect(
+            detailSummary.locator('[data-registration-field="Result ID"]'),
+        ).toHaveCount(0);
+        await expect(
+            detailSummary.locator('[data-registration-field="Pipeline name"]'),
+        ).toHaveCount(0);
+        await expect(
+            page.getByText("Registration", { exact: true }),
+        ).toHaveCount(0);
+        await expect(
+            page.getByText("Result metadata", { exact: true }),
+        ).toHaveCount(0);
+        await expect(
+            detailSummary.locator('[data-metadata-row="seqmeta_studyid"]'),
         ).toContainText("6568");
         await expect(
-            page.locator('[data-metadata-row="library"]'),
+            detailSummary.locator('[data-metadata-row="library"]'),
         ).toContainText("exon");
     });
 
