@@ -250,7 +250,7 @@ describe("K1 filter builder component", () => {
                 seqmetaAvailable: true,
                 studies: [],
                 suggestionValues: {
-                    seqmeta_libraryid: ["71046409"],
+                    seqmeta_library_id: ["71046409"],
                 },
             }),
         );
@@ -262,7 +262,7 @@ describe("K1 filter builder component", () => {
         });
         fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
-        expect(pushMock).toHaveBeenCalledWith("/?seqmeta_libraryid=71046409");
+        expect(pushMock).toHaveBeenCalledWith("/?seqmeta_library_id=71046409");
     });
 
     it("shows library filter help warning about the first call and wa mlwh sync", async () => {

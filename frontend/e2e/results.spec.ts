@@ -206,9 +206,13 @@ async function openSeqmetaDetailsDialog(
     page: Page,
     metadataKey: string,
 ): Promise<Locator> {
+    const displayKey =
+        metadataKey === "seqmeta_studyid"
+            ? "seqmeta_id_study_lims"
+            : metadataKey;
     const metadataRow = page.locator(`[data-metadata-row="${metadataKey}"]`);
     const trigger = metadataRow.getByRole("button", {
-        name: new RegExp(`Open ${metadataKey} details`, "i"),
+        name: new RegExp(`Open ${displayKey} details`, "i"),
     });
 
     await expect(trigger).toBeVisible();

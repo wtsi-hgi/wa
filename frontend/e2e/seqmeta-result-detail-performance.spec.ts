@@ -100,7 +100,9 @@ test("renders five seqmeta result metadata details in under one second", async (
 
         await page
             .locator('[data-metadata-row="seqmeta_studyid"]')
-            .getByRole("button", { name: /Open seqmeta_studyid details/i })
+            .getByRole("button", {
+                name: /Open seqmeta_id_study_lims details/i,
+            })
             .click();
 
         const dialog = page.getByRole("dialog");

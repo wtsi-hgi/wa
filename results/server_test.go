@@ -237,6 +237,27 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-study-alias-match")
 	})
 
+	convey.Convey("Bug 3: Given GET /results?study=6568, then MLWH-named study metadata is matched by the combined Study field", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-lims-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_id_study_lims": "6568"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-lims-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_id_study_lims": "9999"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?study=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-study-lims-match")
+	})
+
 	convey.Convey("Bug 3: Given GET /results?sample=SMP1001, then metadata aliases like seqmeta_sample_lims are matched by the combined Sample field", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-alias-match", func(reg *Registration) {
@@ -256,6 +277,27 @@ func TestServerGetResults(t *testing.T) {
 
 		convey.So(results, convey.ShouldHaveLength, 1)
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-alias-match")
+	})
+
+	convey.Convey("Bug 3: Given GET /results?sample=SANG1001, then MLWH-named sample metadata is matched by the combined Sample field", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG1001"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG1002"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?sample=SANG1001", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-name-match")
 	})
 
 	convey.Convey("E2.2: Given GET /results?meta_library=exon, then only result sets with metadata key library equal to exon are returned", t, func() {

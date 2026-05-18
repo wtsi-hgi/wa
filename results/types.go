@@ -55,15 +55,55 @@ var (
 	ErrSeqmetaRejected = errors.New("results: seqmeta validation failed")
 )
 
+const (
+	// SeqmetaIDRunKey stores an MLWH id_run value.
+	SeqmetaIDRunKey = "seqmeta_id_run"
+	// SeqmetaIDStudyLimsKey stores an MLWH id_study_lims value.
+	SeqmetaIDStudyLimsKey = "seqmeta_id_study_lims"
+	// SeqmetaSampleNameKey stores the MLWH sample name value used as the
+	// canonical sample identity for sample-scoped result metadata.
+	SeqmetaSampleNameKey = "seqmeta_name"
+	// SeqmetaIDSampleLimsKey stores an MLWH id_sample_lims value.
+	SeqmetaIDSampleLimsKey = "seqmeta_id_sample_lims"
+	// SeqmetaSangerSampleIDKey stores an MLWH sanger_sample_id value.
+	SeqmetaSangerSampleIDKey = "seqmeta_sanger_sample_id"
+	// SeqmetaPipelineIDLimsKey stores an MLWH pipeline_id_lims value.
+	SeqmetaPipelineIDLimsKey = "seqmeta_pipeline_id_lims"
+	// SeqmetaLibraryIDKey stores an MLWH library_id value.
+	SeqmetaLibraryIDKey = "seqmeta_library_id"
+	// SeqmetaIDLibraryLimsKey stores an MLWH id_library_lims value.
+	SeqmetaIDLibraryLimsKey = "seqmeta_id_library_lims"
+
+	// Legacy seqmeta keys remain supported for existing result databases and
+	// URLs, but new registrations use the MLWH-named keys above.
+	LegacySeqmetaRunIDKey       = "seqmeta_runid"
+	LegacySeqmetaStudyIDKey     = "seqmeta_studyid"
+	LegacySeqmetaSampleIDKey    = "seqmeta_sampleid"
+	LegacySeqmetaSampleLimsKey  = "seqmeta_sample_lims"
+	LegacySeqmetaLibraryKey     = "seqmeta_library"
+	LegacySeqmetaLibraryIDKey   = "seqmeta_libraryid"
+	LegacySeqmetaLibraryLimsKey = "seqmeta_library_lims"
+	LegacySeqmetaLibraryTypeKey = "seqmeta_librarytype"
+)
+
 // SeqmetaFieldTypes maps metadata key suffixes to expected seqmeta identifier types.
 var SeqmetaFieldTypes = map[string]string{
-	"runid":        "run_id",
-	"studyid":      "study_id",
-	"sampleid":     "sanger_sample_id",
-	"library":      "library_type",
-	"libraryid":    "library_id",
-	"library_lims": "id_library_lims",
-	"librarytype":  "library_type",
+	"id_run":           "run_id",
+	"runid":            "run_id",
+	"id_study_lims":    "study_lims_id",
+	"studyid":          "study_lims_id",
+	"name":             "sanger_sample_name",
+	"sampleid":         "sanger_sample_name",
+	"id_sample_lims":   "sample_lims_id",
+	"sample_lims":      "sample_lims_id",
+	"sanger_sample_id": "sanger_sample_id",
+	"library":          "library_type",
+	"library_id":       "library_id",
+	"libraryid":        "library_id",
+	"id_library_lims":  "id_library_lims",
+	"library_lims":     "id_library_lims",
+	"librarytype":      "library_type",
+	"pipeline_id_lims": "library_type",
 }
 
 // ResultSet is the core domain object returned by queries.

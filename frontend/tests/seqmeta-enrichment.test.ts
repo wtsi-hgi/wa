@@ -1095,7 +1095,7 @@ describe("H3 enrichment state and badge", () => {
 
         expect(
             screen.getByText(
-                "Upstream services were unavailable while resolving this study identifier value.",
+                "Upstream services were unavailable while resolving this study lims id value.",
             ),
         ).toBeTruthy();
     });
@@ -1179,9 +1179,9 @@ describe("H3 enrichment state and badge", () => {
             .map((el) => el.getAttribute("data-seqmeta-detail-key"))
             .filter(Boolean);
 
-        expect(directKeys).toContain("sample_name");
-        expect(directKeys).toContain("seqmeta_sample_lims");
-        expect(directKeys).toContain("sample_accession_number");
+        expect(directKeys).toContain("seqmeta_name");
+        expect(directKeys).toContain("seqmeta_id_sample_lims");
+        expect(directKeys).toContain("seqmeta_accession_number");
 
         expect(relatedKeys).toContain("study");
         expect(relatedKeys).toContain("library");

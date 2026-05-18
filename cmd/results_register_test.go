@@ -499,11 +499,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
-			"seqmeta_runid": "48522",
+			"seqmeta_id_run": "48522",
 		})
 	})
 
-	convey.Convey("E1.4: Given --study/--run/--library/--sample together, when all mlwh resolvers succeed, then register stores canonical seqmeta metadata entries", t, func() {
+	convey.Convey("E1.4: Given --study/--run/--library/--sample together, when all mlwh resolvers succeed, then register stores MLWH-named seqmeta metadata entries", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
@@ -566,10 +566,10 @@ func TestResultsRegisterCommand(t *testing.T) {
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
-			"seqmeta_runid":       "12345",
-			"seqmeta_studyid":     "6568",
-			"seqmeta_sampleid":    "7607STDY14643771",
-			"seqmeta_librarytype": "Standard",
+			"seqmeta_id_run":           "12345",
+			"seqmeta_id_study_lims":    "6568",
+			"seqmeta_name":             "7607STDY14643771",
+			"seqmeta_pipeline_id_lims": "Standard",
 		})
 	})
 
@@ -635,8 +635,8 @@ func TestResultsRegisterCommand(t *testing.T) {
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
-			"seqmeta_libraryid":   "71046409",
-			"seqmeta_librarytype": "Custom",
+			"seqmeta_library_id":       "71046409",
+			"seqmeta_pipeline_id_lims": "Custom",
 		})
 	})
 
@@ -724,11 +724,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
-		convey.So(registration.Metadata["seqmeta_libraryid"], convey.ShouldEqual, "71046409")
-		convey.So(registration.Metadata["seqmeta_librarytype"], convey.ShouldEqual, "Custom")
+		convey.So(registration.Metadata["seqmeta_library_id"], convey.ShouldEqual, "71046409")
+		convey.So(registration.Metadata["seqmeta_pipeline_id_lims"], convey.ShouldEqual, "Custom")
 	})
 
-	convey.Convey("E1.1: Given --sample 7607STDY14643771, when ResolveSample returns a canonical match, then register stores seqmeta_sampleid", t, func() {
+	convey.Convey("E1.1: Given --sample 7607STDY14643771, when ResolveSample returns a canonical match, then register stores seqmeta_name", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
@@ -774,7 +774,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(stderr.String(), convey.ShouldBeBlank)
-		convey.So((<-registrationCh).Metadata["seqmeta_sampleid"], convey.ShouldEqual, "7607STDY14643771")
+		convey.So((<-registrationCh).Metadata["seqmeta_name"], convey.ShouldEqual, "7607STDY14643771")
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 	})
 
@@ -829,7 +829,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(stderr.String(), convey.ShouldBeBlank)
-		convey.So((<-registrationCh).Metadata["seqmeta_sampleid"], convey.ShouldEqual, "7607STDY14643771")
+		convey.So((<-registrationCh).Metadata["seqmeta_name"], convey.ShouldEqual, "7607STDY14643771")
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 	})
 

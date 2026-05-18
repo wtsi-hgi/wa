@@ -18,6 +18,7 @@ import type {
     LibraryDetail,
     MissingHop,
 } from "@/lib/contracts";
+import { canonicalSeqmetaKey } from "@/lib/seqmeta-keys";
 import { fetchLibrarySamples } from "@/lib/seqmeta-enrichment";
 import { cn } from "@/lib/utils";
 
@@ -96,6 +97,10 @@ function asString(value: unknown): string | null {
     return typeof value === "string" && value.trim() ? value : null;
 }
 
+function seqmetaDisplayKey(metadataKey: string): string {
+    return canonicalSeqmetaKey(metadataKey);
+}
+
 function humanizeToken(token: string): string {
     return token
         .split("_")
@@ -115,30 +120,35 @@ function humanizeToken(token: string): string {
 }
 
 function metadataLabel(metadataKey: string): string {
-    const trimmedKey = metadataKey.replace(/^seqmeta_/, "");
+    const displayKey = seqmetaDisplayKey(metadataKey);
+    const trimmedKey = displayKey.replace(/^seqmeta_/, "");
 
-    if (trimmedKey === "libraryid") {
+    if (trimmedKey === "library_id") {
         return "Library ID";
     }
 
-    if (trimmedKey === "library_lims") {
+    if (trimmedKey === "id_library_lims") {
         return "Library LIMS ID";
     }
 
-    if (trimmedKey === "library" || trimmedKey === "librarytype") {
+    if (trimmedKey === "pipeline_id_lims") {
         return "Library type";
     }
 
-    if (trimmedKey === "sampleid") {
+    if (trimmedKey === "name") {
+        return "Sample name";
+    }
+
+    if (trimmedKey === "sanger_sample_id") {
         return "Sanger sample ID";
     }
 
-    if (trimmedKey === "sample_lims") {
+    if (trimmedKey === "id_sample_lims") {
         return "Sample LIMS ID";
     }
 
-    if (trimmedKey === "studyid") {
-        return "Study identifier";
+    if (trimmedKey === "id_study_lims") {
+        return "Study LIMS ID";
     }
 
     if (trimmedKey === "study_accession") {
@@ -149,11 +159,13 @@ function metadataLabel(metadataKey: string): string {
 }
 
 function metadataLabelForSentence(metadataKey: string): string {
-    if (metadataKey === "seqmeta_libraryid") {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
+    if (displayKey === "seqmeta_library_id") {
         return "library ID";
     }
 
-    if (metadataKey === "seqmeta_library_lims") {
+    if (displayKey === "seqmeta_id_library_lims") {
         return "library LIMS ID";
     }
 
@@ -161,26 +173,27 @@ function metadataLabelForSentence(metadataKey: string): string {
 }
 
 function isLibraryMetadataKey(metadataKey: string): boolean {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
     return (
-        metadataKey === "seqmeta_library" ||
-        metadataKey === "seqmeta_libraryid" ||
-        metadataKey === "seqmeta_library_lims" ||
-        metadataKey === "seqmeta_librarytype"
+        displayKey === "seqmeta_pipeline_id_lims" ||
+        displayKey === "seqmeta_library_id" ||
+        displayKey === "seqmeta_id_library_lims"
     );
 }
 
 function directLibraryMetadataKey(metadataKey: string): string {
-    if (metadataKey === "seqmeta_libraryid") {
-        return "seqmeta_libraryid";
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
+    if (displayKey === "seqmeta_library_id") {
+        return "seqmeta_library_id";
     }
 
-    if (metadataKey === "seqmeta_library_lims") {
-        return "seqmeta_library_lims";
+    if (displayKey === "seqmeta_id_library_lims") {
+        return "seqmeta_id_library_lims";
     }
 
-    return metadataKey === "seqmeta_librarytype"
-        ? "seqmeta_librarytype"
-        : "seqmeta_library";
+    return "seqmeta_pipeline_id_lims";
 }
 
 function copiedStateKey(fieldKey: string, fieldValue: string): string {
@@ -188,29 +201,29 @@ function copiedStateKey(fieldKey: string, fieldValue: string): string {
 }
 
 function titleFilterSearchKey(metadataKey: string): string | null {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
     if (
-        metadataKey === "seqmeta_studyid" ||
+        displayKey === "seqmeta_id_study_lims" ||
         metadataKey === "seqmeta_study_accession"
     ) {
         return "study";
     }
 
     if (
-        metadataKey === "seqmeta_sampleid" ||
-        metadataKey === "seqmeta_sample_lims"
+        displayKey === "seqmeta_name" ||
+        displayKey === "seqmeta_sanger_sample_id" ||
+        displayKey === "seqmeta_id_sample_lims"
     ) {
         return "sample";
     }
 
-    if (
-        metadataKey === "seqmeta_library" ||
-        metadataKey === "seqmeta_librarytype"
-    ) {
+    if (displayKey === "seqmeta_pipeline_id_lims") {
         return "library";
     }
 
-    if (metadataKey.startsWith("seqmeta_")) {
-        return metadataKey;
+    if (displayKey.startsWith("seqmeta_")) {
+        return displayKey;
     }
 
     return null;
@@ -225,6 +238,27 @@ function titleFilterHref(metadataKey: string, rawValue: string): string | null {
     }
 
     return `/?${new URLSearchParams({ [searchKey]: value }).toString()}`;
+}
+
+function isStudyMetadataKey(metadataKey: string): boolean {
+    return (
+        seqmetaDisplayKey(metadataKey) === "seqmeta_id_study_lims" ||
+        metadataKey === "seqmeta_study_accession"
+    );
+}
+
+function isRunMetadataKey(metadataKey: string): boolean {
+    return seqmetaDisplayKey(metadataKey) === "seqmeta_id_run";
+}
+
+function isSampleMetadataKey(metadataKey: string): boolean {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
+    return (
+        displayKey === "seqmeta_name" ||
+        displayKey === "seqmeta_sanger_sample_id" ||
+        displayKey === "seqmeta_id_sample_lims"
+    );
 }
 
 function primaryLabel(
@@ -265,12 +299,12 @@ function librarySearchTarget(
 ): LibrarySearchTarget {
     const libraryId = asString(library.libraryId);
     if (libraryId) {
-        return { key: "seqmeta_libraryid", value: libraryId };
+        return { key: "seqmeta_library_id", value: libraryId };
     }
 
     const libraryLimsId = asString(library.idLibraryLims);
     if (libraryLimsId) {
-        return { key: "seqmeta_library_lims", value: libraryLimsId };
+        return { key: "seqmeta_id_library_lims", value: libraryLimsId };
     }
 
     return { key: "library", value: library.libraryType };
@@ -531,11 +565,13 @@ function libraryMatchesMetadataValue(
         return false;
     }
 
-    if (metadataKey === "seqmeta_libraryid") {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
+    if (displayKey === "seqmeta_library_id") {
         return library.libraryId?.toLowerCase() === value;
     }
 
-    if (metadataKey === "seqmeta_library_lims") {
+    if (displayKey === "seqmeta_id_library_lims") {
         return library.idLibraryLims?.toLowerCase() === value;
     }
 
@@ -699,7 +735,7 @@ function sampleCopyStateKey(sample: EnrichmentSample, index?: number): string {
               ].join("|")
             : librarySampleKey(sample, index);
 
-    return copiedStateKey("seqmeta_sampleid", identity);
+    return copiedStateKey("seqmeta_name", identity);
 }
 
 function humanizeMissingHop(missing: MissingHop): string {
@@ -748,6 +784,7 @@ function appendDetailField(
         if (
             rawValue &&
             field.group === "direct" &&
+            field.key === seqmetaDisplayKey(metadataKey ?? "") &&
             value.toLowerCase() === rawValue.trim().toLowerCase()
         ) {
             return;
@@ -769,13 +806,9 @@ function buildDetailFields(
     }
 
     const libraryMetadata = isLibraryMetadataKey(metadataKey);
-    const studyMetadata =
-        metadataKey === "seqmeta_studyid" ||
-        metadataKey === "seqmeta_study_accession";
-    const runMetadata = metadataKey === "seqmeta_runid";
-    const sampleMetadata =
-        metadataKey === "seqmeta_sampleid" ||
-        metadataKey === "seqmeta_sample_lims";
+    const studyMetadata = isStudyMetadataKey(metadataKey);
+    const runMetadata = isRunMetadataKey(metadataKey);
+    const sampleMetadata = isSampleMetadataKey(metadataKey);
 
     // Study detail modals should never synthesize flat sample/library rows.
     // This avoids stale cached study responses rendering misleading legacy rows.
@@ -786,7 +819,7 @@ function buildDetailFields(
             fields,
             enrichment.graph.study?.name
                 ? {
-                      key: "study_name",
+                      key: "seqmeta_name",
                       label: "Study name",
                       value: enrichment.graph.study.name,
                       group: studyMetadata ? "direct" : "related",
@@ -799,8 +832,8 @@ function buildDetailFields(
             fields,
             enrichment.graph.study?.id_study_lims
                 ? {
-                      key: "study_id",
-                      label: "Study identifier",
+                      key: "seqmeta_id_study_lims",
+                      label: "Study LIMS ID",
                       searchKey: "study",
                       value: enrichment.graph.study.id_study_lims,
                       group: studyMetadata ? "direct" : "related",
@@ -813,7 +846,7 @@ function buildDetailFields(
             fields,
             enrichment.graph.study?.accession_number
                 ? {
-                      key: "study_accession_number",
+                      key: "seqmeta_accession_number",
                       label: "Study accession",
                       value: enrichment.graph.study.accession_number,
                       group: studyMetadata ? "direct" : "related",
@@ -829,7 +862,7 @@ function buildDetailFields(
                 fields,
                 enrichment.graph.sample?.sample_name
                     ? {
-                          key: "sample_name",
+                          key: "seqmeta_name",
                           label: "Sample name",
                           value: enrichment.graph.sample.sample_name,
                           group: sampleMetadata ? "direct" : "related",
@@ -842,7 +875,7 @@ function buildDetailFields(
                 fields,
                 enrichment.graph.sample?.sanger_id
                     ? {
-                          key: "seqmeta_sampleid",
+                          key: "seqmeta_sanger_sample_id",
                           label: "Sanger sample ID",
                           searchKey: "sample",
                           value: enrichment.graph.sample.sanger_id,
@@ -856,7 +889,7 @@ function buildDetailFields(
                 fields,
                 enrichment.graph.sample?.id_sample_lims
                     ? {
-                          key: "seqmeta_sample_lims",
+                          key: "seqmeta_id_sample_lims",
                           label: "Sample LIMS ID",
                           searchKey: "sample",
                           value: enrichment.graph.sample.id_sample_lims,
@@ -870,7 +903,7 @@ function buildDetailFields(
                 fields,
                 enrichment.graph.sample?.accession_number
                     ? {
-                          key: "sample_accession_number",
+                          key: "seqmeta_accession_number",
                           label: "Sample accession",
                           value: enrichment.graph.sample.accession_number,
                           group: sampleMetadata ? "direct" : "related",
@@ -889,9 +922,10 @@ function buildDetailFields(
             enrichment,
         );
         const rawLibraryValue = rawValue.trim().toLowerCase();
+        const displayKey = seqmetaDisplayKey(metadataKey);
         const showExactLibraryFields =
-            metadataKey === "seqmeta_libraryid" ||
-            metadataKey === "seqmeta_library_lims" ||
+            displayKey === "seqmeta_library_id" ||
+            displayKey === "seqmeta_id_library_lims" ||
             library?.libraryId?.toLowerCase() === rawLibraryValue ||
             library?.idLibraryLims?.toLowerCase() === rawLibraryValue;
 
@@ -899,7 +933,7 @@ function buildDetailFields(
             fields,
             library?.libraryType
                 ? {
-                      key: "seqmeta_librarytype",
+                      key: "seqmeta_pipeline_id_lims",
                       label: "Library type",
                       searchKey: "library",
                       value: library.libraryType,
@@ -913,9 +947,9 @@ function buildDetailFields(
             fields,
             showExactLibraryFields && library?.libraryId
                 ? {
-                      key: "seqmeta_libraryid",
+                      key: "seqmeta_library_id",
                       label: "Library ID",
-                      searchKey: "seqmeta_libraryid",
+                      searchKey: "seqmeta_library_id",
                       value: library.libraryId,
                       group: "direct",
                   }
@@ -927,9 +961,9 @@ function buildDetailFields(
             fields,
             showExactLibraryFields && library?.idLibraryLims
                 ? {
-                      key: "seqmeta_library_lims",
+                      key: "seqmeta_id_library_lims",
                       label: "Library LIMS ID",
-                      searchKey: "seqmeta_library_lims",
+                      searchKey: "seqmeta_id_library_lims",
                       value: library.idLibraryLims,
                       group: "direct",
                   }
@@ -953,7 +987,7 @@ function buildDetailFields(
             appendDetailField(
                 fields,
                 {
-                    key: "seqmeta_library",
+                    key: "seqmeta_pipeline_id_lims",
                     label: "Library type",
                     searchKey: "library",
                     value: libraryType,
@@ -1030,14 +1064,10 @@ function buildHierarchicalGroups(
     }
 
     const groups: HierarchicalGroup[] = [];
-    const studyMetadata =
-        metadataKey === "seqmeta_studyid" ||
-        metadataKey === "seqmeta_study_accession";
+    const studyMetadata = isStudyMetadataKey(metadataKey);
     const libraryMetadata = isLibraryMetadataKey(metadataKey);
-    const runMetadata = metadataKey === "seqmeta_runid";
-    const sampleMetadata =
-        metadataKey === "seqmeta_sampleid" ||
-        metadataKey === "seqmeta_sample_lims";
+    const runMetadata = isRunMetadataKey(metadataKey);
+    const sampleMetadata = isSampleMetadataKey(metadataKey);
     const hasGroup = (type: HierarchicalGroup["type"]) =>
         groups.some((group) => group.type === type);
 
@@ -1333,7 +1363,11 @@ export function SeqmetaBadge({
     const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(
         new Set(),
     );
-    const titleCopyKey = copiedStateKey(`title:${metadataKey}`, inlineLabel);
+    const titleMetadataKey = seqmetaDisplayKey(metadataKey);
+    const titleCopyKey = copiedStateKey(
+        `title:${titleMetadataKey}`,
+        inlineLabel,
+    );
     const titleHref = titleFilterHref(metadataKey, rawValue);
     const detailFields = useMemo(
         () =>
@@ -1482,7 +1516,7 @@ export function SeqmetaBadge({
                     type="button"
                     aria-expanded={dialogOpen}
                     aria-haspopup="dialog"
-                    aria-label={`Open ${metadataKey} details`}
+                    aria-label={`Open ${titleMetadataKey} details`}
                     data-testid="seqmeta-badge-trigger"
                     className={cn(
                         "inline-flex max-w-full cursor-pointer items-center rounded-full border border-border/80 px-3 py-1 text-left text-xs font-medium tracking-[0.16em] transition hover:border-primary/45 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
@@ -1560,7 +1594,7 @@ export function SeqmetaBadge({
                                     >
                                         <button
                                             type="button"
-                                            aria-label={`Copy ${metadataKey}`}
+                                            aria-label={`Copy ${titleMetadataKey}`}
                                             className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                             onClick={() => {
                                                 void writeClipboard(
@@ -1584,7 +1618,7 @@ export function SeqmetaBadge({
                                         </button>
                                         {titleHref ? (
                                             <Link
-                                                aria-label={`Send ${metadataKey} to search filter`}
+                                                aria-label={`Send ${titleMetadataKey} to search filter`}
                                                 className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                                 href={titleHref}
                                             >
@@ -1598,11 +1632,7 @@ export function SeqmetaBadge({
                                     </div>
                                 </div>
                                 <p className="font-mono text-xs text-muted-foreground">
-                                    {metadataKey}
-                                    {enrichment &&
-                                    !isLibraryMetadataKey(metadataKey)
-                                        ? ` (${enrichment.type})`
-                                        : null}
+                                    {titleMetadataKey}
                                 </p>
                             </div>
                             <button
@@ -2006,7 +2036,7 @@ export function SeqmetaBadge({
                                                                                                                     copiedKey ===
                                                                                                                     sampleCopyKey
                                                                                                                 }
-                                                                                                                copyAriaLabel="Copy seqmeta_sampleid"
+                                                                                                                copyAriaLabel="Copy seqmeta_name"
                                                                                                                 detailKey="sample"
                                                                                                                 filterAriaLabel={
                                                                                                                     sample.sanger_id
@@ -2102,7 +2132,7 @@ export function SeqmetaBadge({
                                                                                     studyDisplay.title;
                                                                                 const studyCopyKey =
                                                                                     copiedStateKey(
-                                                                                        "study_id",
+                                                                                        "seqmeta_id_study_lims",
                                                                                         study.id,
                                                                                     );
 
@@ -2115,7 +2145,7 @@ export function SeqmetaBadge({
                                                                                             copiedKey ===
                                                                                             studyCopyKey
                                                                                         }
-                                                                                        copyAriaLabel="Copy study_id"
+                                                                                        copyAriaLabel="Copy seqmeta_id_study_lims"
                                                                                         detailKey="study"
                                                                                         filterAriaLabel="Send study to search filter"
                                                                                         filterHref={`/?study=${study.id}`}
@@ -2199,7 +2229,7 @@ export function SeqmetaBadge({
                                                                                             copiedKey ===
                                                                                             sampleCopyKey
                                                                                         }
-                                                                                        copyAriaLabel="Copy seqmeta_sampleid"
+                                                                                        copyAriaLabel="Copy seqmeta_name"
                                                                                         detailKey="sample"
                                                                                         filterAriaLabel={
                                                                                             sample.sanger_id

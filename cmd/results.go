@@ -61,10 +61,10 @@ var resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
 }
 
 var resultsRegisterSeqmetaFlagMetaKeys = map[string]string{
-	"run":     "seqmeta_runid",
-	"study":   "seqmeta_studyid",
-	"sample":  "seqmeta_sampleid",
-	"library": "seqmeta_librarytype",
+	"run":     results.SeqmetaIDRunKey,
+	"study":   results.SeqmetaIDStudyLimsKey,
+	"sample":  results.SeqmetaSampleNameKey,
+	"library": results.SeqmetaPipelineIDLimsKey,
 }
 
 type resultsServeMLWHConfig struct {
@@ -244,7 +244,7 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 			return nil, err
 		}
 
-		metadata["seqmeta_runid"] = resolvedRunID
+		metadata[results.SeqmetaIDRunKey] = resolvedRunID
 	}
 
 	if trimmedStudy := strings.TrimSpace(values.study); trimmedStudy != "" {
@@ -253,7 +253,7 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 			return nil, err
 		}
 
-		metadata["seqmeta_studyid"] = resolvedStudyID
+		metadata[results.SeqmetaIDStudyLimsKey] = resolvedStudyID
 	}
 
 	if trimmedSample := strings.TrimSpace(values.sample); trimmedSample != "" {
@@ -262,7 +262,7 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 			return nil, err
 		}
 
-		metadata["seqmeta_sampleid"] = resolvedSampleID
+		metadata[results.SeqmetaSampleNameKey] = resolvedSampleID
 	}
 
 	if trimmedLibrary := strings.TrimSpace(values.library); trimmedLibrary != "" {
@@ -324,7 +324,7 @@ func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRe
 
 	metadata := make(map[string]string, 2)
 	if libraryType := strings.TrimSpace(matchLibraryType(match)); libraryType != "" {
-		metadata["seqmeta_librarytype"] = libraryType
+		metadata[results.SeqmetaPipelineIDLimsKey] = libraryType
 	}
 
 	switch match.Kind {
@@ -333,21 +333,21 @@ func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRe
 		if err != nil {
 			return nil, err
 		}
-		metadata["seqmeta_libraryid"] = libraryID
+		metadata[results.SeqmetaLibraryIDKey] = libraryID
 	case mlwh.KindLibraryLimsID:
 		libraryLimsID, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
 		if err != nil {
 			return nil, err
 		}
-		metadata["seqmeta_library_lims"] = libraryLimsID
+		metadata[results.SeqmetaIDLibraryLimsKey] = libraryLimsID
 	default:
 		if libraryID := matchingLibraryID(value, match.Library); libraryID != "" {
-			metadata["seqmeta_libraryid"] = libraryID
+			metadata[results.SeqmetaLibraryIDKey] = libraryID
 
 			return metadata, nil
 		}
 		if libraryLimsID := matchingLibraryLimsID(value, match.Library); libraryLimsID != "" {
-			metadata["seqmeta_library_lims"] = libraryLimsID
+			metadata[results.SeqmetaIDLibraryLimsKey] = libraryLimsID
 
 			return metadata, nil
 		}
@@ -356,7 +356,7 @@ func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRe
 		if err != nil {
 			return nil, err
 		}
-		metadata["seqmeta_librarytype"] = libraryType
+		metadata[results.SeqmetaPipelineIDLimsKey] = libraryType
 	}
 
 	return metadata, nil
@@ -426,6 +426,25 @@ func resultsRegisterUniqueValue(unique, legacyRunID string) (string, error) {
 	}
 
 	return trimmedLegacyRunID, nil
+}
+
+func resultsRegisterEquivalentSeqmetaKeys(metaKey string) []string {
+	switch metaKey {
+	case results.SeqmetaIDRunKey:
+		return []string{results.LegacySeqmetaRunIDKey}
+	case results.SeqmetaIDStudyLimsKey:
+		return []string{results.LegacySeqmetaStudyIDKey}
+	case results.SeqmetaSampleNameKey:
+		return []string{results.LegacySeqmetaSampleIDKey}
+	case results.SeqmetaPipelineIDLimsKey:
+		return []string{results.LegacySeqmetaLibraryKey, results.LegacySeqmetaLibraryTypeKey}
+	case results.SeqmetaLibraryIDKey:
+		return []string{results.LegacySeqmetaLibraryIDKey}
+	case results.SeqmetaIDLibraryLimsKey:
+		return []string{results.LegacySeqmetaLibraryLimsKey}
+	default:
+		return nil
+	}
 }
 
 type resultSetWithFiles struct {
@@ -711,9 +730,9 @@ create a new result set.`,
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
-	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric run ID through MLWH and store it as seqmeta_runid")
-	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_studyid")
-	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_sampleid")
+	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric id_run through MLWH and store it as seqmeta_id_run")
+	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_id_study_lims")
+	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_name")
 	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
@@ -865,6 +884,12 @@ func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[strin
 			continue
 		}
 
+		for _, equivalentKey := range resultsRegisterEquivalentSeqmetaKeys(key) {
+			if _, exists := metadata[equivalentKey]; exists {
+				return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", equivalentKey, resultsRegisterSeqmetaFlagName(key))
+			}
+		}
+
 		if _, exists := metadata[key]; exists {
 			return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", key, resultsRegisterSeqmetaFlagName(key))
 		}
@@ -877,7 +902,12 @@ func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[strin
 
 func resultsRegisterSeqmetaFlagName(metaKey string) string {
 	switch metaKey {
-	case "seqmeta_libraryid", "seqmeta_library_lims", "seqmeta_librarytype":
+	case results.SeqmetaLibraryIDKey,
+		results.SeqmetaIDLibraryLimsKey,
+		results.SeqmetaPipelineIDLimsKey,
+		results.LegacySeqmetaLibraryIDKey,
+		results.LegacySeqmetaLibraryLimsKey,
+		results.LegacySeqmetaLibraryTypeKey:
 		return "library"
 	}
 

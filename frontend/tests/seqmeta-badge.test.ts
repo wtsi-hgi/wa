@@ -13,6 +13,7 @@ import {
     fireEvent,
     render,
     screen,
+    within,
     waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -636,9 +637,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
         expect(
-            screen.getByText(
-                "No enrichment matched this sanger sample id value.",
-            ),
+            screen.getByText("No enrichment matched this sample name value."),
         ).toBeTruthy();
     });
 
@@ -746,9 +745,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
             });
 
-            fireEvent.click(
-                screen.getAllByLabelText(/Copy seqmeta_sampleid/i)[0]!,
-            );
+            fireEvent.click(screen.getAllByLabelText(/Copy seqmeta_name/i)[0]!);
 
             await waitFor(() => {
                 expect(execCommandMock).toHaveBeenCalledWith("copy");
@@ -1318,7 +1315,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
     });
 
-    it("shows dialog title matching raw value with key and type in subtitle", async () => {
+    it("shows dialog title matching raw value with canonical key in subtitle", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
         render(
@@ -1345,8 +1342,8 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         const subtitle = dialog.querySelector("p.font-mono");
 
-        expect(subtitle?.textContent).toContain("seqmeta_studyid");
-        expect(subtitle?.textContent).toContain("study_id");
+        expect(subtitle?.textContent).toContain("seqmeta_id_study_lims");
+        expect(subtitle?.textContent).not.toContain("study_id");
     });
 
     it("omits duplicate selected metadata value row from dialog", async () => {
@@ -1992,7 +1989,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             '[data-seqmeta-detail-key="sample"]',
         );
         const libraryRow = relatedData?.querySelector(
-            '[data-seqmeta-detail-key="seqmeta_library"]',
+            '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
         );
 
         expectEntityRowTitle(studyRow, "7607");
@@ -2102,7 +2099,8 @@ describe("M1 result detail seqmeta enrichment", () => {
                 }),
                 rows: [
                     {
-                        selector: '[data-seqmeta-detail-key="seqmeta_library"]',
+                        selector:
+                            '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
                         title: "1001",
                         absent: "id:1001",
                         present: "library_lims:DN111:A1",
@@ -2211,7 +2209,9 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         const libraryRows = screen
             .getByTestId("seqmeta-dialog-body")
-            .querySelectorAll('[data-seqmeta-detail-key="seqmeta_library"]');
+            .querySelectorAll(
+                '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
+            );
 
         expect(libraryRows).toHaveLength(1);
         expectEntityRowTitle(libraryRows[0], "1001");
@@ -2408,12 +2408,12 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(directMetadata).toBeTruthy();
         expect(
             directMetadata?.querySelectorAll(
-                '[data-seqmeta-detail-key="seqmeta_libraryid"]',
+                '[data-seqmeta-detail-key="seqmeta_library_id"]',
             ),
         ).toHaveLength(0);
         expect(
             directMetadata?.querySelectorAll(
-                '[data-seqmeta-detail-key="seqmeta_library_lims"]',
+                '[data-seqmeta-detail-key="seqmeta_id_library_lims"]',
             ),
         ).toHaveLength(1);
         expect(directMetadata?.textContent).not.toContain("71046409");
@@ -2422,15 +2422,17 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         const titleActions = screen.getByTestId("seqmeta-title-actions");
         expect(
-            titleActions.querySelector('[aria-label="Copy seqmeta_libraryid"]'),
+            titleActions.querySelector(
+                '[aria-label="Copy seqmeta_library_id"]',
+            ),
         ).toBeTruthy();
         expect(
             titleActions
                 .querySelector(
-                    '[aria-label="Send seqmeta_libraryid to search filter"]',
+                    '[aria-label="Send seqmeta_library_id to search filter"]',
                 )
                 ?.getAttribute("href"),
-        ).toBe("/?seqmeta_libraryid=71046409");
+        ).toBe("/?seqmeta_library_id=71046409");
     });
 
     it("hides duplicate library-id direct metadata and keeps title copy and filter actions", async () => {
@@ -2497,14 +2499,14 @@ describe("M1 result detail seqmeta enrichment", () => {
 
             expect(
                 dialogHeader?.querySelector(
-                    '[aria-label="Copy seqmeta_libraryid"]',
+                    '[aria-label="Copy seqmeta_library_id"]',
                 ),
             ).toBeTruthy();
             const titleFilter = dialogHeader?.querySelector(
-                '[aria-label="Send seqmeta_libraryid to search filter"]',
+                '[aria-label="Send seqmeta_library_id to search filter"]',
             );
             expect(titleFilter?.getAttribute("href")).toBe(
-                "/?seqmeta_libraryid=71046409",
+                "/?seqmeta_library_id=71046409",
             );
 
             const directMetadata = screen
@@ -2514,22 +2516,22 @@ describe("M1 result detail seqmeta enrichment", () => {
             expect(directMetadata).toBeTruthy();
             expect(
                 directMetadata?.querySelectorAll(
-                    '[data-seqmeta-detail-key="seqmeta_libraryid"]',
+                    '[data-seqmeta-detail-key="seqmeta_library_id"]',
                 ),
             ).toHaveLength(0);
             expect(
                 directMetadata?.querySelectorAll(
-                    '[data-seqmeta-detail-key="seqmeta_librarytype"]',
+                    '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
                 ),
             ).toHaveLength(1);
             expect(
                 directMetadata?.querySelectorAll(
-                    '[data-seqmeta-detail-key="seqmeta_library_lims"]',
+                    '[data-seqmeta-detail-key="seqmeta_id_library_lims"]',
                 ),
             ).toHaveLength(1);
 
             const copyButton = dialogHeader?.querySelector(
-                '[aria-label="Copy seqmeta_libraryid"]',
+                '[aria-label="Copy seqmeta_library_id"]',
             );
             fireEvent.click(copyButton as Element);
 
@@ -2595,7 +2597,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             screen
                 .getByTestId("seqmeta-title-actions")
                 .querySelector(
-                    '[aria-label="Send seqmeta_librarytype to search filter"]',
+                    '[aria-label="Send seqmeta_pipeline_id_lims to search filter"]',
                 )
                 ?.getAttribute("href"),
         ).toBe("/?library=Custom");
@@ -2684,9 +2686,11 @@ describe("M1 result detail seqmeta enrichment", () => {
                         name: /send library to search filter/i,
                     })
                     .getAttribute("href"),
-            ).toBe("/?seqmeta_libraryid=71046409");
+            ).toBe("/?seqmeta_library_id=71046409");
 
-            fireEvent.click(screen.getByLabelText(/Copy seqmeta_library/i));
+            fireEvent.click(
+                screen.getByLabelText(/Copy seqmeta_pipeline_id_lims/i),
+            );
 
             await waitFor(() => {
                 expect(writeTextMock).toHaveBeenCalledWith("71046409");
@@ -3117,6 +3121,62 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("EGAN00003258234")).toBeTruthy();
     });
 
+    it("displays legacy sample metadata details with MLWH field names and no alias/type subtitle", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "7607STDY14643771",
+                enrichment: buildEnrichment({
+                    identifier: "7607STDY14643771",
+                    type: "sanger_sample_name",
+                    graph: {
+                        sample: buildSample({
+                            sanger_id: "9575305",
+                            sample_name: "7607STDY14643771",
+                            id_sample_lims: "6050954",
+                        }),
+                        sample_detail: buildSampleDetail({
+                            sample: {
+                                sanger_id: "9575305",
+                                sample_name: "7607STDY14643771",
+                                id_sample_lims: "6050954",
+                            },
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.getByText("seqmeta_name")).toBeTruthy();
+        expect(
+            screen.queryByText("seqmeta_sampleid (sanger_sample_name)"),
+        ).toBeNull();
+
+        const directMetadataSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+        expect(directMetadataSection).toBeTruthy();
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_sampleid"]',
+            ),
+        ).toBeNull();
+
+        const sangerSampleIDRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
+        );
+        expect(sangerSampleIDRow?.textContent).toContain("Sanger sample ID");
+        expect(sangerSampleIDRow?.textContent).toContain("9575305");
+    });
+
     it("shows hierarchical related data for sample with library parent, study grandparent, and lanes", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
@@ -3430,7 +3490,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             // If the label exists, verify it's NOT in the direct metadata section
             // (it might be elsewhere, but not in direct metadata)
             const fieldCard = studyIdLabel.closest(
-                '[data-seqmeta-detail-key="study_id"]',
+                '[data-seqmeta-detail-key="seqmeta_id_study_lims"]',
             );
             if (fieldCard) {
                 expect(directMetadataSection?.contains(fieldCard)).toBe(false);
@@ -3728,7 +3788,9 @@ describe("M1 result detail seqmeta enrichment", () => {
         // Library rows should NOT have "Library type" label
         const libraryRows = screen
             .getByTestId("seqmeta-dialog-body")
-            .querySelectorAll('[data-seqmeta-detail-key="seqmeta_library"]');
+            .querySelectorAll(
+                '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
+            );
         expect(libraryRows.length).toBe(1);
 
         libraryRows.forEach((row) => {
@@ -4042,8 +4104,9 @@ describe("M1 result detail seqmeta enrichment", () => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
             });
 
-            const copyButtons =
-                screen.getAllByLabelText(/Copy seqmeta_library/i);
+            const copyButtons = screen.getAllByLabelText(
+                /Copy seqmeta_pipeline_id_lims/i,
+            );
             expect(copyButtons).toHaveLength(2);
 
             fireEvent.click(copyButtons[0]!);
@@ -4136,9 +4199,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
             expect(screen.getByText("S1")).toBeTruthy();
 
-            const copyButtons = screen.getAllByLabelText(
-                /Copy seqmeta_sampleid/i,
-            );
+            const copyButtons = screen.getAllByLabelText(/Copy seqmeta_name/i);
             expect(copyButtons).toHaveLength(2);
 
             fireEvent.click(copyButtons[0]!);
@@ -4240,7 +4301,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
             fireEvent.click(
                 screen.getByRole("button", {
-                    name: /copy study_id/i,
+                    name: /copy seqmeta_id_study_lims/i,
                 }),
             );
 
@@ -4948,7 +5009,9 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(secondSampleRow?.textContent).toContain("name:Sample 2");
 
         // Each sample row should have copy and filter buttons
-        const copyButtons = screen.getAllByLabelText(/Copy seqmeta_sampleid/i);
+        const copyButtons = Array.from(sampleRows).map((row) =>
+            within(row as HTMLElement).getByLabelText(/Copy seqmeta_name/i),
+        );
         const filterButtons = screen.getAllByLabelText(
             /Send sample to search filter/i,
         );

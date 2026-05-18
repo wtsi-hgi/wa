@@ -135,8 +135,8 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
             ),
         ).toBeTruthy();
 
-        // The selected Sanger sample ID is already the dialog title, with its
-        // copy/filter controls next to the title rather than a duplicate row.
+        // The selected legacy seqmeta_sampleid maps to MLWH sample name. A
+        // distinct sanger_sample_id value is still shown even when it matches.
         expect(
             screen.getByRole("heading", { name: "WTSI_TEST_SAMPLE" }),
         ).toBeTruthy();
@@ -144,17 +144,22 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
             within(directMetadataSection as HTMLElement).queryByText(
                 "WTSI_TEST_SAMPLE",
             ),
-        ).toBeNull();
+        ).toBeTruthy();
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
+            ),
+        ).toBeTruthy();
         expect(
             screen
                 .getByTestId("seqmeta-title-actions")
-                .querySelector('[aria-label="Copy seqmeta_sampleid"]'),
+                .querySelector('[aria-label="Copy seqmeta_name"]'),
         ).toBeTruthy();
         expect(
             screen
                 .getByTestId("seqmeta-title-actions")
                 .querySelector(
-                    '[aria-label="Send seqmeta_sampleid to search filter"]',
+                    '[aria-label="Send seqmeta_name to search filter"]',
                 )
                 ?.getAttribute("href"),
         ).toBe("/?sample=WTSI_TEST_SAMPLE");

@@ -45,24 +45,27 @@ import (
 var combinedStudyMetaKeys = []string{
 	"study",
 	"study_id",
-	"seqmeta_studyid",
+	SeqmetaIDStudyLimsKey,
+	LegacySeqmetaStudyIDKey,
 	"seqmeta_study_accession",
 }
 
 var libraryTypeMetaKeys = []string{
 	"library",
-	"seqmeta_library",
-	"seqmeta_librarytype",
+	SeqmetaPipelineIDLimsKey,
+	LegacySeqmetaLibraryKey,
+	LegacySeqmetaLibraryTypeKey,
 }
 
-var libraryIDMetaKeys = []string{"seqmeta_libraryid"}
+var libraryIDMetaKeys = []string{SeqmetaLibraryIDKey, LegacySeqmetaLibraryIDKey}
 
-var libraryLimsMetaKeys = []string{"seqmeta_library_lims"}
+var libraryLimsMetaKeys = []string{SeqmetaIDLibraryLimsKey, LegacySeqmetaLibraryLimsKey}
 
 var combinedRunMetaKeys = []string{
 	"run",
 	"run_id",
-	"seqmeta_runid",
+	SeqmetaIDRunKey,
+	LegacySeqmetaRunIDKey,
 }
 
 var combinedSampleMetaKeys = []string{
@@ -70,8 +73,11 @@ var combinedSampleMetaKeys = []string{
 	"sample_id",
 	"sample_name",
 	"sample_accession_number",
-	"seqmeta_sampleid",
-	"seqmeta_sample_lims",
+	SeqmetaSampleNameKey,
+	SeqmetaSangerSampleIDKey,
+	SeqmetaIDSampleLimsKey,
+	LegacySeqmetaSampleIDKey,
+	LegacySeqmetaSampleLimsKey,
 }
 
 var combinedLaneMetaKeys = []string{"seqmeta_lane"}
@@ -748,33 +754,49 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 	directRunValues := append([]string{}, runValues...)
 
 	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["library"])
-	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["seqmeta_library"])
-	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["seqmeta_librarytype"])
-	libraryIDValues = mergeSearchValues(libraryIDValues, params.Meta["seqmeta_libraryid"])
-	libraryLimsValues = mergeSearchValues(libraryLimsValues, params.Meta["seqmeta_library_lims"])
-	runValues = mergeSearchValues(runValues, params.Meta["seqmeta_runid"])
-	sampleValues = mergeSearchValues(sampleValues, params.Meta["seqmeta_sampleid"])
-	sampleValues = mergeSearchValues(sampleValues, params.Meta["seqmeta_sample_lims"])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta[SeqmetaPipelineIDLimsKey])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta[LegacySeqmetaLibraryKey])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta[LegacySeqmetaLibraryTypeKey])
+	libraryIDValues = mergeSearchValues(libraryIDValues, params.Meta[SeqmetaLibraryIDKey])
+	libraryIDValues = mergeSearchValues(libraryIDValues, params.Meta[LegacySeqmetaLibraryIDKey])
+	libraryLimsValues = mergeSearchValues(libraryLimsValues, params.Meta[SeqmetaIDLibraryLimsKey])
+	libraryLimsValues = mergeSearchValues(libraryLimsValues, params.Meta[LegacySeqmetaLibraryLimsKey])
+	runValues = mergeSearchValues(runValues, params.Meta[SeqmetaIDRunKey])
+	runValues = mergeSearchValues(runValues, params.Meta[LegacySeqmetaRunIDKey])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta[SeqmetaSampleNameKey])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta[SeqmetaSangerSampleIDKey])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta[SeqmetaIDSampleLimsKey])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta[LegacySeqmetaSampleIDKey])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta[LegacySeqmetaSampleLimsKey])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_name"])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_id"])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_accession_number"])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample"])
 	directSampleValues = mergeSearchValues(directSampleValues, sampleValues)
 	laneValues = mergeSearchValues(laneValues, params.Meta["seqmeta_lane"])
-	studyValues = mergeSearchValues(studyValues, params.Meta["seqmeta_studyid"])
+	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaIDStudyLimsKey])
+	studyValues = mergeSearchValues(studyValues, params.Meta[LegacySeqmetaStudyIDKey])
 	studyValues = mergeSearchValues(studyValues, params.Meta["seqmeta_study_accession"])
-	delete(params.Meta, "seqmeta_studyid")
+	delete(params.Meta, SeqmetaIDStudyLimsKey)
+	delete(params.Meta, LegacySeqmetaStudyIDKey)
 	delete(params.Meta, "seqmeta_study_accession")
 	delete(params.Meta, "library")
-	delete(params.Meta, "seqmeta_library")
-	delete(params.Meta, "seqmeta_libraryid")
-	delete(params.Meta, "seqmeta_library_lims")
-	delete(params.Meta, "seqmeta_librarytype")
-	delete(params.Meta, "seqmeta_runid")
+	delete(params.Meta, SeqmetaPipelineIDLimsKey)
+	delete(params.Meta, LegacySeqmetaLibraryKey)
+	delete(params.Meta, SeqmetaLibraryIDKey)
+	delete(params.Meta, LegacySeqmetaLibraryIDKey)
+	delete(params.Meta, SeqmetaIDLibraryLimsKey)
+	delete(params.Meta, LegacySeqmetaLibraryLimsKey)
+	delete(params.Meta, LegacySeqmetaLibraryTypeKey)
+	delete(params.Meta, SeqmetaIDRunKey)
+	delete(params.Meta, LegacySeqmetaRunIDKey)
 	delete(params.Meta, "seqmeta_lane")
 
-	delete(params.Meta, "seqmeta_sampleid")
-	delete(params.Meta, "seqmeta_sample_lims")
+	delete(params.Meta, SeqmetaSampleNameKey)
+	delete(params.Meta, SeqmetaSangerSampleIDKey)
+	delete(params.Meta, SeqmetaIDSampleLimsKey)
+	delete(params.Meta, LegacySeqmetaSampleIDKey)
+	delete(params.Meta, LegacySeqmetaSampleLimsKey)
 	delete(params.Meta, "sample_name")
 	delete(params.Meta, "sample_id")
 	delete(params.Meta, "sample_accession_number")
@@ -989,7 +1011,7 @@ func wrapSearchResults(results []ResultSet, resolvedSamples []string) []SearchRe
 	for _, result := range results {
 		wrappedResult := SearchResult{ResultSet: result}
 
-		if sampleID := strings.TrimSpace(result.Metadata["seqmeta_sampleid"]); sampleID != "" {
+		if sampleID := resultSampleName(result.Metadata); sampleID != "" {
 			if _, ok := resolved[sampleID]; ok {
 				wrappedResult.MatchedSamples = []string{sampleID}
 			}
@@ -1121,6 +1143,16 @@ func (s *Server) handleDeleteResultByID(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func resultSampleName(metadata map[string]string) string {
+	for _, key := range []string{SeqmetaSampleNameKey, LegacySeqmetaSampleIDKey} {
+		if sampleName := strings.TrimSpace(metadata[key]); sampleName != "" {
+			return sampleName
+		}
+	}
+
+	return ""
 }
 
 func decodeJSONBody(body io.ReadCloser, target any) error {

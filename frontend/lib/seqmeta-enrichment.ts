@@ -1,6 +1,10 @@
 import { BackendRequestError } from "@/lib/backend-client";
 import type { EnrichmentResult } from "@/lib/contracts";
 import type { SeqmetaCacheStore } from "@/lib/seqmeta-cache-core";
+import {
+    canonicalSeqmetaKey,
+    isSeqmetaKey as isSeqmetaKeyValue,
+} from "@/lib/seqmeta-keys";
 
 export type SeqmetaEnrichmentState = {
     enrichments: Record<string, EnrichmentResult | null>;
@@ -18,13 +22,15 @@ type SeqmetaAliasType =
     | "library_type"
     | "library_id"
     | "run_id"
-    | "sample_lims"
+    | "sample_accession"
+    | "sample_lims_id"
+    | "sanger_sample_name"
     | "sanger_sample_id"
     | "study_accession"
-    | "study_id";
+    | "study_lims_id";
 
 export function isSeqmetaKey(key: string): boolean {
-    return key.startsWith("seqmeta_");
+    return isSeqmetaKeyValue(key);
 }
 
 export function hasUsableSeqmetaCacheEntry(
@@ -53,30 +59,30 @@ export function collectSeqmetaValues(
 }
 
 function seqmetaLookupPriority(metadataKey: string): number {
+    const canonicalKey = canonicalSeqmetaKey(metadataKey);
+
     if (
-        metadataKey === "seqmeta_studyid" ||
+        canonicalKey === "seqmeta_id_study_lims" ||
         metadataKey === "seqmeta_study_accession"
     ) {
         return 0;
     }
 
     if (
-        metadataKey === "seqmeta_sampleid" ||
-        metadataKey === "seqmeta_sample_lims"
+        canonicalKey === "seqmeta_name" ||
+        canonicalKey === "seqmeta_sanger_sample_id" ||
+        canonicalKey === "seqmeta_id_sample_lims"
     ) {
         return 1;
     }
 
-    if (
-        metadataKey === "seqmeta_library" ||
-        metadataKey === "seqmeta_librarytype"
-    ) {
+    if (canonicalKey === "seqmeta_pipeline_id_lims") {
         return 4;
     }
 
     if (
-        metadataKey === "seqmeta_libraryid" ||
-        metadataKey === "seqmeta_library_lims"
+        canonicalKey === "seqmeta_library_id" ||
+        canonicalKey === "seqmeta_id_library_lims"
     ) {
         return 3;
     }
@@ -203,15 +209,15 @@ function collectSeqmetaAliases(
     }
 
     add(enrichment.identifier, enrichment.type as SeqmetaAliasType);
-    add(enrichment.graph.study?.id_study_lims, "study_id");
+    add(enrichment.graph.study?.id_study_lims, "study_lims_id");
     add(enrichment.graph.study?.accession_number, "study_accession");
-    add(enrichment.graph.library?.id_study_lims, "study_id");
+    add(enrichment.graph.library?.id_study_lims, "study_lims_id");
     add(enrichment.graph.library?.library_type, "library_type");
     add(enrichment.graph.library?.library_id, "library_id");
     add(enrichment.graph.library?.id_library_lims, "id_library_lims");
 
     for (const library of enrichment.graph.libraries ?? []) {
-        add(library.id_study_lims, "study_id");
+        add(library.id_study_lims, "study_lims_id");
         add(library.library_type, "library_type");
         add(library.library_id, "library_id");
         add(library.id_library_lims, "id_library_lims");
@@ -223,14 +229,16 @@ function collectSeqmetaAliases(
         id_study_lims?: string;
         library_type?: string;
         sanger_id?: string;
+        sample_name?: string;
         study_accession_number?: string;
         id_run?: number;
     }) {
+        add(sample.sample_name, "sanger_sample_name");
         add(sample.sanger_id, "sanger_sample_id");
-        add(sample.id_sample_lims, "sample_lims");
-        add(sample.id_study_lims, "study_id");
+        add(sample.id_sample_lims, "sample_lims_id");
+        add(sample.id_study_lims, "study_lims_id");
         add(sample.study_accession_number, "study_accession");
-        add(sample.accession_number, "sanger_sample_id");
+        add(sample.accession_number, "sample_accession");
         add(sample.library_type, "library_type");
         add(
             typeof sample.id_run === "number" ? String(sample.id_run) : null,

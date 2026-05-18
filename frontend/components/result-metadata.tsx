@@ -1,5 +1,6 @@
 import { SeqmetaBadge } from "@/components/seqmeta-badge";
 import type { EnrichmentResult } from "@/lib/contracts";
+import { canonicalSeqmetaKey, isSeqmetaKey } from "@/lib/seqmeta-keys";
 
 type ResultMetadataProps = {
     enrichments?: Record<string, EnrichmentResult | null>;
@@ -9,12 +10,12 @@ type ResultMetadataProps = {
     variant?: "section" | "integrated";
 };
 
-function isSeqmetaKey(key: string): boolean {
-    return key.startsWith("seqmeta_");
-}
-
 function seqmetaLookupKey(value: string): string {
     return value.trim();
+}
+
+function displayMetadataKey(key: string): string {
+    return canonicalSeqmetaKey(key);
 }
 
 export function ResultMetadata({
@@ -51,7 +52,7 @@ export function ResultMetadata({
                                 data-metadata-row={key}
                             >
                                 <dt className="break-all font-mono text-xs text-muted-foreground">
-                                    {key}
+                                    {displayMetadataKey(key)}
                                 </dt>
                                 <dd className="mt-1 min-w-0">
                                     {isSeqmetaKey(key) ? (
@@ -114,7 +115,7 @@ export function ResultMetadata({
                             {entries.map(([key, value]) => (
                                 <tr key={key} data-metadata-row={key}>
                                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                                        {key}
+                                        {displayMetadataKey(key)}
                                     </td>
                                     <td className="px-4 py-3">
                                         {isSeqmetaKey(key) ? (
