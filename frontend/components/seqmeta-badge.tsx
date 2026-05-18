@@ -79,6 +79,12 @@ type RelatedEntityRowProps = {
     title: string;
 };
 
+type DirectMetadataRowProps = {
+    copied: boolean;
+    field: SeqmetaDetailField;
+    onCopy: () => void;
+};
+
 type LibrarySearchTarget = {
     key: string;
     value: string;
@@ -238,6 +244,14 @@ function titleFilterHref(metadataKey: string, rawValue: string): string | null {
     }
 
     return `/?${new URLSearchParams({ [searchKey]: value }).toString()}`;
+}
+
+function detailFieldHref(field: SeqmetaDetailField): string | null {
+    if (!field.searchKey) {
+        return null;
+    }
+
+    return `/?${new URLSearchParams({ [field.searchKey]: field.value }).toString()}`;
 }
 
 function isStudyMetadataKey(metadataKey: string): boolean {
@@ -722,6 +736,55 @@ function RelatedEntityRow({
                     {children}
                 </div>
             </div>
+        </article>
+    );
+}
+
+function DirectMetadataRow({ copied, field, onCopy }: DirectMetadataRowProps) {
+    const href = detailFieldHref(field);
+    const tooltip = `MLWH seqmeta key: ${field.key}`;
+
+    return (
+        <article
+            data-seqmeta-detail-key={field.key}
+            className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
+        >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <p
+                        data-testid="seqmeta-direct-metadata-label"
+                        title={tooltip}
+                        aria-label={`${field.label}. ${tooltip}`}
+                        className="cursor-help text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground"
+                    >
+                        {field.label}
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        aria-label={`Copy ${field.key}`}
+                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                        onClick={onCopy}
+                    >
+                        <Copy className="size-3.5" aria-hidden="true" />
+                        {copied ? "Copied" : "Copy"}
+                    </button>
+                    {href ? (
+                        <Link
+                            aria-label={`Send ${field.key} to search filter`}
+                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                            href={href}
+                        >
+                            <Search className="size-3.5" aria-hidden="true" />
+                            Filter
+                        </Link>
+                    ) : null}
+                </div>
+            </div>
+            <p className="mt-3 break-all text-sm leading-6 text-foreground">
+                {field.value}
+            </p>
         </article>
     );
 }
@@ -1725,92 +1788,34 @@ export function SeqmetaBadge({
                                                     <div className="space-y-3">
                                                         {directFields.map(
                                                             (field) => {
-                                                                const href =
-                                                                    field.searchKey
-                                                                        ? `/?${new URLSearchParams(
-                                                                              {
-                                                                                  [field.searchKey]:
-                                                                                      field.value,
-                                                                              },
-                                                                          ).toString()}`
-                                                                        : null;
-
                                                                 return (
-                                                                    <article
+                                                                    <DirectMetadataRow
                                                                         key={`${field.key}:${field.value}`}
-                                                                        data-seqmeta-detail-key={
+                                                                        copied={
+                                                                            copiedKey ===
                                                                             field.key
                                                                         }
-                                                                        className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                    >
-                                                                        <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                            <div className="min-w-0">
-                                                                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                                                    {
-                                                                                        field.label
-                                                                                    }
-                                                                                </p>
-                                                                                <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                                                                                    {
-                                                                                        field.key
-                                                                                    }
-                                                                                </p>
-                                                                            </div>
-                                                                            <div className="flex flex-wrap gap-2">
-                                                                                <button
-                                                                                    type="button"
-                                                                                    aria-label={`Copy ${field.key}`}
-                                                                                    className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                    onClick={() => {
-                                                                                        void writeClipboard(
-                                                                                            field.value,
-                                                                                        ).then(
-                                                                                            (
-                                                                                                copied,
-                                                                                            ) => {
-                                                                                                if (
-                                                                                                    copied
-                                                                                                ) {
-                                                                                                    setCopiedKey(
-                                                                                                        field.key,
-                                                                                                    );
-                                                                                                }
-                                                                                            },
+                                                                        field={
+                                                                            field
+                                                                        }
+                                                                        onCopy={() => {
+                                                                            void writeClipboard(
+                                                                                field.value,
+                                                                            ).then(
+                                                                                (
+                                                                                    copied,
+                                                                                ) => {
+                                                                                    if (
+                                                                                        copied
+                                                                                    ) {
+                                                                                        setCopiedKey(
+                                                                                            field.key,
                                                                                         );
-                                                                                    }}
-                                                                                >
-                                                                                    <Copy
-                                                                                        className="size-3.5"
-                                                                                        aria-hidden="true"
-                                                                                    />
-                                                                                    {copiedKey ===
-                                                                                    field.key
-                                                                                        ? "Copied"
-                                                                                        : "Copy"}
-                                                                                </button>
-                                                                                {href ? (
-                                                                                    <Link
-                                                                                        aria-label={`Send ${field.key} to search filter`}
-                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                        href={
-                                                                                            href
-                                                                                        }
-                                                                                    >
-                                                                                        <Search
-                                                                                            className="size-3.5"
-                                                                                            aria-hidden="true"
-                                                                                        />
-                                                                                        Filter
-                                                                                    </Link>
-                                                                                ) : null}
-                                                                            </div>
-                                                                        </div>
-                                                                        <p className="mt-3 break-all text-sm leading-6 text-foreground">
-                                                                            {
-                                                                                field.value
-                                                                            }
-                                                                        </p>
-                                                                    </article>
+                                                                                    }
+                                                                                },
+                                                                            );
+                                                                        }}
+                                                                    />
                                                                 );
                                                             },
                                                         )}
@@ -2494,92 +2499,34 @@ export function SeqmetaBadge({
                                                         <div className="space-y-3">
                                                             {fields.map(
                                                                 (field) => {
-                                                                    const href =
-                                                                        field.searchKey
-                                                                            ? `/?${new URLSearchParams(
-                                                                                  {
-                                                                                      [field.searchKey]:
-                                                                                          field.value,
-                                                                                  },
-                                                                              ).toString()}`
-                                                                            : null;
-
                                                                     return (
-                                                                        <article
+                                                                        <DirectMetadataRow
                                                                             key={`${field.key}:${field.value}`}
-                                                                            data-seqmeta-detail-key={
+                                                                            copied={
+                                                                                copiedKey ===
                                                                                 field.key
                                                                             }
-                                                                            className="rounded-[1.35rem] border border-border/70 bg-background/72 px-4 py-4 shadow-[0_18px_54px_-44px_rgba(48,67,98,0.55)]"
-                                                                        >
-                                                                            <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                                <div className="min-w-0">
-                                                                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                                                                                        {
-                                                                                            field.label
-                                                                                        }
-                                                                                    </p>
-                                                                                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                                                                                        {
-                                                                                            field.key
-                                                                                        }
-                                                                                    </p>
-                                                                                </div>
-                                                                                <div className="flex flex-wrap gap-2">
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        aria-label={`Copy ${field.key}`}
-                                                                                        className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                        onClick={() => {
-                                                                                            void writeClipboard(
-                                                                                                field.value,
-                                                                                            ).then(
-                                                                                                (
-                                                                                                    copied,
-                                                                                                ) => {
-                                                                                                    if (
-                                                                                                        copied
-                                                                                                    ) {
-                                                                                                        setCopiedKey(
-                                                                                                            field.key,
-                                                                                                        );
-                                                                                                    }
-                                                                                                },
+                                                                            field={
+                                                                                field
+                                                                            }
+                                                                            onCopy={() => {
+                                                                                void writeClipboard(
+                                                                                    field.value,
+                                                                                ).then(
+                                                                                    (
+                                                                                        copied,
+                                                                                    ) => {
+                                                                                        if (
+                                                                                            copied
+                                                                                        ) {
+                                                                                            setCopiedKey(
+                                                                                                field.key,
                                                                                             );
-                                                                                        }}
-                                                                                    >
-                                                                                        <Copy
-                                                                                            className="size-3.5"
-                                                                                            aria-hidden="true"
-                                                                                        />
-                                                                                        {copiedKey ===
-                                                                                        field.key
-                                                                                            ? "Copied"
-                                                                                            : "Copy"}
-                                                                                    </button>
-                                                                                    {href ? (
-                                                                                        <Link
-                                                                                            aria-label={`Send ${field.key} to search filter`}
-                                                                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
-                                                                                            href={
-                                                                                                href
-                                                                                            }
-                                                                                        >
-                                                                                            <Search
-                                                                                                className="size-3.5"
-                                                                                                aria-hidden="true"
-                                                                                            />
-                                                                                            Filter
-                                                                                        </Link>
-                                                                                    ) : null}
-                                                                                </div>
-                                                                            </div>
-                                                                            <p className="mt-3 break-all text-sm leading-6 text-foreground">
-                                                                                {
-                                                                                    field.value
-                                                                                }
-                                                                            </p>
-                                                                        </article>
+                                                                                        }
+                                                                                    },
+                                                                                );
+                                                                            }}
+                                                                        />
                                                                     );
                                                                 },
                                                             )}

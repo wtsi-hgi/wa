@@ -3177,6 +3177,65 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(sangerSampleIDRow?.textContent).toContain("9575305");
     });
 
+    it("keeps canonical direct metadata keys in label hover text instead of a visible second line", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "7607STDY14643771",
+                enrichment: buildEnrichment({
+                    identifier: "7607STDY14643771",
+                    type: "sanger_sample_name",
+                    graph: {
+                        sample: buildSample({
+                            sanger_id: "9575305",
+                            sample_name: "7607STDY14643771",
+                            id_sample_lims: "6050954",
+                        }),
+                        sample_detail: buildSampleDetail({
+                            sample: {
+                                sanger_id: "9575305",
+                                sample_name: "7607STDY14643771",
+                                id_sample_lims: "6050954",
+                            },
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const directMetadataSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+        const sangerSampleIDRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
+        );
+        expect(sangerSampleIDRow).toBeTruthy();
+        expect(
+            within(sangerSampleIDRow as HTMLElement).getByText(
+                "Sanger sample ID",
+            ),
+        ).toBeTruthy();
+        expect(sangerSampleIDRow?.textContent).toContain("9575305");
+        expect(sangerSampleIDRow?.textContent).not.toContain(
+            "seqmeta_sanger_sample_id",
+        );
+
+        const label = sangerSampleIDRow?.querySelector(
+            '[data-testid="seqmeta-direct-metadata-label"]',
+        );
+        expect(label?.getAttribute("title")).toBe(
+            "MLWH seqmeta key: seqmeta_sanger_sample_id",
+        );
+    });
+
     it("shows hierarchical related data for sample with library parent, study grandparent, and lanes", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
