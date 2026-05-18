@@ -215,6 +215,14 @@ function relatedSamplesSummary(samples: EnrichmentSample[]): string | null {
     return `Showing ${RELATED_SAMPLE_RENDER_LIMIT} of ${samples.length} samples`;
 }
 
+function laneDetailId(lane: {
+    id_run: string;
+    lane: string;
+    tag_index: number;
+}): string {
+    return `${lane.id_run}_${lane.lane}#${lane.tag_index}`;
+}
+
 function entityMetadataPairs(
     pairs: (EntityMetadataPair | null)[],
 ): EntityMetadataPair[] {
@@ -269,6 +277,34 @@ function sampleMetadataPairs(sample: EnrichmentSample): EntityMetadataPair[] {
         asString(sample.accession_number)
             ? { label: "accession", value: sample.accession_number }
             : null,
+    ]);
+}
+
+function libraryMetadataPairs(
+    library: HierarchicalLibrary,
+): EntityMetadataPair[] {
+    const libraryId = asString(library.libraryId);
+    const libraryLimsId = asString(library.idLibraryLims);
+
+    return entityMetadataPairs([
+        asString(library.libraryType)
+            ? { label: "type", value: library.libraryType }
+            : null,
+        libraryId ? { label: "id", value: libraryId } : null,
+        libraryLimsId ? { label: "library_lims", value: libraryLimsId } : null,
+    ]);
+}
+
+function laneMetadataPairs(lane: {
+    id_run: string;
+    lane: string;
+    tag_index: number;
+}): EntityMetadataPair[] {
+    return entityMetadataPairs([
+        { label: "id", value: laneDetailId(lane) },
+        { label: "id_run", value: lane.id_run },
+        { label: "lane", value: lane.lane },
+        { label: "tag_index", value: String(lane.tag_index) },
     ]);
 }
 
@@ -593,6 +629,8 @@ function buildHierarchicalGroups(
     const sampleMetadata =
         metadataKey === "seqmeta_sampleid" ||
         metadataKey === "seqmeta_sample_lims";
+    const hasGroup = (type: HierarchicalGroup["type"]) =>
+        groups.some((group) => group.type === type);
 
     // For study details with hierarchy, group libraries.
     // Prefer study_detail.library_details; fall back to graph.libraries for
@@ -783,6 +821,80 @@ function buildHierarchicalGroups(
         }
     }
 
+    if (
+        !libraryMetadata &&
+        !studyMetadata &&
+        !hasGroup("library") &&
+        !hasGroup("libraries")
+    ) {
+        const libraryLink =
+            enrichment.graph.library ??
+            enrichment.graph.sample_detail?.libraries?.[0] ??
+            enrichment.graph.libraries?.find(
+                (library) =>
+                    library.library_type ===
+                        enrichment.graph.sample?.library_type &&
+                    (!enrichment.graph.sample?.id_study_lims ||
+                        library.id_study_lims ===
+                            enrichment.graph.sample.id_study_lims),
+            );
+        const libraryType =
+            libraryLink?.library_type ?? enrichment.graph.sample?.library_type;
+
+        if (libraryType) {
+            groups.push({
+                type: "library",
+                title: "Library",
+                items: [
+                    {
+                        libraryType,
+                        idStudyLims:
+                            libraryLink?.id_study_lims ??
+                            enrichment.graph.sample?.id_study_lims ??
+                            "",
+                        libraryId: libraryLink?.library_id,
+                        idLibraryLims: libraryLink?.id_library_lims,
+                        samples: [],
+                    },
+                ],
+            });
+        }
+    }
+
+    if (
+        !studyMetadata &&
+        !libraryMetadata &&
+        !hasGroup("study") &&
+        enrichment.graph.study
+    ) {
+        groups.push({
+            type: "study",
+            title: "Study",
+            items: [
+                {
+                    name: enrichment.graph.study.name,
+                    id: enrichment.graph.study.id_study_lims,
+                    accession:
+                        asString(enrichment.graph.study.accession_number) ??
+                        undefined,
+                },
+            ],
+        });
+    }
+
+    if (
+        !sampleMetadata &&
+        !studyMetadata &&
+        !hasGroup("samples") &&
+        enrichment.graph.sample
+    ) {
+        groups.push({
+            type: "samples",
+            title: "Sample",
+            items: [enrichment.graph.sample],
+        });
+    }
+
     return groups;
 }
 
@@ -845,7 +957,6 @@ export function SeqmetaBadge({
     const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(
         new Set(),
     );
-    const runMetadata = metadataKey === "seqmeta_runid";
     const detailFields = useMemo(
         () =>
             dialogOpen
@@ -1340,19 +1451,11 @@ export function SeqmetaBadge({
                                                                                         >
                                                                                             <div className="flex flex-wrap items-start justify-between gap-3">
                                                                                                 <div className="min-w-0 flex-1">
-                                                                                                    <p className="break-all text-sm leading-6 text-foreground">
-                                                                                                        {
-                                                                                                            libraryLabel
-                                                                                                        }
-                                                                                                    </p>
-                                                                                                    {libraryLabel !==
-                                                                                                    library.libraryType ? (
-                                                                                                        <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">
-                                                                                                            {
-                                                                                                                library.libraryType
-                                                                                                            }
-                                                                                                        </p>
-                                                                                                    ) : null}
+                                                                                                    <EntityMetadataPairs
+                                                                                                        pairs={libraryMetadataPairs(
+                                                                                                            library,
+                                                                                                        )}
+                                                                                                    />
                                                                                                 </div>
                                                                                                 <div className="flex flex-wrap gap-2">
                                                                                                     <button
@@ -1515,6 +1618,11 @@ export function SeqmetaBadge({
                                                                                                                                 displayName
                                                                                                                             }
                                                                                                                         </p>
+                                                                                                                        <EntityMetadataPairs
+                                                                                                                            pairs={sampleMetadataPairs(
+                                                                                                                                sample,
+                                                                                                                            )}
+                                                                                                                        />
                                                                                                                     </div>
                                                                                                                     <div className="flex flex-wrap gap-2">
                                                                                                                         {sample.sanger_id ? (
@@ -1743,11 +1851,9 @@ export function SeqmetaBadge({
                                                                                         sample,
                                                                                     );
                                                                                 const samplePairs =
-                                                                                    runMetadata
-                                                                                        ? sampleMetadataPairs(
-                                                                                              sample,
-                                                                                          )
-                                                                                        : [];
+                                                                                    sampleMetadataPairs(
+                                                                                        sample,
+                                                                                    );
 
                                                                                 return (
                                                                                     <article
@@ -1880,19 +1986,11 @@ export function SeqmetaBadge({
                                                                                     >
                                                                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                                                                             <div className="min-w-0 flex-1">
-                                                                                                <p className="break-all text-sm leading-6 text-foreground">
-                                                                                                    {
-                                                                                                        libraryLabel
-                                                                                                    }
-                                                                                                </p>
-                                                                                                {libraryLabel !==
-                                                                                                library.libraryType ? (
-                                                                                                    <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">
-                                                                                                        {
-                                                                                                            library.libraryType
-                                                                                                        }
-                                                                                                    </p>
-                                                                                                ) : null}
+                                                                                                <EntityMetadataPairs
+                                                                                                    pairs={libraryMetadataPairs(
+                                                                                                        library,
+                                                                                                    )}
+                                                                                                />
                                                                                             </div>
                                                                                             <div className="flex flex-wrap gap-2">
                                                                                                 <button
@@ -1977,7 +2075,10 @@ export function SeqmetaBadge({
                                                                                 lane,
                                                                                 index,
                                                                             ) => {
-                                                                                const laneId = `${lane.id_run}_${lane.lane}#${lane.tag_index}`;
+                                                                                const laneId =
+                                                                                    laneDetailId(
+                                                                                        lane,
+                                                                                    );
 
                                                                                 return (
                                                                                     <article
@@ -1987,11 +2088,11 @@ export function SeqmetaBadge({
                                                                                     >
                                                                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                                                                             <div className="min-w-0 flex-1">
-                                                                                                <p className="break-all text-sm leading-6 text-foreground">
-                                                                                                    {
-                                                                                                        laneId
-                                                                                                    }
-                                                                                                </p>
+                                                                                                <EntityMetadataPairs
+                                                                                                    pairs={laneMetadataPairs(
+                                                                                                        lane,
+                                                                                                    )}
+                                                                                                />
                                                                                             </div>
                                                                                             <div className="flex flex-wrap gap-2">
                                                                                                 <button

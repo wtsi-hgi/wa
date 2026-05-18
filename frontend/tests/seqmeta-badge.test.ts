@@ -333,12 +333,21 @@ describe("M1 result detail seqmeta enrichment", () => {
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
-        expect(screen.getByText("Study name")).toBeTruthy();
-        expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
+
+        const studyRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="study"]');
+
+        expect(studyRows).toHaveLength(1);
+        expect(studyRows[0]?.textContent).toContain("name:");
+        expect(studyRows[0]?.textContent).toContain("RNA Seq");
+        expect(studyRows[0]?.textContent).toContain("id:");
+        expect(studyRows[0]?.textContent).toContain("6568");
+        expect(screen.queryByText("Study name")).toBeNull();
         expect(
             screen
                 .getByRole("link", {
-                    name: /send study_id to search filter/i,
+                    name: /send study to search filter/i,
                 })
                 .getAttribute("href"),
         ).toBe("/?study=6568");
@@ -656,8 +665,15 @@ describe("M1 result detail seqmeta enrichment", () => {
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
-        expect(screen.getByText("Study name")).toBeTruthy();
-        expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
+
+        const studyRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="study"]');
+
+        expect(studyRows).toHaveLength(1);
+        expect(studyRows[0]?.textContent).toContain("name:");
+        expect(studyRows[0]?.textContent).toContain("RNA Seq");
+        expect(screen.queryByText("Study name")).toBeNull();
     });
 
     it("marks clickable seqmeta metadata values with a pointer cursor", async () => {
@@ -1902,6 +1918,195 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(relatedData?.textContent).not.toContain("Study identifier");
         expect(relatedData?.textContent).not.toContain("Sanger sample ID");
         expect(relatedData?.textContent).not.toContain("Sample LIMS ID");
+    });
+
+    it("renders study related libraries as entity rows with metadata pairs", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: buildStudy({
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                        }),
+                        study_detail: {
+                            study: buildStudy({
+                                id_study_lims: "6568",
+                                name: "RNA Seq",
+                            }),
+                            library_details: [
+                                {
+                                    library_type: "RNA PolyA",
+                                    id_study_lims: "6568",
+                                    library_id: "1001",
+                                    id_library_lims: "DN111:A1",
+                                    samples: [],
+                                },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const libraryRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="seqmeta_library"]');
+
+        expect(libraryRows).toHaveLength(1);
+        expect(libraryRows[0]?.textContent).toContain("type:");
+        expect(libraryRows[0]?.textContent).toContain("RNA PolyA");
+        expect(libraryRows[0]?.textContent).toContain("id:");
+        expect(libraryRows[0]?.textContent).toContain("1001");
+        expect(libraryRows[0]?.textContent).toContain("library_lims:");
+        expect(libraryRows[0]?.textContent).toContain("DN111:A1");
+    });
+
+    it("renders sample related library and lane rows with metadata pairs", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG001",
+                enrichment: buildEnrichment({
+                    identifier: "SANG001",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: buildStudy({
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                            accession_number: "ERP123456",
+                        }),
+                        sample: buildSample({
+                            id_study_lims: "6568",
+                            id_sample_lims: "LIMS001",
+                            sanger_id: "SANG001",
+                            sample_name: "Sample 1",
+                            library_type: "RNA PolyA",
+                        }),
+                        library: {
+                            library_type: "RNA PolyA",
+                            id_study_lims: "6568",
+                            library_id: "1001",
+                            id_library_lims: "DN111:A1",
+                        },
+                        sample_detail: buildSampleDetail({
+                            sample: {
+                                id_study_lims: "6568",
+                                id_sample_lims: "LIMS001",
+                                sanger_id: "SANG001",
+                                sample_name: "Sample 1",
+                                library_type: "RNA PolyA",
+                            },
+                            lanes: [
+                                {
+                                    id_run: "12345",
+                                    lane: "2",
+                                    tag_index: 88,
+                                },
+                            ],
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const libraryRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="library"]');
+        const laneRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="lane"]');
+
+        expect(libraryRows).toHaveLength(1);
+        expect(libraryRows[0]?.textContent).toContain("type:");
+        expect(libraryRows[0]?.textContent).toContain("RNA PolyA");
+        expect(libraryRows[0]?.textContent).toContain("id:");
+        expect(libraryRows[0]?.textContent).toContain("1001");
+        expect(libraryRows[0]?.textContent).toContain("library_lims:");
+        expect(libraryRows[0]?.textContent).toContain("DN111:A1");
+
+        expect(laneRows).toHaveLength(1);
+        expect(laneRows[0]?.textContent).toContain("id:");
+        expect(laneRows[0]?.textContent).toContain("12345_2#88");
+        expect(laneRows[0]?.textContent).toContain("id_run:");
+        expect(laneRows[0]?.textContent).toContain("12345");
+        expect(laneRows[0]?.textContent).toContain("lane:");
+        expect(laneRows[0]?.textContent).toContain("2");
+        expect(laneRows[0]?.textContent).toContain("tag_index:");
+        expect(laneRows[0]?.textContent).toContain("88");
+        expect(
+            screen
+                .getByRole("link", {
+                    name: /send lane to search filter/i,
+                })
+                .getAttribute("href"),
+        ).toBe("/?seqmeta_lane=12345_2#88");
+    });
+
+    it("renders library related samples as entity rows with metadata pairs", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_librarytype",
+                rawValue: "RNA",
+                enrichment: buildEnrichment({
+                    identifier: "RNA",
+                    type: "library_type",
+                    graph: {
+                        studies: [buildStudy()],
+                        samples: [
+                            buildSample({
+                                id_sample_lims: "LIMS001",
+                                sanger_id: "SANG001",
+                                sample_name: "Sample 1",
+                                accession_number: "ERS123456",
+                            }),
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const sampleRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="sample"]');
+
+        expect(sampleRows).toHaveLength(1);
+        expect(sampleRows[0]?.textContent).toContain("name:");
+        expect(sampleRows[0]?.textContent).toContain("Sample 1");
+        expect(sampleRows[0]?.textContent).toContain("id:");
+        expect(sampleRows[0]?.textContent).toContain("SANG001");
+        expect(sampleRows[0]?.textContent).toContain("sample_lims:");
+        expect(sampleRows[0]?.textContent).toContain("LIMS001");
+        expect(sampleRows[0]?.textContent).toContain("accession:");
+        expect(sampleRows[0]?.textContent).toContain("ERS123456");
     });
 
     it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {

@@ -1183,8 +1183,17 @@ describe("H3 enrichment state and badge", () => {
         expect(directKeys).toContain("seqmeta_sample_lims");
         expect(directKeys).toContain("sample_accession_number");
 
-        expect(relatedKeys).toContain("study_name");
-        expect(relatedKeys).toContain("study_id");
-        expect(relatedKeys).toContain("seqmeta_library");
+        expect(relatedKeys).toContain("study");
+        expect(relatedKeys).toContain("library");
+
+        const relatedText =
+            relatedDataSection.closest("[data-field-group]")?.textContent ?? "";
+
+        expect(relatedText).toContain("name:");
+        expect(relatedText).toContain("Cancer Programme");
+        expect(relatedText).toContain("id:");
+        expect(relatedText).toContain("6568");
+        expect(relatedText).toContain("type:");
+        expect(relatedText).toContain("RNA PolyA");
     });
 });
