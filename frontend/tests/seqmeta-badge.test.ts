@@ -1844,6 +1844,66 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(fetchLibrarySamplesMock).not.toHaveBeenCalled();
     });
 
+    it("renders run-id related study and sample as one row per entity", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_runid",
+                rawValue: "48522",
+                enrichment: buildEnrichment({
+                    identifier: "48522",
+                    type: "run_id",
+                    graph: {
+                        study: buildStudy({
+                            id_study_lims: "7607",
+                            name: "Run Study",
+                            accession_number: "EGAS00001005445",
+                        }),
+                        sample: buildSample({
+                            id_study_lims: "7607",
+                            id_sample_lims: "SMP7607",
+                            sanger_id: "7607STDY14643771",
+                            sample_name: "Run Sample",
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const dialogBody = screen.getByTestId("seqmeta-dialog-body");
+        const relatedData = dialogBody.querySelector(
+            '[data-field-group="related-data"]',
+        );
+        const studyRows = relatedData?.querySelectorAll(
+            '[data-seqmeta-detail-key="study"]',
+        );
+        const sampleRows = relatedData?.querySelectorAll(
+            '[data-seqmeta-detail-key="sample"]',
+        );
+
+        expect(studyRows).toHaveLength(1);
+        expect(studyRows?.[0]?.textContent).toContain("Run Study");
+        expect(studyRows?.[0]?.textContent).toContain("7607");
+        expect(studyRows?.[0]?.textContent).toContain("EGAS00001005445");
+
+        expect(sampleRows).toHaveLength(1);
+        expect(sampleRows?.[0]?.textContent).toContain("Run Sample");
+        expect(sampleRows?.[0]?.textContent).toContain("7607STDY14643771");
+        expect(sampleRows?.[0]?.textContent).toContain("SMP7607");
+
+        expect(relatedData?.textContent).not.toContain("Study name");
+        expect(relatedData?.textContent).not.toContain("Study identifier");
+        expect(relatedData?.textContent).not.toContain("Sanger sample ID");
+        expect(relatedData?.textContent).not.toContain("Sample LIMS ID");
+    });
+
     it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 

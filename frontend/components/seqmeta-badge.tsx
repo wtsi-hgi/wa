@@ -55,6 +55,11 @@ type HierarchicalGroup = {
         | { id_run: string; lane: string; tag_index: number }[];
 };
 
+type EntityMetadataPair = {
+    label: string;
+    value: string;
+};
+
 const RELATED_SAMPLE_RENDER_LIMIT = 50;
 
 function asString(value: unknown): string | null {
@@ -208,6 +213,85 @@ function relatedSamplesSummary(samples: EnrichmentSample[]): string | null {
     }
 
     return `Showing ${RELATED_SAMPLE_RENDER_LIMIT} of ${samples.length} samples`;
+}
+
+function entityMetadataPairs(
+    pairs: (EntityMetadataPair | null)[],
+): EntityMetadataPair[] {
+    const seen = new Set<string>();
+    const metadata: EntityMetadataPair[] = [];
+
+    for (const pair of pairs) {
+        if (!pair) {
+            continue;
+        }
+
+        const value = pair.value.trim();
+        if (!value) {
+            continue;
+        }
+
+        const key = `${pair.label}:${value}`;
+        if (seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        metadata.push({ ...pair, value });
+    }
+
+    return metadata;
+}
+
+function studyMetadataPairs(study: {
+    name: string;
+    id: string;
+    accession?: string;
+}): EntityMetadataPair[] {
+    return entityMetadataPairs([
+        { label: "name", value: study.name },
+        { label: "id", value: study.id },
+        study.accession ? { label: "accession", value: study.accession } : null,
+    ]);
+}
+
+function sampleMetadataPairs(sample: EnrichmentSample): EntityMetadataPair[] {
+    return entityMetadataPairs([
+        asString(sample.sample_name)
+            ? { label: "name", value: sample.sample_name }
+            : null,
+        asString(sample.sanger_id)
+            ? { label: "id", value: sample.sanger_id }
+            : null,
+        asString(sample.id_sample_lims)
+            ? { label: "sample_lims", value: sample.id_sample_lims }
+            : null,
+        asString(sample.accession_number)
+            ? { label: "accession", value: sample.accession_number }
+            : null,
+    ]);
+}
+
+function EntityMetadataPairs({ pairs }: { pairs: EntityMetadataPair[] }) {
+    if (pairs.length === 0) {
+        return null;
+    }
+
+    return (
+        <dl className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs leading-5 text-muted-foreground">
+            {pairs.map((pair) => (
+                <div
+                    key={`${pair.label}:${pair.value}`}
+                    className="inline-flex max-w-full gap-1"
+                >
+                    <dt className="font-medium text-foreground/70">
+                        {pair.label}:
+                    </dt>
+                    <dd className="break-all">{pair.value}</dd>
+                </div>
+            ))}
+        </dl>
+    );
 }
 
 function sampleCopyStateKey(sample: EnrichmentSample, index?: number): string {
@@ -548,6 +632,30 @@ function buildHierarchicalGroups(
     }
 
     if (runMetadata) {
+        if (enrichment.graph.study) {
+            groups.push({
+                type: "study",
+                title: "Study",
+                items: [
+                    {
+                        name: enrichment.graph.study.name,
+                        id: enrichment.graph.study.id_study_lims,
+                        accession:
+                            asString(enrichment.graph.study.accession_number) ??
+                            undefined,
+                    },
+                ],
+            });
+        }
+
+        if (enrichment.graph.sample) {
+            groups.push({
+                type: "samples",
+                title: "Sample",
+                items: [enrichment.graph.sample],
+            });
+        }
+
         const libraryItems = runLibraryItems(enrichment);
 
         if (libraryItems.length > 0) {
@@ -737,6 +845,7 @@ export function SeqmetaBadge({
     const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(
         new Set(),
     );
+    const runMetadata = metadataKey === "seqmeta_runid";
     const detailFields = useMemo(
         () =>
             dialogOpen
@@ -1522,11 +1631,11 @@ export function SeqmetaBadge({
                                                                                     >
                                                                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                                                                             <div className="min-w-0 flex-1">
-                                                                                                <p className="break-all text-sm leading-6 text-foreground">
-                                                                                                    {
-                                                                                                        study.name
-                                                                                                    }
-                                                                                                </p>
+                                                                                                <EntityMetadataPairs
+                                                                                                    pairs={studyMetadataPairs(
+                                                                                                        study,
+                                                                                                    )}
+                                                                                                />
                                                                                             </div>
                                                                                             <div className="flex flex-wrap gap-2">
                                                                                                 <button
@@ -1633,6 +1742,12 @@ export function SeqmetaBadge({
                                                                                     sampleCopyStateKey(
                                                                                         sample,
                                                                                     );
+                                                                                const samplePairs =
+                                                                                    runMetadata
+                                                                                        ? sampleMetadataPairs(
+                                                                                              sample,
+                                                                                          )
+                                                                                        : [];
 
                                                                                 return (
                                                                                     <article
@@ -1647,6 +1762,11 @@ export function SeqmetaBadge({
                                                                                                         displayName
                                                                                                     }
                                                                                                 </p>
+                                                                                                <EntityMetadataPairs
+                                                                                                    pairs={
+                                                                                                        samplePairs
+                                                                                                    }
+                                                                                                />
                                                                                             </div>
                                                                                             <div className="flex flex-wrap gap-2">
                                                                                                 {sample.sanger_id ? (
