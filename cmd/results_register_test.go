@@ -881,6 +881,18 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "requires a previously synced MLWH cache")
 	})
 
+	convey.Convey("Given register help, when printed, then it explains when a registration replaces an existing result set", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"results", "register", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "same pipeline identity and run key")
+		convey.So(output, convey.ShouldContainSubstring, "--nextflow-workflow")
+		convey.So(output, convey.ShouldContainSubstring, "--runid and --additional-unique")
+		convey.So(output, convey.ShouldContainSubstring, "multiple independently registered outputs")
+		convey.So(output, convey.ShouldContainSubstring, "short, stable, human-readable label")
+		convey.So(output, convey.ShouldContainSubstring, "timestamp, random value, or output path")
+	})
+
 	convey.Convey("G1.4: Given missing --user, then the command returns an error and stderr contains the error", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")

@@ -621,14 +621,33 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "register [output-dir]",
 		Short: "Register a result set",
-		Long: strings.Join([]string{
-			"Register a result set.",
-			"",
-			"The --run, --study, --sample and --library shorthands resolve through MLWH and store canonical seqmeta metadata keys.",
-			"--sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID.",
-			"--study accepts LIMS ID, accession, UUID, or name; --run accepts numeric run IDs.",
-			"--library accepts exact pipeline_id_lims, library_id, or id_library_lims values and requires the MLWH cache to have been synced already.",
-		}, "\n"),
+		Long: `Register a result set.
+
+The --run, --study, --sample and --library shorthands resolve through MLWH
+and store canonical seqmeta metadata keys.
+--sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or
+donor ID.
+--study accepts LIMS ID, accession, UUID, or name; --run accepts numeric run
+IDs.
+--library accepts exact pipeline_id_lims, library_id, or id_library_lims values
+and requires the MLWH cache to have been synced already.
+
+Registrations are keyed by the detected pipeline identity and the run key.
+The server replaces an existing result set instead of adding a new one when a
+registration has the same pipeline identity and run key.
+The pipeline identity comes from --nextflow-workflow: files inside git use
+repository/commit metadata, while files outside git use the workflow path and
+content hash.
+The run key is built from --runid and --additional-unique. Use the same values
+when rerunning the same logical result and you want the stored registration,
+files and metadata to be refreshed.
+Use --additional-unique when the same workflow and run ID produce
+multiple independently registered outputs that should coexist, such as
+different analyses, panels, cohorts or parameter sets.
+Choose a short, stable, human-readable label for --additional-unique that
+describes that output, and reuse it for future replacements.
+Avoid a timestamp, random value, or output path unless every registration should
+create a new result set.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -669,7 +688,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&commandLine, "command", "", "Pipeline command line")
 	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path to the Nextflow workflow used for the run")
 	command.Flags().StringVar(&runID, "runid", "", "Run identifier")
-	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Additional value used to disambiguate the run key")
+	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Stable label used to disambiguate the run key")
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
 	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric run ID through MLWH and store it as seqmeta_runid")
