@@ -18,7 +18,7 @@ describe("ResultRegistrationSummary", () => {
                         value: "gh://repo/workflow.nf",
                         mono: true,
                     },
-                    { label: "Run key", value: "runid=1001", mono: true },
+                    { label: "Unique", value: "1001", mono: true },
                     { label: "Requester", value: "alice" },
                     { label: "Operator", value: "bob" },
                     { label: "Registered", value: "23 Apr 2026, 09:15" },
@@ -68,7 +68,7 @@ describe("ResultRegistrationSummary", () => {
         ).toEqual([
             "Pipeline version",
             "Pipeline identifier",
-            "Run key",
+            "Unique",
             "Requester",
             "Operator",
             "Registered",

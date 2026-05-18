@@ -28,6 +28,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -100,6 +101,21 @@ func TestResultsSearchCommand(t *testing.T) {
 		convey.So(query.Get("run_key"), convey.ShouldEqual, "runid=48522")
 		convey.So(query.Get("output_dir_prefix"), convey.ShouldEqual, "/tmp/results")
 		convey.So(query.Get("meta_library"), convey.ShouldEqual, "exon")
+	})
+
+	convey.Convey("Given --unique, search forwards the value as the compatibility run_key query", t, func() {
+		queryCh := make(chan string, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			queryCh <- r.URL.Query().Get("run_key")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		}))
+		defer server.Close()
+
+		_, err := executeRootCommandForTest(t, []string{"results", "search", "--server", server.URL, "--unique", "48522 / random_exon"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(<-queryCh, convey.ShouldEqual, "48522 / random_exon")
 	})
 
 	convey.Convey("results endpoints preserve a server path prefix", t, func() {

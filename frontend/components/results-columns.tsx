@@ -2,6 +2,7 @@ import { ArrowUpDown } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 
 import type { ResultSet, SearchResult } from "@/lib/contracts";
+import { formatRegistrationUnique } from "@/lib/result-identity";
 import { formatUtcDate } from "@/lib/utils";
 
 export type ResultsTableRow = {
@@ -103,6 +104,27 @@ export function getResultsColumns(
                     row.original.id,
                     row.original.result.pipeline_name,
                     "font-medium text-foreground transition hover:text-primary",
+                    returnHref,
+                ),
+        },
+        {
+            accessorKey: "registration_unique",
+            id: "registration_unique",
+            accessorFn: (row) => formatRegistrationUnique(row.result.run_key),
+            header: ({ column }) => (
+                <SortableHeader
+                    columnId="registration_unique"
+                    label="Unique"
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
+                />
+            ),
+            cell: ({ row }) =>
+                linkedCell(
+                    row.original.id,
+                    formatRegistrationUnique(row.original.result.run_key),
+                    "font-mono text-xs text-foreground",
                     returnHref,
                 ),
         },
@@ -260,7 +282,7 @@ export function getResultsColumns(
             header: ({ column }) => (
                 <SortableHeader
                     columnId="run_key"
-                    label="Run Key"
+                    label="Stored Key"
                     onSort={() =>
                         column.toggleSorting(column.getIsSorted() === "asc")
                     }

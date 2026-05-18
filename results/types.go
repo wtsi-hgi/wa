@@ -259,11 +259,14 @@ func repoNameFromIdentifier(identifier string) string {
 }
 
 // BuildRunKey returns a canonical query-encoded run key from non-empty parts.
-func BuildRunKey(runID, additionalUnique string) string {
+//
+// The primary value is now user-facing as "unique", but the stored query key
+// remains "runid" so reruns of existing registrations keep the same ID.
+func BuildRunKey(unique, additionalUnique string) string {
 	values := url.Values{}
 
-	if runID != "" {
-		values.Set("runid", runID)
+	if unique != "" {
+		values.Set("runid", unique)
 	}
 
 	if additionalUnique != "" {
@@ -271,4 +274,42 @@ func BuildRunKey(runID, additionalUnique string) string {
 	}
 
 	return values.Encode()
+}
+
+// DisplayRunKeyUnique returns the user-facing unique label for a stored run key.
+func DisplayRunKeyUnique(runKey string) string {
+	trimmed := strings.TrimSpace(runKey)
+	if trimmed == "" || !strings.Contains(trimmed, "=") {
+		return trimmed
+	}
+
+	values, err := url.ParseQuery(trimmed)
+	if err != nil {
+		return trimmed
+	}
+
+	primary := firstQueryValue(values, "runid")
+	additional := firstQueryValue(values, "unique")
+
+	switch {
+	case primary != "" && additional != "":
+		return primary + " / " + additional
+	case primary != "":
+		return primary
+	case additional != "":
+		return additional
+	default:
+		return trimmed
+	}
+}
+
+func firstQueryValue(values url.Values, key string) string {
+	for _, value := range values[key] {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+
+	return ""
 }

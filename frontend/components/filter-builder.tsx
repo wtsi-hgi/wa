@@ -83,7 +83,7 @@ const coreFieldOptions: FieldOption[] = [
         label: "Pipeline identifier",
         placeholder: "gh://repo/workflow.nf",
     },
-    { key: "run_key", label: "Run key", placeholder: "runid=48522" },
+    { key: "run_key", label: "Unique", placeholder: "48522 or 48522 / exon" },
     {
         key: "output_dir_prefix",
         label: "Output directory prefix",

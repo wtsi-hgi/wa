@@ -13,6 +13,7 @@ import type {
     StatsResult,
     Study,
 } from "@/lib/contracts";
+import { formatRegistrationUnique } from "@/lib/result-identity";
 import { parseSearchFilters } from "@/lib/search-params";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -127,7 +128,11 @@ function buildSuggestionValues(
             "pipeline_identifier",
             result.pipeline_identifier,
         );
-        appendSuggestion(suggestions, "run_key", result.run_key);
+        appendSuggestion(
+            suggestions,
+            "run_key",
+            formatRegistrationUnique(result.run_key),
+        );
         appendSuggestion(
             suggestions,
             "output_dir_prefix",

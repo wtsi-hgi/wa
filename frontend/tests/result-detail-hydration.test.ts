@@ -349,7 +349,7 @@ describe("O1 result detail hydration", () => {
         expect(registrationLabels).toEqual([
             "Pipeline version",
             "Pipeline identifier",
-            "Run key",
+            "Unique",
             "Requester",
             "Operator",
             "Registered",
@@ -360,6 +360,8 @@ describe("O1 result detail hydration", () => {
         expect(registrationLabels).not.toContain("Result ID");
         expect(registrationLabels).not.toContain("Pipeline name");
         expect(metadataKeys).toEqual(["library", "seqmeta_studyid", "study"]);
+        expect(detailSummary?.textContent).toContain("1001");
+        expect(detailSummary?.textContent).not.toContain("runid=1001");
         expect(detailSummary?.textContent).toContain("exon");
         expect(detailSummary?.textContent).toContain("6568");
         expect(detailSummary?.textContent).toContain("study-alpha");

@@ -213,6 +213,33 @@ describe("K1 filter builder component", () => {
         expect(pushMock).toHaveBeenCalledWith("/?library=RNA");
     });
 
+    it("labels the registration uniqueness filter as Unique and sends the existing run_key query key", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: [],
+                seqmetaAvailable: false,
+                studies: [],
+                suggestionValues: {
+                    run_key: ["48522 / random_exon"],
+                },
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(screen.getByRole("option", { name: /^unique$/i }));
+        fireEvent.change(screen.getByLabelText(/unique value/i), {
+            target: { value: "48522 / random_exon" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+        expect(pushMock).toHaveBeenCalledWith(
+            "/?run_key=48522+%2F+random_exon",
+        );
+    });
+
     it("keeps library ID filters on their first-class seqmeta key", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 

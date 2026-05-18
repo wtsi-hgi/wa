@@ -22,7 +22,7 @@ export function ResultRegistrationSummary({
             <div className="space-y-3" data-registration-summary="integrated">
                 <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-foreground">
-                        Run details
+                        Registration details
                     </p>
                     <p className="text-xs text-muted-foreground">
                         {fields.length} fields

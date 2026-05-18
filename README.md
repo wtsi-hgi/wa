@@ -48,7 +48,7 @@ wa results register /path/to/output \
   --operator jdoe \
   --command "nextflow run pipeline" \
   --nextflow-workflow /path/to/main.nf \
-  --runid my-run-001 \
+  --unique my-run-001 \
 	--study 6568 \
 	--sample SANG123
 

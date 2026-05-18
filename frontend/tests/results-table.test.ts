@@ -173,7 +173,7 @@ describe("L1 results table", () => {
         expect(container.textContent).toContain("No results found.");
     });
 
-    it("keeps command, pipeline version, pipeline identifier, run key, operator, and id hidden by default", async () => {
+    it("keeps command, pipeline version, pipeline identifier, stored key, operator, and id hidden by default", async () => {
         await act(async () => {
             root.render(
                 createElement(ResultsTable, { data: [buildResultSet(1)] }),
@@ -185,9 +185,28 @@ describe("L1 results table", () => {
         expect(headers).not.toContain("Command");
         expect(headers).not.toContain("Pipeline version");
         expect(headers).not.toContain("Pipeline identifier");
-        expect(headers).not.toContain("Run key");
+        expect(headers).not.toContain("Stored Key");
         expect(headers).not.toContain("Operator");
         expect(headers).not.toContain("ID");
+    });
+
+    it("shows the formatted Unique column by default next to Pipeline Name", async () => {
+        const result = {
+            ...buildResultSet(1),
+            run_key: "runid=48522&unique=random_exon",
+        };
+
+        await act(async () => {
+            root.render(createElement(ResultsTable, { data: [result] }));
+        });
+
+        const headers = getHeaderLabels(container);
+
+        expect(headers.slice(0, 2)).toEqual(["Pipeline Name", "Unique"]);
+        expect(headers).not.toContain("Run Key");
+        expect(getBodyRows(container)[0].children[1].textContent).toContain(
+            "48522 / random_exon",
+        );
     });
 
     it("shows the matched samples column and values when studyActive is true for search results", async () => {

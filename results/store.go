@@ -781,6 +781,43 @@ func nonEmptySearchValues(values []string) []string {
 	return filtered
 }
 
+func expandRunKeySearchValues(values []string) []string {
+	expanded := make([]string, 0, len(values)*3)
+	seen := map[string]struct{}{}
+
+	add := func(value string) {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+
+		seen[trimmed] = struct{}{}
+		expanded = append(expanded, trimmed)
+	}
+
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		add(trimmed)
+		add(BuildRunKey(trimmed, ""))
+
+		primary, additional, hasDisplaySeparator := strings.Cut(trimmed, " / ")
+		if hasDisplaySeparator {
+			add(BuildRunKey(strings.TrimSpace(primary), strings.TrimSpace(additional)))
+
+			continue
+		}
+
+		if !strings.Contains(trimmed, "=") {
+			add(BuildRunKey("", trimmed))
+		}
+	}
+
+	return expanded
+}
+
 func multiSearchParamsFromSingle(params SearchParams) MultiSearchParams {
 	multi := MultiSearchParams{
 		Meta: map[string][]string{},
@@ -928,7 +965,7 @@ func (s *Store) SearchMulti(ctx context.Context, params MultiSearchParams) ([]Re
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_name", params.PipelineName)
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_version", params.PipelineVersion)
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_identifier", params.PipelineIdentifier)
-	filters, args = appendMultiValueSearchFilter(filters, args, "run_key", params.RunKey)
+	filters, args = appendMultiValueSearchFilter(filters, args, "run_key", expandRunKeySearchValues(params.RunKey))
 	filters, args = appendMultiPrefixFilter(filters, args, "output_directory", params.OutputDirPrefix)
 	filters, args = appendMultiMetadataSearchFilters(filters, args, params.Meta)
 	filters, args = appendOrMetaSearchFilter(filters, args, params.OrMeta)

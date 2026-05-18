@@ -413,6 +413,21 @@ func matchLibraryType(match mlwh.Match) string {
 	return ""
 }
 
+func resultsRegisterUniqueValue(unique, legacyRunID string) (string, error) {
+	trimmedUnique := strings.TrimSpace(unique)
+	trimmedLegacyRunID := strings.TrimSpace(legacyRunID)
+
+	if trimmedUnique != "" && trimmedLegacyRunID != "" && trimmedUnique != trimmedLegacyRunID {
+		return "", errors.New("--unique and deprecated --runid cannot both be set to different values")
+	}
+
+	if trimmedUnique != "" {
+		return trimmedUnique, nil
+	}
+
+	return trimmedLegacyRunID, nil
+}
+
 type resultSetWithFiles struct {
 	results.ResultSet
 	Files []results.FileEntry `json:"files"`
@@ -614,7 +629,8 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var operator string
 	var commandLine string
 	var workflowPath string
-	var runID string
+	var unique string
+	var legacyRunID string
 	var additionalUnique string
 	var inputFiles []string
 	var metaValues []string
@@ -636,20 +652,18 @@ IDs.
 --library accepts exact pipeline_id_lims, library_id, or id_library_lims values
 and requires the MLWH cache to have been synced already.
 
-Registrations are keyed by the detected pipeline identity and the run key.
+Registrations are keyed by the detected pipeline identity and the unique key.
 The server replaces an existing result set instead of adding a new one when a
-registration has the same pipeline identity and run key.
+registration has the same pipeline identity and unique key.
 The pipeline identity comes from --nextflow-workflow: files inside git use
 repository/commit metadata, while files outside git use the workflow path and
 content hash.
-The run key is built from --runid and --additional-unique. Use the same values
+The unique key is built from --unique. Use the same value
 when rerunning the same logical result and you want the stored registration,
 files and metadata to be refreshed.
-Use --additional-unique when the same workflow and run ID produce
-multiple independently registered outputs that should coexist, such as
-different analyses, panels, cohorts or parameter sets.
-Choose a short, stable, human-readable label for --additional-unique that
-describes that output, and reuse it for future replacements.
+Choose a single stable, human-readable label for --unique that describes the
+output, such as a run, cohort, panel or parameter-set label, and reuse it for
+future replacements.
 Avoid a timestamp, random value, or output path unless every registration should
 create a new result set.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -666,7 +680,8 @@ create a new result set.`,
 				operator,
 				commandLine,
 				workflowPath,
-				runID,
+				unique,
+				legacyRunID,
 				additionalUnique,
 				inputFiles,
 				metaValues,
@@ -691,8 +706,9 @@ create a new result set.`,
 	command.Flags().StringVar(&operator, "operator", "", "Operator name")
 	command.Flags().StringVar(&commandLine, "command", "", "Pipeline command line")
 	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path to the Nextflow workflow used for the run")
-	command.Flags().StringVar(&runID, "runid", "", "Run identifier")
-	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Stable label used to disambiguate the run key")
+	command.Flags().StringVar(&unique, "unique", "", "Stable unique label for this result set")
+	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
+	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
 	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric run ID through MLWH and store it as seqmeta_runid")
@@ -701,6 +717,8 @@ create a new result set.`,
 	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
+	_ = command.Flags().MarkHidden("runid")
+	_ = command.Flags().MarkHidden("additional-unique")
 
 	return command
 }
@@ -713,7 +731,8 @@ func buildResultsRegistrationForCommand(
 	operator string,
 	commandLine string,
 	workflowPath string,
-	runID string,
+	unique string,
+	legacyRunID string,
 	additionalUnique string,
 	inputFiles []string,
 	metaValues []string,
@@ -750,9 +769,14 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("--nextflow-workflow is required")
 	}
 
-	runKey := results.BuildRunKey(strings.TrimSpace(runID), strings.TrimSpace(additionalUnique))
+	uniqueValue, err := resultsRegisterUniqueValue(unique, legacyRunID)
+	if err != nil {
+		return nil, err
+	}
+
+	runKey := results.BuildRunKey(uniqueValue, strings.TrimSpace(additionalUnique))
 	if runKey == "" {
-		return nil, errors.New("--runid or --additional-unique is required")
+		return nil, errors.New("--unique is required")
 	}
 
 	seqmetaMetadata, err := resolveResultsRegisterLookupMetadata(ctx, lookupValues)
@@ -912,7 +936,8 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 	var pipelineName string
 	var pipelineVersion string
 	var pipelineIdentifier string
-	var runKey string
+	var unique string
+	var legacyRunKey string
 	var outputDirPrefix string
 	var metaValues []string
 
@@ -920,7 +945,12 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 		Use:   "search",
 		Short: "Search result sets",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			query, err := buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, runKey, outputDirPrefix, metaValues)
+			uniqueValue, err := resultsSearchUniqueValue(unique, legacyRunKey)
+			if err != nil {
+				return err
+			}
+
+			query, err := buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, uniqueValue, outputDirPrefix, metaValues)
 			if err != nil {
 				return err
 			}
@@ -946,11 +976,28 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&pipelineName, "pipeline-name", "", "Pipeline name filter")
 	command.Flags().StringVar(&pipelineVersion, "pipeline-version", "", "Pipeline version filter")
 	command.Flags().StringVar(&pipelineIdentifier, "pipeline-identifier", "", "Pipeline identifier filter")
-	command.Flags().StringVar(&runKey, "run-key", "", "Run key filter")
+	command.Flags().StringVar(&unique, "unique", "", "Unique key filter")
+	command.Flags().StringVar(&legacyRunKey, "run-key", "", "Deprecated alias for --unique")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata filter in key=value form")
 	command.Flags().StringVar(&outputDirPrefix, "output-dir-prefix", "", "Output directory prefix filter")
+	_ = command.Flags().MarkHidden("run-key")
 
 	return command
+}
+
+func resultsSearchUniqueValue(unique, legacyRunKey string) (string, error) {
+	trimmedUnique := strings.TrimSpace(unique)
+	trimmedLegacyRunKey := strings.TrimSpace(legacyRunKey)
+
+	if trimmedUnique != "" && trimmedLegacyRunKey != "" && trimmedUnique != trimmedLegacyRunKey {
+		return "", errors.New("--unique and deprecated --run-key cannot both be set to different values")
+	}
+
+	if trimmedUnique != "" {
+		return trimmedUnique, nil
+	}
+
+	return trimmedLegacyRunKey, nil
 }
 
 func buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, runKey, outputDirPrefix string, metaValues []string) (url.Values, error) {

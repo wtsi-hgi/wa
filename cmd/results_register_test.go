@@ -117,6 +117,55 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(countRegisterCommandFilesByKind(registration.Files, "pipeline"), convey.ShouldEqual, 1)
 	})
 
+	convey.Convey("Given --unique, when register is run, then the registration uses the stable unique key", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "result-unique"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results",
+			"--server", server.URL,
+			"register",
+			"--user", "alice",
+			"--operator", "bob",
+			"--unique", "48522-random-exon",
+			"--nextflow-workflow", workflowPath,
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.RunKey, convey.ShouldEqual, "runid=48522-random-exon")
+	})
+
 	convey.Convey("G1.2: Given --json, when registration JSON is piped to stdin, then it is sent as-is to the server without scanning", t, func() {
 		payload := registerCommandRegistrationForTest()
 		payload.OutputDirectory = "/does/not/need/to/exist"
@@ -885,12 +934,13 @@ func TestResultsRegisterCommand(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"results", "register", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "same pipeline identity and run key")
+		convey.So(output, convey.ShouldContainSubstring, "same pipeline identity and unique key")
 		convey.So(output, convey.ShouldContainSubstring, "--nextflow-workflow")
-		convey.So(output, convey.ShouldContainSubstring, "--runid and --additional-unique")
-		convey.So(output, convey.ShouldContainSubstring, "multiple independently registered outputs")
-		convey.So(output, convey.ShouldContainSubstring, "short, stable, human-readable label")
+		convey.So(output, convey.ShouldContainSubstring, "--unique")
+		convey.So(output, convey.ShouldContainSubstring, "single stable, human-readable label")
 		convey.So(output, convey.ShouldContainSubstring, "timestamp, random value, or output path")
+		convey.So(output, convey.ShouldNotContainSubstring, "--runid")
+		convey.So(output, convey.ShouldNotContainSubstring, "--additional-unique")
 	})
 
 	convey.Convey("G1.4: Given missing --user, then the command returns an error and stderr contains the error", t, func() {
@@ -901,7 +951,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
 			"results", "register",
-			"--runid", "48522",
+			"--unique", "48522",
 			"--nextflow-workflow", workflowPath,
 			outputDir,
 		}, nil)

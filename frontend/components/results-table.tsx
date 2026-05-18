@@ -43,6 +43,25 @@ const defaultHiddenColumns: Record<string, boolean> = {
     id: false,
 };
 
+function columnVisibilityLabel(columnId: string): string {
+    if (columnId === "id") {
+        return "ID";
+    }
+
+    if (columnId === "run_key") {
+        return "Stored Key";
+    }
+
+    if (columnId === "registration_unique") {
+        return "Unique";
+    }
+
+    return columnId
+        .split("_")
+        .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+        .join(" ");
+}
+
 export function ResultsTable({
     data,
     emptyMessage = "No results found.",
@@ -124,18 +143,7 @@ export function ResultsTable({
                                         column.toggleVisibility(checked)
                                     }
                                 >
-                                    {column.id === "id"
-                                        ? "ID"
-                                        : column.id
-                                              .split("_")
-                                              .map(
-                                                  (segment) =>
-                                                      segment
-                                                          .charAt(0)
-                                                          .toUpperCase() +
-                                                      segment.slice(1),
-                                              )
-                                              .join(" ")}
+                                    {columnVisibilityLabel(column.id)}
                                 </DropdownMenuCheckboxItem>
                             ))}
                         </DropdownMenuContent>

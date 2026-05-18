@@ -8,6 +8,7 @@ import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
 import { ResultRegistrationSummary } from "@/components/result-registration-summary";
 import type { FileEntry, ResultSet } from "@/lib/contracts";
+import { formatRegistrationUnique } from "@/lib/result-identity";
 import { formatBytes } from "@/lib/utils";
 
 type DetailPageParams = {
@@ -109,7 +110,11 @@ function detailFields(result: ResultSet) {
             value: result.pipeline_identifier,
             mono: true,
         },
-        { label: "Run key", value: result.run_key, mono: true },
+        {
+            label: "Unique",
+            value: formatRegistrationUnique(result.run_key),
+            mono: true,
+        },
         { label: "Requester", value: result.requester },
         { label: "Operator", value: result.operator },
         {
