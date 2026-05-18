@@ -135,12 +135,29 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
             ),
         ).toBeTruthy();
 
-        // Should show Sanger sample ID
+        // The selected Sanger sample ID is already the dialog title, with its
+        // copy/filter controls next to the title rather than a duplicate row.
         expect(
-            within(directMetadataSection as HTMLElement).getByText(
+            screen.getByRole("heading", { name: "WTSI_TEST_SAMPLE" }),
+        ).toBeTruthy();
+        expect(
+            within(directMetadataSection as HTMLElement).queryByText(
                 "WTSI_TEST_SAMPLE",
             ),
+        ).toBeNull();
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector('[aria-label="Copy seqmeta_sampleid"]'),
         ).toBeTruthy();
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector(
+                    '[aria-label="Send seqmeta_sampleid to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?sample=WTSI_TEST_SAMPLE");
 
         // Should show Sample LIMS ID
         expect(

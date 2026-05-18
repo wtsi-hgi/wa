@@ -187,6 +187,46 @@ function copiedStateKey(fieldKey: string, fieldValue: string): string {
     return `${fieldKey}:${fieldValue}`;
 }
 
+function titleFilterSearchKey(metadataKey: string): string | null {
+    if (
+        metadataKey === "seqmeta_studyid" ||
+        metadataKey === "seqmeta_study_accession"
+    ) {
+        return "study";
+    }
+
+    if (
+        metadataKey === "seqmeta_sampleid" ||
+        metadataKey === "seqmeta_sample_lims"
+    ) {
+        return "sample";
+    }
+
+    if (
+        metadataKey === "seqmeta_library" ||
+        metadataKey === "seqmeta_librarytype"
+    ) {
+        return "library";
+    }
+
+    if (metadataKey.startsWith("seqmeta_")) {
+        return metadataKey;
+    }
+
+    return null;
+}
+
+function titleFilterHref(metadataKey: string, rawValue: string): string | null {
+    const searchKey = titleFilterSearchKey(metadataKey);
+    const value = rawValue.trim();
+
+    if (!searchKey || !value) {
+        return null;
+    }
+
+    return `/?${new URLSearchParams({ [searchKey]: value }).toString()}`;
+}
+
 function primaryLabel(
     rawValue: string,
     enrichment: EnrichmentResult | null,
@@ -705,14 +745,10 @@ function appendDetailField(
     );
 
     if (!duplicate) {
-        // Skip direct metadata fields whose value matches the dialog title (rawValue)
-        // EXCEPT for primary identifier fields (where field.key matches the metadata key)
-        const isPrimaryIdentifier = metadataKey && field.key === metadataKey;
         if (
             rawValue &&
             field.group === "direct" &&
-            value.toLowerCase() === rawValue.trim().toLowerCase() &&
-            !isPrimaryIdentifier
+            value.toLowerCase() === rawValue.trim().toLowerCase()
         ) {
             return;
         }
@@ -1297,6 +1333,8 @@ export function SeqmetaBadge({
     const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(
         new Set(),
     );
+    const titleCopyKey = copiedStateKey(`title:${metadataKey}`, inlineLabel);
+    const titleHref = titleFilterHref(metadataKey, rawValue);
     const detailFields = useMemo(
         () =>
             dialogOpen
@@ -1505,16 +1543,60 @@ export function SeqmetaBadge({
                     />
                     <section className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[2rem] border border-border/80 bg-[linear-gradient(145deg,color-mix(in_oklab,var(--card)_88%,white_12%),color-mix(in_oklab,var(--accent)_14%,var(--card)_86%))] shadow-[0_36px_140px_-72px_rgba(20,31,49,0.9)] sm:max-h-[calc(100vh-3rem)]">
                         <div className="flex items-start justify-between gap-4 border-b border-border/70 px-6 py-5 sm:px-7">
-                            <div className="space-y-2">
+                            <div className="min-w-0 flex-1 space-y-2">
                                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted-foreground">
                                     Seqmeta details
                                 </p>
-                                <h3
-                                    id={`seqmeta-dialog-title-${metadataKey}`}
-                                    className="text-2xl font-semibold tracking-tight text-foreground"
-                                >
-                                    {inlineLabel}
-                                </h3>
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <h3
+                                        id={`seqmeta-dialog-title-${metadataKey}`}
+                                        className="break-all text-2xl font-semibold tracking-tight text-foreground"
+                                    >
+                                        {inlineLabel}
+                                    </h3>
+                                    <div
+                                        data-testid="seqmeta-title-actions"
+                                        className="flex flex-wrap gap-2"
+                                    >
+                                        <button
+                                            type="button"
+                                            aria-label={`Copy ${metadataKey}`}
+                                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                            onClick={() => {
+                                                void writeClipboard(
+                                                    inlineLabel,
+                                                ).then((copied) => {
+                                                    if (copied) {
+                                                        setCopiedKey(
+                                                            titleCopyKey,
+                                                        );
+                                                    }
+                                                });
+                                            }}
+                                        >
+                                            <Copy
+                                                className="size-3.5"
+                                                aria-hidden="true"
+                                            />
+                                            {copiedKey === titleCopyKey
+                                                ? "Copied"
+                                                : "Copy"}
+                                        </button>
+                                        {titleHref ? (
+                                            <Link
+                                                aria-label={`Send ${metadataKey} to search filter`}
+                                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
+                                                href={titleHref}
+                                            >
+                                                <Search
+                                                    className="size-3.5"
+                                                    aria-hidden="true"
+                                                />
+                                                Filter
+                                            </Link>
+                                        ) : null}
+                                    </div>
+                                </div>
                                 <p className="font-mono text-xs text-muted-foreground">
                                     {metadataKey}
                                     {enrichment &&
