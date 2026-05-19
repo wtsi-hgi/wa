@@ -220,12 +220,15 @@ function titleFilterSearchKey(metadataKey: string): string | null {
         return "study";
     }
 
+    if (displayKey === "seqmeta_name") {
+        return "sample";
+    }
+
     if (
-        displayKey === "seqmeta_name" ||
         displayKey === "seqmeta_sanger_sample_id" ||
         displayKey === "seqmeta_id_sample_lims"
     ) {
-        return "sample";
+        return displayKey;
     }
 
     if (displayKey === "seqmeta_pipeline_id_lims") {
@@ -256,6 +259,54 @@ function detailFieldHref(field: SeqmetaDetailField): string | null {
     }
 
     return `/?${new URLSearchParams({ [field.searchKey]: field.value }).toString()}`;
+}
+
+function directDetailSearchKey(
+    metadataKey: string,
+    fieldKey: string,
+): string | undefined {
+    const displayFieldKey = seqmetaDisplayKey(fieldKey);
+
+    if (isStudyMetadataKey(metadataKey)) {
+        if (
+            displayFieldKey === "seqmeta_name" ||
+            displayFieldKey === "seqmeta_id_study_lims" ||
+            displayFieldKey === "seqmeta_accession_number"
+        ) {
+            return "study";
+        }
+    }
+
+    if (isSampleMetadataKey(metadataKey)) {
+        if (
+            displayFieldKey === "seqmeta_name" ||
+            displayFieldKey === "seqmeta_sanger_sample_id" ||
+            displayFieldKey === "seqmeta_supplier_name" ||
+            displayFieldKey === "seqmeta_id_sample_lims" ||
+            displayFieldKey === "seqmeta_accession_number"
+        ) {
+            return displayFieldKey;
+        }
+    }
+
+    if (isLibraryMetadataKey(metadataKey)) {
+        if (displayFieldKey === "seqmeta_pipeline_id_lims") {
+            return "library";
+        }
+
+        if (
+            displayFieldKey === "seqmeta_library_id" ||
+            displayFieldKey === "seqmeta_id_library_lims"
+        ) {
+            return displayFieldKey;
+        }
+    }
+
+    if (isRunMetadataKey(metadataKey) && displayFieldKey === "seqmeta_id_run") {
+        return displayFieldKey;
+    }
+
+    return undefined;
 }
 
 function isStudyMetadataKey(metadataKey: string): boolean {
@@ -857,7 +908,13 @@ function appendDetailField(
             return;
         }
 
-        fields.push({ ...field, value });
+        const searchKey =
+            field.group === "direct"
+                ? (directDetailSearchKey(metadataKey ?? "", field.key) ??
+                  field.searchKey)
+                : field.searchKey;
+
+        fields.push({ ...field, searchKey, value });
     }
 }
 

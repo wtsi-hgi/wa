@@ -2549,6 +2549,82 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
+    it.each([
+        {
+            metadataKey: "seqmeta_id_sample_lims",
+            rawValue: "6050954",
+            suppressedDetailKey: "seqmeta_id_sample_lims",
+            expectedHref: "/?seqmeta_id_sample_lims=6050954",
+            sample: {
+                id_sample_lims: "6050954",
+                sanger_id: "9575305",
+                sample_name: "7607STDY14643771",
+            },
+        },
+        {
+            metadataKey: "seqmeta_sanger_sample_id",
+            rawValue: "9575305",
+            suppressedDetailKey: "seqmeta_sanger_sample_id",
+            expectedHref: "/?seqmeta_sanger_sample_id=9575305",
+            sample: {
+                id_sample_lims: "6050954",
+                sanger_id: "9575305",
+                sample_name: "7607STDY14643771",
+            },
+        },
+    ])(
+        "keeps $metadataKey title filter on the direct metadata key when the duplicate direct row is hidden",
+        async ({
+            expectedHref,
+            metadataKey,
+            rawValue,
+            sample,
+            suppressedDetailKey,
+        }) => {
+            const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey,
+                    rawValue,
+                    enrichment: buildEnrichment({
+                        identifier: rawValue,
+                        type: "sanger_sample_id",
+                        graph: {
+                            sample: buildSample(sample),
+                            sample_detail: buildSampleDetail({ sample }),
+                        },
+                    }),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            const directMetadata = screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelector('[data-field-group="direct-metadata"]');
+
+            expect(directMetadata).toBeTruthy();
+            expect(
+                directMetadata?.querySelector(
+                    `[data-seqmeta-detail-key="${suppressedDetailKey}"]`,
+                ),
+            ).toBeNull();
+            expect(
+                screen
+                    .getByTestId("seqmeta-title-actions")
+                    .querySelector(
+                        `[aria-label="Send ${metadataKey} to search filter"]`,
+                    )
+                    ?.getAttribute("href"),
+            ).toBe(expectedHref);
+        },
+    );
+
     it("omits the direct metadata section when only the selected title value would remain", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 

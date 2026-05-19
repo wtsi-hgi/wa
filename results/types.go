@@ -67,6 +67,10 @@ const (
 	SeqmetaIDSampleLimsKey = "seqmeta_id_sample_lims"
 	// SeqmetaSangerSampleIDKey stores an MLWH sanger_sample_id value.
 	SeqmetaSangerSampleIDKey = "seqmeta_sanger_sample_id"
+	// SeqmetaSupplierNameKey stores an MLWH supplier_name value.
+	SeqmetaSupplierNameKey = "seqmeta_supplier_name"
+	// SeqmetaAccessionNumberKey stores an MLWH sample accession_number value.
+	SeqmetaAccessionNumberKey = "seqmeta_accession_number"
 	// SeqmetaPipelineIDLimsKey stores an MLWH pipeline_id_lims value.
 	SeqmetaPipelineIDLimsKey = "seqmeta_pipeline_id_lims"
 	// SeqmetaLibraryIDKey stores an MLWH library_id value.

@@ -1331,6 +1331,30 @@ func TestExpandIdentifierSampleReturnsOriginalAndDistinctRuns(t *testing.T) {
 	})
 }
 
+func TestExpandSearchValuesDirectSampleMetadataResolvesCanonicalSample(t *testing.T) {
+	convey.Convey("Given a sample with direct MLWH metadata", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedSampleMirrorRow(t, client.cache.DB(), 41, "SANG-DIRECT", "Supplier Direct", "donor-41", time.Date(2026, time.May, 6, 12, 5, 0, 0, time.UTC))
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 8801, 41, 555, 1, 9, "6568")
+
+		samples, runs, lanes, err := client.ExpandSearchValues(context.Background(), KindSampleLimsID, "141")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldResemble, []string{"SANG-DIRECT"})
+		convey.So(runs, convey.ShouldResemble, []string{"555"})
+		convey.So(lanes, convey.ShouldResemble, []string{"555_1#9"})
+
+		samples, runs, lanes, err = client.ExpandSearchValues(context.Background(), KindSupplierName, "Supplier Direct")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(samples, convey.ShouldResemble, []string{"SANG-DIRECT"})
+		convey.So(runs, convey.ShouldResemble, []string{"555"})
+		convey.So(lanes, convey.ShouldResemble, []string{"555_1#9"})
+	})
+}
+
 func TestExpandIdentifierRunReturnsOriginalAndDistinctSamples(t *testing.T) {
 	convey.Convey("Given a run with duplicate product metrics for a sample", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)

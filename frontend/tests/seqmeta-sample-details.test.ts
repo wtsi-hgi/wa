@@ -170,6 +170,16 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
         expect(
             within(directMetadataSection as HTMLElement).getByText("12345"),
         ).toBeTruthy();
+        const sampleLimsRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_id_sample_lims"]',
+        );
+        expect(
+            sampleLimsRow
+                ?.querySelector(
+                    '[aria-label="Send seqmeta_id_sample_lims to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?seqmeta_id_sample_lims=12345");
 
         // Should show supplier_name from the MLWH sample record
         const supplierRow = directMetadataSection?.querySelector(
@@ -184,6 +194,13 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                 ?.querySelector('[data-testid="seqmeta-direct-metadata-label"]')
                 ?.getAttribute("title"),
         ).toBe("MLWH seqmeta key: seqmeta_supplier_name");
+        expect(
+            supplierRow
+                ?.querySelector(
+                    '[aria-label="Send seqmeta_supplier_name to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?seqmeta_supplier_name=Supplier_Sample_Name");
 
         // Should show sample accession
         expect(
