@@ -18,12 +18,7 @@ type ResultRegistrationSummaryProps = {
     variant?: "section" | "integrated";
 };
 
-const PRIORITY_FIELD_LABELS = [
-    "Pipeline version",
-    "Unique",
-    "Requester",
-    "Operator",
-];
+const PRIORITY_FIELD_LABELS = ["Last updated", "Requester", "Operator"];
 
 function visibleIntegratedFields(fields: ResultRegistrationField[]) {
     const priorityFields = PRIORITY_FIELD_LABELS.map((label) =>

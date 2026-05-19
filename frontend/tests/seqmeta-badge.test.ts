@@ -843,8 +843,15 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(markup).toContain('data-result-metadata-layout="integrated"');
         expect(markup).toContain("SANG001");
         expect(markup).not.toContain("sanger_sample_id: SANG001");
-        expect(markup).toContain("Registered files");
+        expect(markup).not.toContain('data-file-summary="true"');
         expect(markup).not.toContain('data-registration-layout="compact"');
+        expect(markup).toContain('data-registration-field="Last updated"');
+        expect(markup).toContain('data-registration-field="Requester"');
+        expect(markup).toContain('data-registration-field="Operator"');
+        expect(markup).not.toContain(
+            'data-registration-field="Pipeline version"',
+        );
+        expect(markup).not.toContain('data-registration-field="Unique"');
         expect(markup).not.toContain('data-registration-field="Result ID"');
         expect(markup).not.toContain('data-registration-field="Pipeline name"');
         expect(markup).not.toMatch(/>Registration</);
@@ -852,17 +859,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(markup).not.toMatch(/>Key details</);
         expect(markup).not.toContain("Registration summary");
         expect(countOccurrences(markup, "nf-core/rnaseq")).toBe(1);
-        expect(countOccurrences(markup, "data-metadata-row=")).toBe(2);
-        expect(markup).toContain("2 files");
-        expect(markup).toContain("2.0 KB");
-        expect(markup).toContain("Output");
-        expect(markup).toContain("Input");
-        expect(markup).toContain("Pipeline");
-        expect(markup).toContain("1 file");
-        expect(markup).toContain("1.5 KB");
-        expect(markup).toContain("512 B");
-        expect(markup).toContain("0 files");
-        expect(markup).toContain("0 B");
+        expect(countOccurrences(markup, "data-metadata-row=")).toBe(1);
         expect(markup).not.toContain("1 input");
         expect(markup).not.toContain("1 output");
         expect(markup).not.toContain(

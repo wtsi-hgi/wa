@@ -25,6 +25,54 @@ function displayMetadataKey(key: string): string {
     return canonicalSeqmetaKey(key);
 }
 
+function displayMetadataStripKey(key: string): string {
+    const displayKey = canonicalSeqmetaKey(key);
+
+    if (
+        displayKey === "seqmeta_id_study_lims" ||
+        displayKey === "seqmeta_study_accession"
+    ) {
+        return "Study";
+    }
+
+    if (
+        displayKey === "seqmeta_name" ||
+        displayKey === "seqmeta_sanger_sample_id" ||
+        displayKey === "seqmeta_supplier_name" ||
+        displayKey === "seqmeta_id_sample_lims"
+    ) {
+        return "Sample";
+    }
+
+    if (
+        displayKey === "seqmeta_library_id" ||
+        displayKey === "seqmeta_id_library_lims" ||
+        displayKey === "seqmeta_pipeline_id_lims"
+    ) {
+        return "Library";
+    }
+
+    if (displayKey === "seqmeta_id_run") {
+        return "Run";
+    }
+
+    if (displayKey === "seqmeta_lane" || displayKey === "seqmeta_tag_index") {
+        return "Lane";
+    }
+
+    return displayMetadataKey(key);
+}
+
+function visibleIntegratedEntries(entries: [string, string][]) {
+    const seqmetaEntries = entries.filter(([key]) => isSeqmetaKey(key));
+
+    if (seqmetaEntries.length > 0) {
+        return seqmetaEntries;
+    }
+
+    return entries.slice(0, 3);
+}
+
 function MetadataValue({
     display = "strip",
     enrichments,
@@ -75,7 +123,7 @@ export function ResultMetadata({
     variant = "section",
 }: ResultMetadataProps) {
     const entries = Object.entries(metadata);
-    const visibleEntries = entries.slice(0, 6);
+    const visibleEntries = visibleIntegratedEntries(entries);
 
     if (variant === "integrated") {
         return (
@@ -123,7 +171,7 @@ export function ResultMetadata({
                                             data-metadata-detail-row={key}
                                         >
                                             <dt className="break-all font-mono text-[11px] text-muted-foreground">
-                                                {displayMetadataKey(key)}
+                                                {key}
                                             </dt>
                                             <dd className="mt-1 min-w-0">
                                                 <MetadataValue
@@ -159,7 +207,7 @@ export function ResultMetadata({
                                 data-metadata-row={key}
                             >
                                 <dt className="min-w-0 shrink truncate font-mono text-[11px] text-muted-foreground">
-                                    {displayMetadataKey(key)}
+                                    {displayMetadataStripKey(key)}
                                 </dt>
                                 <dd className="min-w-0">
                                     <MetadataValue

@@ -6,7 +6,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 describe("ResultRegistrationSummary", () => {
-    it("renders registration details as an integrated compact grid without identity duplicates", async () => {
+    it("renders only the key run details inline and keeps the rest in the popover", async () => {
         const { ResultRegistrationSummary } =
             await import("@/components/result-registration-summary");
 
@@ -23,6 +23,9 @@ describe("ResultRegistrationSummary", () => {
                     { label: "Requester", value: "alice" },
                     { label: "Operator", value: "bob" },
                     { label: "Registered", value: "23 Apr 2026, 09:15" },
+                    { label: "Last updated", value: "24 Apr 2026, 10:30" },
+                    { label: "Registered files", value: "2 files" },
+                    { label: "Total file size", value: "2.0 KB" },
                     {
                         label: "Output directory",
                         value: "/tmp/results/42",
@@ -61,13 +64,13 @@ describe("ResultRegistrationSummary", () => {
         const detailsTrigger = screen.getByText("All details");
 
         expect(compactLayout).toBeTruthy();
-        expect(compactFields).toHaveLength(4);
+        expect(compactFields).toHaveLength(3);
         expect(wideFields).toHaveLength(0);
         expect(
             compactFields.map((field) =>
                 field.getAttribute("data-registration-field"),
             ),
-        ).toEqual(["Pipeline version", "Unique", "Requester", "Operator"]);
+        ).toEqual(["Last updated", "Requester", "Operator"]);
 
         for (const field of compactFields) {
             expect(field.className).toContain("rounded-full");
@@ -75,7 +78,9 @@ describe("ResultRegistrationSummary", () => {
         }
 
         expect(detailsTrigger).toBeTruthy();
-        expect(container.textContent).toContain("1001");
+        expect(container.textContent).not.toContain("1001");
+        expect(container.textContent).not.toContain("3.18.0");
+        expect(container.textContent).not.toContain("2.0 KB");
         expect(container.textContent).not.toContain("/tmp/results/42");
 
         await act(async () => {
@@ -85,8 +90,22 @@ describe("ResultRegistrationSummary", () => {
         await waitFor(() => {
             expect(
                 document.querySelectorAll("[data-registration-detail-field]"),
-            ).toHaveLength(8);
+            ).toHaveLength(11);
         });
+        expect(
+            document.querySelector('[data-registration-detail-field="Unique"]')
+                ?.textContent,
+        ).toContain("1001");
+        expect(
+            document.querySelector(
+                '[data-registration-detail-field="Pipeline version"]',
+            )?.textContent,
+        ).toContain("3.18.0");
+        expect(
+            document.querySelector(
+                '[data-registration-detail-field="Total file size"]',
+            )?.textContent,
+        ).toContain("2.0 KB");
         expect(
             document.querySelector(
                 '[data-registration-detail-field="Output directory"]',

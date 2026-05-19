@@ -347,19 +347,19 @@ describe("O1 result detail hydration", () => {
             ),
         ).not.toBeNull();
         expect(registrationLabels).toEqual([
-            "Pipeline version",
-            "Unique",
+            "Last updated",
             "Requester",
             "Operator",
         ]);
         expect(registrationLabels).not.toContain("Result ID");
         expect(registrationLabels).not.toContain("Pipeline name");
-        expect(metadataKeys).toEqual(["library", "seqmeta_studyid", "study"]);
+        expect(metadataKeys).toEqual(["seqmeta_studyid"]);
         expect(detailSummary?.textContent).toContain("1001");
         expect(detailSummary?.textContent).not.toContain("runid=1001");
-        expect(detailSummary?.textContent).toContain("exon");
+        expect(detailSummary?.textContent).toContain("Study");
+        expect(detailSummary?.textContent).not.toContain("libraryexon");
         expect(detailSummary?.textContent).toContain("6568");
-        expect(detailSummary?.textContent).toContain("study-alpha");
+        expect(detailSummary?.textContent).not.toContain("study-alpha");
         expect(container.querySelector("[data-result-id-copy]")).not.toBeNull();
         expect(container.querySelector("h1")?.textContent).toContain(
             "nf-core/rnaseq",
@@ -420,6 +420,7 @@ describe("O1 result detail hydration", () => {
         const serverMarkup = renderToString(serverTree);
 
         expect(serverMarkup).toContain("Loading result details");
+        expect(serverMarkup).not.toContain("Result detail");
         expect(fetchResultMock).not.toHaveBeenCalled();
         expect(fetchFilesMock).not.toHaveBeenCalled();
     });
