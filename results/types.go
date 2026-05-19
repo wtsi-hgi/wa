@@ -63,6 +63,10 @@ const (
 	// SeqmetaSampleNameKey stores the MLWH sample name value used as the
 	// canonical sample identity for sample-scoped result metadata.
 	SeqmetaSampleNameKey = "seqmeta_name"
+	// SeqmetaSampleNameURLKey is the precise frontend query/display alias for
+	// sample-name metadata. Stored result metadata may still use
+	// SeqmetaSampleNameKey.
+	SeqmetaSampleNameURLKey = "seqmeta_sample_name"
 	// SeqmetaIDSampleLimsKey stores an MLWH id_sample_lims value.
 	SeqmetaIDSampleLimsKey = "seqmeta_id_sample_lims"
 	// SeqmetaSangerSampleIDKey stores an MLWH sanger_sample_id value.

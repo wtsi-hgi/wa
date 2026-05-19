@@ -745,7 +745,9 @@ describe("M1 result detail seqmeta enrichment", () => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
             });
 
-            fireEvent.click(screen.getAllByLabelText(/Copy seqmeta_name/i)[0]!);
+            fireEvent.click(
+                screen.getAllByLabelText(/Copy seqmeta_sample_name/i)[0]!,
+            );
 
             await waitFor(() => {
                 expect(execCommandMock).toHaveBeenCalledWith("copy");
@@ -3228,7 +3230,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
 
-        expect(screen.getByText("seqmeta_name")).toBeTruthy();
+        expect(screen.getByText("seqmeta_sample_name")).toBeTruthy();
         expect(
             screen.queryByText("seqmeta_sampleid (sanger_sample_name)"),
         ).toBeNull();
@@ -4331,7 +4333,9 @@ describe("M1 result detail seqmeta enrichment", () => {
 
             expect(screen.getByText("S1")).toBeTruthy();
 
-            const copyButtons = screen.getAllByLabelText(/Copy seqmeta_name/i);
+            const copyButtons = screen.getAllByLabelText(
+                /Copy seqmeta_sample_name/i,
+            );
             expect(copyButtons).toHaveLength(2);
 
             fireEvent.click(copyButtons[0]!);
@@ -5142,7 +5146,9 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         // Each sample row should have copy and filter buttons
         const copyButtons = Array.from(sampleRows).map((row) =>
-            within(row as HTMLElement).getByLabelText(/Copy seqmeta_name/i),
+            within(row as HTMLElement).getByLabelText(
+                /Copy seqmeta_sample_name/i,
+            ),
         );
         const filterButtons = screen.getAllByLabelText(
             /Send sample to search filter/i,

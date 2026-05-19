@@ -69,7 +69,7 @@ function seqmetaLookupPriority(metadataKey: string): number {
     }
 
     if (
-        canonicalKey === "seqmeta_name" ||
+        canonicalKey === "seqmeta_sample_name" ||
         canonicalKey === "seqmeta_sanger_sample_id" ||
         canonicalKey === "seqmeta_id_sample_lims"
     ) {

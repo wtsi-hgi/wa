@@ -1179,7 +1179,7 @@ describe("H3 enrichment state and badge", () => {
             .map((el) => el.getAttribute("data-seqmeta-detail-key"))
             .filter(Boolean);
 
-        expect(directKeys).toContain("seqmeta_name");
+        expect(directKeys).toContain("seqmeta_sample_name");
         expect(directKeys).toContain("seqmeta_id_sample_lims");
         expect(directKeys).toContain("seqmeta_accession_number");
 

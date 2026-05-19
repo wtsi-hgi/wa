@@ -74,6 +74,7 @@ var combinedSampleMetaKeys = []string{
 	"sample_name",
 	"sample_accession_number",
 	SeqmetaSampleNameKey,
+	SeqmetaSampleNameURLKey,
 	SeqmetaSangerSampleIDKey,
 	SeqmetaIDSampleLimsKey,
 	LegacySeqmetaSampleIDKey,
@@ -91,6 +92,7 @@ type sampleMetadataSearchKey struct {
 
 var sampleMetadataSearchKeys = []sampleMetadataSearchKey{
 	{key: SeqmetaSampleNameKey, kind: mlwh.KindSangerSampleName},
+	{key: SeqmetaSampleNameURLKey, kind: mlwh.KindSangerSampleName},
 	{key: LegacySeqmetaSampleIDKey, kind: mlwh.KindSangerSampleName},
 	{key: "sample_name", kind: mlwh.KindSangerSampleName},
 	{key: "sample_id", kind: mlwh.KindSangerSampleName},
@@ -828,6 +830,7 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 	runValues = mergeSearchValues(runValues, params.Meta[SeqmetaIDRunKey])
 	runValues = mergeSearchValues(runValues, params.Meta[LegacySeqmetaRunIDKey])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample"])
+	sampleValues = mergeSearchValues(sampleValues, params.Meta[SeqmetaSampleNameURLKey])
 	sampleExpansionRequests = appendSampleSearchExpansion(sampleExpansionRequests, mlwh.KindSangerSampleName, params.Meta["sample"])
 	for _, searchKey := range sampleMetadataSearchKeys {
 		values := params.Meta[searchKey.key]
@@ -1208,7 +1211,7 @@ func (s *Server) handleDeleteResultByID(w http.ResponseWriter, r *http.Request) 
 }
 
 func resultSampleName(metadata map[string]string) string {
-	for _, key := range []string{SeqmetaSampleNameKey, LegacySeqmetaSampleIDKey} {
+	for _, key := range []string{SeqmetaSampleNameKey, SeqmetaSampleNameURLKey, LegacySeqmetaSampleIDKey} {
 		if sampleName := strings.TrimSpace(metadata[key]); sampleName != "" {
 			return sampleName
 		}

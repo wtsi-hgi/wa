@@ -73,7 +73,7 @@ function toMetaSuggestionKey(metaKey: string): string {
         metaKey === "sample_id" ||
         metaKey === "sample_name" ||
         metaKey === "sample_accession_number" ||
-        canonicalKey === "seqmeta_name" ||
+        canonicalKey === "seqmeta_sample_name" ||
         canonicalKey === "seqmeta_sanger_sample_id" ||
         canonicalKey === "seqmeta_id_sample_lims"
     ) {

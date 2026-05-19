@@ -141,8 +141,12 @@ function metadataLabel(metadataKey: string): string {
         return "Library type";
     }
 
-    if (trimmedKey === "name") {
+    if (trimmedKey === "sample_name") {
         return "Sample name";
+    }
+
+    if (trimmedKey === "study_name") {
+        return "Study name";
     }
 
     if (trimmedKey === "sanger_sample_id") {
@@ -220,7 +224,7 @@ function titleFilterSearchKey(metadataKey: string): string | null {
         return "study";
     }
 
-    if (displayKey === "seqmeta_name") {
+    if (displayKey === "seqmeta_sample_name") {
         return "sample";
     }
 
@@ -269,7 +273,7 @@ function directDetailSearchKey(
 
     if (isStudyMetadataKey(metadataKey)) {
         if (
-            displayFieldKey === "seqmeta_name" ||
+            displayFieldKey === "seqmeta_study_name" ||
             displayFieldKey === "seqmeta_id_study_lims" ||
             displayFieldKey === "seqmeta_accession_number"
         ) {
@@ -279,7 +283,7 @@ function directDetailSearchKey(
 
     if (isSampleMetadataKey(metadataKey)) {
         if (
-            displayFieldKey === "seqmeta_name" ||
+            displayFieldKey === "seqmeta_sample_name" ||
             displayFieldKey === "seqmeta_sanger_sample_id" ||
             displayFieldKey === "seqmeta_supplier_name" ||
             displayFieldKey === "seqmeta_id_sample_lims" ||
@@ -324,7 +328,7 @@ function isSampleMetadataKey(metadataKey: string): boolean {
     const displayKey = seqmetaDisplayKey(metadataKey);
 
     return (
-        displayKey === "seqmeta_name" ||
+        displayKey === "seqmeta_sample_name" ||
         displayKey === "seqmeta_sanger_sample_id" ||
         displayKey === "seqmeta_id_sample_lims"
     );
@@ -853,7 +857,7 @@ function sampleCopyStateKey(sample: EnrichmentSample, index?: number): string {
               ].join("|")
             : librarySampleKey(sample, index);
 
-    return copiedStateKey("seqmeta_name", identity);
+    return copiedStateKey("seqmeta_sample_name", identity);
 }
 
 function humanizeMissingHop(missing: MissingHop): string {
@@ -943,7 +947,7 @@ function buildDetailFields(
             fields,
             enrichment.graph.study?.name
                 ? {
-                      key: "seqmeta_name",
+                      key: "seqmeta_study_name",
                       label: "Study name",
                       value: enrichment.graph.study.name,
                       group: studyMetadata ? "direct" : "related",
@@ -990,7 +994,7 @@ function buildDetailFields(
                 fields,
                 sampleRecord?.sample_name
                     ? {
-                          key: "seqmeta_name",
+                          key: "seqmeta_sample_name",
                           label: "Sample name",
                           value: sampleRecord.sample_name,
                           group: sampleMetadata ? "direct" : "related",
@@ -2119,7 +2123,7 @@ export function SeqmetaBadge({
                                                                                                                     copiedKey ===
                                                                                                                     sampleCopyKey
                                                                                                                 }
-                                                                                                                copyAriaLabel="Copy seqmeta_name"
+                                                                                                                copyAriaLabel="Copy seqmeta_sample_name"
                                                                                                                 detailKey="sample"
                                                                                                                 filterAriaLabel={
                                                                                                                     sample.sanger_id
@@ -2312,7 +2316,7 @@ export function SeqmetaBadge({
                                                                                             copiedKey ===
                                                                                             sampleCopyKey
                                                                                         }
-                                                                                        copyAriaLabel="Copy seqmeta_name"
+                                                                                        copyAriaLabel="Copy seqmeta_sample_name"
                                                                                         detailKey="sample"
                                                                                         filterAriaLabel={
                                                                                             sample.sanger_id

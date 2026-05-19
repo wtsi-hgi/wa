@@ -155,13 +155,13 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
         expect(
             screen
                 .getByTestId("seqmeta-title-actions")
-                .querySelector('[aria-label="Copy seqmeta_name"]'),
+                .querySelector('[aria-label="Copy seqmeta_sample_name"]'),
         ).toBeTruthy();
         expect(
             screen
                 .getByTestId("seqmeta-title-actions")
                 .querySelector(
-                    '[aria-label="Send seqmeta_name to search filter"]',
+                    '[aria-label="Send seqmeta_sample_name to search filter"]',
                 )
                 ?.getAttribute("href"),
         ).toBe("/?sample=WTSI_TEST_SAMPLE");

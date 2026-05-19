@@ -36,7 +36,7 @@ function displayMetadataStripKey(key: string): string {
     }
 
     if (
-        displayKey === "seqmeta_name" ||
+        displayKey === "seqmeta_sample_name" ||
         displayKey === "seqmeta_sanger_sample_id" ||
         displayKey === "seqmeta_supplier_name" ||
         displayKey === "seqmeta_id_sample_lims"

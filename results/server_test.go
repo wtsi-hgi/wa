@@ -300,6 +300,27 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-name-match")
 	})
 
+	convey.Convey("Bug 260519-2.2: Given GET /results?seqmeta_sample_name=SANG1001, then existing seqmeta_name metadata is matched", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-url-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG1001"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-url-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG1002"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?seqmeta_sample_name=SANG1001", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-name-url-match")
+	})
+
 	convey.Convey("E2.2: Given GET /results?meta_library=exon, then only result sets with metadata key library equal to exon are returned", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-exon", func(reg *Registration) {

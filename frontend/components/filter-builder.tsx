@@ -47,6 +47,7 @@ const combinedSampleMetaKeys = new Set([
     "sample_accession_number",
     "seqmeta_id_sample_lims",
     "seqmeta_name",
+    "seqmeta_sample_name",
     "seqmeta_sanger_sample_id",
     "seqmeta_sampleid",
     "seqmeta_sample_lims",
@@ -127,7 +128,9 @@ function getFieldOptions(
             key: toMetaQueryKey(metaKey),
             label: toTitleCase(metaKey),
             placeholder:
-                metaKey === "seqmeta_name" || metaKey === "seqmeta_sampleid"
+                metaKey === "seqmeta_name" ||
+                metaKey === "seqmeta_sample_name" ||
+                metaKey === "seqmeta_sampleid"
                     ? "SANG001"
                     : "value",
         }))
