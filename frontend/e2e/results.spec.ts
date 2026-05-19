@@ -3,7 +3,9 @@ import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 function recentRows(page: Page): Locator {
-    return page.locator('tbody tr[data-result-row="true"]');
+    return page
+        .locator('tbody tr[data-result-row="true"]')
+        .filter({ hasNotText: "seqmeta/rendering-repro" });
 }
 
 type SortIconMetric = {
@@ -18,7 +20,7 @@ async function collectRecentSortIconMetrics(
 ): Promise<SortIconMetric[]> {
     const sortButtons = page.locator("button[data-column-sort]");
 
-    await expect(sortButtons).toHaveCount(4);
+    await expect(sortButtons).toHaveCount(5);
 
     return sortButtons.evaluateAll((elements) =>
         elements.map((element) => {
@@ -204,9 +206,13 @@ async function openSeqmetaDetailsDialog(
     page: Page,
     metadataKey: string,
 ): Promise<Locator> {
+    const displayKey =
+        metadataKey === "seqmeta_studyid"
+            ? "seqmeta_id_study_lims"
+            : metadataKey;
     const metadataRow = page.locator(`[data-metadata-row="${metadataKey}"]`);
     const trigger = metadataRow.getByRole("button", {
-        name: new RegExp(`Open ${metadataKey} details`, "i"),
+        name: new RegExp(`Open ${displayKey} details`, "i"),
     });
 
     await expect(trigger).toBeVisible();
@@ -320,6 +326,7 @@ test.describe("Q1 critical results flows", () => {
 
         expect(metrics.map((metric) => metric.columnId)).toEqual([
             "pipeline_name",
+            "registration_unique",
             "requester",
             "created_at",
             "output_directory",
@@ -457,7 +464,61 @@ test.describe("Q1 critical results flows", () => {
         ).toContainText("6568");
         await expect(
             detailSummary.locator('[data-metadata-row="library"]'),
+        ).toHaveCount(0);
+
+        await detailSummary
+            .getByRole("button", { name: "All metadata" })
+            .click();
+        await expect(
+            page.locator('[data-metadata-detail-row="library"]'),
         ).toContainText("exon");
+    });
+
+    test("keeps the result detail header compact above the file browser", async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await openResultDetail(page, rnaseqPipelineName);
+
+        const detailSummary = page.locator(
+            '[data-result-detail-summary="true"]',
+        );
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+        const metadata = detailSummary.locator(
+            '[data-result-metadata-layout="integrated"]',
+        );
+        const metrics = await page.evaluate(() => {
+            const summary = document.querySelector(
+                '[data-result-detail-summary="true"]',
+            );
+            const browser = document.querySelector(
+                '[data-file-browser="true"]',
+            );
+            const metadataLayout = document.querySelector(
+                '[data-result-detail-summary="true"] [data-result-metadata-layout="integrated"]',
+            );
+
+            if (!summary || !browser || !metadataLayout) {
+                throw new Error("Missing result detail layout elements");
+            }
+
+            const summaryRect = summary.getBoundingClientRect();
+            const browserRect = browser.getBoundingClientRect();
+            const metadataRect = metadataLayout.getBoundingClientRect();
+
+            return {
+                fileBrowserY: browserRect.y,
+                metadataHeight: metadataRect.height,
+                summaryHeight: summaryRect.height,
+            };
+        });
+
+        await expect(detailSummary).toBeVisible();
+        await expect(fileBrowser).toBeVisible();
+        await expect(metadata).toBeVisible();
+        expect(metrics.summaryHeight).toBeLessThanOrEqual(370);
+        expect(metrics.metadataHeight).toBeLessThanOrEqual(110);
+        expect(metrics.fileBrowserY).toBeLessThanOrEqual(430);
     });
 
     test("keeps the seqmeta dialog body scrollable when content exceeds the viewport", async ({

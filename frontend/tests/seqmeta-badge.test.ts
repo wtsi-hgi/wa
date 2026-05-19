@@ -13,6 +13,7 @@ import {
     fireEvent,
     render,
     screen,
+    within,
     waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -247,6 +248,7 @@ function buildSampleDetail(
         sample_name?: string;
         sample?: Partial<EnrichmentSample>;
         lanes?: Array<Partial<LaneDetail>>;
+        libraries?: SampleDetail["libraries"];
         irods_paths?: Array<Partial<IRODSPath>>;
     } = {},
 ): SampleDetail {
@@ -257,6 +259,7 @@ function buildSampleDetail(
         sample_name: overrides.sample_name ?? sample.sample_name,
         sample,
         lanes: (overrides.lanes ?? []).map((lane) => buildLaneDetail(lane)),
+        ...(overrides.libraries ? { libraries: overrides.libraries } : {}),
         ...(overrides.irods_paths
             ? {
                   irods_paths: overrides.irods_paths.map((path) =>
@@ -286,6 +289,21 @@ function buildEnrichment(
         partial: false,
         ...overrides,
     };
+}
+
+function entityTitle(row: Element | null | undefined): string {
+    return (
+        row?.querySelector('[data-testid="seqmeta-entity-title"]')
+            ?.textContent ?? ""
+    );
+}
+
+function entityText(row: Element | null | undefined): string {
+    return row?.textContent ?? "";
+}
+
+function expectEntityRowTitle(row: Element | null | undefined, title: string) {
+    expect(entityTitle(row)).toBe(title);
 }
 
 function deferred<T>() {
@@ -333,12 +351,22 @@ describe("M1 result detail seqmeta enrichment", () => {
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
-        expect(screen.getByText("Study name")).toBeTruthy();
-        expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
+
+        const studyRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="study"]');
+
+        expect(studyRows).toHaveLength(1);
+        expectEntityRowTitle(studyRows[0], "6568");
+        expect(studyRows[0]?.textContent).toContain("name:");
+        expect(studyRows[0]?.textContent).toContain("RNA Seq");
+        expect(studyRows[0]?.textContent).not.toContain("id:6568");
+        expect(studyRows[0]?.textContent).toContain("6568");
+        expect(screen.queryByText("Study name")).toBeNull();
         expect(
             screen
                 .getByRole("link", {
-                    name: /send study_id to search filter/i,
+                    name: /send study to search filter/i,
                 })
                 .getAttribute("href"),
         ).toBe("/?study=6568");
@@ -528,7 +556,8 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         expect(elapsedMs).toBeLessThan(1000);
         expect(sampleRows.length).toBeLessThanOrEqual(50);
-        expect(screen.getByText("Sample 0 / SANG0")).toBeTruthy();
+        expect(screen.getByText("SANG0")).toBeTruthy();
+        expect(screen.getByText("Sample 0")).toBeTruthy();
         expect(screen.getByText("Showing 50 of 1000 samples")).toBeTruthy();
     });
 
@@ -608,9 +637,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
         expect(
-            screen.getByText(
-                "No enrichment matched this sanger sample id value.",
-            ),
+            screen.getByText("No enrichment matched this sample name value."),
         ).toBeTruthy();
     });
 
@@ -656,8 +683,15 @@ describe("M1 result detail seqmeta enrichment", () => {
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
-        expect(screen.getByText("Study name")).toBeTruthy();
-        expect(screen.getAllByText("RNA Seq").length).toBeGreaterThan(0);
+
+        const studyRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="study"]');
+
+        expect(studyRows).toHaveLength(1);
+        expect(studyRows[0]?.textContent).toContain("name:");
+        expect(studyRows[0]?.textContent).toContain("RNA Seq");
+        expect(screen.queryByText("Study name")).toBeNull();
     });
 
     it("marks clickable seqmeta metadata values with a pointer cursor", async () => {
@@ -712,7 +746,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             });
 
             fireEvent.click(
-                screen.getAllByLabelText(/Copy seqmeta_sampleid/i)[0]!,
+                screen.getAllByLabelText(/Copy seqmeta_sample_name/i)[0]!,
             );
 
             await waitFor(() => {
@@ -811,8 +845,15 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(markup).toContain('data-result-metadata-layout="integrated"');
         expect(markup).toContain("SANG001");
         expect(markup).not.toContain("sanger_sample_id: SANG001");
-        expect(markup).toContain("Registered files");
+        expect(markup).not.toContain('data-file-summary="true"');
         expect(markup).not.toContain('data-registration-layout="compact"');
+        expect(markup).toContain('data-registration-field="Last updated"');
+        expect(markup).toContain('data-registration-field="Requester"');
+        expect(markup).toContain('data-registration-field="Operator"');
+        expect(markup).not.toContain(
+            'data-registration-field="Pipeline version"',
+        );
+        expect(markup).not.toContain('data-registration-field="Unique"');
         expect(markup).not.toContain('data-registration-field="Result ID"');
         expect(markup).not.toContain('data-registration-field="Pipeline name"');
         expect(markup).not.toMatch(/>Registration</);
@@ -820,17 +861,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(markup).not.toMatch(/>Key details</);
         expect(markup).not.toContain("Registration summary");
         expect(countOccurrences(markup, "nf-core/rnaseq")).toBe(1);
-        expect(countOccurrences(markup, "data-metadata-row=")).toBe(2);
-        expect(markup).toContain("2 files");
-        expect(markup).toContain("2.0 KB");
-        expect(markup).toContain("Output");
-        expect(markup).toContain("Input");
-        expect(markup).toContain("Pipeline");
-        expect(markup).toContain("1 file");
-        expect(markup).toContain("1.5 KB");
-        expect(markup).toContain("512 B");
-        expect(markup).toContain("0 files");
-        expect(markup).toContain("0 B");
+        expect(countOccurrences(markup, "data-metadata-row=")).toBe(1);
         expect(markup).not.toContain("1 input");
         expect(markup).not.toContain("1 output");
         expect(markup).not.toContain(
@@ -1283,7 +1314,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
     });
 
-    it("shows dialog title matching raw value with key and type in subtitle", async () => {
+    it("shows dialog title matching raw value with canonical key in subtitle", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
         render(
@@ -1308,10 +1339,10 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         expect(title?.textContent).toBe("6568");
 
-        const subtitle = title?.nextElementSibling;
+        const subtitle = dialog.querySelector("p.font-mono");
 
-        expect(subtitle?.textContent).toContain("seqmeta_studyid");
-        expect(subtitle?.textContent).toContain("study_id");
+        expect(subtitle?.textContent).toContain("seqmeta_id_study_lims");
+        expect(subtitle?.textContent).not.toContain("study_id");
     });
 
     it("omits duplicate selected metadata value row from dialog", async () => {
@@ -1664,7 +1695,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         // Wait for JIT loading to complete and samples to appear
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
 
         // Verify fetchLibrarySamples was called with correct arguments
@@ -1674,7 +1705,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
 
         // Both samples should now be visible
-        expect(screen.getByText("Sample 2 / S2")).toBeTruthy();
+        expect(screen.getByText("S2")).toBeTruthy();
 
         // Button should now show count
         expect(screen.getByText("2 samples")).toBeTruthy();
@@ -1757,10 +1788,10 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(expandButtons[0]!);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
 
-        expect(screen.queryByText("Sample 2 / S2")).toBeNull();
+        expect(screen.queryByText("S2")).toBeNull();
         expect(fetchLibrarySamplesMock).toHaveBeenCalledWith(
             "6568",
             "RNA PolyA",
@@ -1838,10 +1869,916 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         fireEvent.click(screen.getByLabelText("Show samples"));
 
-        expect(screen.getByText("Run Sample 1 / S1")).toBeTruthy();
-        expect(screen.getByText("Run Sample 2 / S2")).toBeTruthy();
+        expect(screen.getByText("S1")).toBeTruthy();
+        expect(screen.getByText("S2")).toBeTruthy();
         expect(screen.getByText("2 samples")).toBeTruthy();
         expect(fetchLibrarySamplesMock).not.toHaveBeenCalled();
+    });
+
+    it("renders run-id related study and sample as one row per entity", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_runid",
+                rawValue: "48522",
+                enrichment: buildEnrichment({
+                    identifier: "48522",
+                    type: "run_id",
+                    graph: {
+                        study: buildStudy({
+                            id_study_lims: "7607",
+                            name: "Run Study",
+                            accession_number: "EGAS00001005445",
+                        }),
+                        sample: buildSample({
+                            id_study_lims: "7607",
+                            id_sample_lims: "SMP7607",
+                            sanger_id: "7607STDY14643771",
+                            sample_name: "Run Sample",
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const dialogBody = screen.getByTestId("seqmeta-dialog-body");
+        const relatedData = dialogBody.querySelector(
+            '[data-field-group="related-data"]',
+        );
+        const studyRows = relatedData?.querySelectorAll(
+            '[data-seqmeta-detail-key="study"]',
+        );
+        const sampleRows = relatedData?.querySelectorAll(
+            '[data-seqmeta-detail-key="sample"]',
+        );
+
+        expect(studyRows).toHaveLength(1);
+        expect(studyRows?.[0]?.textContent).toContain("Run Study");
+        expect(studyRows?.[0]?.textContent).toContain("7607");
+        expect(studyRows?.[0]?.textContent).toContain("EGAS00001005445");
+
+        expect(sampleRows).toHaveLength(1);
+        expect(sampleRows?.[0]?.textContent).toContain("Run Sample");
+        expect(sampleRows?.[0]?.textContent).toContain("7607STDY14643771");
+        expect(sampleRows?.[0]?.textContent).toContain("SMP7607");
+
+        expect(relatedData?.textContent).not.toContain("Study name");
+        expect(relatedData?.textContent).not.toContain("Study identifier");
+        expect(relatedData?.textContent).not.toContain("Sanger sample ID");
+        expect(relatedData?.textContent).not.toContain("Sample LIMS ID");
+    });
+
+    it("uses ID titles and omits duplicated identity metadata for run-id related entities", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_runid",
+                rawValue: "48522",
+                enrichment: buildEnrichment({
+                    identifier: "48522",
+                    type: "run_id",
+                    graph: {
+                        study: buildStudy({
+                            id_study_lims: "7607",
+                            name: "7607",
+                            accession_number: "ERP7607",
+                        }),
+                        sample: buildSample({
+                            id_study_lims: "7607",
+                            id_sample_lims: "SMP7607-0000",
+                            sanger_id: "7607STDY14643771",
+                            sample_name: "7607STDY14643771",
+                            accession_number: "SAMEA76070",
+                            library_type: "Custom",
+                        }),
+                        libraries: [
+                            {
+                                library_type: "Custom",
+                                id_study_lims: "7607",
+                                library_id: "71046409",
+                                id_library_lims: "LIB7607-71046409",
+                            },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const relatedData = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="related-data"]');
+        const studyRow = relatedData?.querySelector(
+            '[data-seqmeta-detail-key="study"]',
+        );
+        const sampleRow = relatedData?.querySelector(
+            '[data-seqmeta-detail-key="sample"]',
+        );
+        const libraryRow = relatedData?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
+        );
+
+        expectEntityRowTitle(studyRow, "7607");
+        expect(entityText(studyRow)).not.toContain("name:7607");
+        expect(entityText(studyRow)).not.toContain("id:7607");
+        expect(entityText(studyRow)).toContain("accession:ERP7607");
+
+        expectEntityRowTitle(sampleRow, "7607STDY14643771");
+        expect(entityText(sampleRow)).not.toContain("name:7607STDY14643771");
+        expect(entityText(sampleRow)).not.toContain("id:7607STDY14643771");
+        expect(entityText(sampleRow)).toContain("sample_lims:SMP7607-0000");
+        expect(entityText(sampleRow)).toContain("accession:SAMEA76070");
+
+        expectEntityRowTitle(libraryRow, "71046409");
+        expect(entityText(libraryRow)).not.toContain("id:71046409");
+        expect(entityText(libraryRow)).toContain(
+            "library_lims:LIB7607-71046409",
+        );
+        expect(entityText(libraryRow)).toContain("type:Custom");
+    });
+
+    it("uses the same related entity row shape from sample, study, and library detail contexts", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const sharedStudy = buildStudy({
+            id_study_lims: "6568",
+            name: "RNA Seq",
+            accession_number: "ERP123456",
+        });
+        const sharedSample = buildSample({
+            id_study_lims: "6568",
+            id_sample_lims: "LIMS001",
+            sanger_id: "SANG001",
+            sample_name: "Sample 1",
+            accession_number: "ERS123456",
+            library_type: "RNA PolyA",
+        });
+        const sharedLibrary = {
+            library_type: "RNA PolyA",
+            id_study_lims: "6568",
+            library_id: "1001",
+            id_library_lims: "DN111:A1",
+        };
+
+        const cases = [
+            {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG001",
+                enrichment: buildEnrichment({
+                    identifier: "SANG001",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: sharedStudy,
+                        sample: sharedSample,
+                        library: sharedLibrary,
+                        sample_detail: buildSampleDetail({
+                            sample: sharedSample,
+                            libraries: [sharedLibrary],
+                            lanes: [
+                                {
+                                    id_run: "12345",
+                                    lane: "2",
+                                    tag_index: 88,
+                                },
+                            ],
+                        }),
+                    },
+                }),
+                rows: [
+                    {
+                        selector: '[data-seqmeta-detail-key="library"]',
+                        title: "1001",
+                        absent: "id:1001",
+                        present: "type:RNA PolyA",
+                    },
+                    {
+                        selector: '[data-seqmeta-detail-key="study"]',
+                        title: "6568",
+                        absent: "id:6568",
+                        present: "name:RNA Seq",
+                    },
+                    {
+                        selector: '[data-seqmeta-detail-key="lane"]',
+                        title: "12345_2#88",
+                        absent: "id:12345_2#88",
+                        present: "id_run:12345",
+                    },
+                ],
+            },
+            {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: sharedStudy,
+                        study_detail: {
+                            study: sharedStudy,
+                            library_details: [
+                                {
+                                    ...sharedLibrary,
+                                    samples: [],
+                                },
+                            ],
+                        },
+                    },
+                }),
+                rows: [
+                    {
+                        selector:
+                            '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
+                        title: "1001",
+                        absent: "id:1001",
+                        present: "library_lims:DN111:A1",
+                    },
+                ],
+            },
+            {
+                metadataKey: "seqmeta_libraryid",
+                rawValue: "1001",
+                enrichment: buildEnrichment({
+                    identifier: "1001",
+                    type: "library_id",
+                    graph: {
+                        studies: [sharedStudy],
+                        samples: [sharedSample],
+                        library: sharedLibrary,
+                    },
+                }),
+                rows: [
+                    {
+                        selector: '[data-seqmeta-detail-key="study"]',
+                        title: "6568",
+                        absent: "id:6568",
+                        present: "accession:ERP123456",
+                    },
+                    {
+                        selector: '[data-seqmeta-detail-key="sample"]',
+                        title: "SANG001",
+                        absent: "id:SANG001",
+                        present: "name:Sample 1",
+                    },
+                ],
+            },
+        ];
+
+        for (const testCase of cases) {
+            cleanup();
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: testCase.metadataKey,
+                    rawValue: testCase.rawValue,
+                    enrichment: testCase.enrichment,
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            const relatedData = screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelector('[data-field-group="related-data"]');
+
+            for (const rowExpectation of testCase.rows) {
+                const row = relatedData?.querySelector(rowExpectation.selector);
+
+                expectEntityRowTitle(row, rowExpectation.title);
+                expect(entityText(row)).not.toContain(rowExpectation.absent);
+                expect(entityText(row)).toContain(rowExpectation.present);
+            }
+        }
+    });
+
+    it("renders study related libraries as entity rows with metadata pairs", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_studyid",
+                rawValue: "6568",
+                enrichment: buildEnrichment({
+                    identifier: "6568",
+                    type: "study_id",
+                    graph: {
+                        study: buildStudy({
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                        }),
+                        study_detail: {
+                            study: buildStudy({
+                                id_study_lims: "6568",
+                                name: "RNA Seq",
+                            }),
+                            library_details: [
+                                {
+                                    library_type: "RNA PolyA",
+                                    id_study_lims: "6568",
+                                    library_id: "1001",
+                                    id_library_lims: "DN111:A1",
+                                    samples: [],
+                                },
+                            ],
+                        },
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const libraryRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll(
+                '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
+            );
+
+        expect(libraryRows).toHaveLength(1);
+        expectEntityRowTitle(libraryRows[0], "1001");
+        expect(libraryRows[0]?.textContent).toContain("type:");
+        expect(libraryRows[0]?.textContent).toContain("RNA PolyA");
+        expect(libraryRows[0]?.textContent).not.toContain("id:1001");
+        expect(libraryRows[0]?.textContent).toContain("1001");
+        expect(libraryRows[0]?.textContent).toContain("library_lims:");
+        expect(libraryRows[0]?.textContent).toContain("DN111:A1");
+    });
+
+    it("renders sample related library and lane rows with metadata pairs", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "SANG001",
+                enrichment: buildEnrichment({
+                    identifier: "SANG001",
+                    type: "sanger_sample_id",
+                    graph: {
+                        study: buildStudy({
+                            id_study_lims: "6568",
+                            name: "RNA Seq",
+                            accession_number: "ERP123456",
+                        }),
+                        sample: buildSample({
+                            id_study_lims: "6568",
+                            id_sample_lims: "LIMS001",
+                            sanger_id: "SANG001",
+                            sample_name: "Sample 1",
+                            library_type: "RNA PolyA",
+                        }),
+                        library: {
+                            library_type: "RNA PolyA",
+                            id_study_lims: "6568",
+                            library_id: "1001",
+                            id_library_lims: "DN111:A1",
+                        },
+                        sample_detail: buildSampleDetail({
+                            sample: {
+                                id_study_lims: "6568",
+                                id_sample_lims: "LIMS001",
+                                sanger_id: "SANG001",
+                                sample_name: "Sample 1",
+                                library_type: "RNA PolyA",
+                            },
+                            lanes: [
+                                {
+                                    id_run: "12345",
+                                    lane: "2",
+                                    tag_index: 88,
+                                },
+                            ],
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const libraryRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="library"]');
+        const laneRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="lane"]');
+
+        expect(libraryRows).toHaveLength(1);
+        expectEntityRowTitle(libraryRows[0], "1001");
+        expect(libraryRows[0]?.textContent).toContain("type:");
+        expect(libraryRows[0]?.textContent).toContain("RNA PolyA");
+        expect(libraryRows[0]?.textContent).not.toContain("id:1001");
+        expect(libraryRows[0]?.textContent).toContain("1001");
+        expect(libraryRows[0]?.textContent).toContain("library_lims:");
+        expect(libraryRows[0]?.textContent).toContain("DN111:A1");
+
+        expect(laneRows).toHaveLength(1);
+        expectEntityRowTitle(laneRows[0], "12345_2#88");
+        expect(laneRows[0]?.textContent).not.toContain("id:12345_2#88");
+        expect(laneRows[0]?.textContent).toContain("12345_2#88");
+        expect(laneRows[0]?.textContent).toContain("id_run:");
+        expect(laneRows[0]?.textContent).toContain("12345");
+        expect(laneRows[0]?.textContent).toContain("lane:");
+        expect(laneRows[0]?.textContent).toContain("2");
+        expect(laneRows[0]?.textContent).toContain("tag_index:");
+        expect(laneRows[0]?.textContent).toContain("88");
+        expect(
+            screen
+                .getByRole("link", {
+                    name: /send lane to search filter/i,
+                })
+                .getAttribute("href"),
+        ).toBe("/?seqmeta_lane=12345_2#88");
+    });
+
+    it("renders library related samples as entity rows with metadata pairs", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_librarytype",
+                rawValue: "RNA",
+                enrichment: buildEnrichment({
+                    identifier: "RNA",
+                    type: "library_type",
+                    graph: {
+                        studies: [buildStudy()],
+                        samples: [
+                            buildSample({
+                                id_sample_lims: "LIMS001",
+                                sanger_id: "SANG001",
+                                sample_name: "Sample 1",
+                                accession_number: "ERS123456",
+                            }),
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const sampleRows = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelectorAll('[data-seqmeta-detail-key="sample"]');
+
+        expect(sampleRows).toHaveLength(1);
+        expectEntityRowTitle(sampleRows[0], "SANG001");
+        expect(sampleRows[0]?.textContent).toContain("name:");
+        expect(sampleRows[0]?.textContent).toContain("Sample 1");
+        expect(sampleRows[0]?.textContent).not.toContain("id:SANG001");
+        expect(sampleRows[0]?.textContent).toContain("SANG001");
+        expect(sampleRows[0]?.textContent).toContain("sample_lims:");
+        expect(sampleRows[0]?.textContent).toContain("LIMS001");
+        expect(sampleRows[0]?.textContent).toContain("accession:");
+        expect(sampleRows[0]?.textContent).toContain("ERS123456");
+    });
+
+    it("renders direct metadata for exact library-id details from related library identifiers", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_libraryid",
+                rawValue: "71046409",
+                enrichment: buildEnrichment({
+                    identifier: "71046409",
+                    type: "library_id",
+                    graph: {
+                        studies: [buildStudy({ id_study_lims: "7607" })],
+                        samples: [
+                            buildSample({
+                                id_study_lims: "7607",
+                                id_sample_lims: "9575305",
+                                sanger_id: "7607STDY14643771",
+                                sample_name: "7607STDY14643771",
+                                library_type: "Custom",
+                            }),
+                        ],
+                        libraries: [
+                            {
+                                library_type: "Custom",
+                                id_study_lims: "7607",
+                                library_id: "71046409",
+                                id_library_lims: "SQPP-47463-G:B1",
+                            },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const directMetadata = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+
+        expect(directMetadata).toBeTruthy();
+        expect(
+            directMetadata?.querySelectorAll(
+                '[data-seqmeta-detail-key="seqmeta_library_id"]',
+            ),
+        ).toHaveLength(0);
+        expect(
+            directMetadata?.querySelectorAll(
+                '[data-seqmeta-detail-key="seqmeta_id_library_lims"]',
+            ),
+        ).toHaveLength(1);
+        expect(directMetadata?.textContent).not.toContain("71046409");
+        expect(directMetadata?.textContent).toContain("SQPP-47463-G:B1");
+        expect(directMetadata?.textContent).toContain("Custom");
+
+        const titleActions = screen.getByTestId("seqmeta-title-actions");
+        expect(
+            titleActions.querySelector(
+                '[aria-label="Copy seqmeta_library_id"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            titleActions
+                .querySelector(
+                    '[aria-label="Send seqmeta_library_id to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?seqmeta_library_id=71046409");
+    });
+
+    it("hides duplicate library-id direct metadata and keeps title copy and filter actions", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
+            globalThis,
+            "navigator",
+        );
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
+
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: {
+                clipboard: {
+                    writeText: writeTextMock,
+                },
+            },
+        });
+
+        try {
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: "seqmeta_libraryid",
+                    rawValue: "71046409",
+                    enrichment: buildEnrichment({
+                        identifier: "71046409",
+                        type: "library_id",
+                        graph: {
+                            studies: [buildStudy({ id_study_lims: "7607" })],
+                            samples: [
+                                buildSample({
+                                    id_study_lims: "7607",
+                                    id_sample_lims: "9575305",
+                                    sanger_id: "7607STDY14643771",
+                                    sample_name: "7607STDY14643771",
+                                    library_type: "Custom",
+                                }),
+                            ],
+                            libraries: [
+                                {
+                                    library_type: "Custom",
+                                    id_study_lims: "7607",
+                                    library_id: "71046409",
+                                    id_library_lims: "LIB7607-71046409",
+                                },
+                            ],
+                        },
+                    }),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            const dialogHeader = screen
+                .getByText("Seqmeta details")
+                .closest("div");
+            expect(dialogHeader?.querySelector("h3")?.textContent).toBe(
+                "71046409",
+            );
+
+            expect(
+                dialogHeader?.querySelector(
+                    '[aria-label="Copy seqmeta_library_id"]',
+                ),
+            ).toBeTruthy();
+            const titleFilter = dialogHeader?.querySelector(
+                '[aria-label="Send seqmeta_library_id to search filter"]',
+            );
+            expect(titleFilter?.getAttribute("href")).toBe(
+                "/?seqmeta_library_id=71046409",
+            );
+
+            const directMetadata = screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelector('[data-field-group="direct-metadata"]');
+
+            expect(directMetadata).toBeTruthy();
+            expect(
+                directMetadata?.querySelectorAll(
+                    '[data-seqmeta-detail-key="seqmeta_library_id"]',
+                ),
+            ).toHaveLength(0);
+            expect(
+                directMetadata?.querySelectorAll(
+                    '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
+                ),
+            ).toHaveLength(1);
+            expect(
+                directMetadata?.querySelectorAll(
+                    '[data-seqmeta-detail-key="seqmeta_id_library_lims"]',
+                ),
+            ).toHaveLength(1);
+
+            const copyButton = dialogHeader?.querySelector(
+                '[aria-label="Copy seqmeta_library_id"]',
+            );
+            fireEvent.click(copyButton as Element);
+
+            await waitFor(() => {
+                expect(writeTextMock).toHaveBeenCalledWith("71046409");
+            });
+        } finally {
+            if (originalNavigatorDescriptor) {
+                Object.defineProperty(
+                    globalThis,
+                    "navigator",
+                    originalNavigatorDescriptor,
+                );
+            }
+        }
+    });
+
+    it.each([
+        {
+            metadataKey: "seqmeta_id_sample_lims",
+            rawValue: "6050954",
+            suppressedDetailKey: "seqmeta_id_sample_lims",
+            expectedHref: "/?seqmeta_id_sample_lims=6050954",
+            sample: {
+                id_sample_lims: "6050954",
+                sanger_id: "9575305",
+                sample_name: "7607STDY14643771",
+            },
+        },
+        {
+            metadataKey: "seqmeta_sanger_sample_id",
+            rawValue: "9575305",
+            suppressedDetailKey: "seqmeta_sanger_sample_id",
+            expectedHref: "/?seqmeta_sanger_sample_id=9575305",
+            sample: {
+                id_sample_lims: "6050954",
+                sanger_id: "9575305",
+                sample_name: "7607STDY14643771",
+            },
+        },
+    ])(
+        "keeps $metadataKey title filter on the direct metadata key when the duplicate direct row is hidden",
+        async ({
+            expectedHref,
+            metadataKey,
+            rawValue,
+            sample,
+            suppressedDetailKey,
+        }) => {
+            const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey,
+                    rawValue,
+                    enrichment: buildEnrichment({
+                        identifier: rawValue,
+                        type: "sanger_sample_id",
+                        graph: {
+                            sample: buildSample(sample),
+                            sample_detail: buildSampleDetail({ sample }),
+                        },
+                    }),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            const directMetadata = screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelector('[data-field-group="direct-metadata"]');
+
+            expect(directMetadata).toBeTruthy();
+            expect(
+                directMetadata?.querySelector(
+                    `[data-seqmeta-detail-key="${suppressedDetailKey}"]`,
+                ),
+            ).toBeNull();
+            expect(
+                screen
+                    .getByTestId("seqmeta-title-actions")
+                    .querySelector(
+                        `[aria-label="Send ${metadataKey} to search filter"]`,
+                    )
+                    ?.getAttribute("href"),
+            ).toBe(expectedHref);
+        },
+    );
+
+    it("omits the direct metadata section when only the selected title value would remain", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_librarytype",
+                rawValue: "Custom",
+                enrichment: buildEnrichment({
+                    identifier: "Custom",
+                    type: "library_type",
+                    graph: {
+                        studies: [buildStudy({ id_study_lims: "7607" })],
+                        samples: [
+                            buildSample({
+                                id_study_lims: "7607",
+                                id_sample_lims: "9575305",
+                                sanger_id: "7607STDY14643771",
+                                sample_name: "7607STDY14643771",
+                                library_type: "Custom",
+                            }),
+                        ],
+                        libraries: [
+                            {
+                                library_type: "Custom",
+                                id_study_lims: "7607",
+                            },
+                        ],
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(
+            screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelector('[data-field-group="direct-metadata"]'),
+        ).toBeNull();
+        expect(screen.getByTestId("seqmeta-title-actions")).toBeTruthy();
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector(
+                    '[aria-label="Send seqmeta_pipeline_id_lims to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?library=Custom");
+        expect(screen.getByText("Related Data")).toBeTruthy();
+    });
+
+    it("filters sample related library rows by library id when the id is only on sample detail libraries", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
+            globalThis,
+            "navigator",
+        );
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
+
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: {
+                clipboard: {
+                    writeText: writeTextMock,
+                },
+            },
+        });
+
+        try {
+            render(
+                createElement(SeqmetaBadge, {
+                    metadataKey: "seqmeta_sampleid",
+                    rawValue: "7607STDY14643771",
+                    enrichment: buildEnrichment({
+                        identifier: "7607STDY14643771",
+                        type: "sanger_sample_id",
+                        graph: {
+                            study: buildStudy({
+                                id_study_lims: "7607",
+                                name: "Study 7607",
+                            }),
+                            sample: buildSample({
+                                id_study_lims: "7607",
+                                id_sample_lims: "9575305",
+                                sanger_id: "7607STDY14643771",
+                                sample_name: "7607STDY14643771",
+                                library_type: "Custom",
+                            }),
+                            sample_detail: buildSampleDetail({
+                                sample: {
+                                    id_study_lims: "7607",
+                                    id_sample_lims: "9575305",
+                                    sanger_id: "7607STDY14643771",
+                                    sample_name: "7607STDY14643771",
+                                    library_type: "Custom",
+                                },
+                                libraries: [
+                                    {
+                                        library_type: "Custom",
+                                        id_study_lims: "7607",
+                                        library_id: "71046409",
+                                        id_library_lims: "SQPP-47463-G:B1",
+                                    },
+                                ],
+                                lanes: [],
+                            }),
+                        },
+                    }),
+                }),
+            );
+
+            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+            await waitFor(() => {
+                expect(screen.getByRole("dialog")).toBeTruthy();
+            });
+
+            const libraryRow = screen
+                .getByTestId("seqmeta-dialog-body")
+                .querySelector('[data-seqmeta-detail-key="library"]');
+
+            expect(libraryRow).toBeTruthy();
+            expectEntityRowTitle(libraryRow, "71046409");
+            expect(libraryRow?.textContent).not.toContain("id:71046409");
+            expect(libraryRow?.textContent).toContain("71046409");
+            expect(libraryRow?.textContent).toContain("library_lims:");
+            expect(libraryRow?.textContent).toContain("SQPP-47463-G:B1");
+            expect(
+                screen
+                    .getByRole("link", {
+                        name: /send library to search filter/i,
+                    })
+                    .getAttribute("href"),
+            ).toBe("/?seqmeta_library_id=71046409");
+
+            fireEvent.click(
+                screen.getByLabelText(/Copy seqmeta_pipeline_id_lims/i),
+            );
+
+            await waitFor(() => {
+                expect(writeTextMock).toHaveBeenCalledWith("71046409");
+            });
+        } finally {
+            if (originalNavigatorDescriptor) {
+                Object.defineProperty(
+                    globalThis,
+                    "navigator",
+                    originalNavigatorDescriptor,
+                );
+            }
+        }
     });
 
     it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {
@@ -1961,7 +2898,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(screen.getByLabelText("Show samples"));
 
         await waitFor(() => {
-            expect(screen.getAllByText("Sample 1 / S1")).toHaveLength(2);
+            expect(screen.getAllByText("S1")).toHaveLength(2);
         });
 
         const duplicateKeyErrors = consoleErrorSpy.mock.calls.filter((call) =>
@@ -2059,7 +2996,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(showSamplesButton);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
 
         expect(fetchLibrarySamplesMock).toHaveBeenCalledWith("6568", "RNA");
@@ -2148,8 +3085,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("Samples")).toBeTruthy();
 
         // Each sample should be on its own row with display name
-        expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
-        expect(screen.getByText("Sample 2 / S2")).toBeTruthy();
+        expect(screen.getByText("S1")).toBeTruthy();
+        expect(screen.getByText("S2")).toBeTruthy();
 
         // Should have a Study section showing the parent study
         expect(screen.getByText("Study")).toBeTruthy();
@@ -2257,6 +3194,121 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("6050954")).toBeTruthy();
         expect(screen.getByText("Sample accession")).toBeTruthy();
         expect(screen.getByText("EGAN00003258234")).toBeTruthy();
+    });
+
+    it("displays legacy sample metadata details with MLWH field names and no alias/type subtitle", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "7607STDY14643771",
+                enrichment: buildEnrichment({
+                    identifier: "7607STDY14643771",
+                    type: "sanger_sample_name",
+                    graph: {
+                        sample: buildSample({
+                            sanger_id: "9575305",
+                            sample_name: "7607STDY14643771",
+                            id_sample_lims: "6050954",
+                        }),
+                        sample_detail: buildSampleDetail({
+                            sample: {
+                                sanger_id: "9575305",
+                                sample_name: "7607STDY14643771",
+                                id_sample_lims: "6050954",
+                            },
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(screen.getByText("seqmeta_sample_name")).toBeTruthy();
+        expect(
+            screen.queryByText("seqmeta_sampleid (sanger_sample_name)"),
+        ).toBeNull();
+
+        const directMetadataSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+        expect(directMetadataSection).toBeTruthy();
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_sampleid"]',
+            ),
+        ).toBeNull();
+
+        const sangerSampleIDRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
+        );
+        expect(sangerSampleIDRow?.textContent).toContain("Sanger sample ID");
+        expect(sangerSampleIDRow?.textContent).toContain("9575305");
+    });
+
+    it("keeps canonical direct metadata keys in label hover text instead of a visible second line", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "7607STDY14643771",
+                enrichment: buildEnrichment({
+                    identifier: "7607STDY14643771",
+                    type: "sanger_sample_name",
+                    graph: {
+                        sample: buildSample({
+                            sanger_id: "9575305",
+                            sample_name: "7607STDY14643771",
+                            id_sample_lims: "6050954",
+                        }),
+                        sample_detail: buildSampleDetail({
+                            sample: {
+                                sanger_id: "9575305",
+                                sample_name: "7607STDY14643771",
+                                id_sample_lims: "6050954",
+                            },
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const directMetadataSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+        const sangerSampleIDRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
+        );
+        expect(sangerSampleIDRow).toBeTruthy();
+        expect(
+            within(sangerSampleIDRow as HTMLElement).getByText(
+                "Sanger sample ID",
+            ),
+        ).toBeTruthy();
+        expect(sangerSampleIDRow?.textContent).toContain("9575305");
+        expect(sangerSampleIDRow?.textContent).not.toContain(
+            "seqmeta_sanger_sample_id",
+        );
+
+        const label = sangerSampleIDRow?.querySelector(
+            '[data-testid="seqmeta-direct-metadata-label"]',
+        );
+        expect(label?.getAttribute("title")).toBe(
+            "MLWH seqmeta key: seqmeta_sanger_sample_id",
+        );
     });
 
     it("shows hierarchical related data for sample with library parent, study grandparent, and lanes", async () => {
@@ -2572,7 +3624,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             // If the label exists, verify it's NOT in the direct metadata section
             // (it might be elsewhere, but not in direct metadata)
             const fieldCard = studyIdLabel.closest(
-                '[data-seqmeta-detail-key="study_id"]',
+                '[data-seqmeta-detail-key="seqmeta_id_study_lims"]',
             );
             if (fieldCard) {
                 expect(directMetadataSection?.contains(fieldCard)).toBe(false);
@@ -2706,8 +3758,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         });
 
         // But values and buttons should still be present
-        expect(screen.getByText("Sample 1 / SANG001")).toBeTruthy();
-        expect(screen.getByText("Sample 2 / SANG002")).toBeTruthy();
+        expect(screen.getByText("SANG001")).toBeTruthy();
+        expect(screen.getByText("SANG002")).toBeTruthy();
     });
 
     it("does not duplicate 'Library type' label in rows within Library section", async () => {
@@ -2870,7 +3922,9 @@ describe("M1 result detail seqmeta enrichment", () => {
         // Library rows should NOT have "Library type" label
         const libraryRows = screen
             .getByTestId("seqmeta-dialog-body")
-            .querySelectorAll('[data-seqmeta-detail-key="seqmeta_library"]');
+            .querySelectorAll(
+                '[data-seqmeta-detail-key="seqmeta_pipeline_id_lims"]',
+            );
         expect(libraryRows.length).toBe(1);
 
         libraryRows.forEach((row) => {
@@ -3085,8 +4139,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(screen.getByText("Samples")).toBeTruthy();
 
         // Both samples should be listed with no duplicate key warnings
-        expect(screen.getByText("Gut tissue A / SANG_SC_001")).toBeTruthy();
-        expect(screen.getByText("Gut tissue B / SANG_SC_002")).toBeTruthy();
+        expect(screen.getByText("SANG_SC_001")).toBeTruthy();
+        expect(screen.getByText("SANG_SC_002")).toBeTruthy();
     });
 
     it("marks only the clicked library row copy button as Copied", async () => {
@@ -3184,8 +4238,9 @@ describe("M1 result detail seqmeta enrichment", () => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
             });
 
-            const copyButtons =
-                screen.getAllByLabelText(/Copy seqmeta_library/i);
+            const copyButtons = screen.getAllByLabelText(
+                /Copy seqmeta_pipeline_id_lims/i,
+            );
             expect(copyButtons).toHaveLength(2);
 
             fireEvent.click(copyButtons[0]!);
@@ -3276,10 +4331,10 @@ describe("M1 result detail seqmeta enrichment", () => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
             });
 
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
 
             const copyButtons = screen.getAllByLabelText(
-                /Copy seqmeta_sampleid/i,
+                /Copy seqmeta_sample_name/i,
             );
             expect(copyButtons).toHaveLength(2);
 
@@ -3382,7 +4437,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
             fireEvent.click(
                 screen.getByRole("button", {
-                    name: /copy study_id/i,
+                    name: /copy seqmeta_id_study_lims/i,
                 }),
             );
 
@@ -3749,7 +4804,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(expandButtons[0]);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
     });
 
@@ -3878,9 +4933,9 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(expandButton);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
-            expect(screen.getByText("Sample 2 / S2")).toBeTruthy();
-            expect(screen.getByText("Sample 3 / S3")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
+            expect(screen.getByText("S2")).toBeTruthy();
+            expect(screen.getByText("S3")).toBeTruthy();
         });
     });
 
@@ -4067,7 +5122,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fireEvent.click(expandButton);
 
         await waitFor(() => {
-            expect(screen.getByText("Sample 1 / S1")).toBeTruthy();
+            expect(screen.getByText("S1")).toBeTruthy();
         });
 
         // Each sample should appear as ONE row with display name
@@ -4081,14 +5136,20 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         // First sample row should contain both name and ID in one row
         const firstSampleRow = sampleRows[0];
-        expect(firstSampleRow?.textContent).toContain("Sample 1 / S1");
+        expectEntityRowTitle(firstSampleRow, "S1");
+        expect(firstSampleRow?.textContent).toContain("name:Sample 1");
 
         // Second sample row should contain both name and ID in one row
         const secondSampleRow = sampleRows[1];
-        expect(secondSampleRow?.textContent).toContain("Sample 2 / S2");
+        expectEntityRowTitle(secondSampleRow, "S2");
+        expect(secondSampleRow?.textContent).toContain("name:Sample 2");
 
         // Each sample row should have copy and filter buttons
-        const copyButtons = screen.getAllByLabelText(/Copy seqmeta_sampleid/i);
+        const copyButtons = Array.from(sampleRows).map((row) =>
+            within(row as HTMLElement).getByLabelText(
+                /Copy seqmeta_sample_name/i,
+            ),
+        );
         const filterButtons = screen.getAllByLabelText(
             /Send sample to search filter/i,
         );

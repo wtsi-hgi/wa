@@ -59,37 +59,62 @@ async function registerMultiSeqmetaResult(): Promise<ResultSet> {
     return (await response.json()) as ResultSet;
 }
 
+async function deleteResult(resultId: string): Promise<void> {
+    const response = await fetch(
+        `${resultsBackendUrl()}/results/${encodeURIComponent(resultId)}`,
+        { method: "DELETE" },
+    );
+
+    if (!response.ok && response.status !== 404) {
+        throw new Error(
+            `delete failed ${response.status}: ${await response.text()}`,
+        );
+    }
+}
+
 test("renders five seqmeta result metadata details in under one second", async ({
     page,
 }) => {
     const result = await registerMultiSeqmetaResult();
-    const startedAt = Date.now();
+    let cleanupNeeded = true;
 
-    await page.goto(`/results/${encodeURIComponent(result.id)}`, {
-        waitUntil: "domcontentloaded",
-    });
-    await page.locator('[data-metadata-row="seqmeta_studyid"]').waitFor({
-        state: "visible",
-    });
+    try {
+        const startedAt = Date.now();
 
-    await page.waitForFunction(
-        () =>
-            document.querySelectorAll('[aria-label="loading enrichment"]')
-                .length === 0,
-    );
+        await page.goto(`/results/${encodeURIComponent(result.id)}`, {
+            waitUntil: "domcontentloaded",
+        });
+        await page.locator('[data-metadata-row="seqmeta_studyid"]').waitFor({
+            state: "visible",
+        });
+        await deleteResult(result.id);
+        cleanupNeeded = false;
 
-    expect(await page.getByText("Rendering...").count()).toBe(0);
+        await page.waitForFunction(
+            () =>
+                document.querySelectorAll('[aria-label="loading enrichment"]')
+                    .length === 0,
+        );
 
-    await page
-        .locator('[data-metadata-row="seqmeta_studyid"]')
-        .getByRole("button", { name: /Open seqmeta_studyid details/i })
-        .click();
+        expect(await page.getByText("Rendering...").count()).toBe(0);
 
-    const dialog = page.getByRole("dialog");
+        await page
+            .locator('[data-metadata-row="seqmeta_studyid"]')
+            .getByRole("button", {
+                name: /Open seqmeta_id_study_lims details/i,
+            })
+            .click();
 
-    await expect(dialog.getByText("LIB7607-71046409")).toBeVisible();
+        const dialog = page.getByRole("dialog");
 
-    const elapsedMs = Date.now() - startedAt;
+        await expect(dialog.getByText("LIB7607-71046409")).toBeVisible();
 
-    expect(elapsedMs).toBeLessThan(1000);
+        const elapsedMs = Date.now() - startedAt;
+
+        expect(elapsedMs).toBeLessThan(1000);
+    } finally {
+        if (cleanupNeeded) {
+            await deleteResult(result.id);
+        }
+    }
 });

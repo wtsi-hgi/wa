@@ -61,10 +61,10 @@ var resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
 }
 
 var resultsRegisterSeqmetaFlagMetaKeys = map[string]string{
-	"run":     "seqmeta_runid",
-	"study":   "seqmeta_studyid",
-	"sample":  "seqmeta_sampleid",
-	"library": "seqmeta_librarytype",
+	"run":     results.SeqmetaIDRunKey,
+	"study":   results.SeqmetaIDStudyLimsKey,
+	"sample":  results.SeqmetaSampleNameKey,
+	"library": results.SeqmetaPipelineIDLimsKey,
 }
 
 type resultsServeMLWHConfig struct {
@@ -144,6 +144,7 @@ type resultsServeSyncClient interface {
 	Sync(context.Context) ([]mlwh.SyncReport, error)
 	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
 	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
 	Close() error
 }
@@ -198,6 +199,18 @@ func (r *resultsServeMLWHRuntime) ExpandSearchValues(ctx context.Context, kind m
 	return r.client.ExpandSearchValues(ctx, kind, canonical)
 }
 
+func (r *resultsServeMLWHRuntime) ExpandSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
+	return r.client.ExpandSampleSearchValues(ctx, kind, canonical)
+}
+
+func (r *resultsServeMLWHRuntime) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
+	return r.client.ResolveStudy(ctx, raw)
+}
+
+func (r *resultsServeMLWHRuntime) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	return r.client.ResolveSampleName(ctx, raw)
+}
+
 func (r *resultsServeMLWHRuntime) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
 	return r.client.LanesForSample(ctx, sangerName, limit, offset)
 }
@@ -240,7 +253,7 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 			return nil, err
 		}
 
-		metadata["seqmeta_runid"] = resolvedRunID
+		metadata[results.SeqmetaIDRunKey] = resolvedRunID
 	}
 
 	if trimmedStudy := strings.TrimSpace(values.study); trimmedStudy != "" {
@@ -249,7 +262,7 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 			return nil, err
 		}
 
-		metadata["seqmeta_studyid"] = resolvedStudyID
+		metadata[results.SeqmetaIDStudyLimsKey] = resolvedStudyID
 	}
 
 	if trimmedSample := strings.TrimSpace(values.sample); trimmedSample != "" {
@@ -258,7 +271,7 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 			return nil, err
 		}
 
-		metadata["seqmeta_sampleid"] = resolvedSampleID
+		metadata[results.SeqmetaSampleNameKey] = resolvedSampleID
 	}
 
 	if trimmedLibrary := strings.TrimSpace(values.library); trimmedLibrary != "" {
@@ -320,7 +333,7 @@ func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRe
 
 	metadata := make(map[string]string, 2)
 	if libraryType := strings.TrimSpace(matchLibraryType(match)); libraryType != "" {
-		metadata["seqmeta_librarytype"] = libraryType
+		metadata[results.SeqmetaPipelineIDLimsKey] = libraryType
 	}
 
 	switch match.Kind {
@@ -329,21 +342,21 @@ func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRe
 		if err != nil {
 			return nil, err
 		}
-		metadata["seqmeta_libraryid"] = libraryID
+		metadata[results.SeqmetaLibraryIDKey] = libraryID
 	case mlwh.KindLibraryLimsID:
 		libraryLimsID, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
 		if err != nil {
 			return nil, err
 		}
-		metadata["seqmeta_library_lims"] = libraryLimsID
+		metadata[results.SeqmetaIDLibraryLimsKey] = libraryLimsID
 	default:
 		if libraryID := matchingLibraryID(value, match.Library); libraryID != "" {
-			metadata["seqmeta_libraryid"] = libraryID
+			metadata[results.SeqmetaLibraryIDKey] = libraryID
 
 			return metadata, nil
 		}
 		if libraryLimsID := matchingLibraryLimsID(value, match.Library); libraryLimsID != "" {
-			metadata["seqmeta_library_lims"] = libraryLimsID
+			metadata[results.SeqmetaIDLibraryLimsKey] = libraryLimsID
 
 			return metadata, nil
 		}
@@ -352,7 +365,7 @@ func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRe
 		if err != nil {
 			return nil, err
 		}
-		metadata["seqmeta_librarytype"] = libraryType
+		metadata[results.SeqmetaPipelineIDLimsKey] = libraryType
 	}
 
 	return metadata, nil
@@ -407,6 +420,40 @@ func matchLibraryType(match mlwh.Match) string {
 	}
 
 	return ""
+}
+
+func resultsRegisterUniqueValue(unique, legacyRunID string) (string, error) {
+	trimmedUnique := strings.TrimSpace(unique)
+	trimmedLegacyRunID := strings.TrimSpace(legacyRunID)
+
+	if trimmedUnique != "" && trimmedLegacyRunID != "" && trimmedUnique != trimmedLegacyRunID {
+		return "", errors.New("--unique and deprecated --runid cannot both be set to different values")
+	}
+
+	if trimmedUnique != "" {
+		return trimmedUnique, nil
+	}
+
+	return trimmedLegacyRunID, nil
+}
+
+func resultsRegisterEquivalentSeqmetaKeys(metaKey string) []string {
+	switch metaKey {
+	case results.SeqmetaIDRunKey:
+		return []string{results.LegacySeqmetaRunIDKey}
+	case results.SeqmetaIDStudyLimsKey:
+		return []string{results.LegacySeqmetaStudyIDKey}
+	case results.SeqmetaSampleNameKey:
+		return []string{results.LegacySeqmetaSampleIDKey}
+	case results.SeqmetaPipelineIDLimsKey:
+		return []string{results.LegacySeqmetaLibraryKey, results.LegacySeqmetaLibraryTypeKey}
+	case results.SeqmetaLibraryIDKey:
+		return []string{results.LegacySeqmetaLibraryIDKey}
+	case results.SeqmetaIDLibraryLimsKey:
+		return []string{results.LegacySeqmetaLibraryLimsKey}
+	default:
+		return nil
+	}
 }
 
 type resultSetWithFiles struct {
@@ -610,7 +657,8 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var operator string
 	var commandLine string
 	var workflowPath string
-	var runID string
+	var unique string
+	var legacyRunID string
 	var additionalUnique string
 	var inputFiles []string
 	var metaValues []string
@@ -632,20 +680,18 @@ IDs.
 --library accepts exact pipeline_id_lims, library_id, or id_library_lims values
 and requires the MLWH cache to have been synced already.
 
-Registrations are keyed by the detected pipeline identity and the run key.
+Registrations are keyed by the detected pipeline identity and the unique key.
 The server replaces an existing result set instead of adding a new one when a
-registration has the same pipeline identity and run key.
+registration has the same pipeline identity and unique key.
 The pipeline identity comes from --nextflow-workflow: files inside git use
 repository/commit metadata, while files outside git use the workflow path and
 content hash.
-The run key is built from --runid and --additional-unique. Use the same values
+The unique key is built from --unique. Use the same value
 when rerunning the same logical result and you want the stored registration,
 files and metadata to be refreshed.
-Use --additional-unique when the same workflow and run ID produce
-multiple independently registered outputs that should coexist, such as
-different analyses, panels, cohorts or parameter sets.
-Choose a short, stable, human-readable label for --additional-unique that
-describes that output, and reuse it for future replacements.
+Choose a single stable, human-readable label for --unique that describes the
+output, such as a run, cohort, panel or parameter-set label, and reuse it for
+future replacements.
 Avoid a timestamp, random value, or output path unless every registration should
 create a new result set.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -662,7 +708,8 @@ create a new result set.`,
 				operator,
 				commandLine,
 				workflowPath,
-				runID,
+				unique,
+				legacyRunID,
 				additionalUnique,
 				inputFiles,
 				metaValues,
@@ -687,16 +734,19 @@ create a new result set.`,
 	command.Flags().StringVar(&operator, "operator", "", "Operator name")
 	command.Flags().StringVar(&commandLine, "command", "", "Pipeline command line")
 	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path to the Nextflow workflow used for the run")
-	command.Flags().StringVar(&runID, "runid", "", "Run identifier")
-	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Stable label used to disambiguate the run key")
+	command.Flags().StringVar(&unique, "unique", "", "Stable unique label for this result set")
+	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
+	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
-	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric run ID through MLWH and store it as seqmeta_runid")
-	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_studyid")
-	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_sampleid")
+	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric id_run through MLWH and store it as seqmeta_id_run")
+	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_id_study_lims")
+	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_name")
 	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
+	_ = command.Flags().MarkHidden("runid")
+	_ = command.Flags().MarkHidden("additional-unique")
 
 	return command
 }
@@ -709,7 +759,8 @@ func buildResultsRegistrationForCommand(
 	operator string,
 	commandLine string,
 	workflowPath string,
-	runID string,
+	unique string,
+	legacyRunID string,
 	additionalUnique string,
 	inputFiles []string,
 	metaValues []string,
@@ -746,9 +797,14 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("--nextflow-workflow is required")
 	}
 
-	runKey := results.BuildRunKey(strings.TrimSpace(runID), strings.TrimSpace(additionalUnique))
+	uniqueValue, err := resultsRegisterUniqueValue(unique, legacyRunID)
+	if err != nil {
+		return nil, err
+	}
+
+	runKey := results.BuildRunKey(uniqueValue, strings.TrimSpace(additionalUnique))
 	if runKey == "" {
-		return nil, errors.New("--runid or --additional-unique is required")
+		return nil, errors.New("--unique is required")
 	}
 
 	seqmetaMetadata, err := resolveResultsRegisterLookupMetadata(ctx, lookupValues)
@@ -837,6 +893,12 @@ func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[strin
 			continue
 		}
 
+		for _, equivalentKey := range resultsRegisterEquivalentSeqmetaKeys(key) {
+			if _, exists := metadata[equivalentKey]; exists {
+				return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", equivalentKey, resultsRegisterSeqmetaFlagName(key))
+			}
+		}
+
 		if _, exists := metadata[key]; exists {
 			return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", key, resultsRegisterSeqmetaFlagName(key))
 		}
@@ -849,7 +911,12 @@ func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[strin
 
 func resultsRegisterSeqmetaFlagName(metaKey string) string {
 	switch metaKey {
-	case "seqmeta_libraryid", "seqmeta_library_lims", "seqmeta_librarytype":
+	case results.SeqmetaLibraryIDKey,
+		results.SeqmetaIDLibraryLimsKey,
+		results.SeqmetaPipelineIDLimsKey,
+		results.LegacySeqmetaLibraryIDKey,
+		results.LegacySeqmetaLibraryLimsKey,
+		results.LegacySeqmetaLibraryTypeKey:
 		return "library"
 	}
 
@@ -908,7 +975,8 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 	var pipelineName string
 	var pipelineVersion string
 	var pipelineIdentifier string
-	var runKey string
+	var unique string
+	var legacyRunKey string
 	var outputDirPrefix string
 	var metaValues []string
 
@@ -916,7 +984,12 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 		Use:   "search",
 		Short: "Search result sets",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			query, err := buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, runKey, outputDirPrefix, metaValues)
+			uniqueValue, err := resultsSearchUniqueValue(unique, legacyRunKey)
+			if err != nil {
+				return err
+			}
+
+			query, err := buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, uniqueValue, outputDirPrefix, metaValues)
 			if err != nil {
 				return err
 			}
@@ -942,11 +1015,28 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&pipelineName, "pipeline-name", "", "Pipeline name filter")
 	command.Flags().StringVar(&pipelineVersion, "pipeline-version", "", "Pipeline version filter")
 	command.Flags().StringVar(&pipelineIdentifier, "pipeline-identifier", "", "Pipeline identifier filter")
-	command.Flags().StringVar(&runKey, "run-key", "", "Run key filter")
+	command.Flags().StringVar(&unique, "unique", "", "Unique key filter")
+	command.Flags().StringVar(&legacyRunKey, "run-key", "", "Deprecated alias for --unique")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata filter in key=value form")
 	command.Flags().StringVar(&outputDirPrefix, "output-dir-prefix", "", "Output directory prefix filter")
+	_ = command.Flags().MarkHidden("run-key")
 
 	return command
+}
+
+func resultsSearchUniqueValue(unique, legacyRunKey string) (string, error) {
+	trimmedUnique := strings.TrimSpace(unique)
+	trimmedLegacyRunKey := strings.TrimSpace(legacyRunKey)
+
+	if trimmedUnique != "" && trimmedLegacyRunKey != "" && trimmedUnique != trimmedLegacyRunKey {
+		return "", errors.New("--unique and deprecated --run-key cannot both be set to different values")
+	}
+
+	if trimmedUnique != "" {
+		return trimmedUnique, nil
+	}
+
+	return trimmedLegacyRunKey, nil
 }
 
 func buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, runKey, outputDirPrefix string, metaValues []string) (url.Values, error) {

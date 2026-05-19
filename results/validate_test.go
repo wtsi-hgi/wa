@@ -97,6 +97,33 @@ func TestSeqmetaValidatorValidateMetadata(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 	})
 
+	convey.Convey("Bug 3: ValidateMetadata accepts MLWH-named seqmeta metadata keys while keeping legacy aliases compatible", t, func() {
+		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
+			"48522":             {status: http.StatusOK, body: `{"identifier":"48522","type":"run_id","object":{}}`},
+			"6568":              {status: http.StatusOK, body: `{"identifier":"6568","type":"study_lims_id","object":{}}`},
+			"7607STDY14643771":  {status: http.StatusOK, body: `{"identifier":"7607STDY14643771","type":"sanger_sample_name","object":{}}`},
+			"Custom":            {status: http.StatusOK, body: `{"identifier":"Custom","type":"library_type","object":{}}`},
+			"71046409":          {status: http.StatusOK, body: `{"identifier":"71046409","type":"library_id","object":{}}`},
+			"SQPP-47463-G:B1":   {status: http.StatusOK, body: `{"identifier":"SQPP-47463-G:B1","type":"id_library_lims","object":{}}`},
+			"legacy-study-lims": {status: http.StatusOK, body: `{"identifier":"legacy-study-lims","type":"study_lims_id","object":{}}`},
+		})
+		defer server.Close()
+
+		validator := NewSeqmetaValidator(server.URL, time.Second)
+
+		err := validator.ValidateMetadata(context.Background(), map[string]string{
+			"seqmeta_id_run":           "48522",
+			"seqmeta_id_study_lims":    "6568",
+			"seqmeta_name":             "7607STDY14643771",
+			"seqmeta_pipeline_id_lims": "Custom",
+			"seqmeta_library_id":       "71046409",
+			"seqmeta_id_library_lims":  "SQPP-47463-G:B1",
+			"seqmeta_studyid":          "legacy-study-lims",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+
 	convey.Convey("D1.3: ValidateMetadata rejects unknown seqmeta metadata suffixes", t, func() {
 		validator := NewSeqmetaValidator("http://example.test", time.Second)
 

@@ -46,9 +46,7 @@ async function openResultFileBrowser(page: Page) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
     await expect(page.getByText("Recent registrations")).toBeVisible();
-    await expect(page.locator('tbody tr[data-result-row="true"]')).toHaveCount(
-        4,
-    );
+    await expect(seededRecentRows(page)).toHaveCount(4);
 
     const resultLink = page
         .getByRole("link", { name: "nf-core/rnaseq" })
@@ -69,9 +67,7 @@ async function openNamedResultFileBrowser(page: Page, pipelineName: string) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
     await expect(page.getByText("Recent registrations")).toBeVisible();
-    await expect(page.locator('tbody tr[data-result-row="true"]')).toHaveCount(
-        4,
-    );
+    await expect(seededRecentRows(page)).toHaveCount(4);
 
     const resultLink = page.getByRole("link", { name: pipelineName }).first();
     const href = await resultLink.getAttribute("href");
@@ -84,6 +80,12 @@ async function openNamedResultFileBrowser(page: Page, pipelineName: string) {
 
     const fileBrowser = page.locator('[data-file-browser="true"]');
     await expect(fileBrowser).toBeVisible({ timeout: 30000 });
+}
+
+function seededRecentRows(page: Page): Locator {
+    return page
+        .locator('tbody tr[data-result-row="true"]')
+        .filter({ hasNotText: "seqmeta/rendering-repro" });
 }
 
 async function openPreviewModes(controls: Locator) {

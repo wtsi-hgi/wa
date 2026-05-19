@@ -45,24 +45,27 @@ import (
 var combinedStudyMetaKeys = []string{
 	"study",
 	"study_id",
-	"seqmeta_studyid",
+	SeqmetaIDStudyLimsKey,
+	LegacySeqmetaStudyIDKey,
 	"seqmeta_study_accession",
 }
 
 var libraryTypeMetaKeys = []string{
 	"library",
-	"seqmeta_library",
-	"seqmeta_librarytype",
+	SeqmetaPipelineIDLimsKey,
+	LegacySeqmetaLibraryKey,
+	LegacySeqmetaLibraryTypeKey,
 }
 
-var libraryIDMetaKeys = []string{"seqmeta_libraryid"}
+var libraryIDMetaKeys = []string{SeqmetaLibraryIDKey, LegacySeqmetaLibraryIDKey}
 
-var libraryLimsMetaKeys = []string{"seqmeta_library_lims"}
+var libraryLimsMetaKeys = []string{SeqmetaIDLibraryLimsKey, LegacySeqmetaLibraryLimsKey}
 
 var combinedRunMetaKeys = []string{
 	"run",
 	"run_id",
-	"seqmeta_runid",
+	SeqmetaIDRunKey,
+	LegacySeqmetaRunIDKey,
 }
 
 var combinedSampleMetaKeys = []string{
@@ -70,13 +73,41 @@ var combinedSampleMetaKeys = []string{
 	"sample_id",
 	"sample_name",
 	"sample_accession_number",
-	"seqmeta_sampleid",
-	"seqmeta_sample_lims",
+	SeqmetaSampleNameKey,
+	SeqmetaSampleNameURLKey,
+	SeqmetaSangerSampleIDKey,
+	SeqmetaIDSampleLimsKey,
+	LegacySeqmetaSampleIDKey,
+	LegacySeqmetaSampleLimsKey,
 }
 
 var combinedLaneMetaKeys = []string{"seqmeta_lane"}
 
 const defaultSeqmetaResolverCacheTTL = 5 * time.Minute
+
+type sampleMetadataSearchKey struct {
+	key  string
+	kind mlwh.IdentifierKind
+}
+
+var sampleMetadataSearchKeys = []sampleMetadataSearchKey{
+	{key: SeqmetaSampleNameKey, kind: mlwh.KindSangerSampleName},
+	{key: SeqmetaSampleNameURLKey, kind: mlwh.KindSangerSampleName},
+	{key: LegacySeqmetaSampleIDKey, kind: mlwh.KindSangerSampleName},
+	{key: "sample_name", kind: mlwh.KindSangerSampleName},
+	{key: "sample_id", kind: mlwh.KindSangerSampleName},
+	{key: SeqmetaSangerSampleIDKey, kind: mlwh.KindSangerSampleID},
+	{key: SeqmetaIDSampleLimsKey, kind: mlwh.KindSampleLimsID},
+	{key: LegacySeqmetaSampleLimsKey, kind: mlwh.KindSampleLimsID},
+	{key: SeqmetaSupplierNameKey, kind: mlwh.KindSupplierName},
+	{key: SeqmetaAccessionNumberKey, kind: mlwh.KindSampleAccession},
+	{key: "sample_accession_number", kind: mlwh.KindSampleAccession},
+}
+
+type sampleSearchExpansion struct {
+	kind   mlwh.IdentifierKind
+	values []string
+}
 
 type seqmetaResolvedValues struct {
 	samples []string
@@ -114,6 +145,14 @@ type seqmetaEnrichmentForSearch struct {
 // SearchResolver expands search values into related sample, run, and lane values.
 type SearchResolver interface {
 	Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error)
+}
+
+type candidateSampleSearchResolver interface {
+	ExpandCandidateSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string, candidates []string) ([]string, error)
+}
+
+type studySearchCanonicalizer interface {
+	CanonicalStudySearchValue(context.Context, string) (string, error)
 }
 
 // SeqmetaSampleResolver resolves study IDs to seqmeta sample IDs.
@@ -631,6 +670,51 @@ func combinedSearchValues(r *http.Request, key string) []string {
 	return nonEmptySearchValues(r.URL.Query()[key])
 }
 
+func appendSampleSearchExpansion(existing []sampleSearchExpansion, kind mlwh.IdentifierKind, values []string) []sampleSearchExpansion {
+	values = nonEmptySearchValues(values)
+	if len(values) == 0 {
+		return existing
+	}
+
+	for index := range existing {
+		if existing[index].kind != kind {
+			continue
+		}
+
+		existing[index].values = mergeSearchValues(existing[index].values, values)
+
+		return existing
+	}
+
+	return append(existing, sampleSearchExpansion{kind: kind, values: values})
+}
+
+func canonicalStudySearchValues(ctx context.Context, resolver SearchResolver, values []string) ([]string, []string, error) {
+	searchValues := append([]string{}, nonEmptySearchValues(values)...)
+	expansionValues := append([]string{}, searchValues...)
+
+	canonicalizer, ok := resolver.(studySearchCanonicalizer)
+	if !ok {
+		return searchValues, expansionValues, nil
+	}
+
+	expansionValues = []string{}
+	for _, value := range searchValues {
+		canonical, err := canonicalizer.CanonicalStudySearchValue(ctx, value)
+		if err != nil {
+			return nil, nil, err
+		}
+		if canonical == "" {
+			canonical = value
+		}
+
+		searchValues = mergeSearchValues(searchValues, []string{canonical})
+		expansionValues = mergeSearchValues(expansionValues, []string{canonical})
+	}
+
+	return searchValues, expansionValues, nil
+}
+
 func writeDomainError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
@@ -648,6 +732,73 @@ func writeDomainError(w http.ResponseWriter, err error) {
 	default:
 		writeServerError(w, http.StatusInternalServerError, err.Error())
 	}
+}
+
+func expandSampleSearchValues(ctx context.Context, resolver SearchResolver, requests []sampleSearchExpansion) ([]string, []string, []string, error) {
+	resolvedSamples := []string{}
+	resolvedRuns := []string{}
+	resolvedLanes := []string{}
+
+	for _, request := range requests {
+		for _, value := range request.values {
+			samples, runs, lanes, err := resolver.Expand(ctx, request.kind, value)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+
+			resolvedSamples = mergeSearchValues(resolvedSamples, samples)
+			resolvedRuns = mergeSearchValues(resolvedRuns, runs)
+			resolvedLanes = mergeSearchValues(resolvedLanes, lanes)
+		}
+	}
+
+	return resolvedSamples, resolvedRuns, resolvedLanes, nil
+}
+
+func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResolver, candidates []string, requests []sampleSearchExpansion) ([]string, []string, []string, bool, error) {
+	candidateResolver, ok := resolver.(candidateSampleSearchResolver)
+	if !ok || len(candidates) == 0 {
+		return nil, nil, nil, false, nil
+	}
+
+	resolvedSamples := []string{}
+	remaining := []sampleSearchExpansion{}
+
+	for _, request := range requests {
+		if !directSampleSearchKind(request.kind) {
+			remaining = append(remaining, request)
+
+			continue
+		}
+
+		for _, value := range request.values {
+			samples, err := candidateResolver.ExpandCandidateSampleSearchValues(ctx, request.kind, value, candidates)
+			if err != nil {
+				if errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
+					return nil, nil, nil, false, nil
+				}
+
+				return nil, nil, nil, false, err
+			}
+
+			resolvedSamples = mergeSearchValues(resolvedSamples, samples)
+		}
+	}
+
+	if len(remaining) == len(requests) {
+		return nil, nil, nil, false, nil
+	}
+
+	if len(remaining) == 0 {
+		return resolvedSamples, []string{}, []string{}, true, nil
+	}
+
+	samples, runs, lanes, err := expandSampleSearchValues(ctx, resolver, remaining)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+
+	return mergeSearchValues(resolvedSamples, samples), runs, lanes, true, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -714,40 +865,52 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 	runValues := mergeSearchValues(combinedSearchValues(r, "run"), combinedSearchValues(r, "run_id"))
 	sampleValues := combinedSearchValues(r, "sample")
 	laneValues := combinedSearchValues(r, "seqmeta_lane")
-	directSampleValues := append([]string{}, sampleValues...)
+	sampleExpansionRequests := appendSampleSearchExpansion(nil, mlwh.KindSangerSampleName, sampleValues)
 	directRunValues := append([]string{}, runValues...)
+	directSampleExactValues := map[string][]string{}
 
 	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["library"])
-	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["seqmeta_library"])
-	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta["seqmeta_librarytype"])
-	libraryIDValues = mergeSearchValues(libraryIDValues, params.Meta["seqmeta_libraryid"])
-	libraryLimsValues = mergeSearchValues(libraryLimsValues, params.Meta["seqmeta_library_lims"])
-	runValues = mergeSearchValues(runValues, params.Meta["seqmeta_runid"])
-	sampleValues = mergeSearchValues(sampleValues, params.Meta["seqmeta_sampleid"])
-	sampleValues = mergeSearchValues(sampleValues, params.Meta["seqmeta_sample_lims"])
-	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_name"])
-	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_id"])
-	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample_accession_number"])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta[SeqmetaPipelineIDLimsKey])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta[LegacySeqmetaLibraryKey])
+	libraryTypeValues = mergeSearchValues(libraryTypeValues, params.Meta[LegacySeqmetaLibraryTypeKey])
+	libraryIDValues = mergeSearchValues(libraryIDValues, params.Meta[SeqmetaLibraryIDKey])
+	libraryIDValues = mergeSearchValues(libraryIDValues, params.Meta[LegacySeqmetaLibraryIDKey])
+	libraryLimsValues = mergeSearchValues(libraryLimsValues, params.Meta[SeqmetaIDLibraryLimsKey])
+	libraryLimsValues = mergeSearchValues(libraryLimsValues, params.Meta[LegacySeqmetaLibraryLimsKey])
+	runValues = mergeSearchValues(runValues, params.Meta[SeqmetaIDRunKey])
+	runValues = mergeSearchValues(runValues, params.Meta[LegacySeqmetaRunIDKey])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample"])
-	directSampleValues = mergeSearchValues(directSampleValues, sampleValues)
+	sampleValues = mergeSearchValues(sampleValues, params.Meta[SeqmetaSampleNameURLKey])
+	sampleExpansionRequests = appendSampleSearchExpansion(sampleExpansionRequests, mlwh.KindSangerSampleName, params.Meta["sample"])
+	for _, searchKey := range sampleMetadataSearchKeys {
+		values := params.Meta[searchKey.key]
+		sampleExpansionRequests = appendSampleSearchExpansion(sampleExpansionRequests, searchKey.kind, values)
+		if len(values) > 0 {
+			directSampleExactValues[searchKey.key] = mergeSearchValues(directSampleExactValues[searchKey.key], values)
+		}
+	}
 	laneValues = mergeSearchValues(laneValues, params.Meta["seqmeta_lane"])
-	studyValues = mergeSearchValues(studyValues, params.Meta["seqmeta_studyid"])
+	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaIDStudyLimsKey])
+	studyValues = mergeSearchValues(studyValues, params.Meta[LegacySeqmetaStudyIDKey])
 	studyValues = mergeSearchValues(studyValues, params.Meta["seqmeta_study_accession"])
-	delete(params.Meta, "seqmeta_studyid")
+	delete(params.Meta, SeqmetaIDStudyLimsKey)
+	delete(params.Meta, LegacySeqmetaStudyIDKey)
 	delete(params.Meta, "seqmeta_study_accession")
 	delete(params.Meta, "library")
-	delete(params.Meta, "seqmeta_library")
-	delete(params.Meta, "seqmeta_libraryid")
-	delete(params.Meta, "seqmeta_library_lims")
-	delete(params.Meta, "seqmeta_librarytype")
-	delete(params.Meta, "seqmeta_runid")
+	delete(params.Meta, SeqmetaPipelineIDLimsKey)
+	delete(params.Meta, LegacySeqmetaLibraryKey)
+	delete(params.Meta, SeqmetaLibraryIDKey)
+	delete(params.Meta, LegacySeqmetaLibraryIDKey)
+	delete(params.Meta, SeqmetaIDLibraryLimsKey)
+	delete(params.Meta, LegacySeqmetaLibraryLimsKey)
+	delete(params.Meta, LegacySeqmetaLibraryTypeKey)
+	delete(params.Meta, SeqmetaIDRunKey)
+	delete(params.Meta, LegacySeqmetaRunIDKey)
 	delete(params.Meta, "seqmeta_lane")
 
-	delete(params.Meta, "seqmeta_sampleid")
-	delete(params.Meta, "seqmeta_sample_lims")
-	delete(params.Meta, "sample_name")
-	delete(params.Meta, "sample_id")
-	delete(params.Meta, "sample_accession_number")
+	for _, searchKey := range sampleMetadataSearchKeys {
+		delete(params.Meta, searchKey.key)
+	}
 	delete(params.Meta, "sample")
 
 	legacyStudyIDUsed := len(combinedSearchValues(r, "study_id")) > 0
@@ -764,7 +927,15 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			for _, studyValue := range studyValues {
+			studySearchValues, studyExpansionValues, err := canonicalStudySearchValues(r.Context(), s.resolver, studyValues)
+			if err != nil {
+				writeDomainError(w, err)
+
+				return
+			}
+
+			studyValues = studySearchValues
+			for _, studyValue := range studyExpansionValues {
 				samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindStudyLimsID, studyValue)
 				if err != nil {
 					writeDomainError(w, err)
@@ -843,23 +1014,41 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(directSampleValues) > 0 &&
+	if len(sampleExpansionRequests) > 0 &&
 		len(studyValues) == 0 &&
 		!hasLibraryValues &&
 		len(directRunValues) == 0 &&
 		s.resolver != nil {
-		for _, sampleValue := range directSampleValues {
-			samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindSangerSampleName, sampleValue)
-			if err != nil {
-				writeDomainError(w, err)
+		candidateSampleNames, err := s.store.DistinctMetadataValues(r.Context(), combinedSampleMetaKeys)
+		if err != nil {
+			writeDomainError(w, err)
 
-				return
-			}
-
-			sampleValues = mergeSearchValues(sampleValues, samples)
-			runValues = mergeSearchValues(runValues, runs)
-			laneValues = mergeSearchValues(laneValues, lanes)
+			return
 		}
+
+		samples, runs, lanes, expanded, err := expandCandidateSampleSearchValues(
+			r.Context(),
+			s.resolver,
+			candidateSampleNames,
+			sampleExpansionRequests,
+		)
+		if err != nil {
+			writeDomainError(w, err)
+
+			return
+		}
+		if !expanded {
+			samples, runs, lanes, err = expandSampleSearchValues(r.Context(), s.resolver, sampleExpansionRequests)
+		}
+		if err != nil {
+			writeDomainError(w, err)
+
+			return
+		}
+
+		sampleValues = mergeSearchValues(sampleValues, samples)
+		runValues = mergeSearchValues(runValues, runs)
+		laneValues = mergeSearchValues(laneValues, lanes)
 	}
 
 	for _, key := range combinedStudyMetaKeys {
@@ -871,6 +1060,12 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 	for _, key := range combinedSampleMetaKeys {
 		if len(sampleValues) > 0 {
 			params.OrMeta = append(params.OrMeta, map[string][]string{key: sampleValues})
+		}
+	}
+
+	for _, searchKey := range sampleMetadataSearchKeys {
+		if values := directSampleExactValues[searchKey.key]; len(values) > 0 {
+			params.OrMeta = append(params.OrMeta, map[string][]string{searchKey.key: values})
 		}
 	}
 
@@ -951,7 +1146,7 @@ func wrapSearchResults(results []ResultSet, resolvedSamples []string) []SearchRe
 	for _, result := range results {
 		wrappedResult := SearchResult{ResultSet: result}
 
-		if sampleID := strings.TrimSpace(result.Metadata["seqmeta_sampleid"]); sampleID != "" {
+		if sampleID := resultSampleName(result.Metadata); sampleID != "" {
 			if _, ok := resolved[sampleID]; ok {
 				wrappedResult.MatchedSamples = []string{sampleID}
 			}
@@ -1083,6 +1278,16 @@ func (s *Server) handleDeleteResultByID(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func resultSampleName(metadata map[string]string) string {
+	for _, key := range []string{SeqmetaSampleNameKey, SeqmetaSampleNameURLKey, LegacySeqmetaSampleIDKey} {
+		if sampleName := strings.TrimSpace(metadata[key]); sampleName != "" {
+			return sampleName
+		}
+	}
+
+	return ""
 }
 
 func decodeJSONBody(body io.ReadCloser, target any) error {

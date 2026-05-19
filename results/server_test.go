@@ -75,7 +75,11 @@ func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySample
 
 type mockSearchExpander struct {
 	expandCalls      int
+	sampleOnlyCalls  int
 	searchValuesFunc func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	sampleNamesFunc  func(context.Context, mlwh.IdentifierKind, string) ([]string, error)
+	sampleNameFunc   func(context.Context, string) (mlwh.Match, error)
+	resolveStudyFunc func(context.Context, string) (mlwh.Match, error)
 }
 
 func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
@@ -85,6 +89,31 @@ func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.I
 	}
 
 	return m.searchValuesFunc(ctx, kind, canonical)
+}
+
+func (m *mockSearchExpander) ExpandSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
+	m.sampleOnlyCalls++
+	if m.sampleNamesFunc == nil {
+		return nil, mlwh.ErrUnsupportedIdentifier
+	}
+
+	return m.sampleNamesFunc(ctx, kind, canonical)
+}
+
+func (m *mockSearchExpander) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m.resolveStudyFunc != nil {
+		return m.resolveStudyFunc(ctx, raw)
+	}
+
+	return mlwh.Match{Kind: mlwh.KindStudyLimsID, Canonical: raw}, nil
+}
+
+func (m *mockSearchExpander) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m.sampleNameFunc != nil {
+		return m.sampleNameFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
 }
 
 func TestServerPostResults(t *testing.T) {
@@ -228,6 +257,27 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-study-alias-match")
 	})
 
+	convey.Convey("Bug 3: Given GET /results?study=6568, then MLWH-named study metadata is matched by the combined Study field", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-lims-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_id_study_lims": "6568"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-lims-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_id_study_lims": "9999"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?study=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-study-lims-match")
+	})
+
 	convey.Convey("Bug 3: Given GET /results?sample=SMP1001, then metadata aliases like seqmeta_sample_lims are matched by the combined Sample field", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-alias-match", func(reg *Registration) {
@@ -247,6 +297,48 @@ func TestServerGetResults(t *testing.T) {
 
 		convey.So(results, convey.ShouldHaveLength, 1)
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-alias-match")
+	})
+
+	convey.Convey("Bug 3: Given GET /results?sample=SANG1001, then MLWH-named sample metadata is matched by the combined Sample field", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG1001"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG1002"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?sample=SANG1001", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-name-match")
+	})
+
+	convey.Convey("Bug 260519-2.2: Given GET /results?seqmeta_sample_name=SANG1001, then existing seqmeta_name metadata is matched", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-url-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG1001"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-url-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG1002"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?seqmeta_sample_name=SANG1001", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-name-url-match")
 	})
 
 	convey.Convey("E2.2: Given GET /results?meta_library=exon, then only result sets with metadata key library equal to exon are returned", t, func() {
@@ -959,6 +1051,62 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
 	})
 
+	convey.Convey("Bug item 4: Given Study search uses accession EGAS00001005445 for study 6568, then direct study-id and related sample fixture results are both returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-rnaseq-accession", func(reg *Registration) {
+			reg.PipelineName = "nf-core/rnaseq"
+			reg.Metadata = map[string]string{"seqmeta_studyid": "6568"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sarek-accession", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.PipelineName = "nf-core/sarek"
+			reg.Metadata = map[string]string{"seqmeta_sampleid": "WTSI_wEMB10524782"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-unrelated-accession", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{"seqmeta_studyid": "9999"}
+		}))
+
+		expander := &mockSearchExpander{
+			resolveStudyFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "EGAS00001005445")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindStudyAccession,
+					Canonical: "6568",
+					Study: &mlwh.Study{
+						IDStudyLims:     "6568",
+						AccessionNumber: "EGAS00001005445",
+					},
+				}, nil
+			},
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
+				convey.So(canonical, convey.ShouldEqual, "6568")
+
+				return []string{"WTSI_wEMB10524782"}, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=EGAS00001005445", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+
+		runKeys := make([]string, len(results))
+		for i, result := range results {
+			runKeys[i] = result.ResultSet.RunKey
+		}
+
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(runKeys, convey.ShouldContain, "run-rnaseq-accession")
+		convey.So(runKeys, convey.ShouldContain, "run-sarek-accession")
+		convey.So(runKeys, convey.ShouldNotContain, "run-unrelated-accession")
+	})
+
 	convey.Convey("G1.4: Given library search via mlwh and an in-memory fixture, then matching results return within 1 second", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-library-sample", func(reg *Registration) {
@@ -1031,6 +1179,207 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(runKeys, convey.ShouldContain, "run-library-id-direct")
 		convey.So(runKeys, convey.ShouldContain, "run-library-id-expanded-sample")
 		convey.So(runKeys, convey.ShouldNotContain, "run-library-type-lookalike")
+	})
+
+	convey.Convey("Bug 260519-1: Given seqmeta_id_sample_lims search via mlwh, then it uses sample LIMS expansion and finds sample-name metadata", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-lims-clicked", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG-LIMS"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-lims-unrelated", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_name": "OTHER"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindSampleLimsID)
+				convey.So(canonical, convey.ShouldEqual, "12345")
+
+				return []string{"SANG-LIMS"}, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_id_sample_lims=12345", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-lims-clicked")
+	})
+
+	convey.Convey("Bug 260519-1: Given seqmeta_supplier_name search via mlwh, then it expands supplier metadata to the related sample result", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-clicked", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_name": "SANG-SUPPLIER"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-unrelated", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_name": "OTHER"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
+				convey.So(canonical, convey.ShouldEqual, "Supplier_Sample_Name")
+
+				return []string{"SANG-SUPPLIER"}, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_supplier_name=Supplier_Sample_Name", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-clicked")
+	})
+
+	convey.Convey("Bug 260519-2: Given seqmeta_supplier_name search via mlwh, then direct sample metadata uses sample-only expansion instead of cold full hierarchy expansion", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-fast", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_name": "7607STDY14643771"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
+				return nil, nil, nil, fmt.Errorf("full expansion must not run for direct sample metadata")
+			},
+			sampleNamesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
+				convey.So(canonical, convey.ShouldEqual, "Hek_R1")
+
+				return []string{"7607STDY14643771"}, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_supplier_name=Hek_R1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(expander.expandCalls, convey.ShouldEqual, 0)
+		convey.So(expander.sampleOnlyCalls, convey.ShouldEqual, 1)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-fast")
+	})
+
+	convey.Convey("Bug 260519-2: Given seqmeta_supplier_name search through the real results path, then registered sample candidates avoid a cold global supplier scan", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-candidate", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_name": "7607STDY14643771"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
+				return nil, nil, nil, fmt.Errorf("full expansion must not run for direct sample metadata")
+			},
+			sampleNamesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, error) {
+				return nil, fmt.Errorf("global direct sample metadata expansion must not run")
+			},
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+
+				return mlwh.Match{
+					Kind:      mlwh.KindSangerSampleName,
+					Canonical: raw,
+					Sample: &mlwh.Sample{
+						Name:         raw,
+						SupplierName: "Hek_R1",
+					},
+				}, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_supplier_name=Hek_R1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(expander.expandCalls, convey.ShouldEqual, 0)
+		convey.So(expander.sampleOnlyCalls, convey.ShouldEqual, 0)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-candidate")
+	})
+
+	convey.Convey("Bug 260519-1: Given seqmeta_supplier_name search with no mlwh relation, then a lookalike sample name is not matched", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_supplier_name": "Supplier-Lookalike"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-lookalike", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_name": "Supplier-Lookalike"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
+				convey.So(canonical, convey.ShouldEqual, "Supplier-Lookalike")
+
+				return nil, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_supplier_name=Supplier-Lookalike", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-direct")
+	})
+
+	convey.Convey("Bug 260519-1: Given seqmeta_id_sample_lims search with no mlwh relation, then a lookalike direct sample field is not matched", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-lims-direct", func(reg *Registration) {
+			reg.Metadata = map[string]string{"seqmeta_id_sample_lims": "12345"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sanger-id-lookalike", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"seqmeta_sanger_sample_id": "12345"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindSampleLimsID)
+				convey.So(canonical, convey.ShouldEqual, "12345")
+
+				return nil, nil, nil, nil
+			},
+		}
+
+		resolver := NewMLWHSearchResolver(expander)
+		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_id_sample_lims=12345", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-lims-direct")
 	})
 
 	convey.Convey("G1.4: Given library=Custom search via mlwh, then existing library type support still expands by type", t, func() {

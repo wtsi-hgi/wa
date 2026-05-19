@@ -101,7 +101,7 @@ func ValidateRegistration(reg *Registration) error {
 	}
 
 	if strings.TrimSpace(reg.RunKey) == "" {
-		return fmt.Errorf("%w: run key is required", ErrInvalidInput)
+		return fmt.Errorf("%w: unique key is required", ErrInvalidInput)
 	}
 
 	if strings.TrimSpace(reg.Requester) == "" {

@@ -48,7 +48,7 @@ wa results register /path/to/output \
   --operator jdoe \
   --command "nextflow run pipeline" \
   --nextflow-workflow /path/to/main.nf \
-  --runid my-run-001 \
+  --unique my-run-001 \
 	--study 6568 \
 	--sample SANG123
 
@@ -133,6 +133,10 @@ make test
 # Run the production stack (uses .env.production + .env.production.local)
 make prod
 ```
+
+`make test` skips live MLWH integration tests by default. Set
+`WA_LIVE_MLWH_TESTS=1` explicitly to run live MLWH checks; real cold-sync
+performance tests also require `MLWH_SYNC_PERF_TEST=1`.
 
 ## Licence
 

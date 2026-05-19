@@ -178,6 +178,8 @@ function multiFieldSample(index) {
         sanger_id:
             index === 0 ? "7607STDY14643771" : `7607STDY${14643771 + index}`,
         sample_name: index === 0 ? "7607STDY14643771" : `Sample ${index}`,
+        supplier_name:
+            index === 0 ? "Supplier Sample 7607" : `Supplier Sample ${index}`,
         taxon_id: 9606,
         common_name: "Human",
         library_type: "Custom",
@@ -276,6 +278,24 @@ const multiFieldEnrichments = new Map([
         },
     ],
     [
+        "SMP7607-0000",
+        {
+            identifier: "SMP7607-0000",
+            type: "sample_lims_id",
+            graph: multiFieldGraph,
+            partial: false,
+        },
+    ],
+    [
+        "Supplier Sample 7607",
+        {
+            identifier: "Supplier Sample 7607",
+            type: "supplier_name",
+            graph: multiFieldGraph,
+            partial: false,
+        },
+    ],
+    [
         "48522",
         {
             identifier: "48522",
@@ -346,6 +366,22 @@ const validations = new Map([
         {
             identifier: "7607STDY14643771",
             type: "sanger_sample_id",
+            object: multiFieldPrimarySample,
+        },
+    ],
+    [
+        "SMP7607-0000",
+        {
+            identifier: "SMP7607-0000",
+            type: "sample_lims_id",
+            object: multiFieldPrimarySample,
+        },
+    ],
+    [
+        "Supplier Sample 7607",
+        {
+            identifier: "Supplier Sample 7607",
+            type: "supplier_name",
             object: multiFieldPrimarySample,
         },
     ],

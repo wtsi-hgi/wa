@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,13 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/smartystreets/goconvey/convey"
+)
+
+const (
+	liveMLWHTestsEnv    = "WA_LIVE_MLWH_TESTS"
+	liveMLWHSyncPerfEnv = "MLWH_SYNC_PERF_TEST"
+	mlwhDSNEnv          = "WA_MLWH_DSN"
+	mlwhPasswordEnv     = "WA_MLWH_PASSWORD"
 )
 
 func TestLiveMLWHSyncQueriesMatchDevelopmentSchema(t *testing.T) {
@@ -78,10 +86,36 @@ func TestLiveMLWHSyncQueriesMatchDevelopmentSchema(t *testing.T) {
 	})
 }
 
+func TestLiveMLWHConfigSkipsWithoutLiveGate(t *testing.T) {
+	convey.Convey("Given live MLWH credentials but no live-test opt-in, when loading the live test config, then the test is skipped before MLWH is touched", t, func() {
+		t.Setenv(liveMLWHTestsEnv, "")
+		t.Setenv(mlwhDSNEnv, "mlwh_user@tcp(127.0.0.1:1)/mlwarehouse")
+		t.Setenv(mlwhPasswordEnv, "secret")
+
+		_, skipReason := loadLiveMLWHConfigForTest(t)
+
+		convey.So(skipReason, convey.ShouldContainSubstring, liveMLWHTestsEnv)
+	})
+}
+
+func TestLiveMLWHPerfConfigSkipsWithoutLiveGate(t *testing.T) {
+	convey.Convey("Given cold-sync perf opts and credentials but no live-test opt-in, when loading the perf config, then the test is skipped before Sync can run", t, func() {
+		t.Setenv(liveMLWHTestsEnv, "")
+		t.Setenv(liveMLWHSyncPerfEnv, "1")
+		t.Setenv(mlwhDSNEnv, "mlwh_user@tcp(127.0.0.1:1)/mlwarehouse")
+		t.Setenv(mlwhPasswordEnv, "secret")
+
+		_, skipReason := loadLiveMLWHPerfConfigForTest(t)
+
+		convey.So(skipReason, convey.ShouldContainSubstring, liveMLWHTestsEnv)
+	})
+}
+
 func TestLiveMLWHSyncPerTableColdSyncBudgetSkipsWithoutGate(t *testing.T) {
-	t.Setenv("MLWH_SYNC_PERF_TEST", "")
-	t.Setenv("WA_MLWH_DSN", "")
-	t.Setenv("WA_MLWH_PASSWORD", "")
+	t.Setenv(liveMLWHTestsEnv, "1")
+	t.Setenv(liveMLWHSyncPerfEnv, "")
+	t.Setenv(mlwhDSNEnv, "")
+	t.Setenv(mlwhPasswordEnv, "")
 
 	_, skipReason := loadLiveMLWHPerfConfigForTest(t)
 	if skipReason != "MLWH_SYNC_PERF_TEST not set" {
@@ -92,9 +126,10 @@ func TestLiveMLWHSyncPerTableColdSyncBudgetSkipsWithoutGate(t *testing.T) {
 }
 
 func TestLiveMLWHSyncPerTableColdSyncBudgetSkipsWithoutDSN(t *testing.T) {
-	t.Setenv("MLWH_SYNC_PERF_TEST", "1")
-	t.Setenv("WA_MLWH_DSN", "")
-	t.Setenv("WA_MLWH_PASSWORD", "")
+	t.Setenv(liveMLWHTestsEnv, "1")
+	t.Setenv(liveMLWHSyncPerfEnv, "1")
+	t.Setenv(mlwhDSNEnv, "")
+	t.Setenv(mlwhPasswordEnv, "")
 
 	_, skipReason := loadLiveMLWHPerfConfigForTest(t)
 	if skipReason != "WA_MLWH_DSN not set" {
@@ -220,6 +255,14 @@ func liveMLWHColdSyncPerfQueries() ([]liveMLWHPerfQuery, error) {
 	}, nil
 }
 
+func liveMLWHTestsSkipReason() string {
+	if strings.TrimSpace(os.Getenv(liveMLWHTestsEnv)) == "1" {
+		return ""
+	}
+
+	return fmt.Sprintf("%s not set; set %s=1 with %s/%s to run live MLWH integration tests", liveMLWHTestsEnv, liveMLWHTestsEnv, mlwhDSNEnv, mlwhPasswordEnv)
+}
+
 func measureLiveQueryStreamDuration(ctx context.Context, db *sql.DB, query string, args ...any) (time.Duration, int, error) {
 	started := time.Now()
 	rows, err := db.QueryContext(ctx, query, args...)
@@ -258,18 +301,22 @@ func measureLiveQueryStreamDuration(ctx context.Context, db *sql.DB, query strin
 func loadLiveMLWHPerfConfigForTest(t *testing.T) (Config, string) {
 	t.Helper()
 
-	if strings.TrimSpace(os.Getenv("MLWH_SYNC_PERF_TEST")) != "1" {
-		return Config{}, "MLWH_SYNC_PERF_TEST not set"
+	if skipReason := liveMLWHTestsSkipReason(); skipReason != "" {
+		return Config{}, skipReason
 	}
 
-	dsn := strings.TrimSpace(os.Getenv("WA_MLWH_DSN"))
+	if strings.TrimSpace(os.Getenv(liveMLWHSyncPerfEnv)) != "1" {
+		return Config{}, fmt.Sprintf("%s not set", liveMLWHSyncPerfEnv)
+	}
+
+	dsn := strings.TrimSpace(os.Getenv(mlwhDSNEnv))
 	if dsn == "" {
-		return Config{}, "WA_MLWH_DSN not set"
+		return Config{}, fmt.Sprintf("%s not set", mlwhDSNEnv)
 	}
 
-	password := strings.TrimSpace(os.Getenv("WA_MLWH_PASSWORD"))
+	password := strings.TrimSpace(os.Getenv(mlwhPasswordEnv))
 	if password == "" {
-		return Config{}, "WA_MLWH_PASSWORD not set"
+		return Config{}, fmt.Sprintf("%s not set", mlwhPasswordEnv)
 	}
 
 	return Config{
@@ -302,10 +349,14 @@ func openLiveMLWHSourceDBForTest(ctx context.Context, dsn string, password strin
 func loadLiveMLWHConfigForTest(t *testing.T) (Config, string) {
 	t.Helper()
 
-	if dsn := strings.TrimSpace(os.Getenv("WA_MLWH_DSN")); dsn != "" {
+	if skipReason := liveMLWHTestsSkipReason(); skipReason != "" {
+		return Config{}, skipReason
+	}
+
+	if dsn := strings.TrimSpace(os.Getenv(mlwhDSNEnv)); dsn != "" {
 		return Config{
 			DSN:      dsn,
-			Password: strings.TrimSpace(os.Getenv("WA_MLWH_PASSWORD")),
+			Password: strings.TrimSpace(os.Getenv(mlwhPasswordEnv)),
 			Cache:    CacheConfig{Path: filepath.Join(t.TempDir(), "mlwh-live-cache.sqlite")},
 		}, ""
 	}
@@ -336,14 +387,14 @@ func loadLiveMLWHConfigForTest(t *testing.T) (Config, string) {
 		}
 	}
 
-	dsn := strings.TrimSpace(loaded["WA_MLWH_DSN"])
+	dsn := strings.TrimSpace(loaded[mlwhDSNEnv])
 	if dsn == "" {
 		return Config{}, "skipping live MLWH integration: WA_MLWH_DSN not set in environment and no development dotenv file with MLWH credentials was found"
 	}
 
 	return Config{
 		DSN:      dsn,
-		Password: strings.TrimSpace(loaded["WA_MLWH_PASSWORD"]),
+		Password: strings.TrimSpace(loaded[mlwhPasswordEnv]),
 		Cache:    CacheConfig{Path: filepath.Join(t.TempDir(), "mlwh-live-cache.sqlite")},
 	}, ""
 }

@@ -38,7 +38,7 @@ import (
 )
 
 func TestBuildRunKey(t *testing.T) {
-	convey.Convey("A2.1: BuildRunKey includes run ID and additional uniqueness in sorted query order", t, func() {
+	convey.Convey("A2.1: BuildRunKey keeps the compatibility runid key for the primary unique value", t, func() {
 		convey.So(
 			BuildRunKey("48522", "random_exon"),
 			convey.ShouldEqual,
@@ -46,11 +46,11 @@ func TestBuildRunKey(t *testing.T) {
 		)
 	})
 
-	convey.Convey("A2.2: BuildRunKey omits an empty additional uniqueness value", t, func() {
+	convey.Convey("A2.2: BuildRunKey omits an empty legacy additional uniqueness value", t, func() {
 		convey.So(BuildRunKey("48522", ""), convey.ShouldEqual, "runid=48522")
 	})
 
-	convey.Convey("A2.3: BuildRunKey omits an empty run ID", t, func() {
+	convey.Convey("A2.3: BuildRunKey accepts a legacy additional uniqueness value without a primary unique value", t, func() {
 		convey.So(BuildRunKey("", "random_exon"), convey.ShouldEqual, "unique=random_exon")
 	})
 
@@ -60,6 +60,15 @@ func TestBuildRunKey(t *testing.T) {
 
 	convey.Convey("A2.5: BuildRunKey percent-encodes special characters", t, func() {
 		convey.So(BuildRunKey("a&b", "c=d"), convey.ShouldEqual, "runid=a%26b&unique=c%3Dd")
+	})
+}
+
+func TestDisplayRunKeyUnique(t *testing.T) {
+	convey.Convey("Given compatibility run keys, DisplayRunKeyUnique returns user-facing unique labels", t, func() {
+		convey.So(DisplayRunKeyUnique("runid=48522"), convey.ShouldEqual, "48522")
+		convey.So(DisplayRunKeyUnique("runid=48522&unique=random_exon"), convey.ShouldEqual, "48522 / random_exon")
+		convey.So(DisplayRunKeyUnique("unique=random_exon"), convey.ShouldEqual, "random_exon")
+		convey.So(DisplayRunKeyUnique("run-1"), convey.ShouldEqual, "run-1")
 	})
 }
 

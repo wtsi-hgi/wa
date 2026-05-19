@@ -14,7 +14,9 @@ test.describe("Lane filtering support (bugfix 260501-4)", () => {
         await page.goto("/");
         await expect(page.getByText("Recent registrations")).toBeVisible();
         await expect(
-            page.locator('tbody tr[data-result-row="true"]'),
+            page
+                .locator('tbody tr[data-result-row="true"]')
+                .filter({ hasNotText: "seqmeta/rendering-repro" }),
         ).toHaveCount(4);
 
         const resultLink = page

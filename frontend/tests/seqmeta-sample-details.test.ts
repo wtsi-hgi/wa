@@ -61,6 +61,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                     id_sample_lims: "12345",
                     sanger_id: "WTSI_TEST_SAMPLE",
                     sample_name: "Test_Sample_Name",
+                    supplier_name: "Supplier_Sample_Name",
                     taxon_id: 9606,
                     common_name: "human",
                     library_type: "Test Library Type",
@@ -84,6 +85,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                         id_sample_lims: "12345",
                         sanger_id: "WTSI_TEST_SAMPLE",
                         sample_name: "Test_Sample_Name",
+                        supplier_name: "Supplier_Sample_Name",
                         taxon_id: 9606,
                         common_name: "human",
                         library_type: "Test Library Type",
@@ -135,17 +137,76 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
             ),
         ).toBeTruthy();
 
-        // Should show Sanger sample ID
+        // The selected legacy seqmeta_sampleid maps to MLWH sample name. A
+        // distinct sanger_sample_id value is still shown even when it matches.
         expect(
-            within(directMetadataSection as HTMLElement).getByText(
+            screen.getByRole("heading", { name: "WTSI_TEST_SAMPLE" }),
+        ).toBeTruthy();
+        expect(
+            within(directMetadataSection as HTMLElement).queryByText(
                 "WTSI_TEST_SAMPLE",
             ),
         ).toBeTruthy();
+        const sangerSampleIDRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
+        );
+        expect(sangerSampleIDRow).toBeTruthy();
+        expect(
+            sangerSampleIDRow
+                ?.querySelector(
+                    '[aria-label="Send seqmeta_sanger_sample_id to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?seqmeta_sanger_sample_id=WTSI_TEST_SAMPLE");
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector('[aria-label="Copy seqmeta_sample_name"]'),
+        ).toBeTruthy();
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector(
+                    '[aria-label="Send seqmeta_sample_name to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?sample=WTSI_TEST_SAMPLE");
 
         // Should show Sample LIMS ID
         expect(
             within(directMetadataSection as HTMLElement).getByText("12345"),
         ).toBeTruthy();
+        const sampleLimsRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_id_sample_lims"]',
+        );
+        expect(
+            sampleLimsRow
+                ?.querySelector(
+                    '[aria-label="Send seqmeta_id_sample_lims to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?seqmeta_id_sample_lims=12345");
+
+        // Should show supplier_name from the MLWH sample record
+        const supplierRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_supplier_name"]',
+        );
+        expect(supplierRow).toBeTruthy();
+        expect(supplierRow?.textContent).toContain("Sample supplier name");
+        expect(supplierRow?.textContent).toContain("Supplier_Sample_Name");
+        expect(supplierRow?.textContent).not.toContain("seqmeta_supplier_name");
+        expect(
+            supplierRow
+                ?.querySelector('[data-testid="seqmeta-direct-metadata-label"]')
+                ?.getAttribute("title"),
+        ).toBe("MLWH seqmeta key: seqmeta_supplier_name");
+        expect(
+            supplierRow
+                ?.querySelector(
+                    '[aria-label="Send seqmeta_supplier_name to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?seqmeta_supplier_name=Supplier_Sample_Name");
 
         // Should show sample accession
         expect(

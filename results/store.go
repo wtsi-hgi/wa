@@ -781,6 +781,43 @@ func nonEmptySearchValues(values []string) []string {
 	return filtered
 }
 
+func expandRunKeySearchValues(values []string) []string {
+	expanded := make([]string, 0, len(values)*3)
+	seen := map[string]struct{}{}
+
+	add := func(value string) {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+
+		seen[trimmed] = struct{}{}
+		expanded = append(expanded, trimmed)
+	}
+
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		add(trimmed)
+		add(BuildRunKey(trimmed, ""))
+
+		primary, additional, hasDisplaySeparator := strings.Cut(trimmed, " / ")
+		if hasDisplaySeparator {
+			add(BuildRunKey(strings.TrimSpace(primary), strings.TrimSpace(additional)))
+
+			continue
+		}
+
+		if !strings.Contains(trimmed, "=") {
+			add(BuildRunKey("", trimmed))
+		}
+	}
+
+	return expanded
+}
+
 func multiSearchParamsFromSingle(params SearchParams) MultiSearchParams {
 	multi := MultiSearchParams{
 		Meta: map[string][]string{},
@@ -928,12 +965,57 @@ func (s *Store) SearchMulti(ctx context.Context, params MultiSearchParams) ([]Re
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_name", params.PipelineName)
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_version", params.PipelineVersion)
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_identifier", params.PipelineIdentifier)
-	filters, args = appendMultiValueSearchFilter(filters, args, "run_key", params.RunKey)
+	filters, args = appendMultiValueSearchFilter(filters, args, "run_key", expandRunKeySearchValues(params.RunKey))
 	filters, args = appendMultiPrefixFilter(filters, args, "output_directory", params.OutputDirPrefix)
 	filters, args = appendMultiMetadataSearchFilters(filters, args, params.Meta)
 	filters, args = appendOrMetaSearchFilter(filters, args, params.OrMeta)
 
 	return querySearchResults(ctx, conn, filters, args)
+}
+
+// DistinctMetadataValues returns sorted distinct metadata values for any of the supplied keys.
+func (s *Store) DistinctMetadataValues(ctx context.Context, keys []string) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
+	}
+
+	keys = nonEmptySearchValues(keys)
+	if len(keys) == 0 {
+		return []string{}, nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(keys)), ", ")
+	args := make([]any, 0, len(keys))
+	for _, key := range keys {
+		args = append(args, key)
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		fmt.Sprintf(`SELECT DISTINCT value FROM result_metadata WHERE meta_key IN (%s) ORDER BY value`, placeholders),
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query distinct metadata values: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err = rows.Scan(&value); err != nil {
+			return nil, fmt.Errorf("scan distinct metadata value: %w", err)
+		}
+
+		values = append(values, value)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate distinct metadata values: %w", err)
+	}
+
+	return values, nil
 }
 
 // Stats returns aggregate counts and recent result sets for dashboard loading.

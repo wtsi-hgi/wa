@@ -55,15 +55,63 @@ var (
 	ErrSeqmetaRejected = errors.New("results: seqmeta validation failed")
 )
 
+const (
+	// SeqmetaIDRunKey stores an MLWH id_run value.
+	SeqmetaIDRunKey = "seqmeta_id_run"
+	// SeqmetaIDStudyLimsKey stores an MLWH id_study_lims value.
+	SeqmetaIDStudyLimsKey = "seqmeta_id_study_lims"
+	// SeqmetaSampleNameKey stores the MLWH sample name value used as the
+	// canonical sample identity for sample-scoped result metadata.
+	SeqmetaSampleNameKey = "seqmeta_name"
+	// SeqmetaSampleNameURLKey is the precise frontend query/display alias for
+	// sample-name metadata. Stored result metadata may still use
+	// SeqmetaSampleNameKey.
+	SeqmetaSampleNameURLKey = "seqmeta_sample_name"
+	// SeqmetaIDSampleLimsKey stores an MLWH id_sample_lims value.
+	SeqmetaIDSampleLimsKey = "seqmeta_id_sample_lims"
+	// SeqmetaSangerSampleIDKey stores an MLWH sanger_sample_id value.
+	SeqmetaSangerSampleIDKey = "seqmeta_sanger_sample_id"
+	// SeqmetaSupplierNameKey stores an MLWH supplier_name value.
+	SeqmetaSupplierNameKey = "seqmeta_supplier_name"
+	// SeqmetaAccessionNumberKey stores an MLWH sample accession_number value.
+	SeqmetaAccessionNumberKey = "seqmeta_accession_number"
+	// SeqmetaPipelineIDLimsKey stores an MLWH pipeline_id_lims value.
+	SeqmetaPipelineIDLimsKey = "seqmeta_pipeline_id_lims"
+	// SeqmetaLibraryIDKey stores an MLWH library_id value.
+	SeqmetaLibraryIDKey = "seqmeta_library_id"
+	// SeqmetaIDLibraryLimsKey stores an MLWH id_library_lims value.
+	SeqmetaIDLibraryLimsKey = "seqmeta_id_library_lims"
+
+	// Legacy seqmeta keys remain supported for existing result databases and
+	// URLs, but new registrations use the MLWH-named keys above.
+	LegacySeqmetaRunIDKey       = "seqmeta_runid"
+	LegacySeqmetaStudyIDKey     = "seqmeta_studyid"
+	LegacySeqmetaSampleIDKey    = "seqmeta_sampleid"
+	LegacySeqmetaSampleLimsKey  = "seqmeta_sample_lims"
+	LegacySeqmetaLibraryKey     = "seqmeta_library"
+	LegacySeqmetaLibraryIDKey   = "seqmeta_libraryid"
+	LegacySeqmetaLibraryLimsKey = "seqmeta_library_lims"
+	LegacySeqmetaLibraryTypeKey = "seqmeta_librarytype"
+)
+
 // SeqmetaFieldTypes maps metadata key suffixes to expected seqmeta identifier types.
 var SeqmetaFieldTypes = map[string]string{
-	"runid":        "run_id",
-	"studyid":      "study_id",
-	"sampleid":     "sanger_sample_id",
-	"library":      "library_type",
-	"libraryid":    "library_id",
-	"library_lims": "id_library_lims",
-	"librarytype":  "library_type",
+	"id_run":           "run_id",
+	"runid":            "run_id",
+	"id_study_lims":    "study_lims_id",
+	"studyid":          "study_lims_id",
+	"name":             "sanger_sample_name",
+	"sampleid":         "sanger_sample_name",
+	"id_sample_lims":   "sample_lims_id",
+	"sample_lims":      "sample_lims_id",
+	"sanger_sample_id": "sanger_sample_id",
+	"library":          "library_type",
+	"library_id":       "library_id",
+	"libraryid":        "library_id",
+	"id_library_lims":  "id_library_lims",
+	"library_lims":     "id_library_lims",
+	"librarytype":      "library_type",
+	"pipeline_id_lims": "library_type",
 }
 
 // ResultSet is the core domain object returned by queries.
@@ -259,11 +307,14 @@ func repoNameFromIdentifier(identifier string) string {
 }
 
 // BuildRunKey returns a canonical query-encoded run key from non-empty parts.
-func BuildRunKey(runID, additionalUnique string) string {
+//
+// The primary value is now user-facing as "unique", but the stored query key
+// remains "runid" so reruns of existing registrations keep the same ID.
+func BuildRunKey(unique, additionalUnique string) string {
 	values := url.Values{}
 
-	if runID != "" {
-		values.Set("runid", runID)
+	if unique != "" {
+		values.Set("runid", unique)
 	}
 
 	if additionalUnique != "" {
@@ -271,4 +322,42 @@ func BuildRunKey(runID, additionalUnique string) string {
 	}
 
 	return values.Encode()
+}
+
+// DisplayRunKeyUnique returns the user-facing unique label for a stored run key.
+func DisplayRunKeyUnique(runKey string) string {
+	trimmed := strings.TrimSpace(runKey)
+	if trimmed == "" || !strings.Contains(trimmed, "=") {
+		return trimmed
+	}
+
+	values, err := url.ParseQuery(trimmed)
+	if err != nil {
+		return trimmed
+	}
+
+	primary := firstQueryValue(values, "runid")
+	additional := firstQueryValue(values, "unique")
+
+	switch {
+	case primary != "" && additional != "":
+		return primary + " / " + additional
+	case primary != "":
+		return primary
+	case additional != "":
+		return additional
+	default:
+		return trimmed
+	}
+}
+
+func firstQueryValue(values url.Values, key string) string {
+	for _, value := range values[key] {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+
+	return ""
 }

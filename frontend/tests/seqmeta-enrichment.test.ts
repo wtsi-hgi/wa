@@ -1095,7 +1095,7 @@ describe("H3 enrichment state and badge", () => {
 
         expect(
             screen.getByText(
-                "Upstream services were unavailable while resolving this study identifier value.",
+                "Upstream services were unavailable while resolving this study lims id value.",
             ),
         ).toBeTruthy();
     });
@@ -1179,12 +1179,37 @@ describe("H3 enrichment state and badge", () => {
             .map((el) => el.getAttribute("data-seqmeta-detail-key"))
             .filter(Boolean);
 
-        expect(directKeys).toContain("sample_name");
-        expect(directKeys).toContain("seqmeta_sample_lims");
-        expect(directKeys).toContain("sample_accession_number");
+        expect(directKeys).toContain("seqmeta_sample_name");
+        expect(directKeys).toContain("seqmeta_id_sample_lims");
+        expect(directKeys).toContain("seqmeta_accession_number");
 
-        expect(relatedKeys).toContain("study_name");
-        expect(relatedKeys).toContain("study_id");
-        expect(relatedKeys).toContain("seqmeta_library");
+        expect(relatedKeys).toContain("study");
+        expect(relatedKeys).toContain("library");
+
+        const relatedText =
+            relatedDataSection.closest("[data-field-group]")?.textContent ?? "";
+
+        expect(relatedText).toContain("name:");
+        expect(relatedText).toContain("Cancer Programme");
+        expect(relatedText).toContain("6568");
+        expect(relatedText).toContain("RNA PolyA");
+
+        const studyRow = relatedDataSection
+            .closest("[data-field-group]")
+            ?.querySelector('[data-seqmeta-detail-key="study"]');
+        const libraryRow = relatedDataSection
+            .closest("[data-field-group]")
+            ?.querySelector('[data-seqmeta-detail-key="library"]');
+
+        expect(
+            studyRow?.querySelector('[data-testid="seqmeta-entity-title"]')
+                ?.textContent,
+        ).toBe("6568");
+        expect(studyRow?.textContent).not.toContain("id:6568");
+        expect(
+            libraryRow?.querySelector('[data-testid="seqmeta-entity-title"]')
+                ?.textContent,
+        ).toBe("RNA PolyA");
+        expect(libraryRow?.textContent).not.toContain("type:RNA PolyA");
     });
 });

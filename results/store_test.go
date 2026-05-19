@@ -182,7 +182,7 @@ func TestStoreUpsert(t *testing.T) {
 		convey.So(errors.Is(err, ErrInvalidInput), convey.ShouldBeTrue)
 	})
 
-	convey.Convey("C2.5: Given an empty run key, when Upsert is called, then it returns an invalid input error", t, func() {
+	convey.Convey("C2.5: Given an empty unique key, when Upsert is called, then it returns an invalid input error", t, func() {
 		store := newSQLiteStoreForTest(t)
 		reg := testRegistration()
 		reg.RunKey = ""
@@ -354,6 +354,56 @@ func TestStoreSearch(t *testing.T) {
 		convey.So(results, convey.ShouldHaveLength, 0)
 	})
 
+	convey.Convey("Given an old-style stored key, when searched by the displayed unique value, then Search returns the matching result", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("runid=48522&unique=random_exon", func(reg *Registration) {}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("runid=99999&unique=random_exon", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+		}))
+
+		results, err := store.Search(ctx, SearchParams{RunKey: "48522 / random_exon"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "runid=48522&unique=random_exon")
+	})
+
+	convey.Convey("Given a literal unique key containing the display separator, when searched by its displayed value, then Search returns the matching result", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+		literalRunKey := BuildRunKey("48522 / random_exon", "")
+
+		seedResultSetForTest(t, store, searchRegistrationForTest(literalRunKey, func(reg *Registration) {}))
+		seedResultSetForTest(t, store, searchRegistrationForTest(BuildRunKey("99999 / random_exon", ""), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+		}))
+
+		results, err := store.Search(ctx, SearchParams{RunKey: "48522 / random_exon"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, literalRunKey)
+	})
+
+	convey.Convey("Given a literal unique key containing equals, when searched by its displayed value, then Search returns the matching result", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+		literalRunKey := BuildRunKey("panel=v1", "")
+
+		seedResultSetForTest(t, store, searchRegistrationForTest(literalRunKey, func(reg *Registration) {}))
+		seedResultSetForTest(t, store, searchRegistrationForTest(BuildRunKey("panel=v2", ""), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+		}))
+
+		results, err := store.Search(ctx, SearchParams{RunKey: "panel=v1"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, literalRunKey)
+	})
+
 	convey.Convey("Upsert rejects registrations missing required requester metadata", t, func() {
 		store := newSQLiteStoreForTest(t)
 
@@ -473,8 +523,8 @@ func TestStoreSearchMulti(t *testing.T) {
 
 		results, err := store.SearchMulti(ctx, MultiSearchParams{
 			OrMeta: []map[string][]string{
-				{"seqmeta_studyid":  {"6568"}},
-				{"study":            {"6568"}},
+				{"seqmeta_studyid": {"6568"}},
+				{"study": {"6568"}},
 				{"seqmeta_sampleid": {"SANG1", "SANG2"}},
 			},
 		})

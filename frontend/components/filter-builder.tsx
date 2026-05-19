@@ -35,6 +35,7 @@ type FieldOption = {
 const combinedStudyMetaKeys = new Set([
     "study",
     "study_id",
+    "seqmeta_id_study_lims",
     "seqmeta_studyid",
     "seqmeta_study_accession",
 ]);
@@ -44,16 +45,23 @@ const combinedSampleMetaKeys = new Set([
     "sample_id",
     "sample_name",
     "sample_accession_number",
+    "seqmeta_id_sample_lims",
+    "seqmeta_name",
+    "seqmeta_sample_name",
+    "seqmeta_sanger_sample_id",
     "seqmeta_sampleid",
     "seqmeta_sample_lims",
 ]);
 
 const combinedLibraryMetaKeys = new Set([
     "library",
+    "seqmeta_id_library_lims",
+    "seqmeta_library_id",
     "seqmeta_library",
     "seqmeta_libraryid",
     "seqmeta_library_lims",
     "seqmeta_librarytype",
+    "seqmeta_pipeline_id_lims",
 ]);
 
 const coreFieldOptions: FieldOption[] = [
@@ -61,9 +69,9 @@ const coreFieldOptions: FieldOption[] = [
     { key: "operator", label: "Operator", placeholder: "operator-1" },
     { key: "study", label: "Study", placeholder: "6568 or ERP012345" },
     { key: "library", label: "Library", placeholder: "RNA or WGS" },
-    { key: "seqmeta_libraryid", label: "Library ID", placeholder: "71046409" },
+    { key: "seqmeta_library_id", label: "Library ID", placeholder: "71046409" },
     {
-        key: "seqmeta_library_lims",
+        key: "seqmeta_id_library_lims",
         label: "Library LIMS ID",
         placeholder: "SQPP-47463-G:B1",
     },
@@ -83,7 +91,7 @@ const coreFieldOptions: FieldOption[] = [
         label: "Pipeline identifier",
         placeholder: "gh://repo/workflow.nf",
     },
-    { key: "run_key", label: "Run key", placeholder: "runid=48522" },
+    { key: "run_key", label: "Unique", placeholder: "48522 or 48522 / exon" },
     {
         key: "output_dir_prefix",
         label: "Output directory prefix",
@@ -119,7 +127,12 @@ function getFieldOptions(
         .map((metaKey) => ({
             key: toMetaQueryKey(metaKey),
             label: toTitleCase(metaKey),
-            placeholder: metaKey === "seqmeta_sampleid" ? "SANG001" : "value",
+            placeholder:
+                metaKey === "seqmeta_name" ||
+                metaKey === "seqmeta_sample_name" ||
+                metaKey === "seqmeta_sampleid"
+                    ? "SANG001"
+                    : "value",
         }))
         .filter(
             (option, index, entries) =>

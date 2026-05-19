@@ -125,6 +125,11 @@ The `make` recipes, `wa` startup path, and `run-dev.sh` enforce the following:
   SQLite DBs) on completion, regardless of whether the sub-suites passed
   or failed. Run `make clean-test-tmp` to perform the same cleanup
   manually.
+- Live MLWH integration tests are skipped unless `WA_LIVE_MLWH_TESTS=1` is
+  set. Tests that run a real cold `Client.Sync` also require
+  `MLWH_SYNC_PERF_TEST=1`, `WA_MLWH_DSN`, and `WA_MLWH_PASSWORD`; they sync to
+  a temporary cache under `t.TempDir()`. Do not put these opt-ins in
+  `.env.test` or `.env.test.local` for ordinary `make test` runs.
 
 ### Runtime variables
 
@@ -224,8 +229,28 @@ go test -tags netgo --count 1 ./cmd/...
 go test -tags netgo --count 1 -v ./results/...
 ```
 
-Tests use in-memory SQLite — no external database needed. External API calls
-(MLWH and related services) are mocked via interfaces.
+Tests use in-memory SQLite or temporary on-disk SQLite caches by default — no
+external database needed. External API calls (MLWH and related services) are
+mocked via interfaces.
+
+Live MLWH-backed Go integration tests are opt-in:
+
+```bash
+WA_LIVE_MLWH_TESTS=1 \
+WA_MLWH_DSN='mlwh_user@tcp(host:3306)/mlwarehouse' \
+WA_MLWH_PASSWORD='...' \
+go test -tags netgo --count 1 ./mlwh -run TestLiveMLWH
+```
+
+The cold-sync performance test is intentionally a second opt-in because it runs
+`Client.Sync` against real MLWH:
+
+```bash
+WA_LIVE_MLWH_TESTS=1 MLWH_SYNC_PERF_TEST=1 \
+WA_MLWH_DSN='mlwh_user@tcp(host:3306)/mlwarehouse' \
+WA_MLWH_PASSWORD='...' \
+go test -tags netgo --count 1 ./mlwh -run TestLiveMLWHSyncPerTableColdSyncBudget
+```
 
 ### Frontend tests
 

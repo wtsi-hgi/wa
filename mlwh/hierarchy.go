@@ -41,23 +41,27 @@ import (
 const expandIdentifierTTL = 5 * time.Minute
 
 var (
-	samplesForStudyCacheSQL       = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
-	samplesForLibraryTypeCacheSQL = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
-	samplesForLibraryCacheSQL     = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
-	samplesForRunCacheSQL         = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
-	findSamplesBySangerIDSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesByIDSampleLimsSQL  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesByAccessionSQL     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesBySupplierSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
-	findSamplesByLibraryTypeSQL   = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT 2`
-	librariesForStudySQL          = `SELECT pipeline_id_lims, library_id, id_library_lims, COUNT(DISTINCT id_sample_tmp) FROM library_samples WHERE id_study_lims = ? GROUP BY pipeline_id_lims, library_id, id_library_lims ORDER BY pipeline_id_lims, library_id, id_library_lims LIMIT ? OFFSET ?`
-	runsForStudyCacheSQL          = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_study_lims = ? ORDER BY id_run LIMIT ? OFFSET ?`
-	lanesForSampleCacheSQL        = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
-	lanesForSampleStudyCacheSQL   = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? AND id_study_lims = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
-	irodsPathsForSampleCacheSQL   = `SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
-	irodsPathsForStudyCacheSQL    = `SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
-	studiesForSampleCacheSQL      = `SELECT DISTINCT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_lims`
-	qualifiedStudyMirrorSelectSQL = qualifySelectColumns("study_mirror", studyMirrorSelectColumns)
+	samplesForStudyCacheSQL        = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	samplesForLibraryTypeCacheSQL  = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	samplesForLibraryCacheSQL      = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	samplesForRunCacheSQL          = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ? ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	findSamplesBySangerIDSQL       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
+	findSamplesByIDSampleLimsSQL   = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
+	findSamplesByAccessionSQL      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
+	findSamplesBySupplierSQL       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY id_sample_tmp LIMIT 2`
+	findSamplesByLibraryTypeSQL    = `SELECT DISTINCT ` + sampleMirrorSelectColumns + ` FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT 2`
+	searchSamplesBySangerIDSQL     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	searchSamplesByIDSampleLimsSQL = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	searchSamplesByAccessionSQL    = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	searchSamplesBySupplierSQL     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.name, sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
+	librariesForStudySQL           = `SELECT pipeline_id_lims, library_id, id_library_lims, COUNT(DISTINCT id_sample_tmp) FROM library_samples WHERE id_study_lims = ? GROUP BY pipeline_id_lims, library_id, id_library_lims ORDER BY pipeline_id_lims, library_id, id_library_lims LIMIT ? OFFSET ?`
+	runsForStudyCacheSQL           = `SELECT DISTINCT id_run FROM iseq_product_metrics_mirror WHERE id_study_lims = ? ORDER BY id_run LIMIT ? OFFSET ?`
+	lanesForSampleCacheSQL         = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
+	lanesForSampleStudyCacheSQL    = `SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ? AND id_study_lims = ? ORDER BY id_run, position, tag_index LIMIT ? OFFSET ?`
+	irodsPathsForSampleCacheSQL    = `SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
+	irodsPathsForStudyCacheSQL     = `SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_study_lims = ? ORDER BY id_iseq_product LIMIT ? OFFSET ?`
+	studiesForSampleCacheSQL       = `SELECT DISTINCT study_mirror.id_study_tmp, study_mirror.id_lims, study_mirror.id_study_lims, study_mirror.uuid_study_lims, study_mirror.name, study_mirror.accession_number, study_mirror.study_title, study_mirror.faculty_sponsor, study_mirror.state, study_mirror.data_release_strategy, study_mirror.data_access_group, study_mirror.programme, study_mirror.reference_genome, study_mirror.ethically_approved, study_mirror.study_type, study_mirror.contains_human_dna, study_mirror.contaminated_human_dna, study_mirror.study_visibility, study_mirror.ega_dac_accession_number, study_mirror.ega_policy_accession_number, study_mirror.data_release_timing FROM sample_mirror INNER JOIN library_samples ON library_samples.id_sample_tmp = sample_mirror.id_sample_tmp INNER JOIN study_mirror ON study_mirror.id_study_lims = library_samples.id_study_lims WHERE sample_mirror.name = ? AND sample_mirror.id_lims = 'SQSCP' AND study_mirror.id_lims = 'SQSCP' ORDER BY study_mirror.id_study_lims`
+	qualifiedStudyMirrorSelectSQL  = qualifySelectColumns("study_mirror", studyMirrorSelectColumns)
 )
 
 var (
@@ -102,6 +106,46 @@ func applyNullableHierarchySampleFields(sample *Sample, nullable *nullableHierar
 	}
 	sample.CommonName = nullStringValue(nullable.commonName)
 	sample.Description = nullStringValue(nullable.description)
+}
+
+func (c *Client) expandResolvedSampleIdentifiers(ctx context.Context, base TaggedID, samples []Sample) (expandedSearchValues, error) {
+	taggedIDSet := make(map[TaggedID]struct{}, len(samples))
+	sampleValues := make([]string, 0, len(samples))
+	sampleSeen := make(map[string]struct{}, len(samples))
+	runValues := []string{}
+	runSeen := map[string]struct{}{}
+	laneValues := []string{}
+	laneSeen := map[string]struct{}{}
+
+	for _, sample := range samples {
+		sampleName := strings.TrimSpace(sample.Name)
+		if sampleName == "" {
+			continue
+		}
+
+		taggedIDSet[TaggedID{Kind: KindSangerSampleName, Canonical: sampleName}] = struct{}{}
+		sampleValues = appendUniqueString(sampleValues, sampleSeen, sampleName)
+
+		lanes, err := c.LanesForSample(ctx, sampleName, MaxSamplesPerHop, 0)
+		if err != nil {
+			return expandedSearchValues{}, err
+		}
+
+		addRunTags(taggedIDSet, lanes)
+		for _, lane := range lanes {
+			runValues = appendUniqueString(runValues, runSeen, strconv.Itoa(lane.IDRun))
+			laneValues = appendUniqueString(laneValues, laneSeen, laneSearchValue(lane))
+		}
+	}
+
+	taggedIDs := append([]TaggedID{base}, sortedTaggedIDs(taggedIDSet)...)
+
+	return expandedSearchValues{
+		TaggedIDs: taggedIDs,
+		Samples:   sampleValues,
+		Runs:      runValues,
+		Lanes:     laneValues,
+	}, nil
 }
 
 func querySamples(ctx context.Context, querier Querier, query, action string, args ...any) ([]Sample, error) {
@@ -381,6 +425,21 @@ func laneSearchValue(lane Lane) string {
 	}
 
 	return strconv.Itoa(lane.IDRun) + "_" + strconv.Itoa(lane.Position) + "#" + strconv.Itoa(lane.TagIndex)
+}
+
+func sampleSearchIdentifierQuery(kind IdentifierKind) string {
+	switch kind {
+	case KindSangerSampleID:
+		return searchSamplesBySangerIDSQL
+	case KindSampleLimsID:
+		return searchSamplesByIDSampleLimsSQL
+	case KindSampleAccession:
+		return searchSamplesByAccessionSQL
+	case KindSupplierName:
+		return searchSamplesBySupplierSQL
+	default:
+		return ""
+	}
 }
 
 func (c *Client) lanesForSampleStudy(ctx context.Context, sampleID int64, studyLimsID string, limit, offset int) ([]Lane, error) {
@@ -678,6 +737,79 @@ func (c *Client) FindSamplesBySupplierName(ctx context.Context, supplierName str
 // FindSamplesByLibraryType returns the unique sample matching pipeline_id_lims.
 func (c *Client) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error) {
 	return c.findSamplesByQuery(ctx, findSamplesByLibraryTypeSQL, libraryType, "query samples by library type", syncTableSample, syncTableIseqFlowcell)
+}
+
+func (c *Client) samplesForSampleSearchIdentifier(ctx context.Context, kind IdentifierKind, canonical string) ([]Sample, error) {
+	query := sampleSearchIdentifierQuery(kind)
+	if query == "" {
+		return nil, ErrUnsupportedIdentifier
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	samples, err := querySamples(ctx, db, query, "query sample direct metadata search", canonical, MaxSamplesPerHop, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(samples) > 0 {
+		if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+			return nil, err
+		}
+
+		return samples, nil
+	}
+
+	if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
+		return nil, err
+	}
+
+	return nil, ErrNotFound
+}
+
+// ExpandSampleSearchValues expands direct sample metadata to canonical sample names only.
+func (c *Client) ExpandSampleSearchValues(ctx context.Context, kind IdentifierKind, canonical string) ([]string, error) {
+	query := sampleSearchIdentifierQuery(kind)
+	if query == "" {
+		return nil, ErrUnsupportedIdentifier
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	samples, err := querySamples(ctx, db, query, "query sample direct metadata search", canonical, MaxSamplesPerHop, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(samples) == 0 {
+		if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
+			return nil, err
+		}
+
+		return nil, ErrNotFound
+	}
+
+	return uniqueSampleNames(samples), nil
+}
+
+func uniqueSampleNames(samples []Sample) []string {
+	names := make([]string, 0, len(samples))
+	seen := make(map[string]struct{}, len(samples))
+
+	for _, sample := range samples {
+		name := strings.TrimSpace(sample.Name)
+		if name == "" {
+			continue
+		}
+
+		names = appendUniqueString(names, seen, name)
+	}
+
+	return names
 }
 
 func (c *Client) samplesForLibraryIdentifier(ctx context.Context, query, identifier string, limit, offset int) ([]Sample, error) {
@@ -1272,6 +1404,13 @@ func (c *Client) expandIdentifierValues(ctx context.Context, kind IdentifierKind
 		}
 
 		return expandSampleIdentifier(base, canonical, lanes), nil
+	case KindSampleLimsID, KindSangerSampleID, KindSupplierName, KindSampleAccession:
+		samples, err := c.samplesForSampleSearchIdentifier(ctx, kind, canonical)
+		if err != nil {
+			return expandedSearchValues{}, err
+		}
+
+		return c.expandResolvedSampleIdentifiers(ctx, base, samples)
 	case KindRunID:
 		samples, err := c.SamplesForRun(ctx, canonical, MaxSamplesPerHop, 0)
 		if err != nil {

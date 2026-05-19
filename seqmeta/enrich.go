@@ -735,6 +735,7 @@ func classifyLibraryType(ctx context.Context, provider Provider, identifier stri
 		Identifier: identifier,
 		Type:       resultType,
 		Graph: EnrichmentGraph{
+			Library:      libraryLinkForExactMatch(exactLibrary),
 			Samples:      flattened,
 			Studies:      studies,
 			Libraries:    distinctLibrariesForSamples(flattened),
@@ -1026,6 +1027,19 @@ func rebuildStudyDetailsFromSamples(original []mlwh.StudyDetail, samples []mlwh.
 	}
 
 	return result
+}
+
+func libraryLinkForExactMatch(exactLibrary *mlwh.Library) *Library {
+	if exactLibrary == nil {
+		return nil
+	}
+
+	return &Library{
+		LibraryType:   exactLibrary.PipelineIDLims,
+		IDStudyLims:   exactLibrary.IDStudyLims,
+		LibraryID:     exactLibrary.LibraryID,
+		IDLibraryLims: exactLibrary.IDLibraryLims,
+	}
 }
 
 func allClassificationHopsFailed(identifier string, missing []MissingHop) bool {

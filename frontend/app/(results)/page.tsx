@@ -13,7 +13,9 @@ import type {
     StatsResult,
     Study,
 } from "@/lib/contracts";
+import { formatRegistrationUnique } from "@/lib/result-identity";
 import { parseSearchFilters } from "@/lib/search-params";
+import { canonicalSeqmetaKey } from "@/lib/seqmeta-keys";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -55,10 +57,12 @@ function toResultSet(entry: ResultSet | SearchResult): ResultSet {
 }
 
 function toMetaSuggestionKey(metaKey: string): string {
+    const canonicalKey = canonicalSeqmetaKey(metaKey);
+
     if (
         metaKey === "study" ||
         metaKey === "study_id" ||
-        metaKey === "seqmeta_studyid" ||
+        canonicalKey === "seqmeta_id_study_lims" ||
         metaKey === "seqmeta_study_accession"
     ) {
         return "study";
@@ -69,29 +73,28 @@ function toMetaSuggestionKey(metaKey: string): string {
         metaKey === "sample_id" ||
         metaKey === "sample_name" ||
         metaKey === "sample_accession_number" ||
-        metaKey === "seqmeta_sampleid" ||
-        metaKey === "seqmeta_sample_lims"
+        canonicalKey === "seqmeta_sample_name" ||
+        canonicalKey === "seqmeta_sanger_sample_id" ||
+        canonicalKey === "seqmeta_id_sample_lims"
     ) {
         return "sample";
     }
 
-    if (metaKey === "seqmeta_libraryid") {
-        return "seqmeta_libraryid";
+    if (canonicalKey === "seqmeta_library_id") {
+        return "seqmeta_library_id";
     }
 
-    if (metaKey === "seqmeta_library_lims") {
-        return "seqmeta_library_lims";
+    if (canonicalKey === "seqmeta_id_library_lims") {
+        return "seqmeta_id_library_lims";
     }
 
-    if (
-        metaKey === "library" ||
-        metaKey === "seqmeta_library" ||
-        metaKey === "seqmeta_librarytype"
-    ) {
+    if (metaKey === "library" || canonicalKey === "seqmeta_pipeline_id_lims") {
         return "library";
     }
 
-    return metaKey.startsWith("seqmeta_") ? metaKey : `meta_${metaKey}`;
+    return canonicalKey.startsWith("seqmeta_")
+        ? canonicalKey
+        : `meta_${canonicalKey}`;
 }
 
 function buildSuggestionValues(
@@ -127,7 +130,11 @@ function buildSuggestionValues(
             "pipeline_identifier",
             result.pipeline_identifier,
         );
-        appendSuggestion(suggestions, "run_key", result.run_key);
+        appendSuggestion(
+            suggestions,
+            "run_key",
+            formatRegistrationUnique(result.run_key),
+        );
         appendSuggestion(
             suggestions,
             "output_dir_prefix",
