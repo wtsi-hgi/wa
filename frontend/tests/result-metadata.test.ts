@@ -2,7 +2,13 @@
 
 import { createElement } from "react";
 import { act } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+    within,
+} from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 describe("ResultMetadata", () => {
@@ -36,6 +42,10 @@ describe("ResultMetadata", () => {
         ).toEqual(["seqmeta_studyid", "seqmeta_library_id"]);
         expect(rows[0]?.querySelector("dt")?.textContent).toBe("Study");
         expect(rows[1]?.querySelector("dt")?.textContent).toBe("Library");
+        expect(
+            within(container).getByRole("button", { name: "All metadata" })
+                .textContent,
+        ).toBe("all");
         expect(container.textContent).not.toContain("seqmeta_studyid");
         expect(container.textContent).not.toContain("seqmeta_library_id");
         expect(container.textContent).not.toContain("libraryexon");
@@ -96,9 +106,9 @@ describe("ResultMetadata", () => {
 
         await act(async () => {
             fireEvent.click(
-                container.querySelector(
-                    '[data-metadata-details-trigger="true"]',
-                )!,
+                within(container).getByRole("button", {
+                    name: "All metadata",
+                }),
             );
         });
 

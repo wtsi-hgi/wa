@@ -13,6 +13,15 @@ const domEvidencePath = path.join(
     "result-detail-header-reopened-repro-dom.json",
 );
 
+const postFixScreenshotPath = path.join(
+    evidenceDir,
+    "result-detail-header-all-buttons-postfix.png",
+);
+const postFixDomEvidencePath = path.join(
+    evidenceDir,
+    "result-detail-header-all-buttons-postfix-dom.json",
+);
+
 test("reproduces reopened result detail header layout issues", async ({
     page,
 }) => {
@@ -87,9 +96,33 @@ test("reproduces reopened result detail header layout issues", async ({
         const registrationLayout = element.querySelector(
             '[data-registration-layout="integrated"]',
         );
+        const registrationHeading = registrationLayout?.querySelector("p");
+        const registrationTrigger = registrationLayout?.querySelector(
+            "[data-registration-details-trigger]",
+        );
         const metadataLayout = element.querySelector(
             '[data-result-metadata-layout="integrated"]',
         );
+        const metadataHeading = metadataLayout?.querySelector("p");
+        const metadataTrigger = metadataLayout?.querySelector(
+            "[data-metadata-details-trigger]",
+        );
+        const horizontalGap = (
+            left: Element | null | undefined,
+            right: Element | null | undefined,
+        ) => {
+            if (
+                !(left instanceof HTMLElement) ||
+                !(right instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const leftRect = left.getBoundingClientRect();
+            const rightRect = right.getBoundingClientRect();
+
+            return Math.round(rightRect.left - leftRect.right);
+        };
         const visibleRegistrationFields = Array.from(
             element.querySelectorAll("[data-registration-field]"),
         ).map((node) => ({
@@ -143,19 +176,22 @@ test("reproduces reopened result detail header layout issues", async ({
                 registrationLayout?.textContent?.replace(/\s+/g, " ").trim() ??
                 "",
             registrationDetailsButtonText:
-                registrationLayout
-                    ?.querySelector("[data-registration-details-trigger]")
-                    ?.textContent?.replace(/\s+/g, " ")
-                    .trim() ?? "",
+                registrationTrigger?.textContent?.replace(/\s+/g, " ").trim() ??
+                "",
+            registrationDetailsButtonGap: horizontalGap(
+                registrationHeading,
+                registrationTrigger,
+            ),
             metadataHeaderLine:
                 metadataLayout?.firstElementChild?.textContent
                     ?.replace(/\s+/g, " ")
                     .trim() ?? "",
             metadataDetailsButtonText:
-                metadataLayout
-                    ?.querySelector("[data-metadata-details-trigger]")
-                    ?.textContent?.replace(/\s+/g, " ")
-                    .trim() ?? "",
+                metadataTrigger?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+            metadataDetailsButtonGap: horizontalGap(
+                metadataHeading,
+                metadataTrigger,
+            ),
             visibleRegistrationFields,
             metadataRows,
         };
@@ -181,12 +217,21 @@ test("reproduces reopened result detail header layout issues", async ({
     ).toEqual(["Last updated", "Requester", "Operator"]);
     expect(evidence.fileSummaryText).toBe("");
     expect(evidence.registrationLayoutText).toContain("Run details");
-    expect(evidence.registrationLayoutText).toContain("All details");
+    expect(evidence.registrationLayoutText).toContain("all");
+    expect(evidence.registrationLayoutText).not.toContain("All details");
     expect(evidence.registrationHeaderLine).toContain("Run details");
-    expect(evidence.registrationHeaderLine).toContain("All details");
+    expect(evidence.registrationHeaderLine).toContain("all");
+    expect(evidence.registrationHeaderLine).not.toContain("All details");
     expect(evidence.registrationHeaderLine).not.toContain("Last updated");
+    expect(evidence.registrationDetailsButtonText).toBe("all");
+    expect(evidence.registrationDetailsButtonGap).toBeGreaterThanOrEqual(0);
+    expect(evidence.registrationDetailsButtonGap).toBeLessThanOrEqual(16);
     expect(evidence.metadataHeaderLine).toContain("Metadata");
-    expect(evidence.metadataHeaderLine).toContain("All metadata");
+    expect(evidence.metadataHeaderLine).toContain("all");
+    expect(evidence.metadataHeaderLine).not.toContain("All metadata");
+    expect(evidence.metadataDetailsButtonText).toBe("all");
+    expect(evidence.metadataDetailsButtonGap).toBeGreaterThanOrEqual(0);
+    expect(evidence.metadataDetailsButtonGap).toBeLessThanOrEqual(16);
     expect(evidence.eyebrowTexts).not.toContain("Result detail");
 
     await summary.getByRole("button", { name: "All details" }).click();
@@ -198,5 +243,11 @@ test("reproduces reopened result detail header layout issues", async ({
     await expect(resultIdDetail).toContainText(resultId);
     await expect(resultIdDetail.locator("[data-result-id-copy]")).toHaveCount(
         0,
+    );
+
+    await summary.screenshot({ path: postFixScreenshotPath });
+    writeFileSync(
+        postFixDomEvidencePath,
+        `${JSON.stringify(evidence, null, 2)}\n`,
     );
 });

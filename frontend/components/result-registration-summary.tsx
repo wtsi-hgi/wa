@@ -54,7 +54,7 @@ export function ResultRegistrationSummary({
                 data-registration-summary="integrated"
             >
                 <div
-                    className="flex items-center justify-between gap-2"
+                    className="flex items-center gap-2"
                     data-registration-layout="integrated"
                     data-registration-header="true"
                 >
@@ -64,11 +64,12 @@ export function ResultRegistrationSummary({
 
                     <Popover>
                         <PopoverTrigger
+                            aria-label="All details"
                             className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-border/70 bg-card/70 px-2.5 py-0.5 text-xs font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                             data-registration-details-trigger="true"
                         >
                             <Info className="h-3.5 w-3.5" aria-hidden="true" />
-                            <span>All details</span>
+                            <span>all</span>
                         </PopoverTrigger>
                         <PopoverContent
                             align="start"

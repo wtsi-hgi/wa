@@ -73,11 +73,14 @@ describe("ResultRegistrationSummary", () => {
                 "[data-registration-wide-field]",
             ),
         );
-        const detailsTrigger = screen.getByText("All details");
+        const detailsTrigger = screen.getByRole("button", {
+            name: "All details",
+        });
 
         expect(compactLayout).toBeTruthy();
         expect(header?.textContent).toContain("Run details");
-        expect(header?.textContent).toContain("All details");
+        expect(header?.textContent).toContain("all");
+        expect(header?.textContent).not.toContain("All details");
         expect(header?.textContent).not.toContain("Last updated");
         expect(fieldStrip?.textContent).toContain("Last updated");
         expect(compactFields).toHaveLength(3);
