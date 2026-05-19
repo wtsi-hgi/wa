@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { act } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 describe("ResultRegistrationSummary", () => {
@@ -57,31 +58,39 @@ describe("ResultRegistrationSummary", () => {
                 "[data-registration-wide-field]",
             ),
         );
+        const detailsTrigger = screen.getByText("All details");
 
         expect(compactLayout).toBeTruthy();
-        expect(compactFields).toHaveLength(6);
-        expect(wideFields).toHaveLength(2);
+        expect(compactFields).toHaveLength(4);
+        expect(wideFields).toHaveLength(0);
         expect(
             compactFields.map((field) =>
                 field.getAttribute("data-registration-field"),
             ),
-        ).toEqual([
-            "Pipeline version",
-            "Pipeline identifier",
-            "Unique",
-            "Requester",
-            "Operator",
-            "Registered",
-        ]);
+        ).toEqual(["Pipeline version", "Unique", "Requester", "Operator"]);
 
         for (const field of compactFields) {
-            expect(field.className).toContain("rounded-lg");
-            expect(field.className).toContain("bg-background/65");
+            expect(field.className).toContain("rounded-full");
+            expect(field.className).toContain("min-h-8");
         }
 
-        for (const field of wideFields) {
-            expect(field.className).toContain("rounded-lg");
-            expect(field.className).toContain("bg-background/65");
-        }
+        expect(detailsTrigger).toBeTruthy();
+        expect(container.textContent).toContain("1001");
+        expect(container.textContent).not.toContain("/tmp/results/42");
+
+        await act(async () => {
+            fireEvent.click(detailsTrigger);
+        });
+
+        await waitFor(() => {
+            expect(
+                document.querySelectorAll("[data-registration-detail-field]"),
+            ).toHaveLength(8);
+        });
+        expect(
+            document.querySelector(
+                '[data-registration-detail-field="Output directory"]',
+            )?.textContent,
+        ).toContain("/tmp/results/42");
     });
 });

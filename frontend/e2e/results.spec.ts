@@ -467,6 +467,53 @@ test.describe("Q1 critical results flows", () => {
         ).toContainText("exon");
     });
 
+    test("keeps the result detail header compact above the file browser", async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await openResultDetail(page, rnaseqPipelineName);
+
+        const detailSummary = page.locator(
+            '[data-result-detail-summary="true"]',
+        );
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+        const metadata = detailSummary.locator(
+            '[data-result-metadata-layout="integrated"]',
+        );
+        const metrics = await page.evaluate(() => {
+            const summary = document.querySelector(
+                '[data-result-detail-summary="true"]',
+            );
+            const browser = document.querySelector(
+                '[data-file-browser="true"]',
+            );
+            const metadataLayout = document.querySelector(
+                '[data-result-detail-summary="true"] [data-result-metadata-layout="integrated"]',
+            );
+
+            if (!summary || !browser || !metadataLayout) {
+                throw new Error("Missing result detail layout elements");
+            }
+
+            const summaryRect = summary.getBoundingClientRect();
+            const browserRect = browser.getBoundingClientRect();
+            const metadataRect = metadataLayout.getBoundingClientRect();
+
+            return {
+                fileBrowserY: browserRect.y,
+                metadataHeight: metadataRect.height,
+                summaryHeight: summaryRect.height,
+            };
+        });
+
+        await expect(detailSummary).toBeVisible();
+        await expect(fileBrowser).toBeVisible();
+        await expect(metadata).toBeVisible();
+        expect(metrics.summaryHeight).toBeLessThanOrEqual(370);
+        expect(metrics.metadataHeight).toBeLessThanOrEqual(110);
+        expect(metrics.fileBrowserY).toBeLessThanOrEqual(430);
+    });
+
     test("keeps the seqmeta dialog body scrollable when content exceeds the viewport", async ({
         page,
     }) => {

@@ -1,4 +1,11 @@
+import { Info } from "lucide-react";
+
 import { SeqmetaBadge } from "@/components/seqmeta-badge";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
 import type { EnrichmentResult } from "@/lib/contracts";
 import { canonicalSeqmetaKey, isSeqmetaKey } from "@/lib/seqmeta-keys";
 
@@ -18,6 +25,48 @@ function displayMetadataKey(key: string): string {
     return canonicalSeqmetaKey(key);
 }
 
+function MetadataValue({
+    display = "strip",
+    enrichments,
+    errors,
+    loading,
+    metadataKey,
+    value,
+}: {
+    display?: "detail" | "strip";
+    enrichments: Record<string, EnrichmentResult | null>;
+    errors: Record<string, "not_found" | "upstream_impaired">;
+    loading: Record<string, boolean>;
+    metadataKey: string;
+    value: string;
+}) {
+    if (isSeqmetaKey(metadataKey)) {
+        const lookupKey = seqmetaLookupKey(value);
+
+        return (
+            <SeqmetaBadge
+                metadataKey={metadataKey}
+                rawValue={value}
+                enrichment={enrichments[lookupKey] ?? null}
+                error={errors[lookupKey]}
+                loading={Boolean(loading[lookupKey])}
+            />
+        );
+    }
+
+    return (
+        <span
+            className={
+                display === "detail"
+                    ? "break-words text-sm leading-5 text-foreground"
+                    : "min-w-0 truncate text-xs font-medium text-foreground"
+            }
+        >
+            {value}
+        </span>
+    );
+}
+
 export function ResultMetadata({
     enrichments = {},
     errors = {},
@@ -26,61 +75,108 @@ export function ResultMetadata({
     variant = "section",
 }: ResultMetadataProps) {
     const entries = Object.entries(metadata);
+    const visibleEntries = entries.slice(0, 6);
 
     if (variant === "integrated") {
         return (
-            <div className="space-y-3" data-result-metadata-layout="integrated">
-                <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-foreground">
+            <div
+                className="min-w-0 space-y-2"
+                data-result-metadata-layout="integrated"
+            >
+                <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Metadata
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                        {entries.length} {entries.length === 1 ? "key" : "keys"}
-                    </p>
+                    {entries.length > 0 ? (
+                        <Popover>
+                            <PopoverTrigger
+                                className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-border/70 bg-card/70 px-2.5 py-0.5 text-xs font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                                data-metadata-details-trigger="true"
+                            >
+                                <Info
+                                    className="h-3.5 w-3.5"
+                                    aria-hidden="true"
+                                />
+                                <span>All metadata</span>
+                            </PopoverTrigger>
+                            <PopoverContent
+                                align="end"
+                                className="w-[min(92vw,42rem)] p-4"
+                            >
+                                <div className="flex items-center justify-between gap-3">
+                                    <p className="text-sm font-semibold text-foreground">
+                                        Metadata
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {entries.length}{" "}
+                                        {entries.length === 1 ? "key" : "keys"}
+                                    </p>
+                                </div>
+                                <dl
+                                    className="mt-3 grid max-h-[min(24rem,70vh)] gap-2 overflow-auto pr-1 sm:grid-cols-2"
+                                    data-result-metadata-details-panel="true"
+                                >
+                                    {entries.map(([key, value]) => (
+                                        <div
+                                            key={key}
+                                            className="min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
+                                            data-metadata-detail-row={key}
+                                        >
+                                            <dt className="break-all font-mono text-[11px] text-muted-foreground">
+                                                {displayMetadataKey(key)}
+                                            </dt>
+                                            <dd className="mt-1 min-w-0">
+                                                <MetadataValue
+                                                    display="detail"
+                                                    enrichments={enrichments}
+                                                    errors={errors}
+                                                    loading={loading}
+                                                    metadataKey={key}
+                                                    value={value}
+                                                />
+                                            </dd>
+                                        </div>
+                                    ))}
+                                </dl>
+                            </PopoverContent>
+                        </Popover>
+                    ) : null}
                 </div>
 
                 {entries.length === 0 ? (
-                    <p className="rounded-lg border border-border/60 bg-background/65 px-3 py-2 text-sm text-muted-foreground">
+                    <p className="inline-flex min-h-8 items-center rounded-full border border-border/65 bg-background/70 px-3 py-1 text-xs text-muted-foreground">
                         No metadata
                     </p>
                 ) : (
-                    <dl className="grid max-h-72 gap-2 overflow-auto pr-1">
-                        {entries.map(([key, value]) => (
+                    <dl
+                        className="flex max-h-20 flex-wrap gap-1.5 overflow-auto pr-1"
+                        data-result-metadata-strip="true"
+                    >
+                        {visibleEntries.map(([key, value]) => (
                             <div
                                 key={key}
-                                className="min-w-0 rounded-lg border border-border/60 bg-background/65 px-3 py-2"
+                                className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border border-border/65 bg-background/70 px-2 py-0.5 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
                                 data-metadata-row={key}
                             >
-                                <dt className="break-all font-mono text-xs text-muted-foreground">
+                                <dt className="min-w-0 shrink truncate font-mono text-[11px] text-muted-foreground">
                                     {displayMetadataKey(key)}
                                 </dt>
-                                <dd className="mt-1 min-w-0">
-                                    {isSeqmetaKey(key) ? (
-                                        <SeqmetaBadge
-                                            metadataKey={key}
-                                            rawValue={value}
-                                            enrichment={
-                                                enrichments[
-                                                    seqmetaLookupKey(value)
-                                                ] ?? null
-                                            }
-                                            error={
-                                                errors[seqmetaLookupKey(value)]
-                                            }
-                                            loading={Boolean(
-                                                loading[
-                                                    seqmetaLookupKey(value)
-                                                ],
-                                            )}
-                                        />
-                                    ) : (
-                                        <span className="break-all text-sm text-foreground">
-                                            {value}
-                                        </span>
-                                    )}
+                                <dd className="min-w-0">
+                                    <MetadataValue
+                                        enrichments={enrichments}
+                                        errors={errors}
+                                        loading={loading}
+                                        metadataKey={key}
+                                        value={value}
+                                    />
                                 </dd>
                             </div>
                         ))}
+                        {entries.length > visibleEntries.length ? (
+                            <div className="inline-flex min-h-7 items-center rounded-full border border-border/65 bg-card/70 px-2.5 py-0.5 text-xs text-muted-foreground">
+                                +{entries.length - visibleEntries.length}
+                            </div>
+                        ) : null}
                     </dl>
                 )}
             </div>

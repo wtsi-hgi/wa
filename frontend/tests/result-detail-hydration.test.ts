@@ -348,14 +348,9 @@ describe("O1 result detail hydration", () => {
         ).not.toBeNull();
         expect(registrationLabels).toEqual([
             "Pipeline version",
-            "Pipeline identifier",
             "Unique",
             "Requester",
             "Operator",
-            "Registered",
-            "Last updated",
-            "Output directory",
-            "Command",
         ]);
         expect(registrationLabels).not.toContain("Result ID");
         expect(registrationLabels).not.toContain("Pipeline name");

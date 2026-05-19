@@ -1,3 +1,11 @@
+import { Info } from "lucide-react";
+
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+
 export type ResultRegistrationField = {
     label: string;
     mono?: boolean;
@@ -10,44 +18,66 @@ type ResultRegistrationSummaryProps = {
     variant?: "section" | "integrated";
 };
 
+const PRIORITY_FIELD_LABELS = [
+    "Pipeline version",
+    "Unique",
+    "Requester",
+    "Operator",
+];
+
+function visibleIntegratedFields(fields: ResultRegistrationField[]) {
+    const priorityFields = PRIORITY_FIELD_LABELS.map((label) =>
+        fields.find((field) => field.label === label),
+    ).filter((field): field is ResultRegistrationField => Boolean(field));
+
+    if (priorityFields.length >= 3) {
+        return priorityFields;
+    }
+
+    return fields
+        .filter((field) => !field.wide)
+        .filter((field) => !priorityFields.includes(field))
+        .slice(0, 4 - priorityFields.length)
+        .reduce(
+            (acc, field) => [...acc, field],
+            priorityFields as ResultRegistrationField[],
+        );
+}
+
 export function ResultRegistrationSummary({
     fields,
     variant = "section",
 }: ResultRegistrationSummaryProps) {
     const compactFields = fields.filter((field) => !field.wide);
     const wideFields = fields.filter((field) => field.wide);
+    const integratedFields = visibleIntegratedFields(fields);
 
     if (variant === "integrated") {
         return (
-            <div className="space-y-3" data-registration-summary="integrated">
-                <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-foreground">
-                        Registration details
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                        {fields.length} fields
-                    </p>
-                </div>
+            <div className="min-w-0" data-registration-summary="integrated">
+                <div
+                    className="flex flex-wrap items-center gap-2"
+                    data-registration-layout="integrated"
+                >
+                    <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Run details
+                    </span>
 
-                <div className="grid gap-2">
-                    <dl
-                        className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3"
-                        data-registration-layout="integrated"
-                    >
-                        {compactFields.map((field) => (
+                    <dl className="contents">
+                        {integratedFields.map((field) => (
                             <div
                                 key={field.label}
-                                className="min-w-0 rounded-lg border border-border/60 bg-background/65 px-3 py-2"
+                                className="inline-flex min-h-8 max-w-full items-center gap-2 rounded-full border border-border/65 bg-background/70 px-3 py-1 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
                                 data-registration-field={field.label}
                             >
-                                <dt className="text-xs font-medium text-muted-foreground">
+                                <dt className="shrink-0 font-medium text-muted-foreground">
                                     {field.label}
                                 </dt>
                                 <dd
                                     className={
                                         field.mono
-                                            ? "mt-1 break-all font-mono text-xs text-foreground"
-                                            : "mt-1 break-words text-sm leading-5 text-foreground"
+                                            ? "min-w-0 truncate font-mono text-foreground"
+                                            : "min-w-0 truncate text-foreground"
                                     }
                                 >
                                     {field.value}
@@ -56,28 +86,60 @@ export function ResultRegistrationSummary({
                         ))}
                     </dl>
 
-                    <dl className="grid gap-2 lg:grid-cols-2">
-                        {wideFields.map((field) => (
-                            <div
-                                key={field.label}
-                                className="min-w-0 rounded-lg border border-border/60 bg-background/65 px-3 py-2"
-                                data-registration-wide-field={field.label}
-                            >
-                                <dt className="text-xs font-medium text-muted-foreground">
-                                    {field.label}
-                                </dt>
-                                <dd
-                                    className={
-                                        field.mono
-                                            ? "mt-1 break-all font-mono text-xs text-foreground"
-                                            : "mt-1 text-sm leading-6 text-foreground"
-                                    }
-                                >
-                                    {field.value}
-                                </dd>
+                    <Popover>
+                        <PopoverTrigger
+                            className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-border/70 bg-card/70 px-3 py-1 text-xs font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                            data-registration-details-trigger="true"
+                        >
+                            <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>All details</span>
+                        </PopoverTrigger>
+                        <PopoverContent
+                            align="start"
+                            className="w-[min(92vw,46rem)] p-4"
+                        >
+                            <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-semibold text-foreground">
+                                    Run details
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                    {fields.length} fields
+                                </p>
                             </div>
-                        ))}
-                    </dl>
+
+                            <dl
+                                className="mt-3 grid max-h-[min(24rem,70vh)] gap-2 overflow-auto pr-1 sm:grid-cols-2"
+                                data-registration-details-panel="true"
+                            >
+                                {fields.map((field) => (
+                                    <div
+                                        key={field.label}
+                                        className={
+                                            field.wide
+                                                ? "min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2 sm:col-span-2"
+                                                : "min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
+                                        }
+                                        data-registration-detail-field={
+                                            field.label
+                                        }
+                                    >
+                                        <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                            {field.label}
+                                        </dt>
+                                        <dd
+                                            className={
+                                                field.mono
+                                                    ? "mt-1 break-all font-mono text-xs leading-5 text-foreground"
+                                                    : "mt-1 break-words text-sm leading-5 text-foreground"
+                                            }
+                                        >
+                                            {field.value}
+                                        </dd>
+                                    </div>
+                                ))}
+                            </dl>
+                        </PopoverContent>
+                    </Popover>
                 </div>
             </div>
         );

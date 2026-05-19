@@ -143,15 +143,15 @@ function resolveReturnHref(searchParams: DetailPageSearchParams): string {
 
 export function ResultDetailLoadingFallback() {
     return (
-        <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
-            <section className="overflow-hidden rounded-[2rem] border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_88%,white_12%),color-mix(in_oklab,var(--accent)_12%,var(--card)_88%))] shadow-[0_36px_120px_-72px_rgba(41,58,85,0.85)]">
-                <div className="grid gap-8 px-6 py-8 sm:px-8 lg:px-10 lg:py-10">
+        <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-6 sm:px-10 lg:px-12 lg:py-8">
+            <section className="overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_8%,var(--card)_92%))] shadow-[0_28px_80px_-64px_rgba(41,58,85,0.78)]">
+                <div className="grid gap-5 px-5 py-5 sm:px-6 lg:px-7">
                     <div className="space-y-4">
-                        <p className="text-sm font-semibold uppercase tracking-[0.32em] text-muted-foreground">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                             Result detail
                         </p>
                         <div className="space-y-3">
-                            <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+                            <h1 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
                                 Loading result details
                             </h1>
                             <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
@@ -179,60 +179,60 @@ export async function ResultDetailPageContent({
     const fileSummary = summarizeFiles(files);
 
     return (
-        <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
+        <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-6 py-6 sm:px-10 lg:px-12 lg:py-8">
             <section
-                className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_10%,var(--card)_90%))] shadow-[0_28px_90px_-64px_rgba(41,58,85,0.8)]"
+                className="overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_8%,var(--card)_92%))] shadow-[0_28px_80px_-64px_rgba(41,58,85,0.78)]"
                 data-result-detail-summary="true"
             >
-                <div className="grid gap-5 px-6 py-6 sm:px-8 lg:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.6fr)] lg:px-10 lg:py-8">
-                    <div className="space-y-4">
-                        <div className="space-y-4">
-                            <Link
-                                href={returnHref}
-                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/85 px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
-                                data-return-link="true"
-                            >
-                                <ChevronLeft
-                                    className="h-4 w-4"
-                                    aria-hidden="true"
-                                />
-                                <span>{returnLabel}</span>
-                            </Link>
-                            <p className="text-sm font-semibold uppercase tracking-[0.32em] text-muted-foreground">
-                                Result detail
-                            </p>
-                            <div className="space-y-3">
-                                <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+                <div className="space-y-4 px-5 py-5 sm:px-6 lg:px-7">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(24rem,0.82fr)] lg:items-start">
+                        <div className="min-w-0 space-y-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Link
+                                    href={returnHref}
+                                    className="inline-flex min-h-8 items-center gap-2 rounded-full border border-border/70 bg-background/85 px-3 py-1 text-xs font-medium text-muted-foreground transition hover:text-foreground"
+                                    data-return-link="true"
+                                >
+                                    <ChevronLeft
+                                        className="h-3.5 w-3.5"
+                                        aria-hidden="true"
+                                    />
+                                    <span>{returnLabel}</span>
+                                </Link>
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                    Result detail
+                                </p>
+                            </div>
+
+                            <div className="flex min-w-0 flex-wrap items-center gap-3">
+                                <h1 className="min-w-0 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
                                     {result.pipeline_name}
                                 </h1>
+                                <ResultIdCopyChip resultId={result.id} />
                             </div>
-                            <ResultIdCopyChip resultId={result.id} />
                         </div>
 
-                        <section
-                            className="rounded-lg border border-border/70 bg-background/70 p-4"
-                            data-file-summary="true"
-                        >
-                            <div className="flex items-center justify-between gap-3">
-                                <p className="text-sm font-semibold text-foreground">
+                        <section className="min-w-0" data-file-summary="true">
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                                     Registered files
                                 </p>
-                                <p className="text-xs text-muted-foreground">
+                                <p className="font-mono text-xs text-muted-foreground">
                                     {formatBytes(fileSummary.total.size)}
                                 </p>
                             </div>
-                            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
-                                <div className="rounded-lg border border-border/60 bg-card/75 px-3 py-2 sm:col-span-2">
-                                    <dt className="text-xs text-muted-foreground">
+                            <dl className="mt-2 flex flex-wrap gap-2">
+                                <div className="inline-flex min-h-8 max-w-full items-center gap-2 rounded-full border border-border/65 bg-background/70 px-3 py-1 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]">
+                                    <dt className="shrink-0 font-medium text-muted-foreground">
                                         {fileSummary.total.label}
                                     </dt>
-                                    <dd className="mt-1 flex items-baseline justify-between gap-3">
-                                        <span className="text-sm font-semibold text-foreground">
+                                    <dd className="flex min-w-0 items-center gap-2">
+                                        <span className="font-semibold text-foreground">
                                             {formatFileCount(
                                                 fileSummary.total.count,
                                             )}
                                         </span>
-                                        <span className="text-sm text-muted-foreground">
+                                        <span className="font-mono text-muted-foreground">
                                             {formatBytes(
                                                 fileSummary.total.size,
                                             )}
@@ -242,16 +242,16 @@ export async function ResultDetailPageContent({
                                 {fileSummary.categories.map((group) => (
                                     <div
                                         key={group.label}
-                                        className="rounded-lg border border-border/60 bg-card/70 px-3 py-2"
+                                        className="inline-flex min-h-8 max-w-full items-center gap-2 rounded-full border border-border/65 bg-card/70 px-3 py-1 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
                                     >
-                                        <dt className="text-xs text-muted-foreground">
+                                        <dt className="shrink-0 font-medium text-muted-foreground">
                                             {group.label}
                                         </dt>
-                                        <dd className="mt-1 flex items-baseline justify-between gap-3">
-                                            <span className="text-sm font-medium text-foreground">
+                                        <dd className="flex min-w-0 items-center gap-2">
+                                            <span className="font-medium text-foreground">
                                                 {formatFileCount(group.count)}
                                             </span>
-                                            <span className="text-xs text-muted-foreground">
+                                            <span className="font-mono text-muted-foreground">
                                                 {formatBytes(group.size)}
                                             </span>
                                         </dd>
@@ -261,15 +261,15 @@ export async function ResultDetailPageContent({
                         </section>
                     </div>
 
-                    <div className="grid content-start gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.75fr)]">
-                        <div className="rounded-lg border border-border/70 bg-card/65 p-4">
+                    <div className="grid gap-3 border-t border-border/60 pt-3 lg:grid-cols-[minmax(0,1.08fr)_minmax(20rem,0.92fr)]">
+                        <div className="min-w-0">
                             <ResultRegistrationSummary
                                 fields={detailFields(result)}
                                 variant="integrated"
                             />
                         </div>
 
-                        <div className="rounded-lg border border-border/70 bg-card/65 p-4">
+                        <div className="min-w-0">
                             <ResultMetadataEnrichment
                                 key={result.id}
                                 metadata={result.metadata}
