@@ -949,27 +949,25 @@ describe("N1 file browser", () => {
             Array.from(designButtons).map((button) =>
                 button.getAttribute("data-file-browser-design-option"),
             ),
-        ).toEqual([
-            "classic",
-            "toolbar",
-            "rail",
-            "command",
-            "ledger",
-            "gallery",
-        ]);
+        ).toEqual(["classic", "inline", "sidecar", "ribbon", "matrix", "deck"]);
 
         await click(
             container.querySelector(
-                '[data-file-browser-design-option="ledger"]',
+                '[data-file-browser-design-option="inline"]',
             ),
         );
 
         expect(browser?.getAttribute("data-file-browser-design")).toBe(
-            "ledger",
+            "inline",
         );
         expect(
             container.querySelector(
                 '[data-file-browser-folder-controls="/results"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-file-browser-name-area-controls="/results"]',
             ),
         ).toBeTruthy();
         expect(
@@ -1024,7 +1022,7 @@ describe("N1 file browser", () => {
         expect(folderControls?.className).not.toBe(directoryRow?.className);
         expect(folderControls?.className).not.toBe(fileButton?.className);
         expect(folderControls?.className).toMatch(
-            /(?:control|toolbar|rail|command|ledger|gallery)/,
+            /(?:control|nameplate|sidecar|ribbon|matrix|deck)/,
         );
         expect(
             folderControls?.querySelector(
@@ -1034,6 +1032,151 @@ describe("N1 file browser", () => {
         expect(
             folderControls?.querySelector(
                 '[data-file-browser-control-trigger="file-types"]',
+            ),
+        ).toBeTruthy();
+    });
+
+    it("moves design 1 controls into the active folder name area", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        await click(
+            container.querySelector(
+                '[data-file-browser-design-option="inline"]',
+            ),
+        );
+
+        const heading = container.querySelector(
+            '[data-directory-heading-with-controls="/results"]',
+        );
+        const nameAreaControls = container.querySelector(
+            '[data-file-browser-name-area-controls="/results"]',
+        );
+        const groupedContent = container.querySelector(
+            '[data-directory-group-content="/results"]',
+        );
+        const folderControls = container.querySelector(
+            '[data-file-browser-folder-controls="/results"]',
+        ) as HTMLElement | null;
+
+        expect(heading).toBeTruthy();
+        expect(nameAreaControls).toBeTruthy();
+        expect(folderControls?.dataset.fileBrowserControlPlacement).toBe(
+            "name-area",
+        );
+        expect(heading?.contains(folderControls)).toBe(true);
+        expect(groupedContent?.contains(folderControls)).toBe(false);
+    });
+
+    it("offers four other structural design layouts beyond the nameplate option", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        await click(
+            container.querySelector(
+                '[data-file-browser-design-option="sidecar"]',
+            ),
+        );
+        expect(
+            container.querySelector(
+                '[data-file-browser-sidecar-layout="/results"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            (
+                container.querySelector(
+                    '[data-file-browser-folder-controls="/results"]',
+                ) as HTMLElement | null
+            )?.dataset.fileBrowserControlPlacement,
+        ).toBe("sidecar");
+
+        await click(
+            container.querySelector(
+                '[data-file-browser-design-option="ribbon"]',
+            ),
+        );
+        expect(
+            container.querySelector(
+                '[data-file-browser-content-ribbon="/results"]',
+            ),
+        ).toBeTruthy();
+        expect(container.textContent).toContain("Path controls");
+
+        await click(
+            container.querySelector(
+                '[data-file-browser-design-option="matrix"]',
+            ),
+        );
+        expect(
+            container.querySelector(
+                '[data-file-browser-file-matrix-header="/results"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-file-browser-file-layout="matrix-row"]',
+            ),
+        ).toBeTruthy();
+
+        await click(
+            container.querySelector('[data-file-browser-design-option="deck"]'),
+        );
+        expect(
+            (
+                container.querySelector(
+                    '[data-file-browser-folder-controls="/results"]',
+                ) as HTMLElement | null
+            )?.dataset.fileBrowserControlPlacement,
+        ).toBe("preview-dock");
+        expect(
+            container.querySelector(
+                '[data-file-browser-file-layout="deck-strip"]',
             ),
         ).toBeTruthy();
     });

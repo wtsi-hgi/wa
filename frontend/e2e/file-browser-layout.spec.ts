@@ -419,13 +419,17 @@ test.describe("File Browser single preview layout", () => {
         screenshotEvidenceDir,
         "file-browser-design-selector-classic.png",
     );
-    const ledgerDesignScreenshotPath = path.join(
+    const inlineDesignScreenshotPath = path.join(
         screenshotEvidenceDir,
-        "file-browser-design-ledger.png",
+        "file-browser-design-inline.png",
     );
-    const galleryDesignScreenshotPath = path.join(
+    const sidecarDesignScreenshotPath = path.join(
         screenshotEvidenceDir,
-        "file-browser-design-gallery.png",
+        "file-browser-design-sidecar.png",
+    );
+    const deckDesignScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-design-deck.png",
     );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -1367,7 +1371,7 @@ test.describe("File Browser single preview layout", () => {
         await expectOpaqueBackground(fileTypesMenu);
     });
 
-    test("switches temporary file browser designs while controls remain a separate surface", async ({
+    test("switches temporary file browser designs into distinct structural layouts", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
@@ -1407,12 +1411,12 @@ test.describe("File Browser single preview layout", () => {
         });
 
         await page
-            .locator('[data-file-browser-design-option="ledger"]')
+            .locator('[data-file-browser-design-option="inline"]')
             .click();
 
         await expect(fileBrowser).toHaveAttribute(
             "data-file-browser-design",
-            "ledger",
+            "inline",
         );
         await expect(controls).toBeVisible();
         await expect(controls).toHaveAttribute(
@@ -1421,11 +1425,45 @@ test.describe("File Browser single preview layout", () => {
         );
         await expect(controls).toHaveAttribute(
             "data-file-browser-control-style",
-            "ledger-density",
+            "inline-nameplate",
         );
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-placement",
+            "name-area",
+        );
+        await expect(
+            page.locator(
+                `[data-file-browser-name-area-controls="${rnaseqGalleryPath}"]`,
+            ),
+        ).toBeVisible();
         await page.screenshot({
             fullPage: true,
-            path: ledgerDesignScreenshotPath,
+            path: inlineDesignScreenshotPath,
+        });
+
+        await page
+            .locator('[data-file-browser-design-option="sidecar"]')
+            .click();
+        await expect(fileBrowser).toHaveAttribute(
+            "data-file-browser-design",
+            "sidecar",
+        );
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-style",
+            "sidecar-utility",
+        );
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-placement",
+            "sidecar",
+        );
+        await expect(
+            page.locator(
+                `[data-file-browser-sidecar-layout="${rnaseqGalleryPath}"]`,
+            ),
+        ).toBeVisible();
+        await page.screenshot({
+            fullPage: true,
+            path: sidecarDesignScreenshotPath,
         });
         await expect(
             controls.locator(
@@ -1483,12 +1521,9 @@ test.describe("File Browser single preview layout", () => {
             throw new Error("Missing control-surface metrics");
         }
 
-        expect(metrics.controlsClass).toContain("ledger-controls");
+        expect(metrics.controlsClass).toContain("sidecar-controls");
         expect(metrics.controlsClass).not.toBe(metrics.rowClass);
         expect(metrics.controlsClass).not.toBe(metrics.fileClass);
-        expect(metrics.controlsRect.y).toBeGreaterThan(
-            metrics.buttonRect.y + metrics.buttonRect.height - 8,
-        );
         expect(metrics.controlsRect.x).toBeGreaterThanOrEqual(
             metrics.rowRect.x - 1,
         );
@@ -1499,19 +1534,38 @@ test.describe("File Browser single preview layout", () => {
         await expect(firstFile).toBeVisible();
 
         await page
-            .locator('[data-file-browser-design-option="gallery"]')
+            .locator('[data-file-browser-design-option="matrix"]')
             .click();
         await expect(fileBrowser).toHaveAttribute(
             "data-file-browser-design",
-            "gallery",
+            "matrix",
+        );
+        await expect(
+            page.locator(
+                `[data-file-browser-file-matrix-header="${rnaseqGalleryPath}"]`,
+            ),
+        ).toBeVisible();
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-style",
+            "matrix-table",
+        );
+
+        await page.locator('[data-file-browser-design-option="deck"]').click();
+        await expect(fileBrowser).toHaveAttribute(
+            "data-file-browser-design",
+            "deck",
         );
         await expect(controls).toHaveAttribute(
             "data-file-browser-control-style",
-            "gallery-lanes",
+            "preview-deck",
+        );
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-placement",
+            "preview-dock",
         );
         await page.screenshot({
             fullPage: true,
-            path: galleryDesignScreenshotPath,
+            path: deckDesignScreenshotPath,
         });
         await expect(firstFile).toBeVisible();
     });

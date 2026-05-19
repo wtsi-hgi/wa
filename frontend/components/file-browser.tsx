@@ -340,11 +340,19 @@ type RawDirectoryNode = {
 
 type FileBrowserDesignKey =
     | "classic"
-    | "toolbar"
-    | "rail"
-    | "command"
-    | "ledger"
-    | "gallery";
+    | "inline"
+    | "sidecar"
+    | "ribbon"
+    | "matrix"
+    | "deck";
+
+type FileBrowserControlPlacement =
+    | "classic-row"
+    | "name-area"
+    | "sidecar"
+    | "content-ribbon"
+    | "matrix-header"
+    | "preview-dock";
 
 type FileBrowserDesign = {
     Icon: LucideIcon;
@@ -513,10 +521,10 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "absolute left-0 z-20 mt-2 min-w-56 rounded-lg border border-border bg-[var(--popover)] p-2 shadow-[0_16px_40px_-24px_rgba(28,40,58,0.65)]",
         controlMenuHeadingClass:
             "mb-2 border-b border-border/60 px-1 pb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        controlStyle: "toolbar-strip",
+        controlStyle: "inline-nameplate",
         controlTriggerClass:
             "inline-flex cursor-pointer list-none items-center gap-2 rounded-md border border-border/80 bg-background px-2.5 py-1.5 text-foreground shadow-sm marker:hidden hover:bg-muted/70",
-        description: "Compact toolbar strip",
+        description: "Controls folded into the active folder nameplate",
         directoryButtonClass:
             "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-3 py-2.5 text-left transition hover:bg-muted/60",
         directoryChevronClass:
@@ -551,7 +559,7 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
         fileNameClass: "block truncate text-sm font-semibold text-foreground",
         folderControlsClass:
-            "file-browser-control-surface toolbar-controls flex w-full flex-wrap items-center justify-start gap-1.5 rounded-md border border-border/80 bg-muted/55 px-2 py-2 text-sm shadow-inner",
+            "file-browser-control-surface inline-nameplate-controls flex w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border/80 bg-muted/55 px-2 py-1.5 text-sm shadow-inner",
         gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
         gridPreviewCellClass: "min-w-0",
         gridRowClass:
@@ -561,8 +569,8 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
         headerIconClass: "size-4 text-primary",
         headerTitleClass:
             "text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        id: "toolbar",
-        label: "Toolbar Strip",
+        id: "inline",
+        label: "Inline Nameplate",
         pageBadgeClass:
             "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1.5 text-muted-foreground",
         paginationClass:
@@ -581,7 +589,7 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
             ),
-        shortLabel: "Toolbar",
+        shortLabel: "Inline",
         singlePreviewClass:
             "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
         subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
@@ -610,10 +618,10 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "absolute left-0 z-20 mt-2 min-w-56 rounded-r-xl rounded-l-md border border-l-4 border-border/70 border-l-primary bg-[var(--popover)] p-3 shadow-lg",
         controlMenuHeadingClass:
             "mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary",
-        controlStyle: "segmented-rail",
+        controlStyle: "sidecar-utility",
         controlTriggerClass:
             "inline-flex cursor-pointer list-none items-center gap-2 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden",
-        description: "Segmented rail explorer",
+        description: "Expanded folders get a utility sidecar",
         directoryButtonClass:
             "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-r-lg rounded-l-sm px-3 py-3 text-left transition hover:bg-background/70",
         directoryChevronClass:
@@ -649,7 +657,7 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
         fileNameClass: "block truncate text-base font-medium text-foreground",
         folderControlsClass:
-            "file-browser-control-surface rail-controls flex w-full flex-wrap items-center justify-start gap-2 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-background/80 px-3 py-2 text-sm",
+            "file-browser-control-surface sidecar-controls flex w-full min-w-0 flex-col items-stretch justify-start gap-2 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-background/80 px-3 py-2 text-sm",
         gridFileCellClass: "min-w-0 border-r border-border/60 pr-3",
         gridPreviewCellClass: "min-w-0",
         gridRowClass:
@@ -659,8 +667,8 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
         headerIconClass: "size-4 text-primary",
         headerTitleClass:
             "text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground",
-        id: "rail",
-        label: "Segmented Rail",
+        id: "sidecar",
+        label: "Utility Sidecar",
         pageBadgeClass:
             "inline-flex items-center gap-2 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-background/75 px-2 py-1.5 text-muted-foreground",
         paginationClass:
@@ -679,7 +687,7 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
             ),
-        shortLabel: "Rail",
+        shortLabel: "Sidecar",
         singlePreviewClass:
             "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
         subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-2",
@@ -708,10 +716,10 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "absolute left-0 z-20 mt-2 min-w-60 rounded-2xl border border-primary/25 bg-[var(--popover)] p-2 shadow-[0_28px_90px_-54px_rgba(28,40,58,0.72)]",
         controlMenuHeadingClass:
             "mb-1 rounded-xl bg-muted/50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground",
-        controlStyle: "command-popover",
+        controlStyle: "breadcrumb-ribbon",
         controlTriggerClass:
             "inline-flex cursor-pointer list-none items-center gap-2 rounded-xl border border-primary/25 bg-[var(--popover)] px-3 py-2 text-foreground shadow-[0_10px_30px_-24px_rgba(32,48,76,0.9)] marker:hidden hover:bg-muted/50",
-        description: "Command palette utilities",
+        description: "Breadcrumb ribbon with popover controls",
         directoryButtonClass:
             "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-muted/45",
         directoryChevronClass:
@@ -746,7 +754,7 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
         fileNameClass: "block truncate text-base font-medium text-foreground",
         folderControlsClass:
-            "file-browser-control-surface command-controls flex w-full flex-wrap items-center justify-start gap-2 rounded-2xl border border-primary/25 bg-popover px-3 py-2 text-sm shadow-[0_14px_45px_-38px_rgba(28,40,58,0.7)]",
+            "file-browser-control-surface ribbon-controls flex w-full flex-wrap items-center justify-start gap-2 rounded-2xl border border-primary/25 bg-popover px-3 py-2 text-sm shadow-[0_14px_45px_-38px_rgba(28,40,58,0.7)]",
         gridFileCellClass: "min-w-0 border-r border-border/60 pr-3",
         gridPreviewCellClass: "min-w-0",
         gridRowClass:
@@ -756,8 +764,8 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
         headerIconClass: "size-4 text-primary",
         headerTitleClass:
             "text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground",
-        id: "command",
-        label: "Command Deck",
+        id: "ribbon",
+        label: "Breadcrumb Ribbon",
         pageBadgeClass:
             "inline-flex items-center gap-2 rounded-xl border border-primary/25 bg-background px-2 py-1.5 text-muted-foreground",
         paginationClass:
@@ -776,7 +784,7 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
             ),
-        shortLabel: "Command",
+        shortLabel: "Ribbon",
         singlePreviewClass:
             "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
         subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-2",
@@ -805,10 +813,10 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "absolute left-0 z-20 mt-2 min-w-56 rounded-md border border-border bg-[var(--popover)] p-2 shadow-md",
         controlMenuHeadingClass:
             "mb-1 border-b border-border/70 px-1 pb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        controlStyle: "ledger-density",
+        controlStyle: "matrix-table",
         controlTriggerClass:
             "inline-flex cursor-pointer list-none items-center gap-2 rounded-md border border-border bg-[var(--popover)] px-2.5 py-1.5 text-foreground marker:hidden hover:bg-muted/60",
-        description: "Dense ledger rows",
+        description: "A table-like file matrix with header utilities",
         directoryButtonClass:
             "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-2 py-2 text-left transition hover:bg-muted/40",
         directoryChevronClass:
@@ -841,7 +849,7 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
         fileNameClass: "block truncate text-sm font-medium text-foreground",
         folderControlsClass:
-            "file-browser-control-surface ledger-controls flex w-full flex-wrap items-center justify-start gap-1.5 border-y border-border/70 bg-muted/35 px-2 py-1.5 text-sm",
+            "file-browser-control-surface matrix-controls flex w-full flex-wrap items-center justify-start gap-1.5 border-y border-border/70 bg-muted/35 px-2 py-1.5 text-sm",
         gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
         gridPreviewCellClass: "min-w-0",
         gridRowClass:
@@ -851,8 +859,8 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
         headerIconClass: "size-4 text-primary",
         headerTitleClass:
             "text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground",
-        id: "ledger",
-        label: "Ledger Density",
+        id: "matrix",
+        label: "File Matrix",
         pageBadgeClass:
             "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1.5 text-muted-foreground",
         paginationClass:
@@ -871,7 +879,7 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
             ),
-        shortLabel: "Ledger",
+        shortLabel: "Matrix",
         singlePreviewClass:
             "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
         subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
@@ -899,10 +907,10 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
             "absolute left-0 z-20 mt-2 min-w-56 rounded-xl border border-dashed border-accent/80 bg-[var(--popover)] p-3 shadow-lg",
         controlMenuHeadingClass:
             "mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        controlStyle: "gallery-lanes",
+        controlStyle: "preview-deck",
         controlTriggerClass:
             "inline-flex cursor-pointer list-none items-center gap-2 rounded-lg border border-dashed border-accent/80 bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden hover:bg-accent/20",
-        description: "Gallery-forward lanes",
+        description: "Preview-first deck with a compact file strip",
         directoryButtonClass:
             "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-accent/10",
         directoryChevronClass:
@@ -932,12 +940,12 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
         fileListGridClass: "space-y-3 xl:col-span-2",
         fileListSingleClass: "space-y-3",
         fileListSinglePreviewClass:
-            "grid gap-3 grid-cols-[minmax(18rem,0.78fr)_minmax(0,1.22fr)] items-start",
+            "grid gap-3 grid-cols-[minmax(0,1.22fr)_minmax(16rem,0.78fr)] items-start",
         fileMetaClass:
             "mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
         fileNameClass: "block truncate text-base font-medium text-foreground",
         folderControlsClass:
-            "file-browser-control-surface gallery-controls flex w-full flex-wrap items-center justify-start gap-2 rounded-xl border border-dashed border-accent/80 bg-accent/15 px-3 py-2 text-sm",
+            "file-browser-control-surface deck-controls flex w-full flex-wrap items-center justify-start gap-2 rounded-xl border border-dashed border-accent/80 bg-accent/15 px-3 py-2 text-sm",
         gridFileCellClass: "min-w-0 border-r border-border/60 pr-3",
         gridPreviewCellClass: "min-w-0",
         gridRowClass:
@@ -947,8 +955,8 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
         headerIconClass: "size-4 text-primary",
         headerTitleClass:
             "text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground",
-        id: "gallery",
-        label: "Gallery Lanes",
+        id: "deck",
+        label: "Preview Deck",
         pageBadgeClass:
             "inline-flex items-center gap-2 rounded-lg border border-dashed border-accent/80 bg-background px-2 py-1.5 text-muted-foreground",
         paginationClass:
@@ -967,9 +975,9 @@ const fileBrowserDesigns: FileBrowserDesign[] = [
                     ? "bg-accent text-accent-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-accent/20 hover:text-foreground",
             ),
-        shortLabel: "Gallery",
+        shortLabel: "Deck",
         singlePreviewClass:
-            "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
+            "sticky top-4 z-10 min-w-0 col-start-1 row-start-1 self-start",
         subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-2",
         subdirFilenameClass:
             "truncate text-xs font-semibold text-muted-foreground",
@@ -993,6 +1001,25 @@ const fileBrowserDesignById = new Map(
     fileBrowserDesigns.map((design) => [design.id, design]),
 );
 const defaultFileBrowserDesign = fileBrowserDesigns[0] as FileBrowserDesign;
+
+function controlPlacementFor(
+    designId: FileBrowserDesignKey,
+): FileBrowserControlPlacement {
+    switch (designId) {
+        case "inline":
+            return "name-area";
+        case "sidecar":
+            return "sidecar";
+        case "ribbon":
+            return "content-ribbon";
+        case "matrix":
+            return "matrix-header";
+        case "deck":
+            return "preview-dock";
+        case "classic":
+            return "classic-row";
+    }
+}
 
 const previewHeightCommitKeys = new Set([
     "ArrowDown",
@@ -1648,43 +1675,80 @@ export function FileBrowser({
         file: FileEntry,
         compact = false,
         style?: CSSProperties,
-    ) => (
-        <button
-            type="button"
-            key={file.path}
-            className={cn(
-                activeDesign.fileButtonBaseClass,
-                effectiveSelectedPath === file.path &&
-                    activeDesign.fileButtonSelectedClass,
-                compact && activeDesign.fileButtonCompactClass,
-            )}
-            data-file-path={file.path}
-            onClick={() => {
-                if (selectedPath === undefined) {
-                    setUncontrolledPath(file.path);
-                }
+    ) => {
+        const isMatrix = activeDesign.id === "matrix";
+        const isDeck = activeDesign.id === "deck";
 
-                onSelectFile(file);
-            }}
-            style={style}
-        >
-            <span aria-hidden="true" className={activeDesign.fileGlyphClass}>
-                {file.kind.slice(0, 1)}
-            </span>
-            <span className="min-w-0 flex-1">
-                <span className={activeDesign.fileNameClass}>
-                    {fileName(file.path)}
+        return (
+            <button
+                type="button"
+                key={file.path}
+                className={cn(
+                    activeDesign.fileButtonBaseClass,
+                    isMatrix &&
+                        "grid grid-cols-[auto_minmax(10rem,1fr)_5rem_minmax(9rem,0.75fr)_5rem] items-center gap-3",
+                    isDeck &&
+                        "grid grid-cols-[auto_minmax(0,1fr)] rounded-none border-x-0 border-t-0 bg-transparent",
+                    effectiveSelectedPath === file.path &&
+                        activeDesign.fileButtonSelectedClass,
+                    compact && activeDesign.fileButtonCompactClass,
+                )}
+                data-file-browser-file-layout={
+                    isMatrix ? "matrix-row" : isDeck ? "deck-strip" : "card"
+                }
+                data-file-path={file.path}
+                onClick={() => {
+                    if (selectedPath === undefined) {
+                        setUncontrolledPath(file.path);
+                    }
+
+                    onSelectFile(file);
+                }}
+                style={style}
+            >
+                <span
+                    aria-hidden="true"
+                    className={activeDesign.fileGlyphClass}
+                >
+                    {file.kind.slice(0, 1)}
                 </span>
-                <span className={activeDesign.fileMetaClass}>
-                    <span>{formatBytes(file.size)}</span>
-                    <span>{formatMtime(file.mtime)}</span>
-                    <span className="uppercase tracking-[0.18em]">
-                        {file.kind}
+                {isMatrix ? (
+                    <>
+                        <span
+                            className={cn(
+                                activeDesign.fileNameClass,
+                                "min-w-0",
+                            )}
+                        >
+                            {fileName(file.path)}
+                        </span>
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                            {formatBytes(file.size)}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                            {formatMtime(file.mtime)}
+                        </span>
+                        <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                            {file.kind}
+                        </span>
+                    </>
+                ) : (
+                    <span className="min-w-0 flex-1">
+                        <span className={activeDesign.fileNameClass}>
+                            {fileName(file.path)}
+                        </span>
+                        <span className={activeDesign.fileMetaClass}>
+                            <span>{formatBytes(file.size)}</span>
+                            <span>{formatMtime(file.mtime)}</span>
+                            <span className="uppercase tracking-[0.18em]">
+                                {file.kind}
+                            </span>
+                        </span>
                     </span>
-                </span>
-            </span>
-        </button>
-    );
+                )}
+            </button>
+        );
+    };
 
     const renderPreviewControls = (directoryPath: string) => {
         const showPreviewPaging = previewPageCount > 1;
@@ -1741,6 +1805,7 @@ export function FileBrowser({
         const showPreviewPaging = previewPageCount > 1;
         const subdirPreviewEnabled = subdirPreviewEnabledFor(directoryPath);
         const subdirPreviewKinds = subdirPreviewKindsFor(directoryPath);
+        const controlPlacement = controlPlacementFor(activeDesign.id);
         const hasPreviewModeControls =
             hasSubdirPreviewControls || showGridToggle;
 
@@ -1752,6 +1817,7 @@ export function FileBrowser({
             <div
                 className={activeDesign.folderControlsClass}
                 data-file-browser-folder-controls={directoryPath}
+                data-file-browser-control-placement={controlPlacement}
                 data-file-browser-control-style={activeDesign.controlStyle}
                 data-file-browser-control-surface="true"
                 data-subdir-preview-controls={
@@ -2240,141 +2306,209 @@ export function FileBrowser({
             const showsChildRows = isStructurallyExpanded && hasChildren;
             const isExpanded =
                 hasPreviewControls || showsDirectoryFiles || showsChildRows;
-            const renderDirectoryRow = (groupedContent: ReactNode) => (
-                <div
-                    key={`dir-${node.path}`}
-                    className={cn(
-                        activeDesign.directoryRowBaseClass,
-                        hasPreviewControls || groupedContent
-                            ? activeDesign.directoryRowWithContentClass
-                            : activeDesign.directoryRowCollapsedClass,
-                        isSelected
-                            ? activeDesign.directoryRowSelectedClass
-                            : activeDesign.directoryRowIdleClass,
-                    )}
-                    data-directory-row={node.path}
-                    data-subdir-preview-row={
+            const controlPlacement = controlPlacementFor(activeDesign.id);
+            const folderControlsInNameArea =
+                controlPlacement === "name-area" && Boolean(folderControls);
+            const folderControlsInSidecar =
+                controlPlacement === "sidecar" && Boolean(folderControls);
+            const folderControlsInRibbon =
+                (controlPlacement === "content-ribbon" ||
+                    controlPlacement === "matrix-header" ||
+                    controlPlacement === "preview-dock") &&
+                Boolean(folderControls);
+            const renderDirectoryButton = () => (
+                <button
+                    type="button"
+                    className={activeDesign.directoryButtonClass}
+                    data-depth={depth}
+                    data-directory-expanded={String(isExpanded)}
+                    data-directory-path={node.path}
+                    data-subdir-preview-heading={
                         showInlineSubdirPreview ? node.path : undefined
                     }
-                >
-                    <button
-                        type="button"
-                        className={activeDesign.directoryButtonClass}
-                        data-depth={depth}
-                        data-directory-expanded={String(isExpanded)}
-                        data-directory-path={node.path}
-                        data-subdir-preview-heading={
-                            showInlineSubdirPreview ? node.path : undefined
-                        }
-                        onClick={() => {
-                            const nextIsExpanded = !isExpanded;
+                    onClick={() => {
+                        const nextIsExpanded = !isExpanded;
 
-                            setCollapsedDirectories((current) => {
-                                const next = new Set(current);
+                        setCollapsedDirectories((current) => {
+                            const next = new Set(current);
 
-                                if (nextIsExpanded) {
-                                    next.delete(node.path);
-                                } else {
-                                    next.add(node.path);
+                            if (nextIsExpanded) {
+                                next.delete(node.path);
+                            } else {
+                                next.add(node.path);
+                            }
+
+                            return next;
+                        });
+                        setExpandedDirectories((current) => {
+                            const next = new Set(current);
+
+                            if (isExpanded) {
+                                for (const path of collectTreePaths(node)) {
+                                    next.delete(path);
                                 }
-
-                                return next;
-                            });
-                            setExpandedDirectories((current) => {
-                                const next = new Set(current);
-
-                                if (isExpanded) {
-                                    for (const path of collectTreePaths(node)) {
-                                        next.delete(path);
-                                    }
-                                    for (const path of ancestorPaths(
-                                        node.path,
-                                    )) {
-                                        if (path !== node.path) {
-                                            next.add(path);
-                                        }
-                                    }
-                                } else {
-                                    for (const path of ancestorPaths(
-                                        node.path,
-                                    )) {
+                                for (const path of ancestorPaths(node.path)) {
+                                    if (path !== node.path) {
                                         next.add(path);
                                     }
                                 }
-
-                                return next;
-                            });
-
-                            if (selectedDirectory === undefined) {
-                                setUncontrolledDirectory(node.path);
+                            } else {
+                                for (const path of ancestorPaths(node.path)) {
+                                    next.add(path);
+                                }
                             }
 
-                            onSelectDirectory?.(node.path, {
-                                expanded: nextIsExpanded,
-                                parentPath,
-                            });
-                        }}
-                        style={{ paddingLeft: `${depth * 1.2 + 0.75}rem` }}
-                    >
-                        <span className={activeDesign.directoryChevronClass}>
-                            {hasChildren || hasFiles ? (
-                                isExpanded ? (
-                                    <ChevronDown
-                                        className="size-4"
-                                        aria-hidden="true"
-                                    />
-                                ) : (
-                                    <ChevronRight
-                                        className="size-4"
-                                        aria-hidden="true"
-                                    />
-                                )
+                            return next;
+                        });
+
+                        if (selectedDirectory === undefined) {
+                            setUncontrolledDirectory(node.path);
+                        }
+
+                        onSelectDirectory?.(node.path, {
+                            expanded: nextIsExpanded,
+                            parentPath,
+                        });
+                    }}
+                    style={{ paddingLeft: `${depth * 1.2 + 0.75}rem` }}
+                >
+                    <span className={activeDesign.directoryChevronClass}>
+                        {hasChildren || hasFiles ? (
+                            isExpanded ? (
+                                <ChevronDown
+                                    className="size-4"
+                                    aria-hidden="true"
+                                />
                             ) : (
-                                <span className="size-4" />
+                                <ChevronRight
+                                    className="size-4"
+                                    aria-hidden="true"
+                                />
+                            )
+                        ) : (
+                            <span className="size-4" />
+                        )}
+                    </span>
+                    <span className="min-w-0">
+                        <span className="block truncate text-base font-medium text-foreground">
+                            {visibleDirectoryLabel(
+                                node.path,
+                                node.label,
+                                depth,
                             )}
                         </span>
-                        <span className="min-w-0">
-                            <span className="block truncate text-base font-medium text-foreground">
-                                {visibleDirectoryLabel(
-                                    node.path,
-                                    node.label,
-                                    depth,
-                                )}
+                        <span className={activeDesign.directoryMetaClass}>
+                            <span>
+                                {node.descendantFileCount === 0
+                                    ? hasChildren
+                                        ? "Expand to browse"
+                                        : "Empty folder"
+                                    : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
                             </span>
-                            <span className={activeDesign.directoryMetaClass}>
-                                <span>
-                                    {node.descendantFileCount === 0
-                                        ? hasChildren
-                                            ? "Expand to browse"
-                                            : "Empty folder"
-                                        : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
+                            {node.totalSize > 0 ? (
+                                <span>{formatBytes(node.totalSize)}</span>
+                            ) : null}
+                            {Object.keys(node.typeCounts).length > 0 ? (
+                                <span className="uppercase tracking-[0.18em]">
+                                    {formatTypeSummary(node.typeCounts)}
                                 </span>
-                                {node.totalSize > 0 ? (
-                                    <span>{formatBytes(node.totalSize)}</span>
-                                ) : null}
-                                {Object.keys(node.typeCounts).length > 0 ? (
-                                    <span className="uppercase tracking-[0.18em]">
-                                        {formatTypeSummary(node.typeCounts)}
-                                    </span>
-                                ) : null}
-                            </span>
+                            ) : null}
                         </span>
-                        <span className={activeDesign.directoryTagClass}>
-                            {node.descendantDirectoryCount > 0
-                                ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
-                                : "Folder"}
-                        </span>
-                    </button>
-                    {folderControls}
-                    {showInlineSubdirPreview && inlineSubdirPreviewKinds
-                        ? renderSubdirPreviewStrip(
-                              node,
-                              inlineSubdirPreviewKinds,
-                          )
-                        : null}
-                    {groupedContent}
-                </div>
+                    </span>
+                    <span className={activeDesign.directoryTagClass}>
+                        {node.descendantDirectoryCount > 0
+                            ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
+                            : "Folder"}
+                    </span>
+                </button>
             );
+            const renderDirectoryRow = (groupedContent: ReactNode) => {
+                const ribbonLabel =
+                    controlPlacement === "matrix-header"
+                        ? "Matrix controls"
+                        : controlPlacement === "preview-dock"
+                          ? "Preview controls"
+                          : "Path controls";
+                const groupedContentWithSidecar =
+                    folderControlsInSidecar && groupedContent ? (
+                        <div
+                            className="grid gap-3 lg:grid-cols-[minmax(12rem,0.32fr)_minmax(0,1fr)]"
+                            data-file-browser-sidecar-layout={node.path}
+                        >
+                            <aside
+                                className="min-w-0"
+                                data-file-browser-sidecar-controls={node.path}
+                            >
+                                {folderControls}
+                            </aside>
+                            <div className="min-w-0">{groupedContent}</div>
+                        </div>
+                    ) : (
+                        groupedContent
+                    );
+
+                return (
+                    <div
+                        key={`dir-${node.path}`}
+                        className={cn(
+                            activeDesign.directoryRowBaseClass,
+                            hasPreviewControls || groupedContent
+                                ? activeDesign.directoryRowWithContentClass
+                                : activeDesign.directoryRowCollapsedClass,
+                            isSelected
+                                ? activeDesign.directoryRowSelectedClass
+                                : activeDesign.directoryRowIdleClass,
+                        )}
+                        data-directory-row={node.path}
+                        data-subdir-preview-row={
+                            showInlineSubdirPreview ? node.path : undefined
+                        }
+                    >
+                        {folderControlsInNameArea ? (
+                            <div
+                                className="grid w-full grid-cols-1 items-start gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.74fr)]"
+                                data-directory-heading-with-controls={node.path}
+                            >
+                                {renderDirectoryButton()}
+                                <div
+                                    className="min-w-0 self-center px-2 pb-2 lg:px-0 lg:pb-0 lg:pr-2"
+                                    data-file-browser-name-area-controls={
+                                        node.path
+                                    }
+                                >
+                                    {folderControls}
+                                </div>
+                            </div>
+                        ) : (
+                            renderDirectoryButton()
+                        )}
+                        {!folderControlsInNameArea &&
+                        !folderControlsInSidecar &&
+                        !folderControlsInRibbon
+                            ? folderControls
+                            : null}
+                        {folderControlsInRibbon ? (
+                            <div
+                                className="space-y-2"
+                                data-file-browser-content-ribbon={node.path}
+                            >
+                                <div className="flex flex-wrap items-center gap-2 px-1 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                    <span>{ribbonLabel}</span>
+                                    <span className="h-px min-w-8 flex-1 bg-border/70" />
+                                </div>
+                                {folderControls}
+                            </div>
+                        ) : null}
+                        {showInlineSubdirPreview && inlineSubdirPreviewKinds
+                            ? renderSubdirPreviewStrip(
+                                  node,
+                                  inlineSubdirPreviewKinds,
+                              )
+                            : null}
+                        {groupedContentWithSidecar}
+                    </div>
+                );
+            };
             const contentRows: ReactNode[] = [];
 
             if (
@@ -2401,30 +2535,76 @@ export function FileBrowser({
                                 : undefined
                         }
                     >
+                        {activeDesign.id === "matrix" ? (
+                            <div
+                                className="grid grid-cols-[auto_minmax(10rem,1fr)_5rem_minmax(9rem,0.75fr)_5rem] items-center gap-3 border-b border-border/70 px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
+                                data-file-browser-file-matrix-header={node.path}
+                            >
+                                <span />
+                                <span>Name</span>
+                                <span>Size</span>
+                                <span>Modified</span>
+                                <span>Kind</span>
+                            </div>
+                        ) : null}
                         {previewMode === "single"
                             ? showFilePreviewWidgets
-                                ? [
-                                      ...directoryDisplayedFiles.map((file) =>
-                                          cloneElement(
-                                              renderFileButton(file, true),
-                                              { key: file.path },
+                                ? activeDesign.id === "deck"
+                                    ? [
+                                          <div
+                                              key={`single-preview-${node.path}`}
+                                              className={
+                                                  activeDesign.singlePreviewClass
+                                              }
+                                              data-file-browser-preview="single"
+                                              style={{
+                                                  gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
+                                              }}
+                                          >
+                                              {renderSinglePreview?.(
+                                                  activeFile ?? null,
+                                              ) ?? null}
+                                          </div>,
+                                          ...directoryDisplayedFiles.map(
+                                              (file) =>
+                                                  cloneElement(
+                                                      renderFileButton(
+                                                          file,
+                                                          true,
+                                                          {
+                                                              gridColumn: "2",
+                                                          },
+                                                      ),
+                                                      { key: file.path },
+                                                  ),
                                           ),
-                                      ),
-                                      <div
-                                          key={`single-preview-${node.path}`}
-                                          className={
-                                              activeDesign.singlePreviewClass
-                                          }
-                                          data-file-browser-preview="single"
-                                          style={{
-                                              gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
-                                          }}
-                                      >
-                                          {renderSinglePreview?.(
-                                              activeFile ?? null,
-                                          ) ?? null}
-                                      </div>,
-                                  ]
+                                      ]
+                                    : [
+                                          ...directoryDisplayedFiles.map(
+                                              (file) =>
+                                                  cloneElement(
+                                                      renderFileButton(
+                                                          file,
+                                                          true,
+                                                      ),
+                                                      { key: file.path },
+                                                  ),
+                                          ),
+                                          <div
+                                              key={`single-preview-${node.path}`}
+                                              className={
+                                                  activeDesign.singlePreviewClass
+                                              }
+                                              data-file-browser-preview="single"
+                                              style={{
+                                                  gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
+                                              }}
+                                          >
+                                              {renderSinglePreview?.(
+                                                  activeFile ?? null,
+                                              ) ?? null}
+                                          </div>,
+                                      ]
                                 : directoryDisplayedFiles.map((file) =>
                                       cloneElement(
                                           renderFileButton(file, true),
