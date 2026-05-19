@@ -905,6 +905,139 @@ describe("N1 file browser", () => {
         expect(folderControls?.textContent).toContain("1 preview per row");
     });
 
+    it("provides a temporary selector for the current file browser design plus five alternatives", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        const selector = container.querySelector(
+            '[data-file-browser-design-selector="true"]',
+        );
+        const designButtons = container.querySelectorAll(
+            "[data-file-browser-design-option]",
+        );
+        const browser = container.querySelector("[data-file-browser]");
+
+        expect(selector).toBeTruthy();
+        expect(designButtons).toHaveLength(6);
+        expect(browser?.getAttribute("data-file-browser-design")).toBe(
+            "classic",
+        );
+        expect(
+            Array.from(designButtons).map((button) =>
+                button.getAttribute("data-file-browser-design-option"),
+            ),
+        ).toEqual([
+            "classic",
+            "toolbar",
+            "rail",
+            "command",
+            "ledger",
+            "gallery",
+        ]);
+
+        await click(
+            container.querySelector(
+                '[data-file-browser-design-option="ledger"]',
+            ),
+        );
+
+        expect(browser?.getAttribute("data-file-browser-design")).toBe(
+            "ledger",
+        );
+        expect(
+            container.querySelector(
+                '[data-file-browser-folder-controls="/results"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                'button[data-file-path="/results/plot-001.png"]',
+            ),
+        ).toBeTruthy();
+    });
+
+    it("marks preview controls as a distinct surface from directory and file rows", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plot-001.png", "output"),
+            buildFile("/results/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewHeightChange: vi.fn(),
+                    onPreviewModeChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "single",
+                    renderSinglePreview: (file: FileEntry | null): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": "single-preview" },
+                            file?.path ?? "none",
+                        ),
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        const folderControls = container.querySelector(
+            '[data-file-browser-folder-controls="/results"]',
+        ) as HTMLElement | null;
+        const directoryRow = container.querySelector(
+            '[data-directory-row="/results"]',
+        ) as HTMLElement | null;
+        const fileButton = container.querySelector(
+            'button[data-file-path="/results/plot-001.png"]',
+        ) as HTMLElement | null;
+
+        expect(folderControls).toBeTruthy();
+        expect(directoryRow).toBeTruthy();
+        expect(fileButton).toBeTruthy();
+        expect(folderControls?.dataset.fileBrowserControlSurface).toBe("true");
+        expect(folderControls?.dataset.fileBrowserControlStyle).toBeTruthy();
+        expect(folderControls?.className).not.toBe(directoryRow?.className);
+        expect(folderControls?.className).not.toBe(fileButton?.className);
+        expect(folderControls?.className).toMatch(
+            /(?:control|toolbar|rail|command|ledger|gallery)/,
+        );
+        expect(
+            folderControls?.querySelector(
+                '[data-file-browser-control-trigger="preview-modes"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            folderControls?.querySelector(
+                '[data-file-browser-control-trigger="file-types"]',
+            ),
+        ).toBeTruthy();
+    });
+
     it("keeps preview height drag updates local until the slider is committed", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const handlePreviewHeightChange = vi.fn();

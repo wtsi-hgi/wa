@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdirSync } from "node:fs";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -407,6 +408,24 @@ test.describe("File Browser single preview layout", () => {
         process.cwd(),
         "test-results",
         "close-subdir-parent-reselected.png",
+    );
+    const screenshotEvidenceDir = path.resolve(
+        process.cwd(),
+        "..",
+        ".tmp",
+        "agent",
+    );
+    const designSelectorScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-design-selector-classic.png",
+    );
+    const ledgerDesignScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-design-ledger.png",
+    );
+    const galleryDesignScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-design-gallery.png",
     );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -1346,5 +1365,154 @@ test.describe("File Browser single preview layout", () => {
         await openFileTypes(controls);
         await expectOpaqueBackground(fileTypesSummary);
         await expectOpaqueBackground(fileTypesMenu);
+    });
+
+    test("switches temporary file browser designs while controls remain a separate surface", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+        const selector = page.locator(
+            '[data-file-browser-design-selector="true"]',
+        );
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+        const directoryRow = page.locator(
+            `[data-directory-row="${rnaseqGalleryPath}"]`,
+        );
+        const directoryButton = directoryRow
+            .locator(`[data-directory-path="${rnaseqGalleryPath}"]`)
+            .first();
+        const firstFile = page
+            .locator(
+                `[data-file-path="${path.join(rnaseqGalleryPath, "plot-001.png")}"]`,
+            )
+            .first();
+
+        await expect(selector).toBeVisible();
+        await expect(
+            page.locator("[data-file-browser-design-option]"),
+        ).toHaveCount(6);
+        await expect(fileBrowser).toHaveAttribute(
+            "data-file-browser-design",
+            "classic",
+        );
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: designSelectorScreenshotPath,
+        });
+
+        await page
+            .locator('[data-file-browser-design-option="ledger"]')
+            .click();
+
+        await expect(fileBrowser).toHaveAttribute(
+            "data-file-browser-design",
+            "ledger",
+        );
+        await expect(controls).toBeVisible();
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-surface",
+            "true",
+        );
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-style",
+            "ledger-density",
+        );
+        await page.screenshot({
+            fullPage: true,
+            path: ledgerDesignScreenshotPath,
+        });
+        await expect(
+            controls.locator(
+                '[data-file-browser-control-trigger="preview-modes"]',
+            ),
+        ).toBeVisible();
+        await expect(
+            controls.locator(
+                '[data-file-browser-control-trigger="file-types"]',
+            ),
+        ).toBeVisible();
+
+        const metrics = await page.evaluate((directoryPath) => {
+            function bySelector(selectorValue: string) {
+                return document.querySelector(selectorValue);
+            }
+
+            function rectMetrics(element: Element | null) {
+                if (!(element instanceof HTMLElement)) {
+                    return null;
+                }
+
+                const rect = element.getBoundingClientRect();
+
+                return {
+                    height: rect.height,
+                    width: rect.width,
+                    x: rect.x,
+                    y: rect.y,
+                };
+            }
+
+            const row = bySelector(
+                `[data-directory-row="${CSS.escape(directoryPath)}"]`,
+            );
+            const button = bySelector(
+                `[data-directory-path="${CSS.escape(directoryPath)}"]`,
+            );
+            const controlsElement = bySelector(
+                `[data-file-browser-folder-controls="${CSS.escape(directoryPath)}"]`,
+            );
+            const fileButton = bySelector("[data-file-path]");
+
+            return {
+                buttonRect: rectMetrics(button),
+                controlsClass: controlsElement?.className ?? "",
+                controlsRect: rectMetrics(controlsElement),
+                fileClass: fileButton?.className ?? "",
+                rowClass: row?.className ?? "",
+                rowRect: rectMetrics(row),
+            };
+        }, rnaseqGalleryPath);
+
+        if (!metrics.buttonRect || !metrics.controlsRect || !metrics.rowRect) {
+            throw new Error("Missing control-surface metrics");
+        }
+
+        expect(metrics.controlsClass).toContain("ledger-controls");
+        expect(metrics.controlsClass).not.toBe(metrics.rowClass);
+        expect(metrics.controlsClass).not.toBe(metrics.fileClass);
+        expect(metrics.controlsRect.y).toBeGreaterThan(
+            metrics.buttonRect.y + metrics.buttonRect.height - 8,
+        );
+        expect(metrics.controlsRect.x).toBeGreaterThanOrEqual(
+            metrics.rowRect.x - 1,
+        );
+        expect(
+            metrics.controlsRect.x + metrics.controlsRect.width,
+        ).toBeLessThanOrEqual(metrics.rowRect.x + metrics.rowRect.width + 1);
+
+        await expect(firstFile).toBeVisible();
+
+        await page
+            .locator('[data-file-browser-design-option="gallery"]')
+            .click();
+        await expect(fileBrowser).toHaveAttribute(
+            "data-file-browser-design",
+            "gallery",
+        );
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-style",
+            "gallery-lanes",
+        );
+        await page.screenshot({
+            fullPage: true,
+            path: galleryDesignScreenshotPath,
+        });
+        await expect(firstFile).toBeVisible();
     });
 });
