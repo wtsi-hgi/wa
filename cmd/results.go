@@ -144,6 +144,7 @@ type resultsServeSyncClient interface {
 	Sync(context.Context) ([]mlwh.SyncReport, error)
 	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
 	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
 	Close() error
 }
@@ -198,8 +199,16 @@ func (r *resultsServeMLWHRuntime) ExpandSearchValues(ctx context.Context, kind m
 	return r.client.ExpandSearchValues(ctx, kind, canonical)
 }
 
+func (r *resultsServeMLWHRuntime) ExpandSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
+	return r.client.ExpandSampleSearchValues(ctx, kind, canonical)
+}
+
 func (r *resultsServeMLWHRuntime) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
 	return r.client.ResolveStudy(ctx, raw)
+}
+
+func (r *resultsServeMLWHRuntime) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	return r.client.ResolveSampleName(ctx, raw)
 }
 
 func (r *resultsServeMLWHRuntime) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {

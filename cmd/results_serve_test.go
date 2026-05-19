@@ -98,6 +98,10 @@ func (f *fakeResultsServeSyncClient) ExpandSearchValues(context.Context, mlwh.Id
 	return nil, nil, nil, nil
 }
 
+func (f *fakeResultsServeSyncClient) ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error) {
+	return nil, nil
+}
+
 func (f *fakeResultsServeSyncClient) LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error) {
 	return nil, nil
 }
@@ -358,6 +362,42 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(tickerCreated, convey.ShouldEqual, 0)
 		convey.So(fakeClient.SyncCalls(), convey.ShouldEqual, 0)
 	})
+
+	convey.Convey("Bug 260519-2: Given results serve with a sample-only MLWH cache, seqmeta_supplier_name search uses the runtime sample-only expansion", t, func() {
+		resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
+		addrCh := make(chan string, 1)
+		listenFunc = resultsServeListenFuncForTest(addrCh)
+		dbPath := filepath.Join(t.TempDir(), "results.sqlite")
+		mlwhCachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
+		seedResultsServeDirectSampleSearchFixture(t, dbPath, mlwhCachePath)
+
+		cmd := NewRootCommand()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"results", "serve", "--port", "0", "--db", dbPath, "--mlwh-cache", mlwhCachePath})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- cmd.ExecuteContext(ctx)
+		}()
+
+		addr := <-addrCh
+		response, err := http.Get("http://" + addr + "/results?seqmeta_supplier_name=Hek_R1")
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = response.Body.Close() }()
+		convey.So(response.StatusCode, convey.ShouldEqual, http.StatusOK)
+
+		var payload []results.ResultSet
+		convey.So(json.NewDecoder(response.Body).Decode(&payload), convey.ShouldBeNil)
+		convey.So(payload, convey.ShouldHaveLength, 1)
+		convey.So(payload[0].RunKey, convey.ShouldEqual, "direct-supplier")
+
+		cancel()
+		convey.So(<-errCh, convey.ShouldBeNil)
+	})
 }
 
 func resultsServeListenFuncForTest(addrCh chan<- string) func(string, string) (net.Listener, error) {
@@ -388,6 +428,71 @@ func postResultsRegistrationForTest(endpoint string, registration *results.Regis
 	}
 
 	return nil, err
+}
+
+func seedResultsServeDirectSampleSearchFixture(t *testing.T, dbPath, mlwhCachePath string) {
+	t.Helper()
+
+	db, err := openResultsDB(dbPath)
+	if err != nil {
+		t.Fatalf("open results DB: %v", err)
+	}
+	store, err := results.NewStore(db)
+	if err != nil {
+		t.Fatalf("create results store: %v", err)
+	}
+	_, err = store.Upsert(context.Background(), &results.Registration{
+		PipelineIdentifier: "pipeline-direct-supplier",
+		RunKey:             "direct-supplier",
+		Requester:          "alice",
+		Operator:           "bob",
+		Command:            "nextflow run",
+		PipelineName:       "nf",
+		PipelineVersion:    "1.0.0",
+		OutputDirectory:    t.TempDir(),
+		Metadata: map[string]string{
+			results.SeqmetaSampleNameKey: "7607STDY14643771",
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed results store: %v", err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatalf("close results store: %v", err)
+	}
+
+	cache, err := mlwh.OpenCache(context.Background(), mlwh.CacheConfig{Path: mlwhCachePath})
+	if err != nil {
+		t.Fatalf("open mlwh cache: %v", err)
+	}
+	defer func() {
+		if err := cache.Close(); err != nil {
+			t.Fatalf("close mlwh cache: %v", err)
+		}
+	}()
+
+	_, err = cache.DB().Exec(
+		`INSERT INTO sample_mirror(
+			id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+			sanger_sample_id, supplier_name, accession_number, donor_id,
+			taxon_id, common_name, description, last_updated
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		1, "SQSCP", "101", "sample-uuid-1", "7607STDY14643771",
+		"7607STDY14643771", "Hek_R1", "", "donor-1",
+		9606, "human", "", "2026-05-19T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("seed mlwh sample: %v", err)
+	}
+
+	_, err = cache.DB().Exec(
+		`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped)
+		 VALUES (?, ?, ?, ?, ?)`,
+		"sample", "2026-05-19T00:00:00Z", "2026-05-19T00:00:00Z", nil, 0,
+	)
+	if err != nil {
+		t.Fatalf("seed mlwh sample sync state: %v", err)
+	}
 }
 
 func executeServeCommandUntilListeningForTest(t *testing.T, args []string) error {

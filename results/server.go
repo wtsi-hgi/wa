@@ -147,6 +147,10 @@ type SearchResolver interface {
 	Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error)
 }
 
+type candidateSampleSearchResolver interface {
+	ExpandCandidateSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string, candidates []string) ([]string, error)
+}
+
 type studySearchCanonicalizer interface {
 	CanonicalStudySearchValue(context.Context, string) (string, error)
 }
@@ -751,6 +755,52 @@ func expandSampleSearchValues(ctx context.Context, resolver SearchResolver, requ
 	return resolvedSamples, resolvedRuns, resolvedLanes, nil
 }
 
+func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResolver, candidates []string, requests []sampleSearchExpansion) ([]string, []string, []string, bool, error) {
+	candidateResolver, ok := resolver.(candidateSampleSearchResolver)
+	if !ok || len(candidates) == 0 {
+		return nil, nil, nil, false, nil
+	}
+
+	resolvedSamples := []string{}
+	remaining := []sampleSearchExpansion{}
+
+	for _, request := range requests {
+		if !directSampleSearchKind(request.kind) {
+			remaining = append(remaining, request)
+
+			continue
+		}
+
+		for _, value := range request.values {
+			samples, err := candidateResolver.ExpandCandidateSampleSearchValues(ctx, request.kind, value, candidates)
+			if err != nil {
+				if errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
+					return nil, nil, nil, false, nil
+				}
+
+				return nil, nil, nil, false, err
+			}
+
+			resolvedSamples = mergeSearchValues(resolvedSamples, samples)
+		}
+	}
+
+	if len(remaining) == len(requests) {
+		return nil, nil, nil, false, nil
+	}
+
+	if len(remaining) == 0 {
+		return resolvedSamples, []string{}, []string{}, true, nil
+	}
+
+	samples, runs, lanes, err := expandSampleSearchValues(ctx, resolver, remaining)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+
+	return mergeSearchValues(resolvedSamples, samples), runs, lanes, true, nil
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -969,7 +1019,27 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		!hasLibraryValues &&
 		len(directRunValues) == 0 &&
 		s.resolver != nil {
-		samples, runs, lanes, err := expandSampleSearchValues(r.Context(), s.resolver, sampleExpansionRequests)
+		candidateSampleNames, err := s.store.DistinctMetadataValues(r.Context(), combinedSampleMetaKeys)
+		if err != nil {
+			writeDomainError(w, err)
+
+			return
+		}
+
+		samples, runs, lanes, expanded, err := expandCandidateSampleSearchValues(
+			r.Context(),
+			s.resolver,
+			candidateSampleNames,
+			sampleExpansionRequests,
+		)
+		if err != nil {
+			writeDomainError(w, err)
+
+			return
+		}
+		if !expanded {
+			samples, runs, lanes, err = expandSampleSearchValues(r.Context(), s.resolver, sampleExpansionRequests)
+		}
 		if err != nil {
 			writeDomainError(w, err)
 

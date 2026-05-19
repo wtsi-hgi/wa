@@ -40,8 +40,16 @@ type mlwhSearchExpander interface {
 	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
 }
 
+type mlwhSampleSearchExpander interface {
+	ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error)
+}
+
 type mlwhStudyResolver interface {
 	ResolveStudy(context.Context, string) (mlwh.Match, error)
+}
+
+type mlwhSampleNameResolver interface {
+	ResolveSampleName(context.Context, string) (mlwh.Match, error)
 }
 
 type mlwhSearchResolvedValues struct {
@@ -122,6 +130,18 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 		return cached.samples, cached.runs, cached.lanes, nil
 	}
 
+	if directSampleSearchKind(kind) {
+		samples, err := r.expandDirectSampleSearchValues(ctx, kind, trimmed)
+		if err == nil {
+			r.cachePut(cacheKey, samples, nil, nil)
+
+			return samples, nil, nil, nil
+		}
+		if !errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
+			return nil, nil, nil, err
+		}
+	}
+
 	samples, runs, lanes, err := r.client.ExpandSearchValues(ctx, kind, trimmed)
 	if err != nil {
 		switch {
@@ -138,6 +158,101 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 	r.cachePut(cacheKey, samples, runs, lanes)
 
 	return samples, runs, lanes, nil
+}
+
+func (r *MLWHSearchResolver) expandDirectSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
+	expander, ok := r.client.(mlwhSampleSearchExpander)
+	if !ok {
+		return nil, mlwh.ErrUnsupportedIdentifier
+	}
+
+	samples, err := expander.ExpandSampleSearchValues(ctx, kind, canonical)
+	if err != nil {
+		switch {
+		case errors.Is(err, mlwh.ErrNotFound):
+			return []string{}, nil
+		case errors.Is(err, mlwh.ErrUnsupportedIdentifier):
+			return nil, err
+		default:
+			return nil, fmt.Errorf("%w: expand sample metadata: %w", ErrSeqmetaFailed, err)
+		}
+	}
+
+	return samples, nil
+}
+
+// ExpandCandidateSampleSearchValues resolves a direct sample metadata value by
+// checking only sample names already present in registered results.
+func (r *MLWHSearchResolver) ExpandCandidateSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string, candidates []string) ([]string, error) {
+	if !directSampleSearchKind(kind) {
+		return nil, mlwh.ErrUnsupportedIdentifier
+	}
+
+	resolver, ok := r.client.(mlwhSampleNameResolver)
+	if !ok {
+		return nil, mlwh.ErrUnsupportedIdentifier
+	}
+
+	target := strings.TrimSpace(canonical)
+	if target == "" {
+		return []string{}, nil
+	}
+
+	matches := []string{}
+	seen := map[string]struct{}{}
+	for _, candidate := range nonEmptySearchValues(candidates) {
+		match, err := resolver.ResolveSampleName(ctx, candidate)
+		if err != nil {
+			if errors.Is(err, mlwh.ErrNotFound) {
+				continue
+			}
+			if errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
+				return nil, err
+			}
+
+			return nil, fmt.Errorf("%w: resolve candidate sample metadata: %w", ErrSeqmetaFailed, err)
+		}
+		if !sampleMatchHasDirectMetadataValue(match.Sample, kind, target) {
+			continue
+		}
+
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+
+		seen[candidate] = struct{}{}
+		matches = append(matches, candidate)
+	}
+
+	return matches, nil
+}
+
+func sampleMatchHasDirectMetadataValue(sample *mlwh.Sample, kind mlwh.IdentifierKind, target string) bool {
+	if sample == nil {
+		return false
+	}
+
+	switch kind {
+	case mlwh.KindSampleLimsID:
+		return strings.EqualFold(strings.TrimSpace(sample.IDSampleLims), target)
+	case mlwh.KindSangerSampleID:
+		return strings.EqualFold(strings.TrimSpace(sample.SangerSampleID), target)
+	case mlwh.KindSupplierName:
+		return strings.EqualFold(strings.TrimSpace(sample.SupplierName), target)
+	case mlwh.KindSampleAccession:
+		return strings.EqualFold(strings.TrimSpace(sample.AccessionNumber), target)
+	default:
+		return false
+	}
+}
+
+func directSampleSearchKind(kind mlwh.IdentifierKind) bool {
+	switch kind {
+	case mlwh.KindSampleLimsID, mlwh.KindSangerSampleID, mlwh.KindSupplierName, mlwh.KindSampleAccession:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *MLWHSearchResolver) cacheGet(key string) (mlwhSearchResolvedValues, bool) {

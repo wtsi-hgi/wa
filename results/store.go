@@ -973,6 +973,51 @@ func (s *Store) SearchMulti(ctx context.Context, params MultiSearchParams) ([]Re
 	return querySearchResults(ctx, conn, filters, args)
 }
 
+// DistinctMetadataValues returns sorted distinct metadata values for any of the supplied keys.
+func (s *Store) DistinctMetadataValues(ctx context.Context, keys []string) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
+	}
+
+	keys = nonEmptySearchValues(keys)
+	if len(keys) == 0 {
+		return []string{}, nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(keys)), ", ")
+	args := make([]any, 0, len(keys))
+	for _, key := range keys {
+		args = append(args, key)
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		fmt.Sprintf(`SELECT DISTINCT value FROM result_metadata WHERE meta_key IN (%s) ORDER BY value`, placeholders),
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query distinct metadata values: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err = rows.Scan(&value); err != nil {
+			return nil, fmt.Errorf("scan distinct metadata value: %w", err)
+		}
+
+		values = append(values, value)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate distinct metadata values: %w", err)
+	}
+
+	return values, nil
+}
+
 // Stats returns aggregate counts and recent result sets for dashboard loading.
 func (s *Store) Stats(ctx context.Context, recent, days int) (*StatsResult, error) {
 	if s == nil || s.db == nil {

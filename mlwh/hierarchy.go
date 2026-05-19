@@ -769,6 +769,49 @@ func (c *Client) samplesForSampleSearchIdentifier(ctx context.Context, kind Iden
 	return nil, ErrNotFound
 }
 
+// ExpandSampleSearchValues expands direct sample metadata to canonical sample names only.
+func (c *Client) ExpandSampleSearchValues(ctx context.Context, kind IdentifierKind, canonical string) ([]string, error) {
+	query := sampleSearchIdentifierQuery(kind)
+	if query == "" {
+		return nil, ErrUnsupportedIdentifier
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return nil, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	samples, err := querySamples(ctx, db, query, "query sample direct metadata search", canonical, MaxSamplesPerHop, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(samples) == 0 {
+		if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
+			return nil, err
+		}
+
+		return nil, ErrNotFound
+	}
+
+	return uniqueSampleNames(samples), nil
+}
+
+func uniqueSampleNames(samples []Sample) []string {
+	names := make([]string, 0, len(samples))
+	seen := make(map[string]struct{}, len(samples))
+
+	for _, sample := range samples {
+		name := strings.TrimSpace(sample.Name)
+		if name == "" {
+			continue
+		}
+
+		names = appendUniqueString(names, seen, name)
+	}
+
+	return names
+}
+
 func (c *Client) samplesForLibraryIdentifier(ctx context.Context, query, identifier string, limit, offset int) ([]Sample, error) {
 	pairs, err := c.sampleStudyPairsForLibraryIdentifier(ctx, query, identifier, limit, offset)
 	if err != nil {
