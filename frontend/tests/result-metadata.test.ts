@@ -80,6 +80,9 @@ describe("ResultMetadata", () => {
             createElement(ResultMetadata, {
                 metadata: {
                     output_uri: longValue,
+                    owner: "alice",
+                    project: "cancer",
+                    hidden_key: "hidden value",
                 },
                 variant: "integrated",
             }),

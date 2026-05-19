@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-test.describe("bug 2 result ID copy chip", () => {
-    test("renders a pointer cursor for the clickable copy affordance", async ({
+test.describe("result detail title identity", () => {
+    test("keeps the old copy chip out of the result detail title", async ({
         page,
     }) => {
         await page.goto("/");
@@ -23,9 +23,6 @@ test.describe("bug 2 result ID copy chip", () => {
             page.getByRole("heading", { level: 1, name: "nf-core/rnaseq" }),
         ).toBeVisible({ timeout: 30000 });
 
-        const copyButton = page.locator("[data-result-id-copy]").first();
-
-        await expect(copyButton).toBeVisible({ timeout: 30000 });
-        await expect(copyButton).toHaveCSS("cursor", "pointer");
+        await expect(page.locator("[data-result-id-copy]")).toHaveCount(0);
     });
 });

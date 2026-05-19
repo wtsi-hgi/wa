@@ -3,7 +3,6 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 
 import { fetchFiles, fetchResult } from "@/app/(results)/actions";
-import { ResultIdCopyChip } from "@/app/(results)/results/[id]/result-id-copy-chip";
 import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
 import { ResultRegistrationSummary } from "@/components/result-registration-summary";
@@ -125,6 +124,7 @@ function detailFields(
     fileSummary: ReturnType<typeof summarizeFiles>,
 ) {
     return [
+        { label: "Result ID", value: result.id, mono: true, wide: true },
         { label: "Pipeline version", value: result.pipeline_version },
         {
             label: "Pipeline identifier",
@@ -224,14 +224,28 @@ export async function ResultDetailPageContent({
                             </Link>
                         </div>
 
-                        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-baseline lg:justify-between">
                             <h1 className="min-w-0 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
                                 {result.pipeline_name}
                                 <span className="ml-3 align-baseline font-mono text-base font-medium text-muted-foreground sm:text-lg">
                                     {formatRegistrationUnique(result.run_key)}
                                 </span>
                             </h1>
-                            <ResultIdCopyChip resultId={result.id} />
+                            <div
+                                className="flex shrink-0 items-center gap-2 text-sm font-medium text-muted-foreground lg:justify-end"
+                                data-title-file-summary="true"
+                            >
+                                <span>
+                                    {formatFileCount(fileSummary.total.count)}
+                                </span>
+                                <span
+                                    className="h-1 w-1 rounded-full bg-muted-foreground/50"
+                                    aria-hidden="true"
+                                />
+                                <span className="font-mono">
+                                    {formatBytes(fileSummary.total.size)}
+                                </span>
+                            </div>
                         </div>
                     </div>
 

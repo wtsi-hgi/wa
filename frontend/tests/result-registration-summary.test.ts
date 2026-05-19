@@ -13,6 +13,12 @@ describe("ResultRegistrationSummary", () => {
         const { container } = render(
             createElement(ResultRegistrationSummary, {
                 fields: [
+                    {
+                        label: "Result ID",
+                        value: "result-2026-04-16-operator-1-pipeline-run-abcdef1234567890",
+                        mono: true,
+                        wide: true,
+                    },
                     { label: "Pipeline version", value: "3.18.0" },
                     {
                         label: "Pipeline identifier",
@@ -51,6 +57,12 @@ describe("ResultRegistrationSummary", () => {
         const compactLayout = container.querySelector(
             '[data-registration-layout="integrated"]',
         );
+        const header = container.querySelector(
+            '[data-registration-header="true"]',
+        );
+        const fieldStrip = container.querySelector(
+            '[data-registration-field-strip="true"]',
+        );
         const compactFields = Array.from(
             container.querySelectorAll<HTMLElement>(
                 "[data-registration-field]",
@@ -64,6 +76,10 @@ describe("ResultRegistrationSummary", () => {
         const detailsTrigger = screen.getByText("All details");
 
         expect(compactLayout).toBeTruthy();
+        expect(header?.textContent).toContain("Run details");
+        expect(header?.textContent).toContain("All details");
+        expect(header?.textContent).not.toContain("Last updated");
+        expect(fieldStrip?.textContent).toContain("Last updated");
         expect(compactFields).toHaveLength(3);
         expect(wideFields).toHaveLength(0);
         expect(
@@ -74,7 +90,7 @@ describe("ResultRegistrationSummary", () => {
 
         for (const field of compactFields) {
             expect(field.className).toContain("rounded-full");
-            expect(field.className).toContain("min-h-8");
+            expect(field.className).toContain("min-h-7");
         }
 
         expect(detailsTrigger).toBeTruthy();
@@ -90,8 +106,20 @@ describe("ResultRegistrationSummary", () => {
         await waitFor(() => {
             expect(
                 document.querySelectorAll("[data-registration-detail-field]"),
-            ).toHaveLength(11);
+            ).toHaveLength(12);
         });
+        expect(
+            document.querySelector(
+                '[data-registration-detail-field="Result ID"]',
+            )?.textContent,
+        ).toContain(
+            "result-2026-04-16-operator-1-pipeline-run-abcdef1234567890",
+        );
+        expect(
+            document.querySelector(
+                '[data-registration-detail-field="Result ID"] dd',
+            )?.className,
+        ).toContain("break-all");
         expect(
             document.querySelector('[data-registration-detail-field="Unique"]')
                 ?.textContent,

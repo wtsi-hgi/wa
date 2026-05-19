@@ -49,41 +49,22 @@ export function ResultRegistrationSummary({
 
     if (variant === "integrated") {
         return (
-            <div className="min-w-0" data-registration-summary="integrated">
+            <div
+                className="min-w-0 space-y-2"
+                data-registration-summary="integrated"
+            >
                 <div
-                    className="flex flex-wrap items-center gap-2"
+                    className="flex items-center justify-between gap-2"
                     data-registration-layout="integrated"
+                    data-registration-header="true"
                 >
-                    <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Run details
-                    </span>
-
-                    <dl className="contents">
-                        {integratedFields.map((field) => (
-                            <div
-                                key={field.label}
-                                className="inline-flex min-h-8 max-w-full items-center gap-2 rounded-full border border-border/65 bg-background/70 px-3 py-1 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
-                                data-registration-field={field.label}
-                            >
-                                <dt className="shrink-0 font-medium text-muted-foreground">
-                                    {field.label}
-                                </dt>
-                                <dd
-                                    className={
-                                        field.mono
-                                            ? "min-w-0 truncate font-mono text-foreground"
-                                            : "min-w-0 truncate text-foreground"
-                                    }
-                                >
-                                    {field.value}
-                                </dd>
-                            </div>
-                        ))}
-                    </dl>
+                    </p>
 
                     <Popover>
                         <PopoverTrigger
-                            className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-border/70 bg-card/70 px-3 py-1 text-xs font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                            className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-border/70 bg-card/70 px-2.5 py-0.5 text-xs font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                             data-registration-details-trigger="true"
                         >
                             <Info className="h-3.5 w-3.5" aria-hidden="true" />
@@ -136,6 +117,32 @@ export function ResultRegistrationSummary({
                         </PopoverContent>
                     </Popover>
                 </div>
+
+                <dl
+                    className="flex max-h-20 flex-wrap gap-1.5 overflow-auto pr-1"
+                    data-registration-field-strip="true"
+                >
+                    {integratedFields.map((field) => (
+                        <div
+                            key={field.label}
+                            className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border border-border/65 bg-background/70 px-2 py-0.5 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
+                            data-registration-field={field.label}
+                        >
+                            <dt className="shrink-0 font-medium text-muted-foreground">
+                                {field.label}
+                            </dt>
+                            <dd
+                                className={
+                                    field.mono
+                                        ? "min-w-0 truncate font-mono text-foreground"
+                                        : "min-w-0 truncate text-foreground"
+                                }
+                            >
+                                {field.value}
+                            </dd>
+                        </div>
+                    ))}
+                </dl>
             </div>
         );
     }

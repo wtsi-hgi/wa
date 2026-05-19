@@ -334,6 +334,9 @@ describe("O1 result detail hydration", () => {
                 "[data-metadata-row]",
             ) ?? [],
         ).map((row) => row.getAttribute("data-metadata-row"));
+        const titleFileSummary = detailSummary?.querySelector<HTMLElement>(
+            "[data-title-file-summary]",
+        );
 
         expect(detailSummary).not.toBeNull();
         expect(
@@ -356,13 +359,18 @@ describe("O1 result detail hydration", () => {
         expect(metadataKeys).toEqual(["seqmeta_studyid"]);
         expect(detailSummary?.textContent).toContain("1001");
         expect(detailSummary?.textContent).not.toContain("runid=1001");
+        expect(titleFileSummary?.textContent).toContain("1 file");
+        expect(titleFileSummary?.textContent).toContain("512 B");
         expect(detailSummary?.textContent).toContain("Study");
         expect(detailSummary?.textContent).not.toContain("libraryexon");
         expect(detailSummary?.textContent).toContain("6568");
         expect(detailSummary?.textContent).not.toContain("study-alpha");
-        expect(container.querySelector("[data-result-id-copy]")).not.toBeNull();
+        expect(container.querySelector("[data-result-id-copy]")).toBeNull();
         expect(container.querySelector("h1")?.textContent).toContain(
             "nf-core/rnaseq",
+        );
+        expect(container.querySelector("h1")?.textContent).not.toContain(
+            result.id,
         );
         expect(
             container.querySelector('[data-registration-layout="compact"]'),

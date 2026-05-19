@@ -124,6 +124,7 @@ export function ResultMetadata({
 }: ResultMetadataProps) {
     const entries = Object.entries(metadata);
     const visibleEntries = visibleIntegratedEntries(entries);
+    const hasHiddenEntries = entries.length > visibleEntries.length;
 
     if (variant === "integrated") {
         return (
@@ -135,7 +136,7 @@ export function ResultMetadata({
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Metadata
                     </p>
-                    {entries.length > 0 ? (
+                    {hasHiddenEntries ? (
                         <Popover>
                             <PopoverTrigger
                                 className="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-border/70 bg-card/70 px-2.5 py-0.5 text-xs font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -220,7 +221,7 @@ export function ResultMetadata({
                                 </dd>
                             </div>
                         ))}
-                        {entries.length > visibleEntries.length ? (
+                        {hasHiddenEntries ? (
                             <div className="inline-flex min-h-7 items-center rounded-full border border-border/65 bg-card/70 px-2.5 py-0.5 text-xs text-muted-foreground">
                                 +{entries.length - visibleEntries.length}
                             </div>
