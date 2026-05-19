@@ -34,6 +34,7 @@ type SeqmetaDetailField = {
     key: string;
     label: string;
     searchKey?: string;
+    searchValue?: string;
     value: string;
     group: "direct" | "related";
 };
@@ -262,7 +263,7 @@ function detailFieldHref(field: SeqmetaDetailField): string | null {
         return null;
     }
 
-    return `/?${new URLSearchParams({ [field.searchKey]: field.value }).toString()}`;
+    return `/?${new URLSearchParams({ [field.searchKey]: field.searchValue ?? field.value }).toString()}`;
 }
 
 function directDetailSearchKey(
@@ -282,14 +283,17 @@ function directDetailSearchKey(
     }
 
     if (isSampleMetadataKey(metadataKey)) {
+        if (displayFieldKey === "seqmeta_sample_name") {
+            return displayFieldKey;
+        }
+
         if (
-            displayFieldKey === "seqmeta_sample_name" ||
             displayFieldKey === "seqmeta_sanger_sample_id" ||
             displayFieldKey === "seqmeta_supplier_name" ||
             displayFieldKey === "seqmeta_id_sample_lims" ||
             displayFieldKey === "seqmeta_accession_number"
         ) {
-            return displayFieldKey;
+            return "sample";
         }
     }
 
@@ -860,6 +864,15 @@ function sampleCopyStateKey(sample: EnrichmentSample, index?: number): string {
     return copiedStateKey("seqmeta_sample_name", identity);
 }
 
+function sampleFilterValue(sample: EnrichmentSample): string | undefined {
+    return (
+        asString(sample.sample_name) ??
+        asString(sample.sanger_id) ??
+        asString(sample.id_sample_lims) ??
+        undefined
+    );
+}
+
 function humanizeMissingHop(missing: MissingHop): string {
     if (missing.hop === "samples" && missing.reason === "samples_truncated") {
         return "Showing first 1000 samples";
@@ -989,6 +1002,9 @@ function buildDetailFields(
             const sampleRecord =
                 enrichment.graph.sample ??
                 enrichment.graph.sample_detail?.sample;
+            const sampleSearchValue = sampleRecord
+                ? sampleFilterValue(sampleRecord)
+                : undefined;
 
             appendDetailField(
                 fields,
@@ -996,6 +1012,8 @@ function buildDetailFields(
                     ? {
                           key: "seqmeta_sample_name",
                           label: "Sample name",
+                          searchKey: "sample",
+                          searchValue: sampleSearchValue,
                           value: sampleRecord.sample_name,
                           group: sampleMetadata ? "direct" : "related",
                       }
@@ -1010,6 +1028,7 @@ function buildDetailFields(
                           key: "seqmeta_sanger_sample_id",
                           label: "Sanger sample ID",
                           searchKey: "sample",
+                          searchValue: sampleSearchValue,
                           value: sampleRecord.sanger_id,
                           group: sampleMetadata ? "direct" : "related",
                       }
@@ -1023,6 +1042,8 @@ function buildDetailFields(
                     ? {
                           key: "seqmeta_supplier_name",
                           label: "Sample supplier name",
+                          searchKey: "sample",
+                          searchValue: sampleSearchValue,
                           value: sampleRecord.supplier_name,
                           group: sampleMetadata ? "direct" : "related",
                       }
@@ -1037,6 +1058,7 @@ function buildDetailFields(
                           key: "seqmeta_id_sample_lims",
                           label: "Sample LIMS ID",
                           searchKey: "sample",
+                          searchValue: sampleSearchValue,
                           value: sampleRecord.id_sample_lims,
                           group: sampleMetadata ? "direct" : "related",
                       }
@@ -1050,6 +1072,8 @@ function buildDetailFields(
                     ? {
                           key: "seqmeta_accession_number",
                           label: "Sample accession",
+                          searchKey: "sample",
+                          searchValue: sampleSearchValue,
                           value: sampleRecord.accession_number,
                           group: sampleMetadata ? "direct" : "related",
                       }
