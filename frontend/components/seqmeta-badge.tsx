@@ -293,7 +293,7 @@ function directDetailSearchKey(
             displayFieldKey === "seqmeta_id_sample_lims" ||
             displayFieldKey === "seqmeta_accession_number"
         ) {
-            return "sample";
+            return displayFieldKey;
         }
     }
 
@@ -930,8 +930,12 @@ function appendDetailField(
                 ? (directDetailSearchKey(metadataKey ?? "", field.key) ??
                   field.searchKey)
                 : field.searchKey;
+        const searchValue =
+            field.group === "direct" && searchKey !== field.searchKey
+                ? undefined
+                : field.searchValue;
 
-        fields.push({ ...field, searchKey, value });
+        fields.push({ ...field, searchKey, searchValue, value });
     }
 }
 

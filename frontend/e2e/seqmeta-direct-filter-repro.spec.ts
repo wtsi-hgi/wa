@@ -61,7 +61,9 @@ async function registerDirectMetadataReproResult(): Promise<ResultSet> {
                 seqmeta_librarytype: "Custom",
                 seqmeta_libraryid: "71046409",
                 seqmeta_runid: "48522",
+                seqmeta_id_sample_lims: "SMP7607-0000",
                 seqmeta_sampleid: "7607STDY14643771",
+                seqmeta_supplier_name: "Supplier Sample 7607",
                 seqmeta_studyid: "7607",
             },
         }),
@@ -239,6 +241,19 @@ test("direct seqmeta sample metadata filter links return the originating result 
         expect(titleEvidence.resultRows).toBeGreaterThanOrEqual(1);
         expect(directSupplierEvidence.resultRows).toBeGreaterThanOrEqual(1);
         expect(directLimsEvidence.resultRows).toBeGreaterThanOrEqual(1);
+        expect(new URL(titleEvidence.finalUrl).searchParams.get("sample")).toBe(
+            "7607STDY14643771",
+        );
+        expect(
+            new URL(directSupplierEvidence.finalUrl).searchParams.get(
+                "seqmeta_supplier_name",
+            ),
+        ).toBe("Supplier Sample 7607");
+        expect(
+            new URL(directLimsEvidence.finalUrl).searchParams.get(
+                "seqmeta_id_sample_lims",
+            ),
+        ).toBe("SMP7607-0000");
         expect(directSupplierEvidence.renderingSampleCount).toBe(0);
         expect(directLimsEvidence.renderingSampleCount).toBe(0);
         expect(

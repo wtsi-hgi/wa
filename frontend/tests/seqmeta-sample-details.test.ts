@@ -147,11 +147,17 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                 "WTSI_TEST_SAMPLE",
             ),
         ).toBeTruthy();
+        const sangerSampleIDRow = directMetadataSection?.querySelector(
+            '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
+        );
+        expect(sangerSampleIDRow).toBeTruthy();
         expect(
-            directMetadataSection?.querySelector(
-                '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
-            ),
-        ).toBeTruthy();
+            sangerSampleIDRow
+                ?.querySelector(
+                    '[aria-label="Send seqmeta_sanger_sample_id to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?seqmeta_sanger_sample_id=WTSI_TEST_SAMPLE");
         expect(
             screen
                 .getByTestId("seqmeta-title-actions")
@@ -179,7 +185,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                     '[aria-label="Send seqmeta_id_sample_lims to search filter"]',
                 )
                 ?.getAttribute("href"),
-        ).toBe("/?sample=Test_Sample_Name");
+        ).toBe("/?seqmeta_id_sample_lims=12345");
 
         // Should show supplier_name from the MLWH sample record
         const supplierRow = directMetadataSection?.querySelector(
@@ -200,7 +206,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                     '[aria-label="Send seqmeta_supplier_name to search filter"]',
                 )
                 ?.getAttribute("href"),
-        ).toBe("/?sample=Test_Sample_Name");
+        ).toBe("/?seqmeta_supplier_name=Supplier_Sample_Name");
 
         // Should show sample accession
         expect(
