@@ -35,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 	_ "modernc.org/sqlite"
 )
@@ -119,6 +120,36 @@ func TestNewStore(t *testing.T) {
 
 		convey.So(queryPlan, convey.ShouldContainSubstring, "USING COVERING INDEX idx_result_metadata_meta_key_value")
 		convey.So(queryPlan, convey.ShouldNotContainSubstring, "SCAN result_metadata")
+	})
+
+	convey.Convey("C1.5: Given a MySQL results schema, when the SQLite index statement is unsupported, then NewStore can still create or tolerate the metadata value index", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		mock.ExpectExec("CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value").
+			WillReturnError(errors.New("Error 1064 (42000): syntax error near 'IF NOT EXISTS'"))
+		mock.ExpectExec("CREATE INDEX idx_result_metadata_meta_key_value").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		convey.So(ensureResultMetadataMetaKeyValueIndex(db), convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+
+		db, mock, err = sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		mock.ExpectExec("CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value").
+			WillReturnError(errors.New("Error 1064 (42000): syntax error near 'IF NOT EXISTS'"))
+		mock.ExpectExec("CREATE INDEX idx_result_metadata_meta_key_value").
+			WillReturnError(errors.New("Error 1061 (42000): Duplicate key name 'idx_result_metadata_meta_key_value'"))
+
+		convey.So(ensureResultMetadataMetaKeyValueIndex(db), convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
 }
 
