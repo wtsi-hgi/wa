@@ -1599,13 +1599,48 @@ test.describe("File Browser single preview layout", () => {
                 const subfolderCount = bySelector(
                     `[data-directory-subfolder-count="${CSS.escape(countPath)}"]`,
                 );
+                const directoryTypeSummary = bySelector(
+                    "[data-directory-type-summary]",
+                );
+                const directoryTypeSummaryMeta = directoryTypeSummary?.closest(
+                    "[data-directory-meta]",
+                );
+                const fileKind = fileButton?.querySelector("[data-file-kind]");
+
+                function textStyle(element: Element | undefined) {
+                    if (!(element instanceof HTMLElement)) {
+                        return null;
+                    }
+
+                    const styles = window.getComputedStyle(element);
+
+                    return {
+                        fontFamily: styles.fontFamily,
+                        letterSpacing: styles.letterSpacing,
+                        textTransform: styles.textTransform,
+                    };
+                }
 
                 return {
                     buttonRect: rectMetrics(button),
                     controlsClass: controlsElement?.className ?? "",
                     controlsRect: rectMetrics(controlsElement),
                     directoryMetaRect: rectMetrics(directoryMeta),
+                    directoryMetaSeparatorCount:
+                        directoryTypeSummaryMeta?.querySelectorAll(
+                            "[data-file-browser-meta-separator]",
+                        ).length ?? 0,
+                    directoryTypeSummaryText:
+                        directoryTypeSummary?.textContent?.trim() ?? "",
+                    directoryTypeSummaryTextStyle:
+                        textStyle(directoryTypeSummary),
                     fileClass: fileButton?.className ?? "",
+                    fileKindSeparatorCount:
+                        fileButton?.querySelectorAll(
+                            "[data-file-browser-meta-separator]",
+                        ).length ?? 0,
+                    fileKindText: fileKind?.textContent?.trim() ?? "",
+                    fileKindTextStyle: textStyle(fileKind),
                     fileCountRect: rectMetrics(fileCount),
                     rowClass: row?.className ?? "",
                     rowRect: rectMetrics(row),
@@ -1641,6 +1676,18 @@ test.describe("File Browser single preview layout", () => {
         expect(
             Math.abs(metrics.fileCountRect.y - metrics.subfolderCountRect.y),
         ).toBeLessThan(4);
+        expect(metrics.directoryTypeSummaryText).toMatch(/^\d+ [A-Z0-9]+/);
+        expect(metrics.directoryTypeSummaryTextStyle).toMatchObject({
+            letterSpacing: "normal",
+            textTransform: "none",
+        });
+        expect(metrics.fileKindText).toBe("output");
+        expect(metrics.fileKindTextStyle).toMatchObject({
+            letterSpacing: "normal",
+            textTransform: "none",
+        });
+        expect(metrics.directoryMetaSeparatorCount).toBeGreaterThanOrEqual(3);
+        expect(metrics.fileKindSeparatorCount).toBeGreaterThanOrEqual(2);
 
         await expect(firstFile).toBeVisible();
         await expect(

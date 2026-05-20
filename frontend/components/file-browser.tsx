@@ -403,7 +403,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     directoryContentClass: "space-y-2 px-2 pb-2 pt-0",
     directoryGroupClass: "space-y-2",
     directoryMetaClass:
-        "mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground",
+        "mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground",
     directoryRowBaseClass:
         "grid w-full grid-cols-1 gap-2 rounded-lg border transition",
     directoryRowCollapsedClass: "p-0",
@@ -425,7 +425,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     fileListSinglePreviewClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
     fileMetaClass:
-        "mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
+        "mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground",
     fileNameClass: "block truncate text-sm font-semibold text-foreground",
     folderControlsClass:
         "file-browser-control-surface inline-nameplate-controls flex w-fit max-w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border/80 bg-muted/55 px-2 py-1 text-sm shadow-inner",
@@ -769,8 +769,64 @@ function formatTypeSummary(typeCounts: Record<string, number>): string {
             (left, right) =>
                 right[1] - left[1] || left[0].localeCompare(right[0]),
         )
-        .map(([type, count]) => `${count} ${type}`)
+        .map(([type, count]) => `${count} ${type.toUpperCase()}`)
         .join(", ");
+}
+
+function renderMetaItems(items: ReactNode[]): ReactNode[] {
+    return items.flatMap((item, index) => {
+        const keyedItem = <span key={`item-${index}`}>{item}</span>;
+
+        if (index === 0) {
+            return [keyedItem];
+        }
+
+        return [
+            <span
+                aria-hidden="true"
+                className="text-muted-foreground/60"
+                data-file-browser-meta-separator="true"
+                key={`separator-${index}`}
+            >
+                ·
+            </span>,
+            keyedItem,
+        ];
+    });
+}
+
+function renderDirectoryMetaItems(
+    node: DirectoryTreeNode,
+    hasChildren: boolean,
+): ReactNode[] {
+    const items: ReactNode[] = [
+        <span data-directory-file-count={node.path} key="file-count">
+            {node.descendantFileCount === 0
+                ? hasChildren
+                    ? "Expand to browse"
+                    : "Empty folder"
+                : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
+        </span>,
+        <span data-directory-subfolder-count={node.path} key="subfolder-count">
+            {node.descendantDirectoryCount > 0
+                ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
+                : "Folder"}
+        </span>,
+    ];
+
+    if (node.totalSize > 0) {
+        items.push(<span key="total-size">{formatBytes(node.totalSize)}</span>);
+    }
+
+    if (Object.keys(node.typeCounts).length > 0) {
+        items.push(
+            <span data-directory-type-summary={node.path} key="type-summary">
+                {formatTypeSummary(node.typeCounts)}
+            </span>,
+        );
+    }
+
+    return renderMetaItems(items);
 }
 
 export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
@@ -1089,11 +1145,13 @@ export function FileBrowser({
                         {fileName(file.path)}
                     </span>
                     <span className={activeDesign.fileMetaClass}>
-                        <span>{formatBytes(file.size)}</span>
-                        <span>{formatMtime(file.mtime)}</span>
-                        <span className="uppercase tracking-[0.18em]">
-                            {file.kind}
-                        </span>
+                        {renderMetaItems([
+                            formatBytes(file.size),
+                            formatMtime(file.mtime),
+                            <span data-file-kind={file.path} key="file-kind">
+                                {file.kind}
+                            </span>,
+                        ])}
                     </span>
                 </span>
             </button>
@@ -1765,26 +1823,7 @@ export function FileBrowser({
                             className={activeDesign.directoryMetaClass}
                             data-directory-meta={node.path}
                         >
-                            <span data-directory-file-count={node.path}>
-                                {node.descendantFileCount === 0
-                                    ? hasChildren
-                                        ? "Expand to browse"
-                                        : "Empty folder"
-                                    : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
-                            </span>
-                            <span data-directory-subfolder-count={node.path}>
-                                {node.descendantDirectoryCount > 0
-                                    ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
-                                    : "Folder"}
-                            </span>
-                            {node.totalSize > 0 ? (
-                                <span>{formatBytes(node.totalSize)}</span>
-                            ) : null}
-                            {Object.keys(node.typeCounts).length > 0 ? (
-                                <span className="uppercase tracking-[0.18em]">
-                                    {formatTypeSummary(node.typeCounts)}
-                                </span>
-                            ) : null}
+                            {renderDirectoryMetaItems(node, hasChildren)}
                         </span>
                     </span>
                 </button>
