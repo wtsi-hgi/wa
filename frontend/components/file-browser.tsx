@@ -433,8 +433,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass:
-        "flex flex-wrap items-center gap-3 border-b border-border/70 pb-4",
+    headerClass: "flex flex-wrap items-center gap-3 pb-4",
     headerIconClass: "size-4 text-primary",
     headerTitleClass:
         "text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground",

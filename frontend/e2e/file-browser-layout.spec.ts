@@ -423,6 +423,10 @@ test.describe("File Browser single preview layout", () => {
         screenshotEvidenceDir,
         "file-browser-inline-compact-postfix.png",
     );
+    const titleNoRuleScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-title-no-rule-postfix.png",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -454,6 +458,52 @@ test.describe("File Browser single preview layout", () => {
         "lane-1",
         "lane-1-notes.tsv",
     );
+
+    test("does not draw a divider under the file browser title row", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+        const header = fileBrowser.locator('[data-file-browser-header="true"]');
+        await expect(header).toBeVisible();
+
+        const headerBorder = await header.evaluate((element) => {
+            const styles = window.getComputedStyle(element);
+            const width = Number.parseFloat(styles.borderBottomWidth);
+
+            function alphaFromColor(color: string) {
+                const slashAlpha = color.match(/\/[\s]*([0-9]*\.?[0-9]+)\)$/);
+
+                if (slashAlpha) {
+                    return Number.parseFloat(slashAlpha[1] ?? "1");
+                }
+
+                const rgbaAlpha = color.match(
+                    /^rgba?\([^,]+,[^,]+,[^,]+(?:,[\s]*([0-9]*\.?[0-9]+))?\)$/,
+                );
+
+                if (rgbaAlpha) {
+                    return rgbaAlpha[1] ? Number.parseFloat(rgbaAlpha[1]) : 1;
+                }
+
+                return color === "transparent" ? 0 : 1;
+            }
+
+            return {
+                alpha: alphaFromColor(styles.borderBottomColor),
+                width,
+            };
+        });
+
+        expect(headerBorder.width * headerBorder.alpha).toBe(0);
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: titleNoRuleScreenshotPath,
+        });
+    });
 
     test("positions single preview to the right of file metadata at 1024px viewport", async ({
         page,
