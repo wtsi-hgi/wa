@@ -207,11 +207,11 @@ vi.mock("@/components/file-browser", () => ({
             createElement(
                 "button",
                 {
-                    key: "preview-height-320",
+                    key: "resize-preview-320",
                     onClick: () => onPreviewHeightChange?.(320),
                     type: "button",
                 },
-                "preview-height-320",
+                "resize-preview-320",
             ),
             createElement(
                 "button",
@@ -577,7 +577,7 @@ describe("O1 result detail file integration", () => {
         expect(initialThumbnailUrl).toBeTruthy();
 
         fireEvent.click(
-            screen.getByRole("button", { name: "preview-height-320" }),
+            screen.getByRole("button", { name: "resize-preview-320" }),
         );
 
         await waitFor(() => {
@@ -731,7 +731,7 @@ describe("O1 result detail file integration", () => {
         });
     });
 
-    it("does not refetch the inline preview when the height slider changes", async () => {
+    it("does not refetch the inline preview when the resized height changes", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
 
@@ -761,10 +761,10 @@ describe("O1 result detail file integration", () => {
         const fetchCallsAfterInitialLoad = fetchMock.mock.calls.length;
 
         fireEvent.click(
-            screen.getByRole("button", { name: "preview-height-320" }),
+            screen.getByRole("button", { name: "resize-preview-320" }),
         );
 
-        // Height-slider changes must not trigger a fresh data request because
+        // Preview height changes must not trigger a fresh data request because
         // the backend already returned enough lines for the maximum possible
         // preview height.
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -772,7 +772,7 @@ describe("O1 result detail file integration", () => {
         expect(fetchMock.mock.calls.length).toBe(fetchCallsAfterInitialLoad);
     });
 
-    it("restores preview height per selected directory instead of sharing one global value", async () => {
+    it("keeps resized preview height global across selected directories", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
         const fileBrowser = () =>
@@ -808,7 +808,7 @@ describe("O1 result detail file integration", () => {
         });
 
         fireEvent.click(
-            screen.getByRole("button", { name: "preview-height-320" }),
+            screen.getByRole("button", { name: "resize-preview-320" }),
         );
 
         await waitFor(() => {
@@ -825,7 +825,7 @@ describe("O1 result detail file integration", () => {
             );
         });
 
-        expect(fileBrowser()?.getAttribute("data-preview-height")).toBe("220");
+        expect(fileBrowser()?.getAttribute("data-preview-height")).toBe("320");
 
         fireEvent.click(screen.getByRole("button", { name: "/tmp/results/a" }));
 
@@ -874,7 +874,7 @@ describe("O1 result detail file integration", () => {
         );
 
         fireEvent.click(
-            screen.getByRole("button", { name: "preview-height-320" }),
+            screen.getByRole("button", { name: "resize-preview-320" }),
         );
 
         // Preview should re-render once due to maxHeight prop change

@@ -3,8 +3,13 @@
 import {
     cloneElement,
     type CSSProperties,
+    type HTMLAttributes,
+    type KeyboardEvent as ReactKeyboardEvent,
     memo,
+    type MouseEvent as ReactMouseEvent,
     type ReactNode,
+    type TouchEvent as ReactTouchEvent,
+    useCallback,
     useEffect,
     useMemo,
     useRef,
@@ -112,6 +117,8 @@ const subdirPreviewKindGroups: ReadonlyArray<{
 ];
 
 const SUBDIR_PREVIEW_PAGE_SIZE = 20;
+const PREVIEW_HEIGHT_MIN = 120;
+const PREVIEW_HEIGHT_MAX = 420;
 const compressedExtensions = new Set(["gz"]);
 const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(
     subdirPreviewKindGroups.map((group) => group.id),
@@ -303,6 +310,17 @@ function fileMatchesPreviewKinds(
     return kind !== null && kinds.has(kind);
 }
 
+function clampPreviewHeight(value: number): number {
+    if (!Number.isFinite(value)) {
+        return PREVIEW_HEIGHT_MIN;
+    }
+
+    return Math.min(
+        PREVIEW_HEIGHT_MAX,
+        Math.max(PREVIEW_HEIGHT_MIN, Math.round(value)),
+    );
+}
+
 type FileBrowserProps = {
     files: FileEntry[];
     onPreviewHeightChange?: (value: number) => void;
@@ -370,7 +388,6 @@ type FileBrowserDesign = {
     id: "inline";
     pageBadgeClass: string;
     paginationClass: string;
-    previewHeightControlClass: string;
     sectionClass: string;
     singlePreviewClass: string;
     subdirCardBaseClass: string;
@@ -442,8 +459,6 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1 text-muted-foreground",
     paginationClass:
         "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
-    previewHeightControlClass:
-        "inline-flex min-h-10 w-44 shrink-0 flex-col items-stretch gap-0.5 rounded-md border border-border/70 bg-background px-2 py-0.5 text-foreground",
     sectionClass:
         "rounded-xl border border-border/75 bg-card p-3 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]",
     singlePreviewClass:
@@ -467,89 +482,206 @@ const activeFileBrowserDesign: FileBrowserDesign = {
 
 const inlineControlPlacement: FileBrowserControlPlacement = "name-area";
 
-const previewHeightCommitKeys = new Set([
-    "ArrowDown",
-    "ArrowLeft",
-    "ArrowRight",
-    "ArrowUp",
-    "End",
-    "Home",
-    "PageDown",
-    "PageUp",
-]);
-
-const PreviewHeightControl = memo(function PreviewHeightControl({
-    ariaLabel = "Preview height",
+const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
+    children,
     className,
-    label = "Preview height",
-    onCommit,
-    value,
+    height,
+    kind,
+    onHeightChange,
+    path,
+    style,
+    ...attributes
 }: {
-    ariaLabel?: string;
+    children: ReactNode;
     className?: string;
-    label?: string;
-    onCommit?: (value: number) => void;
-    value: number;
-}) {
-    const [draftValue, setDraftValue] = useState(value);
-    const committedValueRef = useRef(value);
+    height: number;
+    kind: "grid" | "single" | "subfolder";
+    onHeightChange: (value: number) => void;
+    path?: string;
+    style?: CSSProperties;
+} & Omit<HTMLAttributes<HTMLDivElement>, "children" | "className" | "style">) {
+    const frameRef = useRef<HTMLDivElement | null>(null);
+    const committedHeightRef = useRef(height);
 
-    const commitDraftValue = () => {
-        if (draftValue === committedValueRef.current) {
+    useEffect(() => {
+        committedHeightRef.current = height;
+    }, [height]);
+
+    const commitHeight = useCallback(
+        (value: number) => {
+            const nextHeight = clampPreviewHeight(value);
+
+            if (nextHeight === committedHeightRef.current) {
+                return;
+            }
+
+            committedHeightRef.current = nextHeight;
+            onHeightChange(nextHeight);
+        },
+        [onHeightChange],
+    );
+
+    useEffect(() => {
+        const element = frameRef.current;
+
+        if (!element || typeof ResizeObserver === "undefined") {
             return;
         }
 
-        committedValueRef.current = draftValue;
-        onCommit?.(draftValue);
+        const observer = new ResizeObserver((entries) => {
+            const observedHeight = entries[0]?.contentRect.height;
+
+            if (observedHeight === undefined) {
+                return;
+            }
+
+            commitHeight(observedHeight);
+        });
+
+        observer.observe(element);
+
+        return () => {
+            observer.disconnect();
+        };
+    }, [commitHeight]);
+
+    const beginMouseResize = (
+        event: ReactMouseEvent<HTMLButtonElement>,
+    ): void => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startY = event.clientY;
+        const startHeight =
+            frameRef.current?.getBoundingClientRect().height || height;
+        const handleMove = (moveEvent: MouseEvent) => {
+            commitHeight(startHeight + moveEvent.clientY - startY);
+        };
+        const handleEnd = () => {
+            document.removeEventListener("mousemove", handleMove);
+            document.removeEventListener("mouseup", handleEnd);
+        };
+
+        document.addEventListener("mousemove", handleMove);
+        document.addEventListener("mouseup", handleEnd);
+    };
+
+    const beginTouchResize = (
+        event: ReactTouchEvent<HTMLButtonElement>,
+    ): void => {
+        const touch = event.touches[0];
+
+        if (!touch) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startY = touch.clientY;
+        const startHeight =
+            frameRef.current?.getBoundingClientRect().height || height;
+        const handleMove = (moveEvent: TouchEvent) => {
+            const nextTouch = moveEvent.touches[0];
+
+            if (!nextTouch) {
+                return;
+            }
+
+            commitHeight(startHeight + nextTouch.clientY - startY);
+        };
+        const handleEnd = () => {
+            document.removeEventListener("touchmove", handleMove);
+            document.removeEventListener("touchend", handleEnd);
+            document.removeEventListener("touchcancel", handleEnd);
+        };
+
+        document.addEventListener("touchmove", handleMove, {
+            passive: false,
+        });
+        document.addEventListener("touchend", handleEnd);
+        document.addEventListener("touchcancel", handleEnd);
+    };
+
+    const handleKeyDown = (
+        event: ReactKeyboardEvent<HTMLButtonElement>,
+    ): void => {
+        const keyDeltas: Record<string, number> = {
+            ArrowDown: 10,
+            ArrowUp: -10,
+            PageDown: 40,
+            PageUp: -40,
+        };
+
+        if (event.key === "Home") {
+            event.preventDefault();
+            commitHeight(PREVIEW_HEIGHT_MIN);
+            return;
+        }
+
+        if (event.key === "End") {
+            event.preventDefault();
+            commitHeight(PREVIEW_HEIGHT_MAX);
+            return;
+        }
+
+        const delta = keyDeltas[event.key];
+
+        if (delta === undefined) {
+            return;
+        }
+
+        event.preventDefault();
+        commitHeight(height + delta);
     };
 
     return (
-        <label
+        <div
+            {...attributes}
+            ref={frameRef}
             className={cn(
-                "inline-flex min-w-0 items-center gap-2 rounded-md border border-border/70 bg-background/75 px-2 py-1 text-foreground",
+                "relative min-w-0 resize-y",
                 className,
+                "overflow-auto",
             )}
-            data-file-browser-control-trigger="preview-height"
+            data-preview-resize-frame={path ?? kind}
+            data-preview-resize-kind={kind}
+            style={{
+                ...style,
+                boxSizing: "border-box",
+                height: `${height}px`,
+                maxHeight: `${PREVIEW_HEIGHT_MAX}px`,
+                minHeight: `${PREVIEW_HEIGHT_MIN}px`,
+            }}
         >
-            <span className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-sm leading-tight">
-                <Eye className="size-4 text-primary" aria-hidden="true" />
+            {children}
+            <button
+                aria-label="Resize preview height"
+                aria-orientation="vertical"
+                aria-valuemax={PREVIEW_HEIGHT_MAX}
+                aria-valuemin={PREVIEW_HEIGHT_MIN}
+                aria-valuenow={height}
+                className={cn(
+                    "absolute right-1 bottom-1 z-20 flex size-5 cursor-ns-resize items-end justify-end rounded-sm border border-border/70 bg-background/85 p-0.5 text-muted-foreground shadow-sm",
+                    "focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none",
+                )}
+                data-preview-resize-handle={path ?? kind}
+                onKeyDown={handleKeyDown}
+                onMouseDown={beginMouseResize}
+                onTouchStart={beginTouchResize}
+                role="separator"
+                type="button"
+            >
                 <span
-                    className="whitespace-nowrap font-medium"
-                    data-file-browser-control-label="preview-height"
-                >
-                    {label}
-                </span>
-            </span>
-            <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
-                <input
-                    aria-label={ariaLabel}
-                    className="h-1 min-w-8 flex-1 accent-primary"
-                    max={420}
-                    min={120}
-                    onBlur={commitDraftValue}
-                    onChange={() => undefined}
-                    onInput={(event) => {
-                        setDraftValue(Number(event.currentTarget.value));
+                    aria-hidden="true"
+                    className="block size-3 opacity-80"
+                    style={{
+                        backgroundImage:
+                            "repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4px)",
                     }}
-                    onKeyUp={(event) => {
-                        if (previewHeightCommitKeys.has(event.key)) {
-                            commitDraftValue();
-                        }
-                    }}
-                    onMouseUp={commitDraftValue}
-                    onTouchEnd={commitDraftValue}
-                    step={20}
-                    type="range"
-                    value={draftValue}
                 />
-                <span
-                    className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground tabular-nums"
-                    data-file-browser-control-current="preview-height"
-                >
-                    {draftValue}px
-                </span>
-            </span>
-        </label>
+            </button>
+        </div>
     );
 });
 
@@ -936,9 +1068,9 @@ export function FileBrowser({
     const openPreviewModeDisclosureRef = useRef<HTMLDetailsElement | null>(
         null,
     );
-    const effectivePreviewHeight = onPreviewHeightChange
-        ? previewHeight
-        : uncontrolledPreviewHeight;
+    const effectivePreviewHeight = clampPreviewHeight(
+        onPreviewHeightChange ? previewHeight : uncontrolledPreviewHeight,
+    );
     const subdirPreviewEnabledFor = (directoryPath: string): boolean =>
         subdirPreviewEnabledByPath[directoryPath] ?? false;
     const subdirPreviewKindsFor = (
@@ -1099,14 +1231,19 @@ export function FileBrowser({
         };
     }, [openPreviewModeDisclosurePath]);
 
-    const handlePreviewHeightCommit = (value: number) => {
-        if (onPreviewHeightChange) {
-            onPreviewHeightChange(value);
-            return;
-        }
+    const handlePreviewHeightCommit = useCallback(
+        (value: number) => {
+            const nextHeight = clampPreviewHeight(value);
 
-        setUncontrolledPreviewHeight(value);
-    };
+            if (onPreviewHeightChange) {
+                onPreviewHeightChange(nextHeight);
+                return;
+            }
+
+            setUncontrolledPreviewHeight(nextHeight);
+        },
+        [onPreviewHeightChange],
+    );
     const renderFileButton = (
         file: FileEntry,
         compact = false,
@@ -1499,12 +1636,6 @@ export function FileBrowser({
                     </>
                 ) : null}
 
-                <PreviewHeightControl
-                    className={activeDesign.previewHeightControlClass}
-                    onCommit={handlePreviewHeightCommit}
-                    value={effectivePreviewHeight}
-                />
-
                 {showPreviewPaging && hasFilePreviewControls ? (
                     <>
                         <div className={activeDesign.pageBadgeClass}>
@@ -1640,7 +1771,7 @@ export function FileBrowser({
                                     >
                                         {fileName(file.path)}
                                     </p>
-                                    <div
+                                    <ResizablePreviewFrame
                                         className={cn(
                                             activeDesign.subdirFrameBaseClass,
                                             isImageSubdirPreview
@@ -1648,12 +1779,18 @@ export function FileBrowser({
                                                 : activeDesign.subdirTextFrameClass,
                                         )}
                                         data-subdir-preview-frame={file.path}
+                                        height={effectivePreviewHeight}
+                                        kind="subfolder"
+                                        onHeightChange={
+                                            handlePreviewHeightCommit
+                                        }
+                                        path={file.path}
                                         style={{
                                             height: `var(--subdir-preview-height)`,
                                         }}
                                     >
                                         {renderGridPreview?.(file) ?? null}
-                                    </div>
+                                    </ResizablePreviewFrame>
                                 </div>
                             );
                         })(),
@@ -1920,12 +2057,18 @@ export function FileBrowser({
                                               { key: file.path },
                                           ),
                                       ),
-                                      <div
+                                      <ResizablePreviewFrame
                                           key={`single-preview-${node.path}`}
                                           className={
                                               activeDesign.singlePreviewClass
                                           }
                                           data-file-browser-preview="single"
+                                          height={effectivePreviewHeight}
+                                          kind="single"
+                                          onHeightChange={
+                                              handlePreviewHeightCommit
+                                          }
+                                          path={activeFile?.path ?? node.path}
                                           style={{
                                               gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
                                           }}
@@ -1933,7 +2076,7 @@ export function FileBrowser({
                                           {renderSinglePreview?.(
                                               activeFile ?? null,
                                           ) ?? null}
-                                      </div>,
+                                      </ResizablePreviewFrame>,
                                   ]
                                 : directoryDisplayedFiles.map((file) =>
                                       cloneElement(
@@ -1964,11 +2107,22 @@ export function FileBrowser({
                                               {fileMatchesPreviewKinds(
                                                   file,
                                                   selectedPreviewKinds,
-                                              )
-                                                  ? (renderGridPreview?.(
-                                                        file,
-                                                    ) ?? null)
-                                                  : null}
+                                              ) ? (
+                                                  <ResizablePreviewFrame
+                                                      height={
+                                                          effectivePreviewHeight
+                                                      }
+                                                      kind="grid"
+                                                      onHeightChange={
+                                                          handlePreviewHeightCommit
+                                                      }
+                                                      path={file.path}
+                                                  >
+                                                      {renderGridPreview?.(
+                                                          file,
+                                                      ) ?? null}
+                                                  </ResizablePreviewFrame>
+                                              ) : null}
                                           </div>
                                       </div>
                                   ) : (
@@ -2024,6 +2178,7 @@ export function FileBrowser({
             className={activeDesign.sectionClass}
             data-file-browser="true"
             data-file-browser-design={activeDesign.id}
+            data-preview-height={effectivePreviewHeight}
         >
             <div
                 className={activeDesign.headerClass}

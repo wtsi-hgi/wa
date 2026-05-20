@@ -857,7 +857,7 @@ describe("N1 file browser", () => {
         ]);
     });
 
-    it("surfaces preview height without putting paging controls in the browser header", async () => {
+    it("does not show a visible preview height control in the browser controls", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/results/plot-001.png", "output"),
@@ -888,7 +888,15 @@ describe("N1 file browser", () => {
             );
         });
 
-        expect(container.textContent).toContain("Preview height");
+        expect(container.textContent).not.toContain("Preview height");
+        expect(
+            container.querySelector('input[aria-label="Preview height"]'),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                '[data-file-browser-control-trigger="preview-height"]',
+            ),
+        ).toBeNull();
         const header = container.querySelector("[data-file-browser-header]");
 
         expect(header?.textContent).not.toContain("1 preview per row");
@@ -901,7 +909,6 @@ describe("N1 file browser", () => {
         );
 
         expect(folderControls).toBeTruthy();
-        expect(folderControls?.textContent).toContain("Preview height");
         expect(folderControls?.textContent).toContain("1 preview per row");
     });
 
@@ -1144,64 +1151,80 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("keeps preview height drag updates local until the slider is committed", async () => {
+    it("dragging one preview resize handle updates the global height for all visible previews", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const handlePreviewHeightChange = vi.fn();
-        const renderGridPreview = vi.fn(
-            (file: FileEntry): ReactNode =>
-                createElement(
-                    "div",
-                    { "data-testid": `grid-preview-${file.path}` },
-                    `preview:${file.path}`,
-                ),
-        );
         const files = [
             buildFile("/results/plot-001.png", "output"),
             buildFile("/results/plot-002.png", "output"),
         ];
+        function Harness() {
+            const [height, setHeight] = useState(220);
+
+            return createElement(FileBrowser, {
+                files,
+                onPreviewHeightChange: (value: number) => {
+                    handlePreviewHeightChange(value);
+                    setHeight(value);
+                },
+                onSelectDirectory: vi.fn(),
+                onSelectFile: vi.fn(),
+                previewHeight: height,
+                previewMode: "grid",
+                renderGridPreview: (file: FileEntry): ReactNode =>
+                    createElement(
+                        "div",
+                        { "data-testid": `grid-preview-${file.path}` },
+                        `preview:${file.path}`,
+                    ),
+                visibleFiles: files,
+            });
+        }
 
         await act(async () => {
-            root.render(
-                createElement(FileBrowser, {
-                    files,
-                    onPreviewHeightChange: handlePreviewHeightChange,
-                    onSelectDirectory: vi.fn(),
-                    onSelectFile: vi.fn(),
-                    previewHeight: 220,
-                    previewMode: "grid",
-                    renderGridPreview,
-                    visibleFiles: files,
+            root.render(createElement(Harness));
+        });
+
+        const frames = () =>
+            Array.from(
+                container.querySelectorAll<HTMLElement>(
+                    "[data-preview-resize-frame]",
+                ),
+            );
+        const handles = container.querySelectorAll<HTMLElement>(
+            "[data-preview-resize-handle]",
+        );
+
+        expect(frames()).toHaveLength(2);
+        expect(handles).toHaveLength(2);
+        expect(frames().map((frame) => frame.style.height)).toEqual([
+            "220px",
+            "220px",
+        ]);
+
+        await act(async () => {
+            handles[0]?.dispatchEvent(
+                new MouseEvent("mousedown", {
+                    bubbles: true,
+                    clientY: 200,
                 }),
+            );
+            document.dispatchEvent(
+                new MouseEvent("mousemove", {
+                    bubbles: true,
+                    clientY: 280,
+                }),
+            );
+            document.dispatchEvent(
+                new MouseEvent("mouseup", { bubbles: true }),
             );
         });
 
-        expect(renderGridPreview).toHaveBeenCalledTimes(2);
-
-        const slider = container.querySelector(
-            'input[aria-label="Preview height"]',
-        );
-
-        expect(slider).toBeTruthy();
-
-        await act(async () => {
-            const range = slider as HTMLInputElement;
-
-            range.value = "260";
-            range.dispatchEvent(new Event("input", { bubbles: true }));
-            range.value = "300";
-            range.dispatchEvent(new Event("input", { bubbles: true }));
-        });
-
-        expect(container.textContent).toContain("300px");
-        expect(handlePreviewHeightChange).not.toHaveBeenCalled();
-        expect(renderGridPreview).toHaveBeenCalledTimes(2);
-
-        await act(async () => {
-            slider?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-        });
-
-        expect(handlePreviewHeightChange).toHaveBeenCalledTimes(1);
         expect(handlePreviewHeightChange).toHaveBeenCalledWith(300);
+        expect(frames().map((frame) => frame.style.height)).toEqual([
+            "300px",
+            "300px",
+        ]);
     });
 
     it("renders paging and preview-mode controls on the expanded folder row and below the file list", async () => {
@@ -1334,7 +1357,6 @@ describe("N1 file browser", () => {
         );
 
         expect(folderControls).toBeTruthy();
-        expect(folderControls?.textContent).toContain("Preview height");
         expect(folderControls?.textContent).toContain("1 preview per row");
         expect(folderControls?.textContent).not.toContain("Page 1 of 1");
         expect(
@@ -1471,7 +1493,6 @@ describe("N1 file browser", () => {
         );
 
         expect(folderControls).toBeTruthy();
-        expect(folderControls?.textContent).toContain("Preview height");
         expect(folderControls?.textContent).toContain("Page 2 of 2");
         expect(container.textContent).toContain("page-2-lane-1.bam");
         expect(container.textContent).toContain("page-2-lane-2.bam");
@@ -1560,7 +1581,6 @@ describe("N1 file browser", () => {
                 'input[aria-label="1 preview per row"]',
             ),
         ).toBeNull();
-        expect(folderControls?.textContent).toContain("Preview height");
     });
 
     it("renders file buttons and preview as direct grid siblings in single mode", async () => {
@@ -1762,7 +1782,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("renders one shared height slider for folders eligible for both direct-file and subfolder previews", async () => {
+    it("renders one shared resize affordance for folders eligible for both direct-file and subfolder previews", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const handlePreviewHeightChange = vi.fn();
         const files = [
@@ -1806,12 +1826,15 @@ describe("N1 file browser", () => {
         const folderControls = container.querySelectorAll(
             '[data-file-browser-folder-controls="/demo"]',
         );
-        const previewHeightSliders = container.querySelectorAll(
-            '[data-file-browser-folder-controls="/demo"] input[type="range"]',
+        const previewResizeHandles = container.querySelectorAll<HTMLElement>(
+            "[data-preview-resize-handle]",
         );
 
         expect(folderControls).toHaveLength(1);
-        expect(previewHeightSliders).toHaveLength(1);
+        expect(
+            container.querySelector('input[aria-label="Preview height"]'),
+        ).toBeNull();
+        expect(previewResizeHandles).toHaveLength(1);
         expect(
             container.querySelector('input[aria-label="1 preview per row"]'),
         ).toBeTruthy();
@@ -1819,18 +1842,24 @@ describe("N1 file browser", () => {
             container.querySelector('input[aria-label="Subfolder previews"]'),
         ).toBeTruthy();
 
-        const slider = previewHeightSliders[0] as HTMLInputElement;
-
         await act(async () => {
-            slider.value = "300";
-            slider.dispatchEvent(new Event("input", { bubbles: true }));
+            previewResizeHandles[0]?.dispatchEvent(
+                new MouseEvent("mousedown", {
+                    bubbles: true,
+                    clientY: 200,
+                }),
+            );
+            document.dispatchEvent(
+                new MouseEvent("mousemove", {
+                    bubbles: true,
+                    clientY: 280,
+                }),
+            );
+            document.dispatchEvent(
+                new MouseEvent("mouseup", { bubbles: true }),
+            );
         });
 
-        await act(async () => {
-            slider.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-        });
-
-        expect(handlePreviewHeightChange).toHaveBeenCalledTimes(1);
         expect(handlePreviewHeightChange).toHaveBeenCalledWith(300);
 
         const subfolderToggle = container.querySelector(
@@ -1854,7 +1883,10 @@ describe("N1 file browser", () => {
             container.querySelectorAll(
                 '[data-file-browser-folder-controls="/demo"] input[type="range"]',
             ),
-        ).toHaveLength(1);
+        ).toHaveLength(0);
+        expect(
+            container.querySelectorAll("[data-preview-resize-handle]").length,
+        ).toBeGreaterThan(0);
         expect(handlePreviewHeightChange).toHaveBeenCalledTimes(1);
     });
 
@@ -2547,7 +2579,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("keeps a shared preview height control available alongside subfolder preview controls", async () => {
+    it("keeps resize handles available alongside subfolder preview controls", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/demo/readme.md", "output"),
@@ -2603,10 +2635,7 @@ describe("N1 file browser", () => {
         expect(controls?.textContent).not.toContain("Preview file types");
         expect(
             container.querySelector('input[aria-label="Preview height"]'),
-        ).toBeTruthy();
-        expect(
-            container.querySelectorAll('input[aria-label="Preview height"]'),
-        ).toHaveLength(1);
+        ).toBeNull();
         expect(
             controls?.querySelector(
                 '[data-subdir-preview-kind-disclosure="/demo"]',
@@ -2649,6 +2678,9 @@ describe("N1 file browser", () => {
 
         expect(rowA).toBeTruthy();
         expect(rowB).toBeTruthy();
+        expect(
+            container.querySelectorAll("[data-preview-resize-handle]").length,
+        ).toBeGreaterThan(0);
 
         // Each row shows all selected previewable file types by default.
         expect(
@@ -2921,22 +2953,26 @@ describe("N1 file browser", () => {
 
         expect(visibleRows()).toEqual(["/demo/sample-21"]);
 
-        const heightSlider = container.querySelector(
-            'input[aria-label="Preview height"]',
-        ) as HTMLInputElement | null;
+        const resizeHandle = container.querySelector<HTMLElement>(
+            '[data-subdir-preview-row="/demo/sample-21"] [data-preview-resize-handle]',
+        );
 
-        expect(heightSlider).toBeTruthy();
-
-        await act(async () => {
-            if (!heightSlider) {
-                throw new Error("missing height slider");
-            }
-            heightSlider.value = "260";
-            heightSlider.dispatchEvent(new Event("input", { bubbles: true }));
-        });
+        expect(resizeHandle).toBeTruthy();
 
         await act(async () => {
-            heightSlider?.dispatchEvent(
+            resizeHandle?.dispatchEvent(
+                new MouseEvent("mousedown", {
+                    bubbles: true,
+                    clientY: 220,
+                }),
+            );
+            document.dispatchEvent(
+                new MouseEvent("mousemove", {
+                    bubbles: true,
+                    clientY: 260,
+                }),
+            );
+            document.dispatchEvent(
                 new MouseEvent("mouseup", { bubbles: true }),
             );
         });

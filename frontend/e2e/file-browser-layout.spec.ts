@@ -935,15 +935,6 @@ test.describe("File Browser single preview layout", () => {
         const fileTypesTrigger = folderControls.locator(
             '[data-file-browser-control-trigger="file-types"]',
         );
-        const previewHeightControl = folderControls.locator(
-            '[data-file-browser-control-trigger="preview-height"]',
-        );
-        const previewHeightLabel = folderControls.locator(
-            '[data-file-browser-control-label="preview-height"]',
-        );
-        const previewHeightState = folderControls.locator(
-            '[data-file-browser-control-current="preview-height"]',
-        );
         const previewModeState = folderControls.locator(
             '[data-file-browser-control-current="preview-modes"]',
         );
@@ -951,28 +942,25 @@ test.describe("File Browser single preview layout", () => {
             '[data-file-browser-control-current="file-types"]',
         );
 
+        await expect(
+            folderControls.locator(
+                '[data-file-browser-control-trigger="preview-height"]',
+            ),
+        ).toHaveCount(0);
+        await expect(
+            folderControls.locator(
+                'input[type="range"][aria-label="Preview height"]',
+            ),
+        ).toHaveCount(0);
         await expect(previewModeTrigger).toBeVisible();
         await expect(fileTypesTrigger).toBeVisible();
-        await expect(previewHeightControl).toBeVisible();
-        await expect(previewHeightLabel).toBeVisible();
-        await expect(previewHeightState).toBeVisible();
         await expect(previewModeState).toBeVisible();
         await expect(fileTypesState).toBeVisible();
         await expect(previewModeState).toHaveText(/preview/i);
         await expect(fileTypesState).toHaveText(/file type/i);
 
-        // Verify preview height slider is present in the same controls container
-        const previewHeightSlider = folderControls.locator(
-            'input[type="range"][aria-label="Preview height"]',
-        );
-        await expect(previewHeightSlider).toBeVisible();
-
         const previewModeBBox = await previewModeTrigger.boundingBox();
         const fileTypesBBox = await fileTypesTrigger.boundingBox();
-        const previewHeightBBox = await previewHeightControl.boundingBox();
-        const previewHeightLabelBBox = await previewHeightLabel.boundingBox();
-        const previewHeightStateBBox = await previewHeightState.boundingBox();
-        const sliderBBox = await previewHeightSlider.boundingBox();
         const controlsBBox = await folderControls.boundingBox();
         const buttonBBox = await directoryButton.boundingBox();
         const rowBBox = await directoryRow.boundingBox();
@@ -980,10 +968,6 @@ test.describe("File Browser single preview layout", () => {
         if (
             !previewModeBBox ||
             !fileTypesBBox ||
-            !previewHeightBBox ||
-            !previewHeightLabelBBox ||
-            !previewHeightStateBBox ||
-            !sliderBBox ||
             !controlsBBox ||
             !buttonBBox ||
             !rowBBox
@@ -1010,69 +994,7 @@ test.describe("File Browser single preview layout", () => {
 
         // All primary controls should fit on one row when the viewport has room.
         expect(Math.abs(previewModeBBox.y - fileTypesBBox.y)).toBeLessThan(8);
-        expect(Math.abs(previewModeBBox.y - previewHeightBBox.y)).toBeLessThan(
-            8,
-        );
         expect(fileTypesBBox.x).toBeGreaterThan(previewModeBBox.x);
-        expect(previewHeightBBox.x).toBeGreaterThan(fileTypesBBox.x);
-        expect(sliderBBox.x).toBeGreaterThan(fileTypesBBox.x);
-        expect(sliderBBox.height).toBeLessThan(32);
-        expect(sliderBBox.height).toBeLessThan(80);
-        expect(
-            Math.abs(previewHeightBBox.height - previewModeBBox.height),
-        ).toBeLessThan(2);
-        expect(
-            Math.abs(previewHeightBBox.height - fileTypesBBox.height),
-        ).toBeLessThan(2);
-        expect(previewHeightBBox.width).toBeGreaterThanOrEqual(160);
-
-        const previewHeightStackedLayout = await previewHeightControl.evaluate(
-            (control) => {
-                const rect = control.getBoundingClientRect();
-
-                return {
-                    clientWidth: control.clientWidth,
-                    controlHeight: rect.height,
-                    labelLine:
-                        control
-                            .querySelector(
-                                '[data-file-browser-control-label="preview-height"]',
-                            )
-                            ?.getBoundingClientRect().y ?? 0,
-                    scrollWidth: control.scrollWidth,
-                    sliderLine:
-                        control
-                            .querySelector(
-                                'input[type="range"][aria-label="Preview height"]',
-                            )
-                            ?.getBoundingClientRect().y ?? 0,
-                    valueLine:
-                        control
-                            .querySelector(
-                                '[data-file-browser-control-current="preview-height"]',
-                            )
-                            ?.getBoundingClientRect().y ?? 0,
-                    width: rect.width,
-                };
-            },
-        );
-
-        expect(previewHeightStackedLayout.scrollWidth).toBeLessThanOrEqual(
-            previewHeightStackedLayout.clientWidth + 1,
-        );
-        expect(previewHeightStateBBox.x).toBeGreaterThan(sliderBBox.x);
-        expect(Math.abs(previewHeightStateBBox.y - sliderBBox.y)).toBeLessThan(
-            8,
-        );
-        expect(previewHeightStackedLayout.sliderLine).toBeGreaterThan(
-            previewHeightStackedLayout.labelLine + 8,
-        );
-        expect(previewHeightStackedLayout.valueLine).toBeGreaterThan(
-            previewHeightStackedLayout.labelLine + 8,
-        );
-        expect(previewHeightStackedLayout.controlHeight).toBeLessThanOrEqual(
-            previewModeBBox.height + 1,
-        );
 
         // Current state should sit underneath each trigger label, reducing width.
         const triggerStateLayout = await folderControls
@@ -1102,10 +1024,6 @@ test.describe("File Browser single preview layout", () => {
             );
 
         for (const layout of triggerStateLayout) {
-            if (layout.kind === "preview-height") {
-                continue;
-            }
-
             expect(layout.stateTop).toBeGreaterThanOrEqual(
                 layout.labelBottom - 1,
             );
