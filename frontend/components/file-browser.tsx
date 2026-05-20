@@ -1037,7 +1037,11 @@ export function FileBrowser({
         () =>
             new Set(
                 ancestorPaths(
-                    selectedDirectory ?? parentDirectory(files[0]?.path ?? "/"),
+                    selectedDirectory ??
+                        (renderGridPreview
+                            ? findInitialSubdirPreviewDirectory(files)
+                            : undefined) ??
+                        parentDirectory(files[0]?.path ?? "/"),
                 ),
             ),
     );
@@ -1831,6 +1835,11 @@ export function FileBrowser({
                 safePage: safeSubdirPreviewPage,
                 visibleSubdirs,
             } = subdirPreviewStateFor(node);
+            const hasExpandedDescendant = node.children.some((child) =>
+                collectTreePaths(child).some((path) =>
+                    visibleExpandedDirectories.has(path),
+                ),
+            );
             const nodePreviewKinds = subdirPreviewKindsFor(node.path);
             const previewableNodeFiles = node.files.filter((file) =>
                 fileMatchesPreviewKinds(file, nodePreviewKinds),
@@ -1846,6 +1855,7 @@ export function FileBrowser({
                 hasPreviewableActiveFiles;
             const hasSubdirPreviewControls =
                 isStructurallyExpanded &&
+                !hasExpandedDescendant &&
                 subdirPreviewAvailable &&
                 Boolean(renderGridPreview);
             const showGridToggle =
@@ -1887,7 +1897,6 @@ export function FileBrowser({
             const controlPlacement = inlineControlPlacement;
             const folderControlsInNameArea =
                 controlPlacement === "name-area" && Boolean(folderControls);
-            const controlsFitInHeadingLine = depth <= 2;
             const renderDirectoryButton = () => (
                 <button
                     type="button"
@@ -2006,8 +2015,7 @@ export function FileBrowser({
                             <div
                                 className={cn(
                                     "grid w-full grid-cols-1 items-start gap-2",
-                                    controlsFitInHeadingLine &&
-                                        "lg:grid-cols-[minmax(0,1fr)_auto]",
+                                    "lg:grid-cols-[minmax(0,1fr)_auto]",
                                 )}
                                 data-directory-heading-with-controls={node.path}
                             >

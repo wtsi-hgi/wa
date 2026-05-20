@@ -2041,8 +2041,15 @@ describe("N1 file browser", () => {
             return createElement(FileBrowser, {
                 files,
                 onPreviewModeChange: setPreviewMode,
-                onSelectDirectory: (directoryPath: string) => {
-                    setSelectedDirectory(directoryPath);
+                onSelectDirectory: (
+                    directoryPath: string,
+                    options?: { expanded: boolean; parentPath?: string },
+                ) => {
+                    setSelectedDirectory(
+                        options?.expanded === false && options.parentPath
+                            ? options.parentPath
+                            : directoryPath,
+                    );
                 },
                 onSelectFile: vi.fn(),
                 previewMode,
@@ -2133,6 +2140,19 @@ describe("N1 file browser", () => {
         );
         expect(gridToggle("/demo/sample-a/lanes")).toBeNull();
         expect(subfolderToggle("/demo/sample-a/lanes")?.checked).toBe(false);
+        expect(parentControls()).toBeNull();
+        expect(previewModeSummary("/demo/sample-a")?.textContent).toBe(
+            undefined,
+        );
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/sample-a/lanes"]',
+            ),
+        );
+
+        expect(childControls()).toBeNull();
+        expect(parentControls()).toBeTruthy();
         expect(previewModeSummary("/demo/sample-a")?.textContent).toBe(
             "Grid + subfolders",
         );
@@ -2141,16 +2161,14 @@ describe("N1 file browser", () => {
 
         await click(gridToggle("/demo/sample-a"));
 
-        expect(gridToggle("/demo/sample-a")).toBeNull();
+        expect(gridToggle("/demo/sample-a")?.checked).toBe(false);
         expect(previewModeSummary("/demo/sample-a")?.textContent).toBe(
             "Subfolders",
         );
-        expect(previewModeSummary("/demo/sample-a/lanes")?.textContent).toBe(
-            "Single preview",
-        );
+        expect(previewModeSummary("/demo/sample-a/lanes")).toBeNull();
     });
 
-    it("keeps subfolder preview widgets visible while the parent folder stays expanded", async () => {
+    it("restores subfolder preview widgets on an uncontrolled parent after an open child closes", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/demo/sample-a/img-1.png", "output"),
@@ -2191,11 +2209,11 @@ describe("N1 file browser", () => {
 
         expect(
             container.querySelector('[data-subdir-preview-controls="/demo"]'),
-        ).toBeTruthy();
+        ).toBeNull();
 
         await click(
             container.querySelector(
-                'button[data-directory-path="/demo/sample-b"]',
+                'button[data-directory-path="/demo/sample-a"]',
             ),
         );
 
@@ -2204,7 +2222,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("keeps subfolder preview widgets visible in controlled mode while the parent folder stays expanded", async () => {
+    it("restores subfolder preview widgets on a controlled parent after an open child closes", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/demo/sample-a/img-1.png", "output"),
@@ -2252,11 +2270,11 @@ describe("N1 file browser", () => {
 
         expect(
             container.querySelector('[data-subdir-preview-controls="/demo"]'),
-        ).toBeTruthy();
+        ).toBeNull();
 
         await click(
             container.querySelector(
-                'button[data-directory-path="/demo/sample-b"]',
+                'button[data-directory-path="/demo/sample-a"]',
             ),
         );
 
@@ -2265,7 +2283,7 @@ describe("N1 file browser", () => {
         ).toBeTruthy();
     });
 
-    it("shows subfolder preview widgets on both an expanded eligible parent and an expanded eligible child", async () => {
+    it("hides parent preview tools while an eligible child folder is open and restores them when the child closes", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/demo/qc/direct-plot.svg", "output"),
@@ -2289,8 +2307,15 @@ describe("N1 file browser", () => {
 
             return createElement(FileBrowser, {
                 files,
-                onSelectDirectory: (path: string) => {
-                    setSelectedDirectory(path);
+                onSelectDirectory: (
+                    path: string,
+                    options?: { expanded: boolean; parentPath?: string },
+                ) => {
+                    setSelectedDirectory(
+                        options?.expanded === false && options.parentPath
+                            ? options.parentPath
+                            : path,
+                    );
                 },
                 onSelectFile: vi.fn(),
                 renderGridPreview: (file: FileEntry): ReactNode =>
@@ -2332,12 +2357,12 @@ describe("N1 file browser", () => {
 
         expect(
             container.querySelector('[data-subdir-preview-controls="/demo"]'),
-        ).toBeTruthy();
+        ).toBeNull();
         expect(
             container.querySelector(
                 '[data-subdir-preview-controls="/demo/qc/images"]',
             ),
-        ).toBeTruthy();
+        ).toBeNull();
         expect(
             container.querySelector(
                 '[data-subdir-preview-controls="/demo/qc/images/gallery"]',
@@ -2347,7 +2372,68 @@ describe("N1 file browser", () => {
             container.querySelector(
                 '[data-subdir-preview-controls="/demo/qc"]',
             ),
+        ).toBeNull();
+
+        await click(
+            container.querySelector(
+                'button[data-directory-path="/demo/qc/images/gallery"]',
+            ),
+        );
+
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-controls="/demo/qc/images"]',
+            ),
         ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-controls="/demo/qc/images/gallery"]',
+            ),
+        ).toBeNull();
+    });
+
+    it("keeps deeply nested folder controls beside the directory heading when a wide viewport can fit them", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/sample-a/lanes/lane-1/rep-a/plot.png", "output"),
+            buildFile("/demo/sample-a/lanes/lane-1/rep-b/plot.png", "output"),
+            buildFile("/demo/sample-a/lanes/lane-2/plot.png", "output"),
+            buildFile("/demo/sample-a/reports/summary.txt", "output"),
+            buildFile("/demo/sample-b/readme.txt", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            {
+                                "data-subdir-preview-file": file.path,
+                            },
+                            file.path,
+                        ),
+                    selectedDirectory: "/demo/sample-a/lanes/lane-1",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const heading = container.querySelector(
+            '[data-directory-heading-with-controls="/demo/sample-a/lanes/lane-1"]',
+        ) as HTMLElement | null;
+        const controls = container.querySelector(
+            '[data-file-browser-name-area-controls="/demo/sample-a/lanes/lane-1"]',
+        ) as HTMLElement | null;
+
+        expect(heading).toBeTruthy();
+        expect(controls).toBeTruthy();
+        expect(heading?.className).toContain(
+            "lg:grid-cols-[minmax(0,1fr)_auto]",
+        );
     });
 
     it("keeps nested subfolder preview ownership and file-type settings on the selected folder", async () => {

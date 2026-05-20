@@ -439,6 +439,10 @@ test.describe("File Browser single preview layout", () => {
         screenshotEvidenceDir,
         "preview-resizer-integrated-corner-csv-post-fix.png",
     );
+    const nestedControlOwnershipScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "bug3-nested-controls-hidden-parent-right-aligned-postfix.png",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -466,6 +470,10 @@ test.describe("File Browser single preview layout", () => {
         galleriesDemoRootPath,
         "sample-a",
         "lanes",
+    );
+    const galleriesDemoSampleALane1Path = path.join(
+        galleriesDemoSampleALanesPath,
+        "lane-1",
     );
     const galleriesDemoLane1NotesPath = path.join(
         galleriesDemoSampleALanesPath,
@@ -1833,15 +1841,17 @@ test.describe("File Browser single preview layout", () => {
         });
     });
 
-    test("shows nested eligible subfolder preview controls on both the parent and child rows", async ({
+    test("hides parent preview tools while a nested eligible subfolder is open and keeps the active tools beside the heading", async ({
         page,
     }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
         await openNamedResultFileBrowser(page, "wtsi/galleries-demo");
+        await page.setViewportSize({ width: 1440, height: 900 });
 
         await selectDirectory(page, galleriesDemoSampleAPath);
 
         const sampleAControls = page.locator(
-            `[data-subdir-preview-controls="${galleriesDemoSampleAPath}"]`,
+            `[data-file-browser-folder-controls="${galleriesDemoSampleAPath}"]`,
         );
 
         await expect(sampleAControls).toBeVisible();
@@ -1854,11 +1864,52 @@ test.describe("File Browser single preview layout", () => {
         await selectDirectory(page, galleriesDemoSampleALanesPath);
 
         const lanesControls = page.locator(
-            `[data-subdir-preview-controls="${galleriesDemoSampleALanesPath}"]`,
+            `[data-file-browser-folder-controls="${galleriesDemoSampleALanesPath}"]`,
         );
 
-        await expect(sampleAControls).toBeVisible();
+        await expect(sampleAControls).toHaveCount(0);
         await expect(lanesControls).toBeVisible();
+
+        await selectDirectory(page, galleriesDemoSampleALane1Path);
+
+        const lane1Controls = page.locator(
+            `[data-file-browser-folder-controls="${galleriesDemoSampleALane1Path}"]`,
+        );
+        const lane1Button = page.locator(
+            `button[data-directory-path="${galleriesDemoSampleALane1Path}"]`,
+        );
+
+        await expect(lanesControls).toHaveCount(0);
+        await expect(lane1Controls).toBeVisible();
+        await expect(
+            lane1Controls.locator(
+                '[data-file-browser-control-trigger="preview-modes"]',
+            ),
+        ).toBeVisible();
+        await expect(
+            lane1Controls.locator(
+                '[data-file-browser-control-trigger="file-types"]',
+            ),
+        ).toBeVisible();
+
+        const controlsBox = await lane1Controls.boundingBox();
+        const buttonBox = await lane1Button.boundingBox();
+
+        if (!controlsBox || !buttonBox) {
+            throw new Error("Missing nested control layout boxes");
+        }
+
+        expect(controlsBox.x).toBeGreaterThan(buttonBox.x);
+        expect(controlsBox.y).toBeLessThan(buttonBox.y + buttonBox.height - 12);
+        expect(controlsBox.y + controlsBox.height).toBeGreaterThan(
+            buttonBox.y + 12,
+        );
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: nestedControlOwnershipScreenshotPath,
+        });
     });
 
     test("keeps parent and child preview mode selectors in sync when opening a nested subfolder", async ({
@@ -1896,16 +1947,26 @@ test.describe("File Browser single preview layout", () => {
             'summary[aria-label="Preview modes"]',
         );
 
-        await expect(sampleAControls).toBeVisible();
+        await expect(sampleAControls).toHaveCount(0);
         await expect(lanesControls).toBeVisible();
-        await expect(sampleASummary).toContainText("Grid + subfolders");
+        await expect(sampleASummary).toHaveCount(0);
         await expect(
             sampleAControls.locator('input[aria-label="1 preview per row"]'),
-        ).toHaveCount(1);
+        ).toHaveCount(0);
         await expect(lanesSummary).toContainText("Single preview");
         await expect(
             lanesControls.locator('input[aria-label="1 preview per row"]'),
         ).toHaveCount(0);
+
+        await page
+            .locator(
+                `button[data-directory-path="${galleriesDemoSampleALanesPath}"]`,
+            )
+            .click();
+
+        await expect(lanesControls).toHaveCount(0);
+        await expect(sampleAControls).toBeVisible();
+        await expect(sampleASummary).toContainText("Grid + subfolders");
 
         await openPreviewModes(sampleAControls);
         await sampleAControls
@@ -1915,8 +1976,8 @@ test.describe("File Browser single preview layout", () => {
         await expect(sampleASummary).toContainText("Subfolders");
         await expect(
             sampleAControls.locator('input[aria-label="1 preview per row"]'),
-        ).toHaveCount(0);
-        await expect(lanesSummary).toContainText("Single preview");
+        ).not.toBeChecked();
+        await expect(lanesSummary).toHaveCount(0);
     });
 
     test("renders solid backgrounds for preview mode and file type menus", async ({

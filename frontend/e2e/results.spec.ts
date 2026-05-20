@@ -633,7 +633,7 @@ test.describe("Q1 critical results flows", () => {
 
         await page.locator(`[data-directory-path="${rnaseqQcPath}"]`).click();
 
-        await expect(rootSubdirControls).toBeVisible();
+        await expect(rootSubdirControls).toHaveCount(0);
         await expect(
             page.locator(`[data-directory-path="${rnaseqImagesPath}"]`),
         ).toBeVisible();
@@ -645,7 +645,7 @@ test.describe("Q1 critical results flows", () => {
             .locator(`[data-directory-path="${rnaseqImagesPath}"]`)
             .click();
 
-        await expect(rootSubdirControls).toBeVisible();
+        await expect(rootSubdirControls).toHaveCount(0);
         await expect(
             page.locator(`[data-file-path="${rnaseqImagePath}"]`),
         ).toBeVisible();
