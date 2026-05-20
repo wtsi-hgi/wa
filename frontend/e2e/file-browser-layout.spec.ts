@@ -433,7 +433,7 @@ test.describe("File Browser single preview layout", () => {
     );
     const previewResizeGripScreenshotPath = path.join(
         screenshotEvidenceDir,
-        "preview-resizer-integrated-corner-image-post-fix.png",
+        "preview-resizer-square-corner-image-post-fix.png",
     );
     const singlePreviewCsvScreenshotPath = path.join(
         screenshotEvidenceDir,
@@ -873,8 +873,10 @@ test.describe("File Browser single preview layout", () => {
         expect(
             Math.abs(metrics.handleRect.bottom - metrics.visibleSurface.bottom),
         ).toBeLessThanOrEqual(1);
-        expect(metrics.lineRect?.width ?? 0).toBeGreaterThanOrEqual(24);
-        expect(metrics.lineRect?.height ?? 0).toBeGreaterThanOrEqual(24);
+        expect(metrics.lineRect?.width ?? 0).toBeGreaterThanOrEqual(16);
+        expect(metrics.lineRect?.width ?? 0).toBeLessThanOrEqual(22);
+        expect(metrics.lineRect?.height ?? 0).toBeGreaterThanOrEqual(16);
+        expect(metrics.lineRect?.height ?? 0).toBeLessThanOrEqual(22);
 
         mkdirSync(screenshotEvidenceDir, { recursive: true });
         await page.screenshot({
@@ -1526,7 +1528,7 @@ test.describe("File Browser single preview layout", () => {
         ).toBeLessThanOrEqual(6);
     });
 
-    test("integrates the preview height resize grip into the preview corner", async ({
+    test("renders the preview height grip as a compact square-corner affordance", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
@@ -1611,6 +1613,10 @@ test.describe("File Browser single preview layout", () => {
                     lineStyles?.backgroundImage.includes(
                         "repeating-linear-gradient",
                     ) ?? false,
+                imageBottomRightRadius:
+                    window.getComputedStyle(image).borderBottomRightRadius,
+                imageTopLeftRadius:
+                    window.getComputedStyle(image).borderTopLeftRadius,
                 lineBottomInset: lineRect
                     ? handleRect.bottom - lineRect.bottom
                     : null,
@@ -1624,6 +1630,12 @@ test.describe("File Browser single preview layout", () => {
                 rightInsetFromFrame: frameRect.right - handleRect.right,
                 rightInsetFromImage: imageRect.right - handleRect.right,
                 rightInsetFromSurface: surfaceRect.right - handleRect.right,
+                shellBottomRightRadius: window.getComputedStyle(
+                    image.parentElement ?? image,
+                ).borderBottomRightRadius,
+                shellTopLeftRadius: window.getComputedStyle(
+                    image.parentElement ?? image,
+                ).borderTopLeftRadius,
                 surfaceRightMatchesImage:
                     Math.abs(surfaceRect.right - imageRect.right) <= 1,
             };
@@ -1658,17 +1670,23 @@ test.describe("File Browser single preview layout", () => {
         expect(Math.abs(gripMetrics.bottomInsetFromFrame)).toBeLessThanOrEqual(
             1,
         );
+        expect(gripMetrics.imageTopLeftRadius).not.toBe("0px");
+        expect(gripMetrics.shellTopLeftRadius).not.toBe("0px");
+        expect(gripMetrics.imageBottomRightRadius).toBe("0px");
+        expect(gripMetrics.shellBottomRightRadius).toBe("0px");
         expect(gripMetrics.cursor).toBe("ns-resize");
         expect(gripMetrics.lineElementCount).toBe(1);
         expect(gripMetrics.hasGripLines).toBe(true);
-        expect(gripMetrics.lineWidth).toBeGreaterThanOrEqual(24);
-        expect(gripMetrics.lineHeight).toBeGreaterThanOrEqual(24);
+        expect(gripMetrics.lineWidth).toBeGreaterThanOrEqual(16);
+        expect(gripMetrics.lineWidth).toBeLessThanOrEqual(22);
+        expect(gripMetrics.lineHeight).toBeGreaterThanOrEqual(16);
+        expect(gripMetrics.lineHeight).toBeLessThanOrEqual(22);
         expect(
             Math.abs(gripMetrics.lineRightInset ?? Infinity),
-        ).toBeLessThanOrEqual(1);
+        ).toBeGreaterThanOrEqual(6);
         expect(
             Math.abs(gripMetrics.lineBottomInset ?? Infinity),
-        ).toBeLessThanOrEqual(1);
+        ).toBeGreaterThanOrEqual(6);
 
         mkdirSync(screenshotEvidenceDir, { recursive: true });
         await frame.screenshot({
