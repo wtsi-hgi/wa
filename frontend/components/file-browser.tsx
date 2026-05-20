@@ -397,7 +397,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     controlTriggerClass:
         "inline-flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-md border border-border/80 bg-background px-2 py-1 text-foreground shadow-sm marker:hidden hover:bg-muted/70",
     directoryButtonClass:
-        "grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-md px-3 py-2 text-left transition hover:bg-muted/60",
+        "grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-md px-3 py-2 text-left transition hover:bg-muted/60",
     directoryChevronClass:
         "inline-flex size-6 items-center justify-center rounded-md border border-border/70 bg-muted text-muted-foreground",
     directoryContentClass: "space-y-2 px-2 pb-2 pt-0",
@@ -444,7 +444,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     paginationClass:
         "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
     previewHeightControlClass:
-        "inline-flex w-28 flex-col items-stretch gap-1 rounded-md border border-border/70 bg-background px-2 py-1 text-foreground",
+        "inline-flex min-h-10 w-56 shrink-0 flex-row items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1 text-foreground",
     sectionClass:
         "rounded-xl border border-border/75 bg-card p-3 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)] sm:p-4",
     singlePreviewClass:
@@ -507,49 +507,49 @@ const PreviewHeightControl = memo(function PreviewHeightControl({
     return (
         <label
             className={cn(
-                "inline-flex min-w-0 items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground",
+                "inline-flex min-w-0 items-center gap-2 rounded-md border border-border/70 bg-background/75 px-2 py-1 text-foreground",
                 className,
             )}
             data-file-browser-control-trigger="preview-height"
         >
-            <span className="inline-flex items-center gap-1.5 text-sm">
+            <span className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-sm">
                 <Eye className="size-4 text-primary" aria-hidden="true" />
-                <span className="flex flex-col leading-tight">
-                    <span
-                        className="whitespace-nowrap font-medium"
-                        data-file-browser-control-label="preview-height"
-                    >
-                        {label}
-                    </span>
-                    <span
-                        className="text-[11px] text-muted-foreground tabular-nums"
-                        data-file-browser-control-current="preview-height"
-                    >
-                        {draftValue}px
-                    </span>
+                <span
+                    className="whitespace-nowrap font-medium"
+                    data-file-browser-control-label="preview-height"
+                >
+                    {label}
                 </span>
             </span>
-            <input
-                aria-label={ariaLabel}
-                className="h-1 w-full accent-primary"
-                max={420}
-                min={120}
-                onBlur={commitDraftValue}
-                onChange={() => undefined}
-                onInput={(event) => {
-                    setDraftValue(Number(event.currentTarget.value));
-                }}
-                onKeyUp={(event) => {
-                    if (previewHeightCommitKeys.has(event.key)) {
-                        commitDraftValue();
-                    }
-                }}
-                onMouseUp={commitDraftValue}
-                onTouchEnd={commitDraftValue}
-                step={20}
-                type="range"
-                value={draftValue}
-            />
+            <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+                <input
+                    aria-label={ariaLabel}
+                    className="h-1 min-w-8 flex-1 accent-primary"
+                    max={420}
+                    min={120}
+                    onBlur={commitDraftValue}
+                    onChange={() => undefined}
+                    onInput={(event) => {
+                        setDraftValue(Number(event.currentTarget.value));
+                    }}
+                    onKeyUp={(event) => {
+                        if (previewHeightCommitKeys.has(event.key)) {
+                            commitDraftValue();
+                        }
+                    }}
+                    onMouseUp={commitDraftValue}
+                    onTouchEnd={commitDraftValue}
+                    step={20}
+                    type="range"
+                    value={draftValue}
+                />
+                <span
+                    className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums"
+                    data-file-browser-control-current="preview-height"
+                >
+                    {draftValue}px
+                </span>
+            </span>
         </label>
     );
 });
