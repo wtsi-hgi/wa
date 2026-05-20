@@ -433,11 +433,11 @@ test.describe("File Browser single preview layout", () => {
     );
     const previewResizeGripScreenshotPath = path.join(
         screenshotEvidenceDir,
-        "preview-resizer-handle-post-fix.png",
+        "preview-resizer-integrated-corner-image-post-fix.png",
     );
     const singlePreviewCsvScreenshotPath = path.join(
         screenshotEvidenceDir,
-        "bug-2-single-preview-scrollbar-post-fix.png",
+        "preview-resizer-integrated-corner-csv-post-fix.png",
     );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
@@ -844,10 +844,16 @@ test.describe("File Browser single preview layout", () => {
 
             const frameRect = rectMetrics(frame);
             const handleRect = rectMetrics(handle);
+            const lineElement = handle.firstElementChild;
+            const lineRect =
+                lineElement instanceof HTMLElement
+                    ? lineElement.getBoundingClientRect()
+                    : null;
 
             return {
                 frameRect,
                 handleRect,
+                lineRect: lineRect ? rectMetrics(lineElement) : null,
                 scrollContainers,
                 visibleSurface,
             };
@@ -867,6 +873,8 @@ test.describe("File Browser single preview layout", () => {
         expect(
             Math.abs(metrics.handleRect.bottom - metrics.visibleSurface.bottom),
         ).toBeLessThanOrEqual(1);
+        expect(metrics.lineRect?.width ?? 0).toBeGreaterThanOrEqual(24);
+        expect(metrics.lineRect?.height ?? 0).toBeGreaterThanOrEqual(24);
 
         mkdirSync(screenshotEvidenceDir, { recursive: true });
         await page.screenshot({
@@ -1569,6 +1577,10 @@ test.describe("File Browser single preview layout", () => {
             const imageRect = image.getBoundingClientRect();
             const surfaceRect = surface.getBoundingClientRect();
             const lineElement = element.firstElementChild;
+            const lineRect =
+                lineElement instanceof HTMLElement
+                    ? lineElement.getBoundingClientRect()
+                    : null;
             const lineStyles =
                 lineElement instanceof HTMLElement
                     ? window.getComputedStyle(lineElement)
@@ -1599,7 +1611,15 @@ test.describe("File Browser single preview layout", () => {
                     lineStyles?.backgroundImage.includes(
                         "repeating-linear-gradient",
                     ) ?? false,
+                lineBottomInset: lineRect
+                    ? handleRect.bottom - lineRect.bottom
+                    : null,
                 lineElementCount: element.children.length,
+                lineHeight: lineRect?.height ?? 0,
+                lineRightInset: lineRect
+                    ? handleRect.right - lineRect.right
+                    : null,
+                lineWidth: lineRect?.width ?? 0,
                 resizeMode: window.getComputedStyle(frame).resize,
                 rightInsetFromFrame: frameRect.right - handleRect.right,
                 rightInsetFromImage: imageRect.right - handleRect.right,
@@ -1641,6 +1661,14 @@ test.describe("File Browser single preview layout", () => {
         expect(gripMetrics.cursor).toBe("ns-resize");
         expect(gripMetrics.lineElementCount).toBe(1);
         expect(gripMetrics.hasGripLines).toBe(true);
+        expect(gripMetrics.lineWidth).toBeGreaterThanOrEqual(24);
+        expect(gripMetrics.lineHeight).toBeGreaterThanOrEqual(24);
+        expect(
+            Math.abs(gripMetrics.lineRightInset ?? Infinity),
+        ).toBeLessThanOrEqual(1);
+        expect(
+            Math.abs(gripMetrics.lineBottomInset ?? Infinity),
+        ).toBeLessThanOrEqual(1);
 
         mkdirSync(screenshotEvidenceDir, { recursive: true });
         await frame.screenshot({
