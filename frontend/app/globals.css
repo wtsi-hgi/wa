@@ -104,6 +104,8 @@ body {
     background: color-mix(in oklab, var(--primary) 22%, transparent);
 }
 
-.preview-resize-square-corner :where(div, section, img, iframe, article, pre) {
+.preview-resize-square-corner,
+.preview-resize-square-corner
+    :where(div, section, img, iframe, article, pre, button) {
     border-bottom-right-radius: 0;
 }

@@ -673,7 +673,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
                     aria-valuemin={PREVIEW_HEIGHT_MIN}
                     aria-valuenow={height}
                     className={cn(
-                        "absolute right-0 bottom-0 z-20 flex size-9 cursor-ns-resize touch-none items-end justify-end overflow-hidden border-0 bg-transparent p-2 text-muted-foreground/75 shadow-none",
+                        "absolute right-0 bottom-0 z-20 block !size-9 cursor-ns-resize touch-none overflow-hidden border-0 bg-transparent p-0 text-muted-foreground/75 shadow-none",
                         "hover:text-foreground",
                         "focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none",
                     )}
@@ -686,7 +686,7 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
                 >
                     <span
                         aria-hidden="true"
-                        className="block size-full opacity-80"
+                        className="absolute right-0 bottom-0 block size-full opacity-80 [clip-path:polygon(100%_0,0_100%,100%_100%)]"
                         style={{
                             backgroundImage:
                                 "repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4px)",
