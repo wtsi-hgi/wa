@@ -513,7 +513,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
             enlargedState.path === file.path ? enlargedState : undefined;
 
         return (
-            <div>
+            <div className="h-full w-full">
                 <FilePreview
                     content={previewContent}
                     enlargedContent={enlargedForFile?.content}

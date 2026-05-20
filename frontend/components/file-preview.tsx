@@ -401,8 +401,8 @@ function ExpandablePreview({
 
     return (
         <>
-            <div className="group relative min-h-0 cursor-zoom-in">
-                {children}
+            <div className="group relative h-full w-full min-h-0 cursor-zoom-in">
+                <div className="h-full w-full">{children}</div>
                 <button
                     type="button"
                     aria-label={`Enlarge ${fileName} preview`}

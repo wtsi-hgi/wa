@@ -435,6 +435,10 @@ test.describe("File Browser single preview layout", () => {
         screenshotEvidenceDir,
         "preview-resizer-handle-post-fix.png",
     );
+    const singlePreviewCsvScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "bug-2-single-preview-scrollbar-post-fix.png",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -446,6 +450,8 @@ test.describe("File Browser single preview layout", () => {
         "gallery",
     );
     const rnaseqNotesPath = path.join(fixturesRoot, "rnaseq", "qc", "notes");
+    const rnaseqReportsPath = path.join(fixturesRoot, "rnaseq", "reports");
+    const rnaseqReportCsvPath = path.join(rnaseqReportsPath, "report.csv");
     const rnaseqGalleryLowerImagePath = path.join(
         rnaseqGalleryPath,
         "plot-080.png",
@@ -728,6 +734,145 @@ test.describe("File Browser single preview layout", () => {
         expect(surface.y).toBeCloseTo(metrics.root.y, 1);
         expect(surface.width).toBeGreaterThanOrEqual(metrics.root.width - 2);
         expect(surface.height).toBeGreaterThanOrEqual(metrics.root.height - 2);
+    });
+
+    test("renders single-preview csv without an inner vertical scrollbar or detached resize corner", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqReportsPath);
+
+        const preview = page.locator('[data-file-browser-preview="single"]');
+        const reportFile = page
+            .locator(`[data-file-path="${rnaseqReportCsvPath}"]`)
+            .first();
+
+        await expect(reportFile).toBeVisible();
+        await reportFile.click();
+        await expect(preview).toBeVisible();
+        await expect(preview.locator("table")).toBeVisible();
+
+        const metrics = await preview.evaluate((root) => {
+            const frame = root.closest("[data-preview-resize-frame]");
+            const handle = root.querySelector("[data-preview-resize-handle]");
+
+            if (
+                !(root instanceof HTMLElement) ||
+                !(frame instanceof HTMLElement) ||
+                !(handle instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            function rectMetrics(element: Element) {
+                const rect = element.getBoundingClientRect();
+
+                return {
+                    bottom: rect.bottom,
+                    height: rect.height,
+                    right: rect.right,
+                    width: rect.width,
+                    x: rect.x,
+                    y: rect.y,
+                };
+            }
+
+            function hasVisibleBorder(element: Element) {
+                const styles = window.getComputedStyle(element);
+
+                return ["Top", "Right", "Bottom", "Left"].some((side) => {
+                    const width = Number.parseFloat(
+                        styles.getPropertyValue(
+                            `border-${side.toLowerCase()}-width`,
+                        ),
+                    );
+                    const style = styles.getPropertyValue(
+                        `border-${side.toLowerCase()}-style`,
+                    );
+
+                    return width > 0 && style !== "none" && style !== "hidden";
+                });
+            }
+
+            const scrollContainers = Array.from(root.querySelectorAll("*"))
+                .filter((element): element is HTMLElement => {
+                    if (!(element instanceof HTMLElement)) {
+                        return false;
+                    }
+
+                    const styles = window.getComputedStyle(element);
+                    const canScrollVertically =
+                        styles.overflowY === "auto" ||
+                        styles.overflowY === "scroll";
+
+                    return (
+                        canScrollVertically &&
+                        element.scrollHeight > element.clientHeight + 1
+                    );
+                })
+                .map((element) => ({
+                    clientHeight: element.clientHeight,
+                    overflowY: window.getComputedStyle(element).overflowY,
+                    scrollHeight: element.scrollHeight,
+                    tagName: element.tagName.toLowerCase(),
+                }));
+
+            const visibleSurface = Array.from(root.querySelectorAll("*"))
+                .filter((element): element is HTMLElement => {
+                    if (!(element instanceof HTMLElement)) {
+                        return false;
+                    }
+
+                    const rect = element.getBoundingClientRect();
+
+                    return (
+                        rect.width > 80 &&
+                        rect.height > 80 &&
+                        hasVisibleBorder(element)
+                    );
+                })
+                .map((element) => {
+                    const rect = rectMetrics(element);
+
+                    return {
+                        ...rect,
+                        area: rect.width * rect.height,
+                        tagName: element.tagName.toLowerCase(),
+                    };
+                })
+                .sort((left, right) => right.area - left.area)[0];
+
+            const frameRect = rectMetrics(frame);
+            const handleRect = rectMetrics(handle);
+
+            return {
+                frameRect,
+                handleRect,
+                scrollContainers,
+                visibleSurface,
+            };
+        });
+
+        if (!metrics?.visibleSurface) {
+            throw new Error("Missing single-preview CSV surface metrics");
+        }
+
+        expect(metrics.scrollContainers).toEqual([]);
+        expect(metrics.visibleSurface.width).toBeGreaterThanOrEqual(
+            metrics.frameRect.width - 2,
+        );
+        expect(
+            Math.abs(metrics.handleRect.right - metrics.visibleSurface.right),
+        ).toBeLessThanOrEqual(1);
+        expect(
+            Math.abs(metrics.handleRect.bottom - metrics.visibleSurface.bottom),
+        ).toBeLessThanOrEqual(1);
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: singlePreviewCsvScreenshotPath,
+        });
     });
 
     test("renders single-preview images with the same corner radius as the preview shell", async ({
