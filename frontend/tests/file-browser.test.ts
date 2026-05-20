@@ -905,7 +905,7 @@ describe("N1 file browser", () => {
         expect(folderControls?.textContent).toContain("1 preview per row");
     });
 
-    it("provides a temporary selector for the current file browser design plus five alternatives", async () => {
+    it("renders only the selected inline file browser design", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/results/plot-001.png", "output"),
@@ -940,23 +940,8 @@ describe("N1 file browser", () => {
         );
         const browser = container.querySelector("[data-file-browser]");
 
-        expect(selector).toBeTruthy();
-        expect(designButtons).toHaveLength(6);
-        expect(browser?.getAttribute("data-file-browser-design")).toBe(
-            "classic",
-        );
-        expect(
-            Array.from(designButtons).map((button) =>
-                button.getAttribute("data-file-browser-design-option"),
-            ),
-        ).toEqual(["classic", "inline", "sidecar", "ribbon", "matrix", "deck"]);
-
-        await click(
-            container.querySelector(
-                '[data-file-browser-design-option="inline"]',
-            ),
-        );
-
+        expect(selector).toBeNull();
+        expect(designButtons).toHaveLength(0);
         expect(browser?.getAttribute("data-file-browser-design")).toBe(
             "inline",
         );
@@ -1021,8 +1006,8 @@ describe("N1 file browser", () => {
         expect(folderControls?.dataset.fileBrowserControlStyle).toBeTruthy();
         expect(folderControls?.className).not.toBe(directoryRow?.className);
         expect(folderControls?.className).not.toBe(fileButton?.className);
-        expect(folderControls?.className).toMatch(
-            /(?:control|nameplate|sidecar|ribbon|matrix|deck)/,
+        expect(folderControls?.dataset.fileBrowserControlStyle).toBe(
+            "inline-nameplate",
         );
         expect(
             folderControls?.querySelector(
@@ -1034,9 +1019,19 @@ describe("N1 file browser", () => {
                 '[data-file-browser-control-trigger="file-types"]',
             ),
         ).toBeTruthy();
+        expect(
+            folderControls?.querySelector(
+                '[data-file-browser-control-current="preview-modes"]',
+            ),
+        ).toHaveProperty("textContent", "Single preview");
+        expect(
+            folderControls?.querySelector(
+                '[data-file-browser-control-current="file-types"]',
+            ),
+        ).toHaveProperty("textContent", "5 file types");
     });
 
-    it("moves design 1 controls into the active folder name area", async () => {
+    it("keeps inline controls in the active folder name area", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/results/plot-001.png", "output"),
@@ -1062,12 +1057,6 @@ describe("N1 file browser", () => {
                 }),
             );
         });
-
-        await click(
-            container.querySelector(
-                '[data-file-browser-design-option="inline"]',
-            ),
-        );
 
         const heading = container.querySelector(
             '[data-directory-heading-with-controls="/results"]',
@@ -1091,7 +1080,7 @@ describe("N1 file browser", () => {
         expect(groupedContent?.contains(folderControls)).toBe(false);
     });
 
-    it("offers four other structural design layouts beyond the nameplate option", async () => {
+    it("does not render temporary alternative design layouts", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/results/plot-001.png", "output"),
@@ -1118,66 +1107,40 @@ describe("N1 file browser", () => {
             );
         });
 
-        await click(
-            container.querySelector(
-                '[data-file-browser-design-option="sidecar"]',
-            ),
-        );
         expect(
             container.querySelector(
                 '[data-file-browser-sidecar-layout="/results"]',
             ),
-        ).toBeTruthy();
-        expect(
-            (
-                container.querySelector(
-                    '[data-file-browser-folder-controls="/results"]',
-                ) as HTMLElement | null
-            )?.dataset.fileBrowserControlPlacement,
-        ).toBe("sidecar");
-
-        await click(
-            container.querySelector(
-                '[data-file-browser-design-option="ribbon"]',
-            ),
-        );
+        ).toBeNull();
         expect(
             container.querySelector(
                 '[data-file-browser-content-ribbon="/results"]',
             ),
-        ).toBeTruthy();
-        expect(container.textContent).toContain("Path controls");
-
-        await click(
-            container.querySelector(
-                '[data-file-browser-design-option="matrix"]',
-            ),
-        );
+        ).toBeNull();
         expect(
             container.querySelector(
                 '[data-file-browser-file-matrix-header="/results"]',
             ),
-        ).toBeTruthy();
+        ).toBeNull();
         expect(
             container.querySelector(
                 '[data-file-browser-file-layout="matrix-row"]',
             ),
-        ).toBeTruthy();
-
-        await click(
-            container.querySelector('[data-file-browser-design-option="deck"]'),
-        );
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                '[data-file-browser-file-layout="deck-strip"]',
+            ),
+        ).toBeNull();
         expect(
             (
                 container.querySelector(
                     '[data-file-browser-folder-controls="/results"]',
                 ) as HTMLElement | null
             )?.dataset.fileBrowserControlPlacement,
-        ).toBe("preview-dock");
+        ).toBe("name-area");
         expect(
-            container.querySelector(
-                '[data-file-browser-file-layout="deck-strip"]',
-            ),
+            container.querySelector('[data-file-browser-file-layout="card"]'),
         ).toBeTruthy();
     });
 
@@ -2088,7 +2051,7 @@ describe("N1 file browser", () => {
             ) as HTMLElement | null;
         const previewModeSummary = (directoryPath: string) =>
             container.querySelector(
-                `[data-preview-mode-disclosure="${directoryPath}"] summary[aria-label="Preview modes"] .text-xs.text-muted-foreground`,
+                `[data-preview-mode-disclosure="${directoryPath}"] [data-file-browser-control-current="preview-modes"]`,
             ) as HTMLElement | null;
         const gridToggle = (directoryPath: string) =>
             container.querySelector(
@@ -2873,11 +2836,21 @@ describe("N1 file browser", () => {
         expect(directoryButton).toBeTruthy();
         expect(folderControls).toBeTruthy();
         expect(groupContent).toBeTruthy();
+        const heading = directoryRow?.querySelector(
+            '[data-directory-heading-with-controls="/results"]',
+        ) as HTMLElement | null;
+        const nameAreaControls = directoryRow?.querySelector(
+            '[data-file-browser-name-area-controls="/results"]',
+        ) as HTMLElement | null;
+
+        expect(heading).toBeTruthy();
+        expect(nameAreaControls).toBeTruthy();
         expect(Array.from(directoryRow?.children ?? [])).toEqual([
-            directoryButton,
-            folderControls,
+            heading,
             groupContent,
         ]);
+        expect(heading?.contains(directoryButton)).toBe(true);
+        expect(nameAreaControls?.contains(folderControls)).toBe(true);
         expect(groupContent?.parentElement).toBe(directoryRow);
         expect(directoryRow?.className).not.toMatch(/lg:grid-cols-\[/);
         expect(folderControls?.className).toContain("justify-start");

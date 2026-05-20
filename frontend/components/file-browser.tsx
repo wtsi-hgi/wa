@@ -13,15 +13,9 @@ import {
 import {
     ChevronDown,
     ChevronRight,
-    Command as CommandIcon,
     Eye,
     FolderTree,
-    GalleryHorizontal,
     ListFilter,
-    ListTree,
-    PanelTop,
-    Table2,
-    type LucideIcon,
 } from "lucide-react";
 
 import { PreviewPagination } from "@/components/preview-pagination";
@@ -338,31 +332,14 @@ type RawDirectoryNode = {
     path: string;
 };
 
-type FileBrowserDesignKey =
-    | "classic"
-    | "inline"
-    | "sidecar"
-    | "ribbon"
-    | "matrix"
-    | "deck";
-
-type FileBrowserControlPlacement =
-    | "classic-row"
-    | "name-area"
-    | "sidecar"
-    | "content-ribbon"
-    | "matrix-header"
-    | "preview-dock";
+type FileBrowserControlPlacement = "name-area";
 
 type FileBrowserDesign = {
-    Icon: LucideIcon;
-    contextClass: string;
     controlLabelClass: string;
     controlMenuClass: string;
     controlMenuHeadingClass: string;
     controlStyle: string;
     controlTriggerClass: string;
-    description: string;
     directoryButtonClass: string;
     directoryChevronClass: string;
     directoryContentClass: string;
@@ -373,7 +350,6 @@ type FileBrowserDesign = {
     directoryRowIdleClass: string;
     directoryRowSelectedClass: string;
     directoryRowWithContentClass: string;
-    directoryTagClass: string;
     emptyStateClass: string;
     fileButtonBaseClass: string;
     fileButtonCompactClass: string;
@@ -391,15 +367,11 @@ type FileBrowserDesign = {
     headerClass: string;
     headerIconClass: string;
     headerTitleClass: string;
-    id: FileBrowserDesignKey;
-    label: string;
+    id: "inline";
     pageBadgeClass: string;
     paginationClass: string;
     previewHeightControlClass: string;
     sectionClass: string;
-    selectorClass: string;
-    selectorOptionClass: (active: boolean) => string;
-    shortLabel: string;
     singlePreviewClass: string;
     subdirCardBaseClass: string;
     subdirFilenameClass: string;
@@ -414,612 +386,87 @@ type FileBrowserDesign = {
     treeShellClass: string;
 };
 
-const selectorOptionBaseClass =
-    "inline-flex h-8 min-w-8 items-center justify-center gap-1.5 px-2 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const activeFileBrowserDesign: FileBrowserDesign = {
+    controlLabelClass:
+        "flex items-center justify-between gap-3 rounded-md px-1 py-0.5 text-sm",
+    controlMenuClass:
+        "absolute left-0 z-20 mt-2 min-w-56 rounded-lg border border-border bg-[var(--popover)] p-2 shadow-[0_16px_40px_-24px_rgba(28,40,58,0.65)]",
+    controlMenuHeadingClass:
+        "mb-2 border-b border-border/60 px-1 pb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground",
+    controlStyle: "inline-nameplate",
+    controlTriggerClass:
+        "inline-flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-md border border-border/80 bg-background px-2 py-1 text-foreground shadow-sm marker:hidden hover:bg-muted/70",
+    directoryButtonClass:
+        "grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-md px-3 py-2 text-left transition hover:bg-muted/60",
+    directoryChevronClass:
+        "inline-flex size-6 items-center justify-center rounded-md border border-border/70 bg-muted text-muted-foreground",
+    directoryContentClass: "space-y-2 px-2 pb-2 pt-0",
+    directoryGroupClass: "space-y-2",
+    directoryMetaClass:
+        "mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground",
+    directoryRowBaseClass:
+        "grid w-full grid-cols-1 gap-2 rounded-lg border transition",
+    directoryRowCollapsedClass: "p-0",
+    directoryRowIdleClass:
+        "border-border/70 bg-background/70 hover:border-primary/35 hover:bg-muted/30",
+    directoryRowSelectedClass:
+        "border-primary/45 bg-primary/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]",
+    directoryRowWithContentClass: "p-2",
+    emptyStateClass:
+        "mt-4 rounded-lg border border-dashed border-border/70 bg-background px-4 py-8 text-center text-sm text-muted-foreground",
+    fileButtonBaseClass:
+        "flex w-full items-start gap-3 rounded-md border border-border/60 bg-background px-3 py-2.5 text-left transition hover:border-primary/40 hover:bg-muted/40",
+    fileButtonCompactClass: "h-full min-w-0",
+    fileButtonSelectedClass: "border-primary/45 bg-primary/10",
+    fileGlyphClass:
+        "mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground",
+    fileListGridClass: "space-y-2 xl:col-span-2",
+    fileListSingleClass: "space-y-2",
+    fileListSinglePreviewClass:
+        "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
+    fileMetaClass:
+        "mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
+    fileNameClass: "block truncate text-sm font-semibold text-foreground",
+    folderControlsClass:
+        "file-browser-control-surface inline-nameplate-controls flex w-fit max-w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border/80 bg-muted/55 px-2 py-1 text-sm shadow-inner",
+    gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
+    gridPreviewCellClass: "min-w-0",
+    gridRowClass:
+        "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
+    headerClass:
+        "flex flex-wrap items-center gap-3 border-b border-border/70 pb-4",
+    headerIconClass: "size-4 text-primary",
+    headerTitleClass:
+        "text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground",
+    id: "inline",
+    pageBadgeClass:
+        "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1 text-muted-foreground",
+    paginationClass:
+        "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
+    previewHeightControlClass:
+        "inline-flex w-28 flex-col items-stretch gap-1 rounded-md border border-border/70 bg-background px-2 py-1 text-foreground",
+    sectionClass:
+        "rounded-xl border border-border/75 bg-card p-3 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)] sm:p-4",
+    singlePreviewClass:
+        "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
+    subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
+    subdirFilenameClass:
+        "truncate text-[11px] font-semibold text-muted-foreground",
+    subdirFrameBaseClass: "inline-flex max-w-full overflow-hidden",
+    subdirImageCardClass: "w-full",
+    subdirImageFrameClass: "w-full items-start justify-center",
+    subdirStripClass:
+        "flex w-full min-w-0 items-start gap-3 overflow-x-auto pb-1",
+    subdirStripWrapperClass: "px-2 pb-2",
+    subdirTextCardClass: "w-fit",
+    subdirTextFrameClass:
+        "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
+    treeInnerClass: "space-y-2",
+    treeShellClass:
+        "mt-4 rounded-lg border border-border/70 bg-background/65 p-2",
+};
 
-const fileBrowserDesigns: FileBrowserDesign[] = [
-    {
-        Icon: FolderTree,
-        contextClass: "",
-        controlLabelClass: "flex items-center justify-between gap-3 text-sm",
-        controlMenuClass:
-            "absolute left-0 z-20 mt-2 min-w-56 rounded-[1.25rem] border border-border/70 bg-[var(--popover)] p-3 shadow-lg",
-        controlMenuHeadingClass:
-            "mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground",
-        controlStyle: "classic-control",
-        controlTriggerClass:
-            "inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden",
-        description: "Current rounded folder rows",
-        directoryButtonClass:
-            "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[1rem] px-3 py-3 text-left transition hover:bg-background/55",
-        directoryChevronClass:
-            "inline-flex size-6 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground",
-        directoryContentClass: "space-y-3 px-3 pb-3 pt-1",
-        directoryGroupClass: "space-y-2",
-        directoryMetaClass:
-            "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
-        directoryRowBaseClass:
-            "grid w-full grid-cols-1 gap-3 rounded-[1.25rem] border transition",
-        directoryRowCollapsedClass: "grid-cols-1 p-0",
-        directoryRowIdleClass:
-            "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
-        directoryRowSelectedClass: "border-primary/45 bg-primary/10",
-        directoryRowWithContentClass: "p-2",
-        directoryTagClass:
-            "text-xs uppercase tracking-[0.18em] text-muted-foreground",
-        emptyStateClass:
-            "mt-5 rounded-[1.5rem] border border-dashed border-border/70 bg-background/40 px-4 py-8 text-center text-sm text-muted-foreground",
-        fileButtonBaseClass:
-            "flex w-full items-start gap-3 rounded-[1rem] border border-border/60 bg-background/70 px-3 py-3 text-left transition hover:border-primary/40 hover:bg-background",
-        fileButtonCompactClass: "h-full min-w-0",
-        fileButtonSelectedClass: "border-primary/45 bg-primary/10",
-        fileGlyphClass:
-            "mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background/80 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        fileListGridClass: "space-y-3 xl:col-span-2",
-        fileListSingleClass: "space-y-3",
-        fileListSinglePreviewClass:
-            "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start",
-        fileMetaClass:
-            "mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
-        fileNameClass: "block truncate text-base font-medium text-foreground",
-        folderControlsClass:
-            "file-browser-control-surface classic-control-surface flex w-full flex-wrap items-center justify-start gap-2 px-3 pb-3 text-sm",
-        gridFileCellClass: "min-w-0 border-r border-border/60 pr-3",
-        gridPreviewCellClass: "min-w-0",
-        gridRowClass:
-            "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start",
-        headerClass: "flex items-center gap-3 border-b border-border/60 pb-5",
-        headerIconClass: "size-4 text-primary",
-        headerTitleClass:
-            "text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground",
-        id: "classic",
-        label: "Current",
-        pageBadgeClass:
-            "inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground",
-        paginationClass:
-            "inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/75 p-1",
-        previewHeightControlClass:
-            "inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground",
-        sectionClass:
-            "rounded-[1.75rem] border border-border/70 bg-card/85 p-4 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)] sm:p-5",
-        selectorClass:
-            "ml-auto inline-flex flex-wrap items-center gap-1 rounded-full border border-border/70 bg-background/70 p-1",
-        selectorOptionClass: (active) =>
-            cn(
-                selectorOptionBaseClass,
-                "rounded-full",
-                active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            ),
-        shortLabel: "Current",
-        singlePreviewClass:
-            "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
-        subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-2",
-        subdirFilenameClass:
-            "truncate text-xs font-medium text-muted-foreground",
-        subdirFrameBaseClass: "inline-flex max-w-full overflow-hidden",
-        subdirImageCardClass: "w-full",
-        subdirImageFrameClass: "w-full items-start justify-center",
-        subdirStripClass:
-            "flex w-full min-w-0 items-start gap-4 overflow-x-auto pb-1",
-        subdirStripWrapperClass: "px-3 pb-3",
-        subdirTextCardClass: "w-fit",
-        subdirTextFrameClass:
-            "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
-        treeInnerClass: "space-y-3",
-        treeShellClass:
-            "mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4",
-    },
-    {
-        Icon: PanelTop,
-        contextClass:
-            "mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-xs text-muted-foreground",
-        controlLabelClass:
-            "flex items-center justify-between gap-3 rounded-md px-1 py-0.5 text-sm",
-        controlMenuClass:
-            "absolute left-0 z-20 mt-2 min-w-56 rounded-lg border border-border bg-[var(--popover)] p-2 shadow-[0_16px_40px_-24px_rgba(28,40,58,0.65)]",
-        controlMenuHeadingClass:
-            "mb-2 border-b border-border/60 px-1 pb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        controlStyle: "inline-nameplate",
-        controlTriggerClass:
-            "inline-flex cursor-pointer list-none items-center gap-2 rounded-md border border-border/80 bg-background px-2.5 py-1.5 text-foreground shadow-sm marker:hidden hover:bg-muted/70",
-        description: "Controls folded into the active folder nameplate",
-        directoryButtonClass:
-            "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-3 py-2.5 text-left transition hover:bg-muted/60",
-        directoryChevronClass:
-            "inline-flex size-6 items-center justify-center rounded-md border border-border/70 bg-muted text-muted-foreground",
-        directoryContentClass: "space-y-2 px-2 pb-2 pt-0",
-        directoryGroupClass: "space-y-2",
-        directoryMetaClass:
-            "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
-        directoryRowBaseClass:
-            "grid w-full grid-cols-1 gap-2 rounded-lg border transition",
-        directoryRowCollapsedClass: "p-0",
-        directoryRowIdleClass:
-            "border-border/70 bg-background/70 hover:border-primary/35 hover:bg-muted/30",
-        directoryRowSelectedClass:
-            "border-primary/45 bg-primary/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]",
-        directoryRowWithContentClass: "p-1.5",
-        directoryTagClass:
-            "text-[11px] uppercase tracking-[0.16em] text-muted-foreground",
-        emptyStateClass:
-            "mt-4 rounded-lg border border-dashed border-border/70 bg-background px-4 py-8 text-center text-sm text-muted-foreground",
-        fileButtonBaseClass:
-            "flex w-full items-start gap-3 rounded-md border border-border/60 bg-background px-3 py-2.5 text-left transition hover:border-primary/40 hover:bg-muted/40",
-        fileButtonCompactClass: "h-full min-w-0",
-        fileButtonSelectedClass: "border-primary/45 bg-primary/10",
-        fileGlyphClass:
-            "mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground",
-        fileListGridClass: "space-y-2 xl:col-span-2",
-        fileListSingleClass: "space-y-2",
-        fileListSinglePreviewClass:
-            "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-        fileMetaClass:
-            "mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
-        fileNameClass: "block truncate text-sm font-semibold text-foreground",
-        folderControlsClass:
-            "file-browser-control-surface inline-nameplate-controls flex w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border/80 bg-muted/55 px-2 py-1.5 text-sm shadow-inner",
-        gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
-        gridPreviewCellClass: "min-w-0",
-        gridRowClass:
-            "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-        headerClass:
-            "flex flex-wrap items-center gap-3 border-b border-border/70 pb-4",
-        headerIconClass: "size-4 text-primary",
-        headerTitleClass:
-            "text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        id: "inline",
-        label: "Inline Nameplate",
-        pageBadgeClass:
-            "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1.5 text-muted-foreground",
-        paginationClass:
-            "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
-        previewHeightControlClass:
-            "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2.5 py-1.5 text-foreground",
-        sectionClass:
-            "rounded-xl border border-border/75 bg-card p-3 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)] sm:p-4",
-        selectorClass:
-            "ml-auto inline-flex flex-wrap items-center gap-1 rounded-lg border border-border/70 bg-background p-1",
-        selectorOptionClass: (active) =>
-            cn(
-                selectorOptionBaseClass,
-                "rounded-md",
-                active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            ),
-        shortLabel: "Inline",
-        singlePreviewClass:
-            "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
-        subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
-        subdirFilenameClass:
-            "truncate text-[11px] font-semibold text-muted-foreground",
-        subdirFrameBaseClass: "inline-flex max-w-full overflow-hidden",
-        subdirImageCardClass: "w-full",
-        subdirImageFrameClass: "w-full items-start justify-center",
-        subdirStripClass:
-            "flex w-full min-w-0 items-start gap-3 overflow-x-auto pb-1",
-        subdirStripWrapperClass: "px-2 pb-2",
-        subdirTextCardClass: "w-fit",
-        subdirTextFrameClass:
-            "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
-        treeInnerClass: "space-y-2",
-        treeShellClass:
-            "mt-4 rounded-lg border border-border/70 bg-background/65 p-2",
-    },
-    {
-        Icon: ListTree,
-        contextClass:
-            "mt-4 flex flex-wrap items-center gap-2 rounded-r-xl border border-l-4 border-border/70 border-l-primary bg-background/80 px-3 py-2 text-xs text-muted-foreground",
-        controlLabelClass:
-            "flex items-center justify-between gap-3 rounded-lg px-1 py-0.5 text-sm",
-        controlMenuClass:
-            "absolute left-0 z-20 mt-2 min-w-56 rounded-r-xl rounded-l-md border border-l-4 border-border/70 border-l-primary bg-[var(--popover)] p-3 shadow-lg",
-        controlMenuHeadingClass:
-            "mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary",
-        controlStyle: "sidecar-utility",
-        controlTriggerClass:
-            "inline-flex cursor-pointer list-none items-center gap-2 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden",
-        description: "Expanded folders get a utility sidecar",
-        directoryButtonClass:
-            "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-r-lg rounded-l-sm px-3 py-3 text-left transition hover:bg-background/70",
-        directoryChevronClass:
-            "inline-flex size-6 items-center justify-center rounded-r-md rounded-l-sm border border-l-2 border-border/70 border-l-primary/45 bg-background text-muted-foreground",
-        directoryContentClass: "space-y-3 px-3 pb-3 pt-0",
-        directoryGroupClass: "space-y-2",
-        directoryMetaClass:
-            "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
-        directoryRowBaseClass:
-            "grid w-full grid-cols-1 gap-3 rounded-r-xl rounded-l-sm border border-l-4 transition",
-        directoryRowCollapsedClass: "p-0",
-        directoryRowIdleClass:
-            "border-border/60 border-l-accent bg-background/55 hover:border-primary/35 hover:border-l-primary hover:bg-background",
-        directoryRowSelectedClass:
-            "border-primary/45 border-l-primary bg-primary/10",
-        directoryRowWithContentClass: "p-2",
-        directoryTagClass:
-            "text-xs uppercase tracking-[0.18em] text-muted-foreground",
-        emptyStateClass:
-            "mt-5 rounded-r-xl rounded-l-sm border border-l-4 border-dashed border-border/70 border-l-primary bg-background/40 px-4 py-8 text-center text-sm text-muted-foreground",
-        fileButtonBaseClass:
-            "flex w-full items-start gap-3 rounded-r-lg rounded-l-sm border border-l-4 border-border/60 border-l-muted bg-background/70 px-3 py-3 text-left transition hover:border-primary/40 hover:border-l-primary hover:bg-background",
-        fileButtonCompactClass: "h-full min-w-0",
-        fileButtonSelectedClass:
-            "border-primary/45 border-l-primary bg-primary/10",
-        fileGlyphClass:
-            "mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-r-md rounded-l-sm border border-border/60 bg-background text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground",
-        fileListGridClass: "space-y-3 xl:col-span-2",
-        fileListSingleClass: "space-y-3",
-        fileListSinglePreviewClass:
-            "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start",
-        fileMetaClass:
-            "mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
-        fileNameClass: "block truncate text-base font-medium text-foreground",
-        folderControlsClass:
-            "file-browser-control-surface sidecar-controls flex w-full min-w-0 flex-col items-stretch justify-start gap-2 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-background/80 px-3 py-2 text-sm",
-        gridFileCellClass: "min-w-0 border-r border-border/60 pr-3",
-        gridPreviewCellClass: "min-w-0",
-        gridRowClass:
-            "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start",
-        headerClass:
-            "flex flex-wrap items-center gap-3 border-b border-border/60 pb-5",
-        headerIconClass: "size-4 text-primary",
-        headerTitleClass:
-            "text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground",
-        id: "sidecar",
-        label: "Utility Sidecar",
-        pageBadgeClass:
-            "inline-flex items-center gap-2 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-background/75 px-2 py-1.5 text-muted-foreground",
-        paginationClass:
-            "inline-flex items-center gap-1 rounded-r-lg rounded-l-sm border border-border/70 bg-background/75 p-1",
-        previewHeightControlClass:
-            "inline-flex items-center gap-2 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-background/75 px-3 py-2 text-foreground",
-        sectionClass:
-            "rounded-r-[1.5rem] rounded-l-lg border border-l-4 border-border/70 border-l-primary bg-card/85 p-4 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)] sm:p-5",
-        selectorClass:
-            "ml-auto inline-flex flex-wrap items-center gap-1 rounded-r-lg rounded-l-sm border border-l-4 border-border/70 border-l-primary bg-background/70 p-1",
-        selectorOptionClass: (active) =>
-            cn(
-                selectorOptionBaseClass,
-                "rounded-md",
-                active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            ),
-        shortLabel: "Sidecar",
-        singlePreviewClass:
-            "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
-        subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-2",
-        subdirFilenameClass:
-            "truncate text-xs font-medium text-muted-foreground",
-        subdirFrameBaseClass: "inline-flex max-w-full overflow-hidden",
-        subdirImageCardClass: "w-full",
-        subdirImageFrameClass: "w-full items-start justify-center",
-        subdirStripClass:
-            "flex w-full min-w-0 items-start gap-4 overflow-x-auto pb-1",
-        subdirStripWrapperClass: "px-3 pb-3",
-        subdirTextCardClass: "w-fit",
-        subdirTextFrameClass:
-            "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
-        treeInnerClass: "space-y-3",
-        treeShellClass:
-            "mt-5 rounded-r-[1.25rem] rounded-l-md border border-l-4 border-border/70 border-l-primary bg-background/50 p-4",
-    },
-    {
-        Icon: CommandIcon,
-        contextClass:
-            "mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-primary/25 bg-popover px-3 py-2 text-xs text-muted-foreground shadow-[0_14px_36px_-30px_rgba(28,40,58,0.72)]",
-        controlLabelClass:
-            "flex items-center justify-between gap-3 rounded-xl px-2 py-1 text-sm hover:bg-muted/45",
-        controlMenuClass:
-            "absolute left-0 z-20 mt-2 min-w-60 rounded-2xl border border-primary/25 bg-[var(--popover)] p-2 shadow-[0_28px_90px_-54px_rgba(28,40,58,0.72)]",
-        controlMenuHeadingClass:
-            "mb-1 rounded-xl bg-muted/50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground",
-        controlStyle: "breadcrumb-ribbon",
-        controlTriggerClass:
-            "inline-flex cursor-pointer list-none items-center gap-2 rounded-xl border border-primary/25 bg-[var(--popover)] px-3 py-2 text-foreground shadow-[0_10px_30px_-24px_rgba(32,48,76,0.9)] marker:hidden hover:bg-muted/50",
-        description: "Breadcrumb ribbon with popover controls",
-        directoryButtonClass:
-            "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-muted/45",
-        directoryChevronClass:
-            "inline-flex size-6 items-center justify-center rounded-xl border border-primary/25 bg-popover text-primary",
-        directoryContentClass: "space-y-3 px-3 pb-3 pt-1",
-        directoryGroupClass: "space-y-2",
-        directoryMetaClass:
-            "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
-        directoryRowBaseClass:
-            "grid w-full grid-cols-1 gap-3 rounded-2xl border transition",
-        directoryRowCollapsedClass: "p-0",
-        directoryRowIdleClass:
-            "border-border/60 bg-popover/70 hover:border-primary/35 hover:bg-popover",
-        directoryRowSelectedClass:
-            "border-primary/45 bg-primary/10 shadow-[0_18px_55px_-48px_rgba(28,40,58,0.8)]",
-        directoryRowWithContentClass: "p-2",
-        directoryTagClass:
-            "text-xs uppercase tracking-[0.18em] text-muted-foreground",
-        emptyStateClass:
-            "mt-5 rounded-2xl border border-dashed border-primary/30 bg-popover px-4 py-8 text-center text-sm text-muted-foreground",
-        fileButtonBaseClass:
-            "flex w-full items-start gap-3 rounded-xl border border-border/60 bg-popover/75 px-3 py-3 text-left transition hover:border-primary/40 hover:bg-popover",
-        fileButtonCompactClass: "h-full min-w-0",
-        fileButtonSelectedClass: "border-primary/45 bg-primary/10",
-        fileGlyphClass:
-            "mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-background text-xs font-semibold uppercase tracking-[0.16em] text-primary",
-        fileListGridClass: "space-y-3 xl:col-span-2",
-        fileListSingleClass: "space-y-3",
-        fileListSinglePreviewClass:
-            "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start",
-        fileMetaClass:
-            "mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
-        fileNameClass: "block truncate text-base font-medium text-foreground",
-        folderControlsClass:
-            "file-browser-control-surface ribbon-controls flex w-full flex-wrap items-center justify-start gap-2 rounded-2xl border border-primary/25 bg-popover px-3 py-2 text-sm shadow-[0_14px_45px_-38px_rgba(28,40,58,0.7)]",
-        gridFileCellClass: "min-w-0 border-r border-border/60 pr-3",
-        gridPreviewCellClass: "min-w-0",
-        gridRowClass:
-            "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start",
-        headerClass:
-            "flex flex-wrap items-center gap-3 border-b border-primary/20 pb-5",
-        headerIconClass: "size-4 text-primary",
-        headerTitleClass:
-            "text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground",
-        id: "ribbon",
-        label: "Breadcrumb Ribbon",
-        pageBadgeClass:
-            "inline-flex items-center gap-2 rounded-xl border border-primary/25 bg-background px-2 py-1.5 text-muted-foreground",
-        paginationClass:
-            "inline-flex items-center gap-1 rounded-xl border border-primary/25 bg-background p-1",
-        previewHeightControlClass:
-            "inline-flex items-center gap-2 rounded-xl border border-primary/25 bg-background px-3 py-2 text-foreground",
-        sectionClass:
-            "rounded-[1.75rem] border border-primary/20 bg-card p-4 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)] sm:p-5",
-        selectorClass:
-            "ml-auto inline-flex flex-wrap items-center gap-1 rounded-2xl border border-primary/25 bg-popover p-1",
-        selectorOptionClass: (active) =>
-            cn(
-                selectorOptionBaseClass,
-                "rounded-xl",
-                active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            ),
-        shortLabel: "Ribbon",
-        singlePreviewClass:
-            "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
-        subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-2",
-        subdirFilenameClass:
-            "truncate text-xs font-medium text-muted-foreground",
-        subdirFrameBaseClass: "inline-flex max-w-full overflow-hidden",
-        subdirImageCardClass: "w-full",
-        subdirImageFrameClass: "w-full items-start justify-center",
-        subdirStripClass:
-            "flex w-full min-w-0 items-start gap-4 overflow-x-auto pb-1",
-        subdirStripWrapperClass: "px-3 pb-3",
-        subdirTextCardClass: "w-fit",
-        subdirTextFrameClass:
-            "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
-        treeInnerClass: "space-y-3",
-        treeShellClass:
-            "mt-5 rounded-2xl border border-primary/20 bg-background/50 p-4",
-    },
-    {
-        Icon: Table2,
-        contextClass:
-            "mt-4 flex flex-wrap items-center gap-2 border-y border-border/70 bg-muted/35 px-2 py-2 text-xs text-muted-foreground",
-        controlLabelClass:
-            "flex items-center justify-between gap-3 px-1 py-1 text-sm",
-        controlMenuClass:
-            "absolute left-0 z-20 mt-2 min-w-56 rounded-md border border-border bg-[var(--popover)] p-2 shadow-md",
-        controlMenuHeadingClass:
-            "mb-1 border-b border-border/70 px-1 pb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        controlStyle: "matrix-table",
-        controlTriggerClass:
-            "inline-flex cursor-pointer list-none items-center gap-2 rounded-md border border-border bg-[var(--popover)] px-2.5 py-1.5 text-foreground marker:hidden hover:bg-muted/60",
-        description: "A table-like file matrix with header utilities",
-        directoryButtonClass:
-            "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-2 py-2 text-left transition hover:bg-muted/40",
-        directoryChevronClass:
-            "inline-flex size-6 items-center justify-center rounded-sm border border-border/70 bg-background text-muted-foreground",
-        directoryContentClass: "space-y-2 px-2 pb-2 pt-0",
-        directoryGroupClass: "space-y-0",
-        directoryMetaClass:
-            "mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
-        directoryRowBaseClass:
-            "grid w-full grid-cols-1 gap-2 rounded-none border-x-0 border-t-0 border-b border-border/70 transition",
-        directoryRowCollapsedClass: "p-0",
-        directoryRowIdleClass: "bg-transparent hover:bg-muted/30",
-        directoryRowSelectedClass: "bg-primary/10",
-        directoryRowWithContentClass: "p-0",
-        directoryTagClass:
-            "text-[11px] uppercase tracking-[0.16em] text-muted-foreground",
-        emptyStateClass:
-            "mt-4 border border-dashed border-border/70 bg-background/40 px-4 py-8 text-center text-sm text-muted-foreground",
-        fileButtonBaseClass:
-            "flex w-full items-start gap-3 rounded-none border-x-0 border-t-0 border-b border-border/60 bg-transparent px-2 py-2 text-left transition hover:bg-muted/30",
-        fileButtonCompactClass: "h-full min-w-0",
-        fileButtonSelectedClass: "bg-primary/10",
-        fileGlyphClass:
-            "mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-sm bg-muted text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground",
-        fileListGridClass: "space-y-0 xl:col-span-2",
-        fileListSingleClass: "space-y-0",
-        fileListSinglePreviewClass:
-            "grid gap-2 grid-cols-[minmax(18rem,0.82fr)_minmax(0,1.18fr)] items-start",
-        fileMetaClass:
-            "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
-        fileNameClass: "block truncate text-sm font-medium text-foreground",
-        folderControlsClass:
-            "file-browser-control-surface matrix-controls flex w-full flex-wrap items-center justify-start gap-1.5 border-y border-border/70 bg-muted/35 px-2 py-1.5 text-sm",
-        gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
-        gridPreviewCellClass: "min-w-0",
-        gridRowClass:
-            "grid gap-2 grid-cols-[minmax(18rem,0.82fr)_minmax(0,1.18fr)] items-start",
-        headerClass:
-            "flex flex-wrap items-center gap-3 border-b border-border/70 pb-3",
-        headerIconClass: "size-4 text-primary",
-        headerTitleClass:
-            "text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground",
-        id: "matrix",
-        label: "File Matrix",
-        pageBadgeClass:
-            "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1.5 text-muted-foreground",
-        paginationClass:
-            "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
-        previewHeightControlClass:
-            "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2.5 py-1.5 text-foreground",
-        sectionClass:
-            "border border-border/70 bg-card p-3 shadow-[0_12px_46px_-42px_rgba(48,67,98,0.9)] sm:p-4",
-        selectorClass:
-            "ml-auto inline-flex flex-wrap items-center gap-0.5 border border-border/70 bg-background p-0.5",
-        selectorOptionClass: (active) =>
-            cn(
-                selectorOptionBaseClass,
-                "rounded-sm",
-                active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            ),
-        shortLabel: "Matrix",
-        singlePreviewClass:
-            "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
-        subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
-        subdirFilenameClass:
-            "truncate text-[11px] font-medium text-muted-foreground",
-        subdirFrameBaseClass: "inline-flex max-w-full overflow-hidden",
-        subdirImageCardClass: "w-full",
-        subdirImageFrameClass: "w-full items-start justify-center",
-        subdirStripClass:
-            "flex w-full min-w-0 items-start gap-3 overflow-x-auto pb-1",
-        subdirStripWrapperClass: "px-2 pb-2",
-        subdirTextCardClass: "w-fit",
-        subdirTextFrameClass:
-            "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
-        treeInnerClass: "space-y-0",
-        treeShellClass: "mt-4 border border-border/70 bg-background/45 p-2",
-    },
-    {
-        Icon: GalleryHorizontal,
-        contextClass:
-            "mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-accent/80 bg-accent/15 px-3 py-2 text-xs text-muted-foreground",
-        controlLabelClass:
-            "flex items-center justify-between gap-3 rounded-lg px-1 py-0.5 text-sm",
-        controlMenuClass:
-            "absolute left-0 z-20 mt-2 min-w-56 rounded-xl border border-dashed border-accent/80 bg-[var(--popover)] p-3 shadow-lg",
-        controlMenuHeadingClass:
-            "mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground",
-        controlStyle: "preview-deck",
-        controlTriggerClass:
-            "inline-flex cursor-pointer list-none items-center gap-2 rounded-lg border border-dashed border-accent/80 bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden hover:bg-accent/20",
-        description: "Preview-first deck with a compact file strip",
-        directoryButtonClass:
-            "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-3 py-3 text-left transition hover:bg-accent/10",
-        directoryChevronClass:
-            "inline-flex size-6 items-center justify-center rounded-lg border border-accent/80 bg-accent/15 text-foreground",
-        directoryContentClass: "space-y-3 px-3 pb-3 pt-1",
-        directoryGroupClass: "space-y-2",
-        directoryMetaClass:
-            "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
-        directoryRowBaseClass:
-            "grid w-full grid-cols-1 gap-3 rounded-xl border transition",
-        directoryRowCollapsedClass: "p-0",
-        directoryRowIdleClass:
-            "border-border/60 bg-background/55 hover:border-accent hover:bg-accent/10",
-        directoryRowSelectedClass:
-            "border-accent bg-accent/20 shadow-[0_18px_60px_-52px_rgba(115,83,25,0.8)]",
-        directoryRowWithContentClass: "p-2",
-        directoryTagClass:
-            "text-xs uppercase tracking-[0.18em] text-muted-foreground",
-        emptyStateClass:
-            "mt-5 rounded-xl border border-dashed border-accent/80 bg-accent/10 px-4 py-8 text-center text-sm text-muted-foreground",
-        fileButtonBaseClass:
-            "flex w-full items-start gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-3 text-left transition hover:border-accent hover:bg-accent/10",
-        fileButtonCompactClass: "h-full min-w-0",
-        fileButtonSelectedClass: "border-accent bg-accent/20",
-        fileGlyphClass:
-            "mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-accent/80 bg-accent/15 text-xs font-semibold uppercase tracking-[0.16em] text-foreground",
-        fileListGridClass: "space-y-3 xl:col-span-2",
-        fileListSingleClass: "space-y-3",
-        fileListSinglePreviewClass:
-            "grid gap-3 grid-cols-[minmax(0,1.22fr)_minmax(16rem,0.78fr)] items-start",
-        fileMetaClass:
-            "mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground",
-        fileNameClass: "block truncate text-base font-medium text-foreground",
-        folderControlsClass:
-            "file-browser-control-surface deck-controls flex w-full flex-wrap items-center justify-start gap-2 rounded-xl border border-dashed border-accent/80 bg-accent/15 px-3 py-2 text-sm",
-        gridFileCellClass: "min-w-0 border-r border-border/60 pr-3",
-        gridPreviewCellClass: "min-w-0",
-        gridRowClass:
-            "grid gap-3 grid-cols-[minmax(18rem,0.78fr)_minmax(0,1.22fr)] items-start",
-        headerClass:
-            "flex flex-wrap items-center gap-3 border-b border-accent/60 pb-5",
-        headerIconClass: "size-4 text-primary",
-        headerTitleClass:
-            "text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground",
-        id: "deck",
-        label: "Preview Deck",
-        pageBadgeClass:
-            "inline-flex items-center gap-2 rounded-lg border border-dashed border-accent/80 bg-background px-2 py-1.5 text-muted-foreground",
-        paginationClass:
-            "inline-flex items-center gap-1 rounded-lg border border-dashed border-accent/80 bg-background p-1",
-        previewHeightControlClass:
-            "inline-flex items-center gap-2 rounded-lg border border-dashed border-accent/80 bg-background px-3 py-2 text-foreground",
-        sectionClass:
-            "rounded-[1.5rem] border border-accent/70 bg-card/90 p-4 shadow-[0_28px_90px_-72px_rgba(115,83,25,0.8)] sm:p-5",
-        selectorClass:
-            "ml-auto inline-flex flex-wrap items-center gap-1 rounded-xl border border-dashed border-accent/80 bg-background/70 p-1",
-        selectorOptionClass: (active) =>
-            cn(
-                selectorOptionBaseClass,
-                "rounded-lg",
-                active
-                    ? "bg-accent text-accent-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent/20 hover:text-foreground",
-            ),
-        shortLabel: "Deck",
-        singlePreviewClass:
-            "sticky top-4 z-10 min-w-0 col-start-1 row-start-1 self-start",
-        subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-2",
-        subdirFilenameClass:
-            "truncate text-xs font-semibold text-muted-foreground",
-        subdirFrameBaseClass: "inline-flex max-w-full overflow-hidden",
-        subdirImageCardClass: "w-full",
-        subdirImageFrameClass: "w-full items-start justify-center",
-        subdirStripClass:
-            "flex w-full min-w-0 items-start gap-4 overflow-x-auto pb-1",
-        subdirStripWrapperClass:
-            "rounded-xl border border-dashed border-accent/60 bg-background/50 px-3 py-3",
-        subdirTextCardClass: "w-fit",
-        subdirTextFrameClass:
-            "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
-        treeInnerClass: "space-y-3",
-        treeShellClass:
-            "mt-5 rounded-xl border border-accent/60 bg-background/50 p-4",
-    },
-];
-
-const fileBrowserDesignById = new Map(
-    fileBrowserDesigns.map((design) => [design.id, design]),
-);
-const defaultFileBrowserDesign = fileBrowserDesigns[0] as FileBrowserDesign;
-
-function controlPlacementFor(
-    designId: FileBrowserDesignKey,
-): FileBrowserControlPlacement {
-    switch (designId) {
-        case "inline":
-            return "name-area";
-        case "sidecar":
-            return "sidecar";
-        case "ribbon":
-            return "content-ribbon";
-        case "matrix":
-            return "matrix-header";
-        case "deck":
-            return "preview-dock";
-        case "classic":
-            return "classic-row";
-    }
-}
+const inlineControlPlacement: FileBrowserControlPlacement = "name-area";
 
 const previewHeightCommitKeys = new Set([
     "ArrowDown",
@@ -1060,17 +507,31 @@ const PreviewHeightControl = memo(function PreviewHeightControl({
     return (
         <label
             className={cn(
-                "inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground",
+                "inline-flex min-w-0 items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground",
                 className,
             )}
+            data-file-browser-control-trigger="preview-height"
         >
-            <span className="inline-flex items-center gap-2 text-sm font-medium">
+            <span className="inline-flex items-center gap-1.5 text-sm">
                 <Eye className="size-4 text-primary" aria-hidden="true" />
-                <span className="whitespace-nowrap">{label}</span>
+                <span className="flex flex-col leading-tight">
+                    <span
+                        className="whitespace-nowrap font-medium"
+                        data-file-browser-control-label="preview-height"
+                    >
+                        {label}
+                    </span>
+                    <span
+                        className="text-[11px] text-muted-foreground tabular-nums"
+                        data-file-browser-control-current="preview-height"
+                    >
+                        {draftValue}px
+                    </span>
+                </span>
             </span>
             <input
                 aria-label={ariaLabel}
-                className="h-1 w-24 accent-primary"
+                className="h-1 w-full accent-primary"
                 max={420}
                 min={120}
                 onBlur={commitDraftValue}
@@ -1089,9 +550,6 @@ const PreviewHeightControl = memo(function PreviewHeightControl({
                 type="range"
                 value={draftValue}
             />
-            <span className="text-xs text-muted-foreground tabular-nums">
-                {draftValue}px
-            </span>
         </label>
     );
 });
@@ -1365,10 +823,7 @@ export function FileBrowser({
     selectedPath,
     visibleFiles,
 }: FileBrowserProps) {
-    const [selectedDesignId, setSelectedDesignId] =
-        useState<FileBrowserDesignKey>("classic");
-    const activeDesign =
-        fileBrowserDesignById.get(selectedDesignId) ?? defaultFileBrowserDesign;
+    const activeDesign = activeFileBrowserDesign;
     const [uncontrolledDirectory, setUncontrolledDirectory] = useState<
         string | undefined
     >(selectedDirectory);
@@ -1597,105 +1052,22 @@ export function FileBrowser({
 
         setUncontrolledPreviewHeight(value);
     };
-    const renderDesignSelector = () => (
-        <div
-            aria-label="Temporary file browser design selector"
-            className={activeDesign.selectorClass}
-            data-file-browser-design-selector="true"
-            role="group"
-        >
-            {fileBrowserDesigns.map((design) => {
-                const DesignIcon = design.Icon;
-                const isActive = design.id === activeDesign.id;
-
-                return (
-                    <button
-                        key={design.id}
-                        type="button"
-                        aria-pressed={isActive}
-                        className={design.selectorOptionClass(isActive)}
-                        data-file-browser-design-option={design.id}
-                        onClick={() => setSelectedDesignId(design.id)}
-                        title={`${design.label}: ${design.description}`}
-                    >
-                        <DesignIcon className="size-3.5" aria-hidden="true" />
-                        <span className="hidden lg:inline">
-                            {design.shortLabel}
-                        </span>
-                    </button>
-                );
-            })}
-        </div>
-    );
-    const renderDesignContext = () => {
-        if (activeDesign.id === "classic") {
-            return null;
-        }
-
-        const activeNode = effectiveSelectedDirectory
-            ? findTreeNodeByPath(directoryTree, effectiveSelectedDirectory)
-            : undefined;
-        const segments = pathSegments(effectiveSelectedDirectory ?? "/");
-
-        return (
-            <div
-                className={activeDesign.contextClass}
-                data-file-browser-design-context={activeDesign.id}
-            >
-                <span className="font-semibold text-foreground">
-                    {activeDesign.label}
-                </span>
-                <span className="text-border">/</span>
-                <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
-                    {segments.length === 0 ? (
-                        <span className="rounded-sm bg-muted px-1.5 py-0.5 text-foreground">
-                            root
-                        </span>
-                    ) : (
-                        segments.map((segment) => (
-                            <span
-                                key={segment}
-                                className="rounded-sm bg-muted px-1.5 py-0.5 text-foreground"
-                            >
-                                {segment}
-                            </span>
-                        ))
-                    )}
-                </span>
-                <span className="text-border">/</span>
-                <span>
-                    {activeNode?.descendantFileCount ?? activeFiles.length}{" "}
-                    files
-                </span>
-                <span>{activeNode?.descendantDirectoryCount ?? 0} folders</span>
-            </div>
-        );
-    };
     const renderFileButton = (
         file: FileEntry,
         compact = false,
         style?: CSSProperties,
     ) => {
-        const isMatrix = activeDesign.id === "matrix";
-        const isDeck = activeDesign.id === "deck";
-
         return (
             <button
                 type="button"
                 key={file.path}
                 className={cn(
                     activeDesign.fileButtonBaseClass,
-                    isMatrix &&
-                        "grid grid-cols-[auto_minmax(10rem,1fr)_5rem_minmax(9rem,0.75fr)_5rem] items-center gap-3",
-                    isDeck &&
-                        "grid grid-cols-[auto_minmax(0,1fr)] rounded-none border-x-0 border-t-0 bg-transparent",
                     effectiveSelectedPath === file.path &&
                         activeDesign.fileButtonSelectedClass,
                     compact && activeDesign.fileButtonCompactClass,
                 )}
-                data-file-browser-file-layout={
-                    isMatrix ? "matrix-row" : isDeck ? "deck-strip" : "card"
-                }
+                data-file-browser-file-layout="card"
                 data-file-path={file.path}
                 onClick={() => {
                     if (selectedPath === undefined) {
@@ -1712,40 +1084,18 @@ export function FileBrowser({
                 >
                     {file.kind.slice(0, 1)}
                 </span>
-                {isMatrix ? (
-                    <>
-                        <span
-                            className={cn(
-                                activeDesign.fileNameClass,
-                                "min-w-0",
-                            )}
-                        >
-                            {fileName(file.path)}
-                        </span>
-                        <span className="text-xs text-muted-foreground tabular-nums">
-                            {formatBytes(file.size)}
-                        </span>
-                        <span className="truncate text-xs text-muted-foreground">
-                            {formatMtime(file.mtime)}
-                        </span>
-                        <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                <span className="min-w-0 flex-1">
+                    <span className={activeDesign.fileNameClass}>
+                        {fileName(file.path)}
+                    </span>
+                    <span className={activeDesign.fileMetaClass}>
+                        <span>{formatBytes(file.size)}</span>
+                        <span>{formatMtime(file.mtime)}</span>
+                        <span className="uppercase tracking-[0.18em]">
                             {file.kind}
                         </span>
-                    </>
-                ) : (
-                    <span className="min-w-0 flex-1">
-                        <span className={activeDesign.fileNameClass}>
-                            {fileName(file.path)}
-                        </span>
-                        <span className={activeDesign.fileMetaClass}>
-                            <span>{formatBytes(file.size)}</span>
-                            <span>{formatMtime(file.mtime)}</span>
-                            <span className="uppercase tracking-[0.18em]">
-                                {file.kind}
-                            </span>
-                        </span>
                     </span>
-                )}
+                </span>
             </button>
         );
     };
@@ -1805,7 +1155,7 @@ export function FileBrowser({
         const showPreviewPaging = previewPageCount > 1;
         const subdirPreviewEnabled = subdirPreviewEnabledFor(directoryPath);
         const subdirPreviewKinds = subdirPreviewKindsFor(directoryPath);
-        const controlPlacement = controlPlacementFor(activeDesign.id);
+        const controlPlacement = inlineControlPlacement;
         const hasPreviewModeControls =
             hasSubdirPreviewControls || showGridToggle;
 
@@ -1861,15 +1211,25 @@ export function FileBrowser({
                                 className="size-4 text-primary"
                                 aria-hidden="true"
                             />
-                            <span className="font-medium">Preview modes</span>
-                            <span className="text-xs text-muted-foreground">
-                                {summarizePreviewModes(
-                                    previewMode,
-                                    subdirPreviewEnabled,
-                                    showGridToggle,
-                                )}
+                            <span className="flex min-w-0 flex-col leading-tight">
+                                <span
+                                    className="whitespace-nowrap font-medium"
+                                    data-file-browser-control-label="preview-modes"
+                                >
+                                    Preview modes
+                                </span>
+                                <span
+                                    className="whitespace-nowrap text-[11px] text-muted-foreground"
+                                    data-file-browser-control-current="preview-modes"
+                                >
+                                    {summarizePreviewModes(
+                                        previewMode,
+                                        subdirPreviewEnabled,
+                                        showGridToggle,
+                                    )}
+                                </span>
                             </span>
-                            <ChevronDown className="size-4 text-muted-foreground" />
+                            <ChevronDown className="size-3.5 text-muted-foreground" />
                         </summary>
                         <div
                             className={activeDesign.controlMenuClass}
@@ -1985,13 +1345,23 @@ export function FileBrowser({
                                     className="size-4 text-primary"
                                     aria-hidden="true"
                                 />
-                                <span className="font-medium">File types</span>
-                                <span className="text-xs text-muted-foreground">
-                                    {summarizeSubdirPreviewKinds(
-                                        subdirPreviewKinds,
-                                    )}
+                                <span className="flex min-w-0 flex-col leading-tight">
+                                    <span
+                                        className="whitespace-nowrap font-medium"
+                                        data-file-browser-control-label="file-types"
+                                    >
+                                        File types
+                                    </span>
+                                    <span
+                                        className="whitespace-nowrap text-[11px] text-muted-foreground"
+                                        data-file-browser-control-current="file-types"
+                                    >
+                                        {summarizeSubdirPreviewKinds(
+                                            subdirPreviewKinds,
+                                        )}
+                                    </span>
                                 </span>
-                                <ChevronDown className="size-4 text-muted-foreground" />
+                                <ChevronDown className="size-3.5 text-muted-foreground" />
                             </summary>
                             <div
                                 className={cn(
@@ -2306,16 +1676,10 @@ export function FileBrowser({
             const showsChildRows = isStructurallyExpanded && hasChildren;
             const isExpanded =
                 hasPreviewControls || showsDirectoryFiles || showsChildRows;
-            const controlPlacement = controlPlacementFor(activeDesign.id);
+            const controlPlacement = inlineControlPlacement;
             const folderControlsInNameArea =
                 controlPlacement === "name-area" && Boolean(folderControls);
-            const folderControlsInSidecar =
-                controlPlacement === "sidecar" && Boolean(folderControls);
-            const folderControlsInRibbon =
-                (controlPlacement === "content-ribbon" ||
-                    controlPlacement === "matrix-header" ||
-                    controlPlacement === "preview-dock") &&
-                Boolean(folderControls);
+            const controlsFitInHeadingLine = depth <= 2;
             const renderDirectoryButton = () => (
                 <button
                     type="button"
@@ -2397,13 +1761,21 @@ export function FileBrowser({
                                 depth,
                             )}
                         </span>
-                        <span className={activeDesign.directoryMetaClass}>
-                            <span>
+                        <span
+                            className={activeDesign.directoryMetaClass}
+                            data-directory-meta={node.path}
+                        >
+                            <span data-directory-file-count={node.path}>
                                 {node.descendantFileCount === 0
                                     ? hasChildren
                                         ? "Expand to browse"
                                         : "Empty folder"
                                     : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
+                            </span>
+                            <span data-directory-subfolder-count={node.path}>
+                                {node.descendantDirectoryCount > 0
+                                    ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
+                                    : "Folder"}
                             </span>
                             {node.totalSize > 0 ? (
                                 <span>{formatBytes(node.totalSize)}</span>
@@ -2415,38 +1787,9 @@ export function FileBrowser({
                             ) : null}
                         </span>
                     </span>
-                    <span className={activeDesign.directoryTagClass}>
-                        {node.descendantDirectoryCount > 0
-                            ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
-                            : "Folder"}
-                    </span>
                 </button>
             );
             const renderDirectoryRow = (groupedContent: ReactNode) => {
-                const ribbonLabel =
-                    controlPlacement === "matrix-header"
-                        ? "Matrix controls"
-                        : controlPlacement === "preview-dock"
-                          ? "Preview controls"
-                          : "Path controls";
-                const groupedContentWithSidecar =
-                    folderControlsInSidecar && groupedContent ? (
-                        <div
-                            className="grid gap-3 lg:grid-cols-[minmax(12rem,0.32fr)_minmax(0,1fr)]"
-                            data-file-browser-sidecar-layout={node.path}
-                        >
-                            <aside
-                                className="min-w-0"
-                                data-file-browser-sidecar-controls={node.path}
-                            >
-                                {folderControls}
-                            </aside>
-                            <div className="min-w-0">{groupedContent}</div>
-                        </div>
-                    ) : (
-                        groupedContent
-                    );
-
                 return (
                     <div
                         key={`dir-${node.path}`}
@@ -2466,7 +1809,11 @@ export function FileBrowser({
                     >
                         {folderControlsInNameArea ? (
                             <div
-                                className="grid w-full grid-cols-1 items-start gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.74fr)]"
+                                className={cn(
+                                    "grid w-full grid-cols-1 items-start gap-2",
+                                    controlsFitInHeadingLine &&
+                                        "lg:grid-cols-[minmax(0,1fr)_auto]",
+                                )}
                                 data-directory-heading-with-controls={node.path}
                             >
                                 {renderDirectoryButton()}
@@ -2482,30 +1829,14 @@ export function FileBrowser({
                         ) : (
                             renderDirectoryButton()
                         )}
-                        {!folderControlsInNameArea &&
-                        !folderControlsInSidecar &&
-                        !folderControlsInRibbon
-                            ? folderControls
-                            : null}
-                        {folderControlsInRibbon ? (
-                            <div
-                                className="space-y-2"
-                                data-file-browser-content-ribbon={node.path}
-                            >
-                                <div className="flex flex-wrap items-center gap-2 px-1 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                                    <span>{ribbonLabel}</span>
-                                    <span className="h-px min-w-8 flex-1 bg-border/70" />
-                                </div>
-                                {folderControls}
-                            </div>
-                        ) : null}
+                        {!folderControlsInNameArea ? folderControls : null}
                         {showInlineSubdirPreview && inlineSubdirPreviewKinds
                             ? renderSubdirPreviewStrip(
                                   node,
                                   inlineSubdirPreviewKinds,
                               )
                             : null}
-                        {groupedContentWithSidecar}
+                        {groupedContent}
                     </div>
                 );
             };
@@ -2535,76 +1866,30 @@ export function FileBrowser({
                                 : undefined
                         }
                     >
-                        {activeDesign.id === "matrix" ? (
-                            <div
-                                className="grid grid-cols-[auto_minmax(10rem,1fr)_5rem_minmax(9rem,0.75fr)_5rem] items-center gap-3 border-b border-border/70 px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
-                                data-file-browser-file-matrix-header={node.path}
-                            >
-                                <span />
-                                <span>Name</span>
-                                <span>Size</span>
-                                <span>Modified</span>
-                                <span>Kind</span>
-                            </div>
-                        ) : null}
                         {previewMode === "single"
                             ? showFilePreviewWidgets
-                                ? activeDesign.id === "deck"
-                                    ? [
-                                          <div
-                                              key={`single-preview-${node.path}`}
-                                              className={
-                                                  activeDesign.singlePreviewClass
-                                              }
-                                              data-file-browser-preview="single"
-                                              style={{
-                                                  gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
-                                              }}
-                                          >
-                                              {renderSinglePreview?.(
-                                                  activeFile ?? null,
-                                              ) ?? null}
-                                          </div>,
-                                          ...directoryDisplayedFiles.map(
-                                              (file) =>
-                                                  cloneElement(
-                                                      renderFileButton(
-                                                          file,
-                                                          true,
-                                                          {
-                                                              gridColumn: "2",
-                                                          },
-                                                      ),
-                                                      { key: file.path },
-                                                  ),
+                                ? [
+                                      ...directoryDisplayedFiles.map((file) =>
+                                          cloneElement(
+                                              renderFileButton(file, true),
+                                              { key: file.path },
                                           ),
-                                      ]
-                                    : [
-                                          ...directoryDisplayedFiles.map(
-                                              (file) =>
-                                                  cloneElement(
-                                                      renderFileButton(
-                                                          file,
-                                                          true,
-                                                      ),
-                                                      { key: file.path },
-                                                  ),
-                                          ),
-                                          <div
-                                              key={`single-preview-${node.path}`}
-                                              className={
-                                                  activeDesign.singlePreviewClass
-                                              }
-                                              data-file-browser-preview="single"
-                                              style={{
-                                                  gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
-                                              }}
-                                          >
-                                              {renderSinglePreview?.(
-                                                  activeFile ?? null,
-                                              ) ?? null}
-                                          </div>,
-                                      ]
+                                      ),
+                                      <div
+                                          key={`single-preview-${node.path}`}
+                                          className={
+                                              activeDesign.singlePreviewClass
+                                          }
+                                          data-file-browser-preview="single"
+                                          style={{
+                                              gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
+                                          }}
+                                      >
+                                          {renderSinglePreview?.(
+                                              activeFile ?? null,
+                                          ) ?? null}
+                                      </div>,
+                                  ]
                                 : directoryDisplayedFiles.map((file) =>
                                       cloneElement(
                                           renderFileButton(file, true),
@@ -2700,10 +1985,7 @@ export function FileBrowser({
                     aria-hidden="true"
                 />
                 <p className={activeDesign.headerTitleClass}>File Browser</p>
-                {renderDesignSelector()}
             </div>
-
-            {renderDesignContext()}
 
             {files.length === 0 ? (
                 <div className={activeDesign.emptyStateClass}>
