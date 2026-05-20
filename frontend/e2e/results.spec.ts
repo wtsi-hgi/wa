@@ -633,7 +633,7 @@ test.describe("Q1 critical results flows", () => {
 
         await page.locator(`[data-directory-path="${rnaseqQcPath}"]`).click();
 
-        await expect(rootSubdirControls).toBeVisible();
+        await expect(rootSubdirControls).toHaveCount(0);
         await expect(
             page.locator(`[data-directory-path="${rnaseqImagesPath}"]`),
         ).toBeVisible();
@@ -645,7 +645,7 @@ test.describe("Q1 critical results flows", () => {
             .locator(`[data-directory-path="${rnaseqImagesPath}"]`)
             .click();
 
-        await expect(rootSubdirControls).toBeVisible();
+        await expect(rootSubdirControls).toHaveCount(0);
         await expect(
             page.locator(`[data-file-path="${rnaseqImagePath}"]`),
         ).toBeVisible();
@@ -847,9 +847,18 @@ test.describe("Q1 critical results flows", () => {
             throw new Error("Missing grid preview bounding boxes");
         }
 
-        expect(Math.abs(buttonBox.x - cellBox.x)).toBeLessThanOrEqual(1);
-        expect(Math.abs(buttonBox.y - cellBox.y)).toBeLessThanOrEqual(1);
-        expect(buttonBox.width).toBeGreaterThanOrEqual(cellBox.width - 2);
+        expect(buttonBox.x).toBeGreaterThanOrEqual(cellBox.x);
+        expect(buttonBox.y).toBeGreaterThanOrEqual(cellBox.y);
+        expect(buttonBox.x + buttonBox.width).toBeLessThanOrEqual(
+            cellBox.x + cellBox.width + 1,
+        );
+        expect(buttonBox.y + buttonBox.height).toBeLessThanOrEqual(
+            cellBox.y + cellBox.height + 1,
+        );
+        expect(Math.abs(buttonBox.x - imageBox.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(buttonBox.y - imageBox.y)).toBeLessThanOrEqual(1);
+        expect(buttonBox.width).toBeGreaterThanOrEqual(imageBox.width - 2);
+        expect(buttonBox.height).toBeGreaterThanOrEqual(imageBox.height - 2);
         expect(imageBox.x).toBeGreaterThanOrEqual(buttonBox.x);
         expect(imageBox.y).toBeGreaterThanOrEqual(buttonBox.y);
         expect(imageBox.x + imageBox.width).toBeLessThanOrEqual(

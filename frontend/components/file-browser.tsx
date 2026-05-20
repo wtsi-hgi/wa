@@ -3,8 +3,13 @@
 import {
     cloneElement,
     type CSSProperties,
+    type HTMLAttributes,
+    type KeyboardEvent as ReactKeyboardEvent,
     memo,
+    type MouseEvent as ReactMouseEvent,
     type ReactNode,
+    type TouchEvent as ReactTouchEvent,
+    useCallback,
     useEffect,
     useMemo,
     useRef,
@@ -112,6 +117,8 @@ const subdirPreviewKindGroups: ReadonlyArray<{
 ];
 
 const SUBDIR_PREVIEW_PAGE_SIZE = 20;
+const PREVIEW_HEIGHT_MIN = 120;
+const PREVIEW_HEIGHT_MAX = 420;
 const compressedExtensions = new Set(["gz"]);
 const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(
     subdirPreviewKindGroups.map((group) => group.id),
@@ -303,6 +310,17 @@ function fileMatchesPreviewKinds(
     return kind !== null && kinds.has(kind);
 }
 
+function clampPreviewHeight(value: number): number {
+    if (!Number.isFinite(value)) {
+        return PREVIEW_HEIGHT_MIN;
+    }
+
+    return Math.min(
+        PREVIEW_HEIGHT_MAX,
+        Math.max(PREVIEW_HEIGHT_MIN, Math.round(value)),
+    );
+}
+
 type FileBrowserProps = {
     files: FileEntry[];
     onPreviewHeightChange?: (value: number) => void;
@@ -332,71 +350,353 @@ type RawDirectoryNode = {
     path: string;
 };
 
-const previewHeightCommitKeys = new Set([
-    "ArrowDown",
-    "ArrowLeft",
-    "ArrowRight",
-    "ArrowUp",
-    "End",
-    "Home",
-    "PageDown",
-    "PageUp",
-]);
+type FileBrowserControlPlacement = "name-area";
 
-const PreviewHeightControl = memo(function PreviewHeightControl({
-    ariaLabel = "Preview height",
-    label = "Preview height",
-    onCommit,
-    value,
+type FileBrowserDesign = {
+    controlLabelClass: string;
+    controlMenuClass: string;
+    controlMenuHeadingClass: string;
+    controlStyle: string;
+    controlTriggerClass: string;
+    directoryButtonClass: string;
+    directoryChevronClass: string;
+    directoryContentClass: string;
+    directoryGroupClass: string;
+    directoryMetaClass: string;
+    directoryRowBaseClass: string;
+    directoryRowCollapsedClass: string;
+    directoryRowIdleClass: string;
+    directoryRowSelectedClass: string;
+    directoryRowWithContentClass: string;
+    emptyStateClass: string;
+    fileButtonBaseClass: string;
+    fileButtonCompactClass: string;
+    fileButtonSelectedClass: string;
+    fileGlyphClass: string;
+    fileListGridClass: string;
+    fileListSingleClass: string;
+    fileListSinglePreviewClass: string;
+    fileMetaClass: string;
+    fileNameClass: string;
+    folderControlsClass: string;
+    gridFileCellClass: string;
+    gridPreviewCellClass: string;
+    gridRowClass: string;
+    headerClass: string;
+    headerIconClass: string;
+    headerTitleClass: string;
+    id: "inline";
+    pageBadgeClass: string;
+    paginationClass: string;
+    sectionClass: string;
+    singlePreviewClass: string;
+    subdirCardBaseClass: string;
+    subdirFilenameClass: string;
+    subdirFrameBaseClass: string;
+    subdirImageCardClass: string;
+    subdirImageFrameClass: string;
+    subdirStripClass: string;
+    subdirStripWrapperClass: string;
+    subdirTextCardClass: string;
+    subdirTextFrameClass: string;
+    treeInnerClass: string;
+    treeShellClass: string;
+};
+
+const activeFileBrowserDesign: FileBrowserDesign = {
+    controlLabelClass:
+        "flex items-center justify-between gap-3 rounded-md px-1 py-0.5 text-sm",
+    controlMenuClass:
+        "absolute left-0 z-20 mt-2 min-w-56 rounded-lg border border-border bg-[var(--popover)] p-2 shadow-[0_16px_40px_-24px_rgba(28,40,58,0.65)]",
+    controlMenuHeadingClass:
+        "mb-2 border-b border-border/60 px-1 pb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground",
+    controlStyle: "inline-nameplate",
+    controlTriggerClass:
+        "inline-flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-md border border-border/80 bg-background px-2 py-1 text-foreground shadow-sm marker:hidden hover:bg-muted/70",
+    directoryButtonClass:
+        "grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-md px-3 py-2 text-left transition hover:bg-muted/60",
+    directoryChevronClass:
+        "inline-flex size-6 items-center justify-center rounded-md border border-border/70 bg-muted text-muted-foreground",
+    directoryContentClass: "space-y-2 px-2 pb-2 pt-0",
+    directoryGroupClass: "space-y-2",
+    directoryMetaClass:
+        "mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground",
+    directoryRowBaseClass:
+        "grid w-full grid-cols-1 gap-2 rounded-lg border transition",
+    directoryRowCollapsedClass: "p-0",
+    directoryRowIdleClass:
+        "border-border/70 bg-background/70 hover:border-primary/35 hover:bg-muted/30",
+    directoryRowSelectedClass:
+        "border-primary/45 bg-primary/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]",
+    directoryRowWithContentClass: "p-2",
+    emptyStateClass:
+        "mt-4 rounded-lg border border-dashed border-border/70 bg-background px-4 py-8 text-center text-sm text-muted-foreground",
+    fileButtonBaseClass:
+        "flex w-full items-start gap-3 rounded-md border border-border/60 bg-background px-3 py-2.5 text-left transition hover:border-primary/40 hover:bg-muted/40",
+    fileButtonCompactClass: "h-full min-w-0",
+    fileButtonSelectedClass: "border-primary/45 bg-primary/10",
+    fileGlyphClass:
+        "mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground",
+    fileListGridClass: "space-y-2 xl:col-span-2",
+    fileListSingleClass: "space-y-2",
+    fileListSinglePreviewClass:
+        "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
+    fileMetaClass:
+        "mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground",
+    fileNameClass: "block truncate text-sm font-semibold text-foreground",
+    folderControlsClass:
+        "file-browser-control-surface inline-nameplate-controls flex w-fit max-w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border/80 bg-muted/55 px-2 py-1 text-sm shadow-inner",
+    gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
+    gridPreviewCellClass: "min-w-0",
+    gridRowClass:
+        "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
+    headerClass: "flex flex-wrap items-center gap-3",
+    headerIconClass: "size-4 text-primary",
+    headerTitleClass:
+        "text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground",
+    id: "inline",
+    pageBadgeClass:
+        "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1 text-muted-foreground",
+    paginationClass:
+        "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
+    sectionClass:
+        "rounded-xl border border-border/75 bg-card p-3 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]",
+    singlePreviewClass:
+        "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
+    subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
+    subdirFilenameClass:
+        "truncate text-[11px] font-semibold text-muted-foreground",
+    subdirFrameBaseClass: "inline-flex max-w-full overflow-hidden",
+    subdirImageCardClass: "w-full",
+    subdirImageFrameClass: "w-full items-start justify-center",
+    subdirStripClass:
+        "flex w-full min-w-0 items-start gap-3 overflow-x-auto pb-1",
+    subdirStripWrapperClass: "px-2 pb-2",
+    subdirTextCardClass: "w-fit",
+    subdirTextFrameClass:
+        "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
+    treeInnerClass: "space-y-2",
+    treeShellClass:
+        "mt-3 rounded-lg border border-border/70 bg-background/65 p-1",
+};
+
+const inlineControlPlacement: FileBrowserControlPlacement = "name-area";
+
+const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
+    children,
+    className,
+    height,
+    kind,
+    onHeightChange,
+    path,
+    style,
+    ...attributes
 }: {
-    ariaLabel?: string;
-    label?: string;
-    onCommit?: (value: number) => void;
-    value: number;
-}) {
-    const [draftValue, setDraftValue] = useState(value);
-    const committedValueRef = useRef(value);
+    children: ReactNode;
+    className?: string;
+    height: number;
+    kind: "grid" | "single" | "subfolder";
+    onHeightChange: (value: number) => void;
+    path?: string;
+    style?: CSSProperties;
+} & Omit<HTMLAttributes<HTMLDivElement>, "children" | "className" | "style">) {
+    const frameRef = useRef<HTMLDivElement | null>(null);
+    const committedHeightRef = useRef(height);
 
-    const commitDraftValue = () => {
-        if (draftValue === committedValueRef.current) {
+    useEffect(() => {
+        committedHeightRef.current = height;
+    }, [height]);
+
+    const commitHeight = useCallback(
+        (value: number) => {
+            const nextHeight = clampPreviewHeight(value);
+
+            if (nextHeight === committedHeightRef.current) {
+                return;
+            }
+
+            committedHeightRef.current = nextHeight;
+            onHeightChange(nextHeight);
+        },
+        [onHeightChange],
+    );
+
+    useEffect(() => {
+        const element = frameRef.current;
+
+        if (!element || typeof ResizeObserver === "undefined") {
             return;
         }
 
-        committedValueRef.current = draftValue;
-        onCommit?.(draftValue);
+        const observer = new ResizeObserver((entries) => {
+            const observedHeight = entries[0]?.contentRect.height;
+
+            if (observedHeight === undefined) {
+                return;
+            }
+
+            commitHeight(observedHeight);
+        });
+
+        observer.observe(element);
+
+        return () => {
+            observer.disconnect();
+        };
+    }, [commitHeight]);
+
+    const beginMouseResize = (
+        event: ReactMouseEvent<HTMLButtonElement>,
+    ): void => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startY = event.clientY;
+        const startHeight =
+            frameRef.current?.getBoundingClientRect().height || height;
+        const handleMove = (moveEvent: MouseEvent) => {
+            commitHeight(startHeight + moveEvent.clientY - startY);
+        };
+        const handleEnd = () => {
+            document.removeEventListener("mousemove", handleMove);
+            document.removeEventListener("mouseup", handleEnd);
+        };
+
+        document.addEventListener("mousemove", handleMove);
+        document.addEventListener("mouseup", handleEnd);
     };
 
+    const beginTouchResize = (
+        event: ReactTouchEvent<HTMLButtonElement>,
+    ): void => {
+        const touch = event.touches[0];
+
+        if (!touch) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startY = touch.clientY;
+        const startHeight =
+            frameRef.current?.getBoundingClientRect().height || height;
+        const handleMove = (moveEvent: TouchEvent) => {
+            const nextTouch = moveEvent.touches[0];
+
+            if (!nextTouch) {
+                return;
+            }
+
+            commitHeight(startHeight + nextTouch.clientY - startY);
+        };
+        const handleEnd = () => {
+            document.removeEventListener("touchmove", handleMove);
+            document.removeEventListener("touchend", handleEnd);
+            document.removeEventListener("touchcancel", handleEnd);
+        };
+
+        document.addEventListener("touchmove", handleMove, {
+            passive: false,
+        });
+        document.addEventListener("touchend", handleEnd);
+        document.addEventListener("touchcancel", handleEnd);
+    };
+
+    const handleKeyDown = (
+        event: ReactKeyboardEvent<HTMLButtonElement>,
+    ): void => {
+        const keyDeltas: Record<string, number> = {
+            ArrowDown: 10,
+            ArrowUp: -10,
+            PageDown: 40,
+            PageUp: -40,
+        };
+
+        if (event.key === "Home") {
+            event.preventDefault();
+            commitHeight(PREVIEW_HEIGHT_MIN);
+            return;
+        }
+
+        if (event.key === "End") {
+            event.preventDefault();
+            commitHeight(PREVIEW_HEIGHT_MAX);
+            return;
+        }
+
+        const delta = keyDeltas[event.key];
+
+        if (delta === undefined) {
+            return;
+        }
+
+        event.preventDefault();
+        commitHeight(height + delta);
+    };
+    const fitVisiblePreviewSurface =
+        path !== undefined && previewKindForPath(path) === "image";
+
     return (
-        <label className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 text-foreground">
-            <span className="inline-flex items-center gap-2 text-sm font-medium">
-                <Eye className="size-4 text-primary" aria-hidden="true" />
-                <span className="whitespace-nowrap">{label}</span>
-            </span>
-            <input
-                aria-label={ariaLabel}
-                className="h-1 w-24 accent-primary"
-                max={420}
-                min={120}
-                onBlur={commitDraftValue}
-                onChange={() => undefined}
-                onInput={(event) => {
-                    setDraftValue(Number(event.currentTarget.value));
-                }}
-                onKeyUp={(event) => {
-                    if (previewHeightCommitKeys.has(event.key)) {
-                        commitDraftValue();
-                    }
-                }}
-                onMouseUp={commitDraftValue}
-                onTouchEnd={commitDraftValue}
-                step={20}
-                type="range"
-                value={draftValue}
-            />
-            <span className="text-xs text-muted-foreground tabular-nums">
-                {draftValue}px
-            </span>
-        </label>
+        <div
+            {...attributes}
+            ref={frameRef}
+            className={cn(
+                "relative min-w-0 overflow-hidden",
+                fitVisiblePreviewSurface && "flex items-start justify-center",
+                className,
+            )}
+            data-preview-resize-frame={path ?? kind}
+            data-preview-resize-kind={kind}
+            style={{
+                ...style,
+                boxSizing: "border-box",
+                height: `${height}px`,
+                maxHeight: `${PREVIEW_HEIGHT_MAX}px`,
+                minHeight: `${PREVIEW_HEIGHT_MIN}px`,
+            }}
+        >
+            <div
+                className={cn(
+                    "preview-resize-square-corner relative h-full max-w-full",
+                    fitVisiblePreviewSurface
+                        ? "inline-flex w-fit"
+                        : "flex w-full",
+                )}
+                data-preview-resize-surface={path ?? kind}
+            >
+                {children}
+                <button
+                    aria-label="Resize preview height"
+                    aria-orientation="vertical"
+                    aria-valuemax={PREVIEW_HEIGHT_MAX}
+                    aria-valuemin={PREVIEW_HEIGHT_MIN}
+                    aria-valuenow={height}
+                    className={cn(
+                        "absolute right-0 bottom-0 z-20 block !size-9 cursor-ns-resize touch-none overflow-hidden border-0 bg-transparent p-0 text-muted-foreground/75 shadow-none",
+                        "hover:text-foreground",
+                        "focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none",
+                    )}
+                    data-preview-resize-handle={path ?? kind}
+                    onKeyDown={handleKeyDown}
+                    onMouseDown={beginMouseResize}
+                    onTouchStart={beginTouchResize}
+                    role="separator"
+                    type="button"
+                >
+                    <span
+                        aria-hidden="true"
+                        className="absolute right-0 bottom-0 block size-6 border-r border-b border-border/70 [clip-path:polygon(100%_0,0_100%,100%_100%)]"
+                        style={{
+                            backgroundColor:
+                                "color-mix(in oklab, var(--background) 88%, var(--muted-foreground) 12%)",
+                            backgroundImage:
+                                "repeating-linear-gradient(135deg, transparent 0 4px, currentColor 4px 5px, transparent 5px 6px)",
+                        }}
+                    />
+                </button>
+            </div>
+        </div>
     );
 });
 
@@ -615,8 +915,64 @@ function formatTypeSummary(typeCounts: Record<string, number>): string {
             (left, right) =>
                 right[1] - left[1] || left[0].localeCompare(right[0]),
         )
-        .map(([type, count]) => `${count} ${type}`)
+        .map(([type, count]) => `${count} ${type.toUpperCase()}`)
         .join(", ");
+}
+
+function renderMetaItems(items: ReactNode[]): ReactNode[] {
+    return items.flatMap((item, index) => {
+        const keyedItem = <span key={`item-${index}`}>{item}</span>;
+
+        if (index === 0) {
+            return [keyedItem];
+        }
+
+        return [
+            <span
+                aria-hidden="true"
+                className="text-muted-foreground/60"
+                data-file-browser-meta-separator="true"
+                key={`separator-${index}`}
+            >
+                ·
+            </span>,
+            keyedItem,
+        ];
+    });
+}
+
+function renderDirectoryMetaItems(
+    node: DirectoryTreeNode,
+    hasChildren: boolean,
+): ReactNode[] {
+    const items: ReactNode[] = [
+        <span data-directory-file-count={node.path} key="file-count">
+            {node.descendantFileCount === 0
+                ? hasChildren
+                    ? "Expand to browse"
+                    : "Empty folder"
+                : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
+        </span>,
+        <span data-directory-subfolder-count={node.path} key="subfolder-count">
+            {node.descendantDirectoryCount > 0
+                ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
+                : "Folder"}
+        </span>,
+    ];
+
+    if (node.totalSize > 0) {
+        items.push(<span key="total-size">{formatBytes(node.totalSize)}</span>);
+    }
+
+    if (Object.keys(node.typeCounts).length > 0) {
+        items.push(
+            <span data-directory-type-summary={node.path} key="type-summary">
+                {formatTypeSummary(node.typeCounts)}
+            </span>,
+        );
+    }
+
+    return renderMetaItems(items);
 }
 
 export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
@@ -669,6 +1025,7 @@ export function FileBrowser({
     selectedPath,
     visibleFiles,
 }: FileBrowserProps) {
+    const activeDesign = activeFileBrowserDesign;
     const [uncontrolledDirectory, setUncontrolledDirectory] = useState<
         string | undefined
     >(selectedDirectory);
@@ -682,7 +1039,11 @@ export function FileBrowser({
         () =>
             new Set(
                 ancestorPaths(
-                    selectedDirectory ?? parentDirectory(files[0]?.path ?? "/"),
+                    selectedDirectory ??
+                        (renderGridPreview
+                            ? findInitialSubdirPreviewDirectory(files)
+                            : undefined) ??
+                        parentDirectory(files[0]?.path ?? "/"),
                 ),
             ),
     );
@@ -726,9 +1087,9 @@ export function FileBrowser({
     const openPreviewModeDisclosureRef = useRef<HTMLDetailsElement | null>(
         null,
     );
-    const effectivePreviewHeight = onPreviewHeightChange
-        ? previewHeight
-        : uncontrolledPreviewHeight;
+    const effectivePreviewHeight = clampPreviewHeight(
+        onPreviewHeightChange ? previewHeight : uncontrolledPreviewHeight,
+    );
     const subdirPreviewEnabledFor = (directoryPath: string): boolean =>
         subdirPreviewEnabledByPath[directoryPath] ?? false;
     const subdirPreviewKindsFor = (
@@ -889,58 +1250,68 @@ export function FileBrowser({
         };
     }, [openPreviewModeDisclosurePath]);
 
-    const handlePreviewHeightCommit = (value: number) => {
-        if (onPreviewHeightChange) {
-            onPreviewHeightChange(value);
-            return;
-        }
+    const handlePreviewHeightCommit = useCallback(
+        (value: number) => {
+            const nextHeight = clampPreviewHeight(value);
 
-        setUncontrolledPreviewHeight(value);
-    };
+            if (onPreviewHeightChange) {
+                onPreviewHeightChange(nextHeight);
+                return;
+            }
+
+            setUncontrolledPreviewHeight(nextHeight);
+        },
+        [onPreviewHeightChange],
+    );
     const renderFileButton = (
         file: FileEntry,
         compact = false,
         style?: CSSProperties,
-    ) => (
-        <button
-            type="button"
-            key={file.path}
-            className={cn(
-                "flex w-full items-start gap-3 rounded-[1rem] border border-border/60 bg-background/70 px-3 py-3 text-left transition hover:border-primary/40 hover:bg-background",
-                effectiveSelectedPath === file.path &&
-                    "border-primary/45 bg-primary/10",
-                compact && "h-full min-w-0",
-            )}
-            data-file-path={file.path}
-            onClick={() => {
-                if (selectedPath === undefined) {
-                    setUncontrolledPath(file.path);
-                }
+    ) => {
+        return (
+            <button
+                type="button"
+                key={file.path}
+                className={cn(
+                    activeDesign.fileButtonBaseClass,
+                    effectiveSelectedPath === file.path &&
+                        activeDesign.fileButtonSelectedClass,
+                    compact && activeDesign.fileButtonCompactClass,
+                )}
+                data-file-browser-file-layout="card"
+                data-file-path={file.path}
+                onClick={() => {
+                    if (selectedPath === undefined) {
+                        setUncontrolledPath(file.path);
+                    }
 
-                onSelectFile(file);
-            }}
-            style={style}
-        >
-            <span
-                aria-hidden="true"
-                className="mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background/80 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                    onSelectFile(file);
+                }}
+                style={style}
             >
-                {file.kind.slice(0, 1)}
-            </span>
-            <span className="min-w-0 flex-1">
-                <span className="block truncate text-base font-medium text-foreground">
-                    {fileName(file.path)}
+                <span
+                    aria-hidden="true"
+                    className={activeDesign.fileGlyphClass}
+                >
+                    {file.kind.slice(0, 1)}
                 </span>
-                <span className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                    <span>{formatBytes(file.size)}</span>
-                    <span>{formatMtime(file.mtime)}</span>
-                    <span className="uppercase tracking-[0.18em]">
-                        {file.kind}
+                <span className="min-w-0 flex-1">
+                    <span className={activeDesign.fileNameClass}>
+                        {fileName(file.path)}
+                    </span>
+                    <span className={activeDesign.fileMetaClass}>
+                        {renderMetaItems([
+                            formatBytes(file.size),
+                            formatMtime(file.mtime),
+                            <span data-file-kind={file.path} key="file-kind">
+                                {file.kind}
+                            </span>,
+                        ])}
                     </span>
                 </span>
-            </span>
-        </button>
-    );
+            </button>
+        );
+    };
 
     const renderPreviewControls = (directoryPath: string) => {
         const showPreviewPaging = previewPageCount > 1;
@@ -954,7 +1325,7 @@ export function FileBrowser({
                 className="col-span-full flex flex-wrap items-center justify-end gap-2 pt-1 text-sm"
                 data-file-browser-bottom-controls={directoryPath}
             >
-                <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                <div className={activeDesign.pageBadgeClass}>
                     <ListFilter
                         className="size-4 text-primary"
                         aria-hidden="true"
@@ -971,6 +1342,7 @@ export function FileBrowser({
                     pageCount={previewPageCount}
                     previousLabel="Previous preview page"
                     selectLabel="Preview page"
+                    className={activeDesign.paginationClass}
                 />
             </div>
         );
@@ -981,7 +1353,6 @@ export function FileBrowser({
         options: {
             hasFilePreviewControls: boolean;
             hasSubdirPreviewControls: boolean;
-            isSelected: boolean;
             showGridToggle: boolean;
             subdirPageCount: number;
             safeSubdirPreviewPage: number;
@@ -990,7 +1361,6 @@ export function FileBrowser({
         const {
             hasFilePreviewControls,
             hasSubdirPreviewControls,
-            isSelected,
             safeSubdirPreviewPage,
             showGridToggle,
             subdirPageCount,
@@ -998,6 +1368,7 @@ export function FileBrowser({
         const showPreviewPaging = previewPageCount > 1;
         const subdirPreviewEnabled = subdirPreviewEnabledFor(directoryPath);
         const subdirPreviewKinds = subdirPreviewKindsFor(directoryPath);
+        const controlPlacement = inlineControlPlacement;
         const hasPreviewModeControls =
             hasSubdirPreviewControls || showGridToggle;
 
@@ -1007,8 +1378,11 @@ export function FileBrowser({
 
         return (
             <div
-                className="flex w-full flex-wrap items-center justify-start gap-2 px-3 pb-3 text-sm"
+                className={activeDesign.folderControlsClass}
                 data-file-browser-folder-controls={directoryPath}
+                data-file-browser-control-placement={controlPlacement}
+                data-file-browser-control-style={activeDesign.controlStyle}
+                data-file-browser-control-surface="true"
                 data-subdir-preview-controls={
                     hasSubdirPreviewControls ? directoryPath : undefined
                 }
@@ -1035,7 +1409,8 @@ export function FileBrowser({
                     >
                         <summary
                             aria-label="Preview modes"
-                            className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden"
+                            className={activeDesign.controlTriggerClass}
+                            data-file-browser-control-trigger="preview-modes"
                             onClick={(event) => {
                                 event.preventDefault();
                                 setOpenPreviewModeDisclosurePath((current) =>
@@ -1049,26 +1424,42 @@ export function FileBrowser({
                                 className="size-4 text-primary"
                                 aria-hidden="true"
                             />
-                            <span className="font-medium">Preview modes</span>
-                            <span className="text-xs text-muted-foreground">
-                                {summarizePreviewModes(
-                                    previewMode,
-                                    subdirPreviewEnabled,
-                                    showGridToggle,
-                                )}
+                            <span className="flex min-w-0 flex-col leading-tight">
+                                <span
+                                    className="whitespace-nowrap font-medium"
+                                    data-file-browser-control-label="preview-modes"
+                                >
+                                    Preview modes
+                                </span>
+                                <span
+                                    className="whitespace-nowrap text-[11px] text-muted-foreground"
+                                    data-file-browser-control-current="preview-modes"
+                                >
+                                    {summarizePreviewModes(
+                                        previewMode,
+                                        subdirPreviewEnabled,
+                                        showGridToggle,
+                                    )}
+                                </span>
                             </span>
-                            <ChevronDown className="size-4 text-muted-foreground" />
+                            <ChevronDown className="size-3.5 text-muted-foreground" />
                         </summary>
                         <div
-                            className="absolute left-0 z-20 mt-2 min-w-56 rounded-[1.25rem] border border-border/70 bg-[var(--popover)] p-3 shadow-lg"
+                            className={activeDesign.controlMenuClass}
                             data-preview-modes-menu={directoryPath}
                         >
-                            <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            <div
+                                className={activeDesign.controlMenuHeadingClass}
+                            >
                                 Preview modes
                             </div>
                             <div className="space-y-2">
                                 {showGridToggle ? (
-                                    <label className="flex items-center justify-between gap-3 text-sm">
+                                    <label
+                                        className={
+                                            activeDesign.controlLabelClass
+                                        }
+                                    >
                                         <span>1 preview per row</span>
                                         <input
                                             aria-label="1 preview per row"
@@ -1086,7 +1477,11 @@ export function FileBrowser({
                                     </label>
                                 ) : null}
                                 {hasSubdirPreviewControls ? (
-                                    <label className="flex items-center justify-between gap-3 text-sm">
+                                    <label
+                                        className={
+                                            activeDesign.controlLabelClass
+                                        }
+                                    >
                                         <span>Subfolder previews</span>
                                         <input
                                             aria-label="Subfolder previews"
@@ -1147,7 +1542,8 @@ export function FileBrowser({
                         >
                             <summary
                                 aria-label="File types"
-                                className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border/70 bg-[var(--popover)] px-3 py-2 text-foreground marker:hidden"
+                                className={activeDesign.controlTriggerClass}
+                                data-file-browser-control-trigger="file-types"
                                 onClick={(event) => {
                                     event.preventDefault();
                                     setOpenSubdirPreviewKindDisclosurePath(
@@ -1162,26 +1558,45 @@ export function FileBrowser({
                                     className="size-4 text-primary"
                                     aria-hidden="true"
                                 />
-                                <span className="font-medium">File types</span>
-                                <span className="text-xs text-muted-foreground">
-                                    {summarizeSubdirPreviewKinds(
-                                        subdirPreviewKinds,
-                                    )}
+                                <span className="flex min-w-0 flex-col leading-tight">
+                                    <span
+                                        className="whitespace-nowrap font-medium"
+                                        data-file-browser-control-label="file-types"
+                                    >
+                                        File types
+                                    </span>
+                                    <span
+                                        className="whitespace-nowrap text-[11px] text-muted-foreground"
+                                        data-file-browser-control-current="file-types"
+                                    >
+                                        {summarizeSubdirPreviewKinds(
+                                            subdirPreviewKinds,
+                                        )}
+                                    </span>
                                 </span>
-                                <ChevronDown className="size-4 text-muted-foreground" />
+                                <ChevronDown className="size-3.5 text-muted-foreground" />
                             </summary>
                             <div
-                                className="absolute right-0 z-20 mt-2 min-w-52 rounded-[1.25rem] border border-border/70 bg-[var(--popover)] p-3 shadow-lg"
+                                className={cn(
+                                    activeDesign.controlMenuClass,
+                                    "right-0 left-auto min-w-52",
+                                )}
                                 data-subdir-preview-kinds={directoryPath}
                             >
-                                <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                <div
+                                    className={
+                                        activeDesign.controlMenuHeadingClass
+                                    }
+                                >
                                     File types
                                 </div>
                                 <div className="space-y-2">
                                     {subdirPreviewKindGroups.map((group) => (
                                         <label
                                             key={group.id}
-                                            className="flex items-center justify-between gap-3 text-sm"
+                                            className={
+                                                activeDesign.controlLabelClass
+                                            }
                                         >
                                             <span>{group.label}</span>
                                             <input
@@ -1240,14 +1655,9 @@ export function FileBrowser({
                     </>
                 ) : null}
 
-                <PreviewHeightControl
-                    onCommit={handlePreviewHeightCommit}
-                    value={effectivePreviewHeight}
-                />
-
                 {showPreviewPaging && hasFilePreviewControls ? (
                     <>
-                        <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                        <div className={activeDesign.pageBadgeClass}>
                             <ListFilter
                                 className="size-4 text-primary"
                                 aria-hidden="true"
@@ -1263,13 +1673,14 @@ export function FileBrowser({
                             pageCount={previewPageCount}
                             previousLabel="Previous preview page"
                             selectLabel="Preview page"
+                            className={activeDesign.paginationClass}
                         />
                     </>
                 ) : null}
 
                 {hasSubdirPreviewControls && subdirPageCount > 1 ? (
                     <>
-                        <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-2 py-1.5 text-muted-foreground">
+                        <div className={activeDesign.pageBadgeClass}>
                             <ListFilter
                                 className="size-4 text-primary"
                                 aria-hidden="true"
@@ -1291,6 +1702,7 @@ export function FileBrowser({
                             pageCount={subdirPageCount}
                             previousLabel="Previous subfolder page"
                             selectLabel="Subfolder preview page"
+                            className={activeDesign.paginationClass}
                         />
                     </>
                 ) : null}
@@ -1338,11 +1750,11 @@ export function FileBrowser({
 
         return (
             <div
-                className="px-3 pb-3"
+                className={activeDesign.subdirStripWrapperClass}
                 data-subdir-preview-strip-wrapper={subdir.path}
             >
                 <div
-                    className="flex w-full min-w-0 items-start gap-4 overflow-x-auto pb-1"
+                    className={activeDesign.subdirStripClass}
                     data-subdir-preview-strip={subdir.path}
                     style={
                         {
@@ -1359,10 +1771,10 @@ export function FileBrowser({
                                 <div
                                     key={file.path}
                                     className={cn(
-                                        "inline-flex max-w-full shrink-0 flex-col gap-2",
+                                        activeDesign.subdirCardBaseClass,
                                         isImageSubdirPreview
-                                            ? "w-full"
-                                            : "w-fit",
+                                            ? activeDesign.subdirImageCardClass
+                                            : activeDesign.subdirTextCardClass,
                                     )}
                                     data-subdir-preview-card={file.path}
                                     style={{
@@ -1370,26 +1782,34 @@ export function FileBrowser({
                                     }}
                                 >
                                     <p
-                                        className="truncate text-xs font-medium text-muted-foreground"
+                                        className={
+                                            activeDesign.subdirFilenameClass
+                                        }
                                         data-subdir-preview-filename={file.path}
                                         title={fileName(file.path)}
                                     >
                                         {fileName(file.path)}
                                     </p>
-                                    <div
+                                    <ResizablePreviewFrame
                                         className={cn(
-                                            "inline-flex max-w-full overflow-hidden",
+                                            activeDesign.subdirFrameBaseClass,
                                             isImageSubdirPreview
-                                                ? "w-full items-start justify-center"
-                                                : "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
+                                                ? activeDesign.subdirImageFrameClass
+                                                : activeDesign.subdirTextFrameClass,
                                         )}
                                         data-subdir-preview-frame={file.path}
+                                        height={effectivePreviewHeight}
+                                        kind="subfolder"
+                                        onHeightChange={
+                                            handlePreviewHeightCommit
+                                        }
+                                        path={file.path}
                                         style={{
                                             height: `var(--subdir-preview-height)`,
                                         }}
                                     >
                                         {renderGridPreview?.(file) ?? null}
-                                    </div>
+                                    </ResizablePreviewFrame>
                                 </div>
                             );
                         })(),
@@ -1417,6 +1837,11 @@ export function FileBrowser({
                 safePage: safeSubdirPreviewPage,
                 visibleSubdirs,
             } = subdirPreviewStateFor(node);
+            const hasExpandedDescendant = node.children.some((child) =>
+                collectTreePaths(child).some((path) =>
+                    visibleExpandedDirectories.has(path),
+                ),
+            );
             const nodePreviewKinds = subdirPreviewKindsFor(node.path);
             const previewableNodeFiles = node.files.filter((file) =>
                 fileMatchesPreviewKinds(file, nodePreviewKinds),
@@ -1432,6 +1857,7 @@ export function FileBrowser({
                 hasPreviewableActiveFiles;
             const hasSubdirPreviewControls =
                 isStructurallyExpanded &&
+                !hasExpandedDescendant &&
                 subdirPreviewAvailable &&
                 Boolean(renderGridPreview);
             const showGridToggle =
@@ -1457,7 +1883,6 @@ export function FileBrowser({
             const folderControls = renderFolderControls(node.path, {
                 hasFilePreviewControls,
                 hasSubdirPreviewControls,
-                isSelected,
                 showGridToggle,
                 safeSubdirPreviewPage,
                 subdirPageCount: subdirPreviewPageCount,
@@ -1470,141 +1895,156 @@ export function FileBrowser({
             const showsChildRows = isStructurallyExpanded && hasChildren;
             const isExpanded =
                 hasPreviewControls || showsDirectoryFiles || showsChildRows;
-            const renderDirectoryRow = (groupedContent: ReactNode) => (
-                <div
-                    key={`dir-${node.path}`}
-                    className={cn(
-                        "grid w-full grid-cols-1 gap-3 rounded-[1.25rem] border transition",
-                        hasPreviewControls || groupedContent
-                            ? "p-2"
-                            : "grid-cols-1 p-0",
-                        isSelected
-                            ? "border-primary/45 bg-primary/10"
-                            : "border-border/60 bg-background/60 hover:border-primary/35 hover:bg-background",
-                    )}
-                    data-directory-row={node.path}
-                    data-subdir-preview-row={
+            const isRootDirectoryRow = depth === 0;
+            const controlPlacement = inlineControlPlacement;
+            const folderControlsInNameArea =
+                controlPlacement === "name-area" && Boolean(folderControls);
+            const renderDirectoryButton = () => (
+                <button
+                    type="button"
+                    className={activeDesign.directoryButtonClass}
+                    data-depth={depth}
+                    data-directory-expanded={String(isExpanded)}
+                    data-directory-path={node.path}
+                    data-subdir-preview-heading={
                         showInlineSubdirPreview ? node.path : undefined
                     }
-                >
-                    <button
-                        type="button"
-                        className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[1rem] px-3 py-3 text-left transition hover:bg-background/55"
-                        data-depth={depth}
-                        data-directory-expanded={String(isExpanded)}
-                        data-directory-path={node.path}
-                        data-subdir-preview-heading={
-                            showInlineSubdirPreview ? node.path : undefined
-                        }
-                        onClick={() => {
-                            const nextIsExpanded = !isExpanded;
+                    onClick={() => {
+                        const nextIsExpanded = !isExpanded;
 
-                            setCollapsedDirectories((current) => {
-                                const next = new Set(current);
+                        setCollapsedDirectories((current) => {
+                            const next = new Set(current);
 
-                                if (nextIsExpanded) {
-                                    next.delete(node.path);
-                                } else {
-                                    next.add(node.path);
+                            if (nextIsExpanded) {
+                                next.delete(node.path);
+                            } else {
+                                next.add(node.path);
+                            }
+
+                            return next;
+                        });
+                        setExpandedDirectories((current) => {
+                            const next = new Set(current);
+
+                            if (isExpanded) {
+                                for (const path of collectTreePaths(node)) {
+                                    next.delete(path);
                                 }
-
-                                return next;
-                            });
-                            setExpandedDirectories((current) => {
-                                const next = new Set(current);
-
-                                if (isExpanded) {
-                                    for (const path of collectTreePaths(node)) {
-                                        next.delete(path);
-                                    }
-                                    for (const path of ancestorPaths(
-                                        node.path,
-                                    )) {
-                                        if (path !== node.path) {
-                                            next.add(path);
-                                        }
-                                    }
-                                } else {
-                                    for (const path of ancestorPaths(
-                                        node.path,
-                                    )) {
+                                for (const path of ancestorPaths(node.path)) {
+                                    if (path !== node.path) {
                                         next.add(path);
                                     }
                                 }
-
-                                return next;
-                            });
-
-                            if (selectedDirectory === undefined) {
-                                setUncontrolledDirectory(node.path);
+                            } else {
+                                for (const path of ancestorPaths(node.path)) {
+                                    next.add(path);
+                                }
                             }
 
-                            onSelectDirectory?.(node.path, {
-                                expanded: nextIsExpanded,
-                                parentPath,
-                            });
-                        }}
-                        style={{ paddingLeft: `${depth * 1.2 + 0.75}rem` }}
-                    >
-                        <span className="inline-flex size-6 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground">
-                            {hasChildren || hasFiles ? (
-                                isExpanded ? (
-                                    <ChevronDown
-                                        className="size-4"
-                                        aria-hidden="true"
-                                    />
-                                ) : (
-                                    <ChevronRight
-                                        className="size-4"
-                                        aria-hidden="true"
-                                    />
-                                )
+                            return next;
+                        });
+
+                        if (selectedDirectory === undefined) {
+                            setUncontrolledDirectory(node.path);
+                        }
+
+                        onSelectDirectory?.(node.path, {
+                            expanded: nextIsExpanded,
+                            parentPath,
+                        });
+                    }}
+                    style={{ paddingLeft: `${depth * 1.2 + 0.75}rem` }}
+                >
+                    <span className={activeDesign.directoryChevronClass}>
+                        {hasChildren || hasFiles ? (
+                            isExpanded ? (
+                                <ChevronDown
+                                    className="size-4"
+                                    aria-hidden="true"
+                                />
                             ) : (
-                                <span className="size-4" />
+                                <ChevronRight
+                                    className="size-4"
+                                    aria-hidden="true"
+                                />
+                            )
+                        ) : (
+                            <span className="size-4" />
+                        )}
+                    </span>
+                    <span className="min-w-0">
+                        <span className="block truncate text-base font-medium text-foreground">
+                            {visibleDirectoryLabel(
+                                node.path,
+                                node.label,
+                                depth,
                             )}
                         </span>
-                        <span className="min-w-0">
-                            <span className="block truncate text-base font-medium text-foreground">
-                                {visibleDirectoryLabel(
-                                    node.path,
-                                    node.label,
-                                    depth,
-                                )}
-                            </span>
-                            <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                                <span>
-                                    {node.descendantFileCount === 0
-                                        ? hasChildren
-                                            ? "Expand to browse"
-                                            : "Empty folder"
-                                        : `${node.descendantFileCount} file${node.descendantFileCount === 1 ? "" : "s"}`}
-                                </span>
-                                {node.totalSize > 0 ? (
-                                    <span>{formatBytes(node.totalSize)}</span>
-                                ) : null}
-                                {Object.keys(node.typeCounts).length > 0 ? (
-                                    <span className="uppercase tracking-[0.18em]">
-                                        {formatTypeSummary(node.typeCounts)}
-                                    </span>
-                                ) : null}
-                            </span>
+                        <span
+                            className={activeDesign.directoryMetaClass}
+                            data-directory-meta={node.path}
+                        >
+                            {renderDirectoryMetaItems(node, hasChildren)}
                         </span>
-                        <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                            {node.descendantDirectoryCount > 0
-                                ? `${node.descendantDirectoryCount} subfolder${node.descendantDirectoryCount === 1 ? "" : "s"}`
-                                : "Folder"}
-                        </span>
-                    </button>
-                    {folderControls}
-                    {showInlineSubdirPreview && inlineSubdirPreviewKinds
-                        ? renderSubdirPreviewStrip(
-                              node,
-                              inlineSubdirPreviewKinds,
-                          )
-                        : null}
-                    {groupedContent}
-                </div>
+                    </span>
+                </button>
             );
+            const renderDirectoryRow = (groupedContent: ReactNode) => {
+                return (
+                    <div
+                        key={`dir-${node.path}`}
+                        className={cn(
+                            isRootDirectoryRow
+                                ? "grid w-full grid-cols-1 gap-2 transition"
+                                : activeDesign.directoryRowBaseClass,
+                            isRootDirectoryRow
+                                ? null
+                                : hasPreviewControls || groupedContent
+                                  ? activeDesign.directoryRowWithContentClass
+                                  : activeDesign.directoryRowCollapsedClass,
+                            isRootDirectoryRow
+                                ? null
+                                : isSelected
+                                  ? activeDesign.directoryRowSelectedClass
+                                  : activeDesign.directoryRowIdleClass,
+                        )}
+                        data-directory-row={node.path}
+                        data-subdir-preview-row={
+                            showInlineSubdirPreview ? node.path : undefined
+                        }
+                    >
+                        {folderControlsInNameArea ? (
+                            <div
+                                className={cn(
+                                    "grid w-full grid-cols-1 items-start gap-2",
+                                    "lg:grid-cols-[minmax(0,1fr)_auto]",
+                                )}
+                                data-directory-heading-with-controls={node.path}
+                            >
+                                {renderDirectoryButton()}
+                                <div
+                                    className="min-w-0 self-center px-2 pb-2 lg:px-0 lg:pb-0 lg:pr-2"
+                                    data-file-browser-name-area-controls={
+                                        node.path
+                                    }
+                                >
+                                    {folderControls}
+                                </div>
+                            </div>
+                        ) : (
+                            renderDirectoryButton()
+                        )}
+                        {!folderControlsInNameArea ? folderControls : null}
+                        {showInlineSubdirPreview && inlineSubdirPreviewKinds
+                            ? renderSubdirPreviewStrip(
+                                  node,
+                                  inlineSubdirPreviewKinds,
+                              )
+                            : null}
+                        {groupedContent}
+                    </div>
+                );
+            };
             const contentRows: ReactNode[] = [];
 
             if (
@@ -1620,9 +2060,9 @@ export function FileBrowser({
                         className={cn(
                             previewMode === "single"
                                 ? showFilePreviewWidgets
-                                    ? "grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
-                                    : "space-y-3"
-                                : "space-y-3 xl:col-span-2",
+                                    ? activeDesign.fileListSinglePreviewClass
+                                    : activeDesign.fileListSingleClass
+                                : activeDesign.fileListGridClass,
                         )}
                         data-file-browser-directory-files={node.path}
                         data-file-browser-single-layout={
@@ -1640,10 +2080,18 @@ export function FileBrowser({
                                               { key: file.path },
                                           ),
                                       ),
-                                      <div
+                                      <ResizablePreviewFrame
                                           key={`single-preview-${node.path}`}
-                                          className="sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start"
+                                          className={
+                                              activeDesign.singlePreviewClass
+                                          }
                                           data-file-browser-preview="single"
+                                          height={effectivePreviewHeight}
+                                          kind="single"
+                                          onHeightChange={
+                                              handlePreviewHeightCommit
+                                          }
+                                          path={activeFile?.path ?? node.path}
                                           style={{
                                               gridRow: `1 / span ${Math.max(directoryDisplayedFiles.length, 1)}`,
                                           }}
@@ -1651,7 +2099,7 @@ export function FileBrowser({
                                           {renderSinglePreview?.(
                                               activeFile ?? null,
                                           ) ?? null}
-                                      </div>,
+                                      </ResizablePreviewFrame>,
                                   ]
                                 : directoryDisplayedFiles.map((file) =>
                                       cloneElement(
@@ -1663,24 +2111,41 @@ export function FileBrowser({
                                   showFilePreviewWidgets ? (
                                       <div
                                           key={file.path}
-                                          className="grid gap-3 grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)] items-start"
+                                          className={activeDesign.gridRowClass}
                                           data-file-browser-grid-row={file.path}
                                       >
-                                          <div className="min-w-0 border-r border-border/60 pr-3">
+                                          <div
+                                              className={
+                                                  activeDesign.gridFileCellClass
+                                              }
+                                          >
                                               {renderFileButton(file, true)}
                                           </div>
                                           <div
-                                              className="min-w-0"
+                                              className={
+                                                  activeDesign.gridPreviewCellClass
+                                              }
                                               data-grid-preview-path={file.path}
                                           >
                                               {fileMatchesPreviewKinds(
                                                   file,
                                                   selectedPreviewKinds,
-                                              )
-                                                  ? (renderGridPreview?.(
-                                                        file,
-                                                    ) ?? null)
-                                                  : null}
+                                              ) ? (
+                                                  <ResizablePreviewFrame
+                                                      height={
+                                                          effectivePreviewHeight
+                                                      }
+                                                      kind="grid"
+                                                      onHeightChange={
+                                                          handlePreviewHeightCommit
+                                                      }
+                                                      path={file.path}
+                                                  >
+                                                      {renderGridPreview?.(
+                                                          file,
+                                                      ) ?? null}
+                                                  </ResizablePreviewFrame>
+                                              ) : null}
                                           </div>
                                       </div>
                                   ) : (
@@ -1707,7 +2172,11 @@ export function FileBrowser({
             const directoryRow = renderDirectoryRow(
                 showsGroupedContent ? (
                     <div
-                        className="space-y-3 px-3 pb-3 pt-1"
+                        className={
+                            isRootDirectoryRow
+                                ? "space-y-2 pt-0"
+                                : activeDesign.directoryContentClass
+                        }
                         data-directory-group-content={node.path}
                     >
                         {contentRows}
@@ -1718,7 +2187,7 @@ export function FileBrowser({
             return [
                 <div
                     key={`group-${node.path}`}
-                    className="space-y-2"
+                    className={activeDesign.directoryGroupClass}
                     data-directory-group={node.path}
                 >
                     {directoryRow}
@@ -1729,44 +2198,44 @@ export function FileBrowser({
 
     return (
         <section
-            className="rounded-[1.75rem] border border-border/70 bg-card/85 p-4 shadow-[0_28px_90px_-72px_rgba(48,67,98,0.9)] sm:p-5"
+            className={activeDesign.sectionClass}
             data-file-browser="true"
+            data-file-browser-design={activeDesign.id}
+            data-preview-height={effectivePreviewHeight}
         >
             <div
-                className="flex items-center gap-3 border-b border-border/60 pb-5"
+                className={activeDesign.headerClass}
                 data-file-browser-header="true"
             >
                 <FolderTree
-                    className="size-4 text-primary"
+                    className={activeDesign.headerIconClass}
                     aria-hidden="true"
                 />
-                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    File Browser
-                </p>
+                <p className={activeDesign.headerTitleClass}>File Browser</p>
             </div>
 
             {files.length === 0 ? (
-                <div className="mt-5 rounded-[1.5rem] border border-dashed border-border/70 bg-background/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className={activeDesign.emptyStateClass}>
                     No registered files
                 </div>
             ) : null}
 
             {files.length > 0 && previewMode === "single" ? (
                 <div
-                    className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4"
+                    className={activeDesign.treeShellClass}
                     data-preview-mode="single"
                 >
-                    <div className="space-y-3">
+                    <div className={activeDesign.treeInnerClass}>
                         {renderDirectoryRows(directoryTree)}
                     </div>
                 </div>
             ) : null}
             {files.length > 0 && previewMode !== "single" ? (
                 <div
-                    className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/55 p-4"
+                    className={activeDesign.treeShellClass}
                     data-preview-mode="grid"
                 >
-                    <div className="space-y-3">
+                    <div className={activeDesign.treeInnerClass}>
                         {renderDirectoryRows(directoryTree)}
                     </div>
                 </div>

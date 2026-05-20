@@ -377,9 +377,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         [directoryGroups, initialSelectedDirectory],
     );
     const [previewMode, setPreviewMode] = useState<PreviewMode>("single");
-    const [previewHeightsByDirectory, setPreviewHeightsByDirectory] = useState<
-        Record<string, number>
-    >({});
+    const [previewHeight, setPreviewHeight] = useState(defaultPreviewHeight);
     const [selectedDirectory, setSelectedDirectory] = useState<
         string | undefined
     >(initialSelectedDirectory);
@@ -398,11 +396,6 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
     });
     const effectiveSelectedDirectory =
         selectedDirectory ?? initialSelectedDirectory;
-    const previewHeight = effectiveSelectedDirectory
-        ? (previewHeightsByDirectory[effectiveSelectedDirectory] ??
-          defaultPreviewHeight)
-        : defaultPreviewHeight;
-
     const selectedGroup = useMemo(
         () =>
             directoryGroups.find(
@@ -520,7 +513,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
             enlargedState.path === file.path ? enlargedState : undefined;
 
         return (
-            <div>
+            <div className="h-full w-full">
                 <FilePreview
                     content={previewContent}
                     enlargedContent={enlargedForFile?.content}
@@ -621,16 +614,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
     return (
         <FileBrowser
             files={files}
-            onPreviewHeightChange={(value) => {
-                if (!effectiveSelectedDirectory) {
-                    return;
-                }
-
-                setPreviewHeightsByDirectory((current) => ({
-                    ...current,
-                    [effectiveSelectedDirectory]: value,
-                }));
-            }}
+            onPreviewHeightChange={setPreviewHeight}
             onPreviewModeChange={(nextMode) => {
                 setPreviewMode(nextMode);
                 setPreviewPage(1);

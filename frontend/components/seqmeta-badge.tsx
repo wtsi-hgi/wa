@@ -28,6 +28,7 @@ type SeqmetaBadgeProps = {
     enrichment: EnrichmentResult | null;
     error?: "not_found" | "upstream_impaired";
     loading?: boolean;
+    statusPlacement?: "inline" | "overlay";
 };
 
 type SeqmetaDetailField = {
@@ -1523,6 +1524,7 @@ export function SeqmetaBadge({
     enrichment,
     error,
     loading = false,
+    statusPlacement = "inline",
 }: SeqmetaBadgeProps) {
     const inlineLabel = primaryLabel(rawValue, enrichment);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -1682,9 +1684,49 @@ export function SeqmetaBadge({
         };
     }, [copiedKey]);
 
+    const status = loading ? (
+        <span
+            aria-label="loading enrichment"
+            className={cn(
+                "inline-flex h-5 w-5 items-center justify-center rounded-full border border-border/80 bg-background text-[11px] font-semibold text-muted-foreground",
+                statusPlacement === "overlay" &&
+                    "absolute -right-1.5 -top-1 h-2.5 w-2.5 text-[0] ring-2 ring-background",
+            )}
+        >
+            ...
+        </span>
+    ) : error === "not_found" ? (
+        <span
+            aria-label="enrichment unavailable"
+            className={cn(
+                "inline-flex h-5 w-5 items-center justify-center rounded-full border border-border/80 bg-background text-[11px] font-semibold text-muted-foreground",
+                statusPlacement === "overlay" &&
+                    "absolute -right-1.5 -top-1 h-2.5 w-2.5 text-[0] ring-2 ring-background",
+            )}
+        >
+            ?
+        </span>
+    ) : error === "upstream_impaired" ? (
+        <span
+            aria-label="enrichment backend impaired"
+            className={cn(
+                "inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-500/40 bg-amber-500/10 text-[11px] font-semibold text-amber-700",
+                statusPlacement === "overlay" &&
+                    "absolute -right-1.5 -top-1 h-2.5 w-2.5 text-[0] ring-2 ring-background",
+            )}
+        >
+            !
+        </span>
+    ) : null;
+
     return (
         <>
-            <span className="inline-flex max-w-full items-center gap-2 align-middle">
+            <span
+                className={cn(
+                    "inline-flex max-w-full items-center gap-2 align-middle",
+                    statusPlacement === "overlay" && "relative",
+                )}
+            >
                 <button
                     type="button"
                     aria-expanded={dialogOpen}
@@ -1707,32 +1749,7 @@ export function SeqmetaBadge({
                     </span>
                 </button>
 
-                {loading ? (
-                    <span
-                        aria-label="loading enrichment"
-                        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border/80 bg-background text-[11px] font-semibold text-muted-foreground"
-                    >
-                        ...
-                    </span>
-                ) : null}
-
-                {error === "not_found" ? (
-                    <span
-                        aria-label="enrichment unavailable"
-                        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border/80 bg-background text-[11px] font-semibold text-muted-foreground"
-                    >
-                        ?
-                    </span>
-                ) : null}
-
-                {error === "upstream_impaired" ? (
-                    <span
-                        aria-label="enrichment backend impaired"
-                        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-500/40 bg-amber-500/10 text-[11px] font-semibold text-amber-700"
-                    >
-                        !
-                    </span>
-                ) : null}
+                {status}
             </span>
 
             {dialogOpen ? (

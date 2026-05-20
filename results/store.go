@@ -72,6 +72,14 @@ CREATE TABLE IF NOT EXISTS result_metadata (
 		REFERENCES result_sets(id) ON DELETE CASCADE
 );`
 
+const createResultMetadataMetaKeyValueIndexSQL = `
+CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value
+	ON result_metadata(meta_key, value);`
+
+const createResultMetadataMetaKeyValueIndexMySQLSQL = `
+CREATE INDEX idx_result_metadata_meta_key_value
+	ON result_metadata(meta_key, value(255));`
+
 // NewStore enables foreign keys and creates the SQL schema on demand.
 func NewStore(db *sql.DB) (*Store, error) {
 	if db == nil {
@@ -93,7 +101,23 @@ func NewStore(db *sql.DB) (*Store, error) {
 		}
 	}
 
+	if err := ensureResultMetadataMetaKeyValueIndex(db); err != nil {
+		return nil, fmt.Errorf("initialise results store: %w", err)
+	}
+
 	return &Store{db: db}, nil
+}
+
+func ensureResultMetadataMetaKeyValueIndex(db *sql.DB) error {
+	if _, err := db.Exec(createResultMetadataMetaKeyValueIndexSQL); err == nil {
+		return nil
+	}
+
+	if _, err := db.Exec(createResultMetadataMetaKeyValueIndexMySQLSQL); err != nil && !isDuplicateIndexError(err) {
+		return fmt.Errorf("create result metadata meta_key/value index: %w", err)
+	}
+
+	return nil
 }
 
 func enableForeignKeysOnExecutor(ctx context.Context, executor interface {
@@ -251,6 +275,16 @@ func isDuplicateKeyError(err error) bool {
 	message := strings.ToLower(err.Error())
 
 	return strings.Contains(message, "duplicate") || strings.Contains(message, "unique constraint")
+}
+
+func isDuplicateIndexError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+
+	return strings.Contains(message, "duplicate") || strings.Contains(message, "already exists")
 }
 
 func ensureUpdatedAtAfterCreatedAt(createdAt, now time.Time) time.Time {
@@ -992,7 +1026,7 @@ func (s *Store) DistinctMetadataValues(ctx context.Context, keys []string) ([]st
 
 	rows, err := s.db.QueryContext(
 		ctx,
-		fmt.Sprintf(`SELECT DISTINCT value FROM result_metadata WHERE meta_key IN (%s) ORDER BY value`, placeholders),
+		fmt.Sprintf(`SELECT DISTINCT value FROM result_metadata WHERE meta_key IN (%s)`, placeholders),
 		args...,
 	)
 	if err != nil {
@@ -1014,6 +1048,8 @@ func (s *Store) DistinctMetadataValues(ctx context.Context, keys []string) ([]st
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate distinct metadata values: %w", err)
 	}
+
+	sort.Strings(values)
 
 	return values, nil
 }

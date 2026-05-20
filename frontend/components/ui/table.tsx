@@ -2,9 +2,18 @@ import type { ComponentProps } from "react";
 
 import { cn } from "@/lib/utils";
 
-export function Table({ className, ...props }: ComponentProps<"table">) {
+type TableProps = ComponentProps<"table"> & {
+    wrapperClassName?: string;
+};
+
+export function Table({ className, wrapperClassName, ...props }: TableProps) {
     return (
-        <div className="relative w-full overflow-x-auto">
+        <div
+            className={cn(
+                "relative w-full overflow-x-auto overflow-y-hidden",
+                wrapperClassName,
+            )}
+        >
             <table
                 className={cn("w-full caption-bottom text-sm", className)}
                 {...props}

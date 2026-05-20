@@ -81,6 +81,15 @@ var combinedSampleMetaKeys = []string{
 	LegacySeqmetaSampleLimsKey,
 }
 
+var candidateSampleNameMetaKeys = []string{
+	"sample",
+	"sample_id",
+	"sample_name",
+	SeqmetaSampleNameKey,
+	SeqmetaSampleNameURLKey,
+	LegacySeqmetaSampleIDKey,
+}
+
 var combinedLaneMetaKeys = []string{"seqmeta_lane"}
 
 const defaultSeqmetaResolverCacheTTL = 5 * time.Minute
@@ -1019,7 +1028,7 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		!hasLibraryValues &&
 		len(directRunValues) == 0 &&
 		s.resolver != nil {
-		candidateSampleNames, err := s.store.DistinctMetadataValues(r.Context(), combinedSampleMetaKeys)
+		candidateSampleNames, err := s.store.DistinctMetadataValues(r.Context(), candidateSampleNameMetaKeys)
 		if err != nil {
 			writeDomainError(w, err)
 

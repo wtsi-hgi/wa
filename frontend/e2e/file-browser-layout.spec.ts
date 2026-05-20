@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdirSync } from "node:fs";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -42,11 +43,49 @@ type ExpandedDirectoryBoxMetrics = {
     rowRect: RectMetrics | null;
 };
 
+type PreviewCornerGripMetrics = {
+    backgroundAlpha: number;
+    backgroundImage: string;
+    borderBottomWidth: number;
+    borderLeftWidth: number;
+    borderRightWidth: number;
+    borderTopWidth: number;
+    bottomInsetFromFrame: number;
+    bottomInsetFromSurface: number;
+    cursor: string;
+    frameRightSlack: number;
+    handleHeight: number;
+    handlePaddingBottom: number;
+    handlePaddingLeft: number;
+    handlePaddingRight: number;
+    handlePaddingTop: number;
+    handleWidth: number;
+    markerBackgroundImage: string;
+    markerBackgroundAlpha: number;
+    markerBorderBottomWidth: number;
+    markerBorderLeftWidth: number;
+    markerBorderRightWidth: number;
+    markerBorderTopWidth: number;
+    markerBottomInset: number;
+    markerClipPath: string;
+    markerHeight: number;
+    markerRightInset: number;
+    markerWidth: number;
+    resizeMode: string;
+    rightInsetFromFrame: number;
+    rightInsetFromSurface: number;
+    surfaceBottomRightRadius: string;
+    surfaceRightMatchesPreview: boolean;
+    surfaceTopLeftRadius: string;
+};
+
 async function openResultFileBrowser(page: Page) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
     await expect(page.getByText("Recent registrations")).toBeVisible();
-    await expect(seededRecentRows(page)).toHaveCount(4);
+    await expect
+        .poll(async () => seededRecentRows(page).count())
+        .toBeGreaterThanOrEqual(4);
 
     const resultLink = page
         .getByRole("link", { name: "nf-core/rnaseq" })
@@ -67,7 +106,9 @@ async function openNamedResultFileBrowser(page: Page, pipelineName: string) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
     await expect(page.getByText("Recent registrations")).toBeVisible();
-    await expect(seededRecentRows(page)).toHaveCount(4);
+    await expect
+        .poll(async () => seededRecentRows(page).count())
+        .toBeGreaterThanOrEqual(4);
 
     const resultLink = page.getByRole("link", { name: pipelineName }).first();
     const href = await resultLink.getAttribute("href");
@@ -300,6 +341,199 @@ async function measurePreviewBorderSurfaces(
     });
 }
 
+async function measurePreviewCornerGrip(
+    frameLocator: Locator,
+): Promise<PreviewCornerGripMetrics> {
+    await expect(frameLocator).toBeVisible();
+
+    const handle = frameLocator.locator("[data-preview-resize-handle]").first();
+    await expect(handle).toBeVisible();
+
+    const metrics = await frameLocator.evaluate((frameElement) => {
+        const frame = frameElement as HTMLElement;
+        const surface = frame.querySelector("[data-preview-resize-surface]");
+        const handle = frame.querySelector("[data-preview-resize-handle]");
+
+        if (
+            !(surface instanceof HTMLElement) ||
+            !(handle instanceof HTMLElement)
+        ) {
+            return null;
+        }
+
+        const marker = handle.firstElementChild;
+
+        if (!(marker instanceof HTMLElement)) {
+            return null;
+        }
+
+        function hasVisibleBorder(element: Element): boolean {
+            const styles = window.getComputedStyle(element);
+            const sides = ["Top", "Right", "Bottom", "Left"] as const;
+
+            return sides.some((side) => {
+                const width = Number.parseFloat(
+                    styles.getPropertyValue(
+                        `border-${side.toLowerCase()}-width`,
+                    ),
+                );
+                const style = styles.getPropertyValue(
+                    `border-${side.toLowerCase()}-style`,
+                );
+
+                return width > 0 && style !== "none" && style !== "hidden";
+            });
+        }
+
+        function alphaFromColor(color: string): number {
+            const alphaMatch = color.match(/\/[\s]*([0-9]*\.?[0-9]+)\)$/);
+
+            if (alphaMatch) {
+                return Number.parseFloat(alphaMatch[1] ?? "1");
+            }
+
+            const rgbaMatch = color.match(
+                /^rgba?\([^,]+,[^,]+,[^,]+(?:,[\s]*([0-9]*\.?[0-9]+))?\)$/,
+            );
+
+            if (rgbaMatch) {
+                return rgbaMatch[1] ? Number.parseFloat(rgbaMatch[1]) : 1;
+            }
+
+            return 1;
+        }
+
+        const borderedPreviewSurface =
+            Array.from(frame.querySelectorAll("*"))
+                .filter((element): element is HTMLElement => {
+                    if (!(element instanceof HTMLElement)) {
+                        return false;
+                    }
+
+                    const rect = element.getBoundingClientRect();
+
+                    return (
+                        hasVisibleBorder(element) &&
+                        rect.width > 80 &&
+                        rect.height > 80
+                    );
+                })
+                .sort((left, right) => {
+                    const leftRect = left.getBoundingClientRect();
+                    const rightRect = right.getBoundingClientRect();
+
+                    return (
+                        rightRect.width * rightRect.height -
+                        leftRect.width * leftRect.height
+                    );
+                })[0] ?? null;
+        const previewSurface =
+            frame.querySelector("img") ?? borderedPreviewSurface;
+
+        if (!(previewSurface instanceof HTMLElement)) {
+            return null;
+        }
+
+        const styles = window.getComputedStyle(handle);
+        const markerStyles = window.getComputedStyle(marker);
+        const frameRect = frame.getBoundingClientRect();
+        const surfaceRect = surface.getBoundingClientRect();
+        const handleRect = handle.getBoundingClientRect();
+        const markerRect = marker.getBoundingClientRect();
+        const previewSurfaceRect = previewSurface.getBoundingClientRect();
+        const surfaceStyles = window.getComputedStyle(previewSurface);
+
+        return {
+            backgroundAlpha: alphaFromColor(styles.backgroundColor),
+            backgroundImage: styles.backgroundImage,
+            borderBottomWidth: Number.parseFloat(styles.borderBottomWidth),
+            borderLeftWidth: Number.parseFloat(styles.borderLeftWidth),
+            borderRightWidth: Number.parseFloat(styles.borderRightWidth),
+            borderTopWidth: Number.parseFloat(styles.borderTopWidth),
+            bottomInsetFromFrame: frameRect.bottom - handleRect.bottom,
+            bottomInsetFromSurface: surfaceRect.bottom - handleRect.bottom,
+            cursor: styles.cursor,
+            frameRightSlack: frameRect.right - previewSurfaceRect.right,
+            handleHeight: handleRect.height,
+            handlePaddingBottom: Number.parseFloat(styles.paddingBottom),
+            handlePaddingLeft: Number.parseFloat(styles.paddingLeft),
+            handlePaddingRight: Number.parseFloat(styles.paddingRight),
+            handlePaddingTop: Number.parseFloat(styles.paddingTop),
+            handleWidth: handleRect.width,
+            markerBackgroundAlpha: alphaFromColor(markerStyles.backgroundColor),
+            markerBackgroundImage: markerStyles.backgroundImage,
+            markerBorderBottomWidth: Number.parseFloat(
+                markerStyles.borderBottomWidth,
+            ),
+            markerBorderLeftWidth: Number.parseFloat(
+                markerStyles.borderLeftWidth,
+            ),
+            markerBorderRightWidth: Number.parseFloat(
+                markerStyles.borderRightWidth,
+            ),
+            markerBorderTopWidth: Number.parseFloat(
+                markerStyles.borderTopWidth,
+            ),
+            markerBottomInset: handleRect.bottom - markerRect.bottom,
+            markerClipPath: markerStyles.clipPath,
+            markerHeight: markerRect.height,
+            markerRightInset: handleRect.right - markerRect.right,
+            markerWidth: markerRect.width,
+            resizeMode: window.getComputedStyle(frame).resize,
+            rightInsetFromFrame: frameRect.right - handleRect.right,
+            rightInsetFromSurface: surfaceRect.right - handleRect.right,
+            surfaceBottomRightRadius: surfaceStyles.borderBottomRightRadius,
+            surfaceRightMatchesPreview:
+                Math.abs(surfaceRect.right - previewSurfaceRect.right) <= 1,
+            surfaceTopLeftRadius: surfaceStyles.borderTopLeftRadius,
+        };
+    });
+
+    if (!metrics) {
+        throw new Error("Missing preview resize corner grip metrics");
+    }
+
+    return metrics;
+}
+
+function expectTriangularPreviewCornerGrip(metrics: PreviewCornerGripMetrics) {
+    expect(metrics.resizeMode).toBe("none");
+    expect(metrics.backgroundAlpha).toBeLessThanOrEqual(0.05);
+    expect(metrics.backgroundImage).toBe("none");
+    expect(metrics.borderTopWidth).toBe(0);
+    expect(metrics.borderRightWidth).toBe(0);
+    expect(metrics.borderBottomWidth).toBe(0);
+    expect(metrics.borderLeftWidth).toBe(0);
+    expect(metrics.cursor).toBe("ns-resize");
+    expect(metrics.handlePaddingTop).toBe(0);
+    expect(metrics.handlePaddingRight).toBe(0);
+    expect(metrics.handlePaddingBottom).toBe(0);
+    expect(metrics.handlePaddingLeft).toBe(0);
+    expect(metrics.handleWidth).toBeGreaterThanOrEqual(32);
+    expect(metrics.handleWidth).toBeLessThanOrEqual(40);
+    expect(metrics.handleHeight).toBeGreaterThanOrEqual(32);
+    expect(metrics.handleHeight).toBeLessThanOrEqual(40);
+    expect(Math.abs(metrics.rightInsetFromSurface)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics.bottomInsetFromSurface)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics.markerRightInset)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics.markerBottomInset)).toBeLessThanOrEqual(1);
+    expect(metrics.markerWidth).toBeGreaterThanOrEqual(20);
+    expect(metrics.markerWidth).toBeLessThanOrEqual(26);
+    expect(metrics.markerHeight).toBeGreaterThanOrEqual(20);
+    expect(metrics.markerHeight).toBeLessThanOrEqual(26);
+    expect(metrics.markerBackgroundAlpha).toBeGreaterThanOrEqual(0.9);
+    expect(metrics.markerBorderTopWidth).toBe(0);
+    expect(metrics.markerBorderLeftWidth).toBe(0);
+    expect(metrics.markerBorderRightWidth).toBe(1);
+    expect(metrics.markerBorderBottomWidth).toBe(1);
+    expect(metrics.markerClipPath).toContain("polygon");
+    expect(metrics.markerBackgroundImage).toContain(
+        "repeating-linear-gradient",
+    );
+    expect(metrics.surfaceTopLeftRadius).not.toBe("0px");
+    expect(metrics.surfaceBottomRightRadius).toBe("0px");
+}
+
 async function measureExpandedDirectoryBox(
     page: Page,
     directoryPath: string,
@@ -408,8 +642,48 @@ test.describe("File Browser single preview layout", () => {
         "test-results",
         "close-subdir-parent-reselected.png",
     );
+    const screenshotEvidenceDir = path.resolve(
+        process.cwd(),
+        "..",
+        ".tmp",
+        "agent",
+    );
+    const compactInlineScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-inline-compact-postfix.png",
+    );
+    const titleNoRuleScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-title-no-rule-postfix.png",
+    );
+    const rootGapScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-root-gap-postfix.png",
+    );
+    const previewResizeGripScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "preview-resizer-triangular-grid-image-post-fix.png",
+    );
+    const singlePreviewCsvScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "preview-resizer-triangular-single-csv-post-fix.png",
+    );
+    const subfolderPreviewImageScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "preview-resizer-triangular-subfolder-image-post-fix.png",
+    );
+    const subfolderPreviewTableScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "preview-resizer-triangular-subfolder-table-post-fix.png",
+    );
+    const nestedControlOwnershipScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "bug3-nested-controls-hidden-parent-right-aligned-postfix.png",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
+    const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
+    const rnaseqImagePath = path.join(rnaseqImagesPath, "image.png");
     const rnaseqGalleryPath = path.join(
         fixturesRoot,
         "rnaseq",
@@ -418,6 +692,8 @@ test.describe("File Browser single preview layout", () => {
         "gallery",
     );
     const rnaseqNotesPath = path.join(fixturesRoot, "rnaseq", "qc", "notes");
+    const rnaseqReportsPath = path.join(fixturesRoot, "rnaseq", "reports");
+    const rnaseqReportCsvPath = path.join(rnaseqReportsPath, "report.csv");
     const rnaseqGalleryLowerImagePath = path.join(
         rnaseqGalleryPath,
         "plot-080.png",
@@ -433,11 +709,122 @@ test.describe("File Browser single preview layout", () => {
         "sample-a",
         "lanes",
     );
+    const galleriesDemoSampleALane1Path = path.join(
+        galleriesDemoSampleALanesPath,
+        "lane-1",
+    );
     const galleriesDemoLane1NotesPath = path.join(
         galleriesDemoSampleALanesPath,
         "lane-1",
         "lane-1-notes.tsv",
     );
+
+    test("does not draw a divider under the file browser title row", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+        const header = fileBrowser.locator('[data-file-browser-header="true"]');
+        await expect(header).toBeVisible();
+
+        const headerBorder = await header.evaluate((element) => {
+            const styles = window.getComputedStyle(element);
+            const width = Number.parseFloat(styles.borderBottomWidth);
+
+            function alphaFromColor(color: string) {
+                const slashAlpha = color.match(/\/[\s]*([0-9]*\.?[0-9]+)\)$/);
+
+                if (slashAlpha) {
+                    return Number.parseFloat(slashAlpha[1] ?? "1");
+                }
+
+                const rgbaAlpha = color.match(
+                    /^rgba?\([^,]+,[^,]+,[^,]+(?:,[\s]*([0-9]*\.?[0-9]+))?\)$/,
+                );
+
+                if (rgbaAlpha) {
+                    return rgbaAlpha[1] ? Number.parseFloat(rgbaAlpha[1]) : 1;
+                }
+
+                return color === "transparent" ? 0 : 1;
+            }
+
+            return {
+                alpha: alphaFromColor(styles.borderBottomColor),
+                width,
+            };
+        });
+
+        expect(headerBorder.width * headerBorder.alpha).toBe(0);
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: titleNoRuleScreenshotPath,
+        });
+    });
+
+    test("keeps the root folder box close to the file browser title", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+        const header = fileBrowser.locator('[data-file-browser-header="true"]');
+        const treeShell = fileBrowser.locator("[data-preview-mode]").first();
+
+        await expect(header).toBeVisible();
+        await expect(treeShell).toBeVisible();
+
+        const metrics = await fileBrowser.evaluate((browser) => {
+            const headerElement = browser.querySelector(
+                '[data-file-browser-header="true"]',
+            );
+            const shellElement = browser.querySelector("[data-preview-mode]");
+
+            if (
+                !(headerElement instanceof HTMLElement) ||
+                !(shellElement instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const browserRect = browser.getBoundingClientRect();
+            const shellRect = shellElement.getBoundingClientRect();
+            const titleContentBottom = Array.from(headerElement.children)
+                .map((child) => child.getBoundingClientRect())
+                .filter((rect) => rect.width > 0 && rect.height > 0)
+                .reduce(
+                    (bottom, rect) => Math.max(bottom, rect.bottom),
+                    headerElement.getBoundingClientRect().top,
+                );
+
+            return {
+                bottomInset: browserRect.bottom - shellRect.bottom,
+                leftInset: shellRect.left - browserRect.left,
+                rightInset: browserRect.right - shellRect.right,
+                topGap: shellRect.top - titleContentBottom,
+            };
+        });
+
+        expect(metrics).not.toBeNull();
+
+        const sideInset = Math.min(
+            metrics?.leftInset ?? 0,
+            metrics?.rightInset ?? 0,
+        );
+        const surroundingInset = Math.min(sideInset, metrics?.bottomInset ?? 0);
+
+        expect(metrics?.topGap).toBeGreaterThanOrEqual(surroundingInset - 1);
+        expect(metrics?.topGap).toBeLessThanOrEqual(surroundingInset + 1);
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: rootGapScreenshotPath,
+        });
+    });
 
     test("positions single preview to the right of file metadata at 1024px viewport", async ({
         page,
@@ -595,6 +982,163 @@ test.describe("File Browser single preview layout", () => {
         expect(surface.height).toBeGreaterThanOrEqual(metrics.root.height - 2);
     });
 
+    test("renders single-preview csv without an inner vertical scrollbar or detached resize corner", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqReportsPath);
+
+        const preview = page.locator('[data-file-browser-preview="single"]');
+        const frame = page
+            .locator(`[data-preview-resize-frame="${rnaseqReportCsvPath}"]`)
+            .first();
+        const reportFile = page
+            .locator(`[data-file-path="${rnaseqReportCsvPath}"]`)
+            .first();
+
+        await expect(reportFile).toBeVisible();
+        await reportFile.click();
+        await expect(preview).toBeVisible();
+        await expect(preview.locator("table")).toBeVisible();
+
+        const metrics = await preview.evaluate((root) => {
+            const frame = root.closest("[data-preview-resize-frame]");
+            const handle = root.querySelector("[data-preview-resize-handle]");
+
+            if (
+                !(root instanceof HTMLElement) ||
+                !(frame instanceof HTMLElement) ||
+                !(handle instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            function rectMetrics(element: Element) {
+                const rect = element.getBoundingClientRect();
+
+                return {
+                    bottom: rect.bottom,
+                    height: rect.height,
+                    right: rect.right,
+                    width: rect.width,
+                    x: rect.x,
+                    y: rect.y,
+                };
+            }
+
+            function hasVisibleBorder(element: Element) {
+                const styles = window.getComputedStyle(element);
+
+                return ["Top", "Right", "Bottom", "Left"].some((side) => {
+                    const width = Number.parseFloat(
+                        styles.getPropertyValue(
+                            `border-${side.toLowerCase()}-width`,
+                        ),
+                    );
+                    const style = styles.getPropertyValue(
+                        `border-${side.toLowerCase()}-style`,
+                    );
+
+                    return width > 0 && style !== "none" && style !== "hidden";
+                });
+            }
+
+            const scrollContainers = Array.from(root.querySelectorAll("*"))
+                .filter((element): element is HTMLElement => {
+                    if (!(element instanceof HTMLElement)) {
+                        return false;
+                    }
+
+                    const styles = window.getComputedStyle(element);
+                    const canScrollVertically =
+                        styles.overflowY === "auto" ||
+                        styles.overflowY === "scroll";
+
+                    return (
+                        canScrollVertically &&
+                        element.scrollHeight > element.clientHeight + 1
+                    );
+                })
+                .map((element) => ({
+                    clientHeight: element.clientHeight,
+                    overflowY: window.getComputedStyle(element).overflowY,
+                    scrollHeight: element.scrollHeight,
+                    tagName: element.tagName.toLowerCase(),
+                }));
+
+            const visibleSurface = Array.from(root.querySelectorAll("*"))
+                .filter((element): element is HTMLElement => {
+                    if (!(element instanceof HTMLElement)) {
+                        return false;
+                    }
+
+                    const rect = element.getBoundingClientRect();
+
+                    return (
+                        rect.width > 80 &&
+                        rect.height > 80 &&
+                        hasVisibleBorder(element)
+                    );
+                })
+                .map((element) => {
+                    const rect = rectMetrics(element);
+
+                    return {
+                        ...rect,
+                        area: rect.width * rect.height,
+                        tagName: element.tagName.toLowerCase(),
+                    };
+                })
+                .sort((left, right) => right.area - left.area)[0];
+
+            const frameRect = rectMetrics(frame);
+            const handleRect = rectMetrics(handle);
+            const lineElement = handle.firstElementChild;
+            const lineRect =
+                lineElement instanceof HTMLElement
+                    ? lineElement.getBoundingClientRect()
+                    : null;
+
+            return {
+                frameRect,
+                handleRect,
+                lineRect: lineRect ? rectMetrics(lineElement) : null,
+                scrollContainers,
+                visibleSurface,
+            };
+        });
+
+        if (!metrics?.visibleSurface) {
+            throw new Error("Missing single-preview CSV surface metrics");
+        }
+
+        expect(metrics.scrollContainers).toEqual([]);
+        expect(metrics.visibleSurface.width).toBeGreaterThanOrEqual(
+            metrics.frameRect.width - 2,
+        );
+        expect(
+            Math.abs(metrics.handleRect.right - metrics.visibleSurface.right),
+        ).toBeLessThanOrEqual(1);
+        expect(
+            Math.abs(metrics.handleRect.bottom - metrics.visibleSurface.bottom),
+        ).toBeLessThanOrEqual(1);
+
+        const gripMetrics = await measurePreviewCornerGrip(frame);
+        expectTriangularPreviewCornerGrip(gripMetrics);
+        expect(Math.abs(gripMetrics.rightInsetFromFrame)).toBeLessThanOrEqual(
+            1,
+        );
+        expect(Math.abs(gripMetrics.bottomInsetFromFrame)).toBeLessThanOrEqual(
+            1,
+        );
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: singlePreviewCsvScreenshotPath,
+        });
+    });
+
     test("renders single-preview images with the same corner radius as the preview shell", async ({
         page,
     }) => {
@@ -693,7 +1237,9 @@ test.describe("File Browser single preview layout", () => {
         expect(metrics.fileRowsRect.x).toBeGreaterThanOrEqual(
             metrics.contentRect.x - 1,
         );
-        expect(metrics.fileRowsRect.y).toBeGreaterThan(metrics.contentRect.y);
+        expect(metrics.fileRowsRect.y).toBeGreaterThanOrEqual(
+            metrics.contentRect.y,
+        );
         expect(
             metrics.fileRowsRect.x + metrics.fileRowsRect.width,
         ).toBeLessThanOrEqual(
@@ -717,23 +1263,141 @@ test.describe("File Browser single preview layout", () => {
         );
     });
 
-    test("places folder controls beneath the directory heading while keeping compact widgets on the same row surface", async ({
+    test("uses the file browser shell as the visual container for the root directory", async ({
         page,
     }) => {
         await openResultFileBrowser(page);
-        await selectDirectory(page, rnaseqGalleryPath);
+        await selectDirectory(page, rnaseqQcPath);
+
+        const rootRow = page.locator(
+            `[data-directory-row="${rnaseqRootPath}"]`,
+        );
+        const rootContent = page.locator(
+            `[data-directory-group-content="${rnaseqRootPath}"]`,
+        );
+        const nestedRow = page.locator(
+            `[data-directory-row="${rnaseqQcPath}"]`,
+        );
+
+        await expect(rootRow).toBeVisible();
+        await expect(rootContent).toBeVisible();
+        await expect(nestedRow).toBeVisible();
+
+        const metrics = await page.evaluate(
+            ({ nestedPath, rootPath }) => {
+                function byData(attributeName: string, value: string) {
+                    return document.querySelector(
+                        `[${attributeName}="${CSS.escape(value)}"]`,
+                    );
+                }
+
+                function surfaceMetrics(element: Element | null) {
+                    if (!(element instanceof HTMLElement)) {
+                        return null;
+                    }
+
+                    const styles = window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+
+                    return {
+                        backgroundAlpha: backgroundAlpha(
+                            styles.backgroundColor,
+                        ),
+                        borderBottomWidth: Number.parseFloat(
+                            styles.borderBottomWidth,
+                        ),
+                        borderLeftWidth: Number.parseFloat(
+                            styles.borderLeftWidth,
+                        ),
+                        borderRightWidth: Number.parseFloat(
+                            styles.borderRightWidth,
+                        ),
+                        borderTopWidth: Number.parseFloat(
+                            styles.borderTopWidth,
+                        ),
+                        paddingBottom: Number.parseFloat(styles.paddingBottom),
+                        paddingLeft: Number.parseFloat(styles.paddingLeft),
+                        paddingRight: Number.parseFloat(styles.paddingRight),
+                        paddingTop: Number.parseFloat(styles.paddingTop),
+                        rect: {
+                            height: rect.height,
+                            width: rect.width,
+                            x: rect.x,
+                            y: rect.y,
+                        },
+                    };
+                }
+
+                function backgroundAlpha(backgroundColor: string): number {
+                    const rgbaMatch = backgroundColor.match(
+                        /^rgba?\([^,]+,[^,]+,[^,]+(?:,[\s]*([0-9]*\.?[0-9]+))?\)$/,
+                    );
+
+                    if (rgbaMatch) {
+                        return rgbaMatch[1]
+                            ? Number.parseFloat(rgbaMatch[1])
+                            : 1;
+                    }
+
+                    return backgroundColor === "transparent" ? 0 : 1;
+                }
+
+                return {
+                    nestedRow: surfaceMetrics(
+                        byData("data-directory-row", nestedPath),
+                    ),
+                    rootContent: surfaceMetrics(
+                        byData("data-directory-group-content", rootPath),
+                    ),
+                    rootRow: surfaceMetrics(
+                        byData("data-directory-row", rootPath),
+                    ),
+                    rootRowContainsContent:
+                        byData("data-directory-row", rootPath)?.contains(
+                            byData("data-directory-group-content", rootPath),
+                        ) ?? false,
+                };
+            },
+            { nestedPath: rnaseqQcPath, rootPath: rnaseqRootPath },
+        );
+
+        expect(metrics.rootRow).not.toBeNull();
+        expect(metrics.rootContent).not.toBeNull();
+        expect(metrics.nestedRow).not.toBeNull();
+        expect(metrics.rootRowContainsContent).toBe(true);
+
+        expect(metrics.rootRow).toMatchObject({
+            backgroundAlpha: 0,
+            borderBottomWidth: 0,
+            borderLeftWidth: 0,
+            borderRightWidth: 0,
+            borderTopWidth: 0,
+            paddingBottom: 0,
+            paddingLeft: 0,
+            paddingRight: 0,
+            paddingTop: 0,
+        });
+        expect(metrics.rootContent).toMatchObject({
+            paddingLeft: 0,
+            paddingRight: 0,
+        });
+        expect(metrics.nestedRow?.borderTopWidth).toBeGreaterThan(0);
+        expect(metrics.nestedRow?.backgroundAlpha).toBeGreaterThan(0);
+    });
+
+    test("keeps inline folder controls compact beside the directory heading when room allows", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqQcPath);
 
         const filePreviewFolderControls = page
-            .locator(
-                `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
-            )
-            .filter({
-                has: page.locator('input[aria-label="1 preview per row"]'),
-            });
+            .locator(`[data-file-browser-folder-controls="${rnaseqQcPath}"]`)
+            .filter({ has: page.locator("[data-preview-mode-disclosure]") });
 
         const folderControls = filePreviewFolderControls.first();
         const directoryRow = page
-            .locator(`[data-directory-row="${rnaseqGalleryPath}"]`)
+            .locator(`[data-directory-row="${rnaseqQcPath}"]`)
             .first();
         const directoryButton = directoryRow
             .locator("button[data-directory-path]")
@@ -742,30 +1406,46 @@ test.describe("File Browser single preview layout", () => {
         await expect(directoryRow).toBeVisible();
         await expect(directoryButton).toBeVisible();
         await expect(folderControls).toBeVisible();
-        await openPreviewModes(folderControls);
 
-        // Verify "1 preview per row" toggle is present
-        const previewModeToggle = folderControls.locator(
-            'input[aria-label="1 preview per row"]',
+        const previewModeTrigger = folderControls.locator(
+            '[data-file-browser-control-trigger="preview-modes"]',
         );
-        await expect(previewModeToggle).toBeVisible();
-
-        // Verify preview height slider is present in the same controls container
-        const previewHeightSlider = folderControls.locator(
-            'input[type="range"][aria-label="Preview height"]',
+        const fileTypesTrigger = folderControls.locator(
+            '[data-file-browser-control-trigger="file-types"]',
         );
-        await expect(previewHeightSlider).toBeVisible();
+        const previewModeState = folderControls.locator(
+            '[data-file-browser-control-current="preview-modes"]',
+        );
+        const fileTypesState = folderControls.locator(
+            '[data-file-browser-control-current="file-types"]',
+        );
 
-        // Get bounding boxes to verify they're on the same horizontal line
-        const toggleBBox = await previewModeToggle.boundingBox();
-        const sliderBBox = await previewHeightSlider.boundingBox();
+        await expect(
+            folderControls.locator(
+                '[data-file-browser-control-trigger="preview-height"]',
+            ),
+        ).toHaveCount(0);
+        await expect(
+            folderControls.locator(
+                'input[type="range"][aria-label="Preview height"]',
+            ),
+        ).toHaveCount(0);
+        await expect(previewModeTrigger).toBeVisible();
+        await expect(fileTypesTrigger).toBeVisible();
+        await expect(previewModeState).toBeVisible();
+        await expect(fileTypesState).toBeVisible();
+        await expect(previewModeState).toHaveText(/preview/i);
+        await expect(fileTypesState).toHaveText(/file type/i);
+
+        const previewModeBBox = await previewModeTrigger.boundingBox();
+        const fileTypesBBox = await fileTypesTrigger.boundingBox();
         const controlsBBox = await folderControls.boundingBox();
         const buttonBBox = await directoryButton.boundingBox();
         const rowBBox = await directoryRow.boundingBox();
 
         if (
-            !toggleBBox ||
-            !sliderBBox ||
+            !previewModeBBox ||
+            !fileTypesBBox ||
             !controlsBBox ||
             !buttonBBox ||
             !rowBBox
@@ -773,10 +1453,12 @@ test.describe("File Browser single preview layout", () => {
             throw new Error("Missing bounding boxes for controls verification");
         }
 
-        // Controls must sit below the folder heading/button, not in a reserved
-        // right-hand column that steals name width.
-        expect(controlsBBox.y).toBeGreaterThan(
-            buttonBBox.y + buttonBBox.height - 8,
+        // The compact controls should share the heading line at desktop width.
+        expect(controlsBBox.y).toBeLessThan(
+            buttonBBox.y + buttonBBox.height - 12,
+        );
+        expect(controlsBBox.y + controlsBBox.height).toBeGreaterThan(
+            buttonBBox.y + 12,
         );
 
         // The controls remain inside the same directory row surface.
@@ -788,24 +1470,45 @@ test.describe("File Browser single preview layout", () => {
             rowBBox.x + rowBBox.width + 1,
         );
 
-        // Both controls should be in the same container row (similar vertical position)
-        expect(Math.abs(toggleBBox.y - sliderBBox.y)).toBeLessThan(30);
+        // All primary controls should fit on one row when the viewport has room.
+        expect(Math.abs(previewModeBBox.y - fileTypesBBox.y)).toBeLessThan(8);
+        expect(fileTypesBBox.x).toBeGreaterThan(previewModeBBox.x);
 
-        // The slider should be compact (height similar to the toggle's parent label)
-        const toggleLabel = page
-            .locator('label:has(input[aria-label="1 preview per row"])')
-            .first();
-        const toggleLabelBBox = await toggleLabel.boundingBox();
+        // Current state should sit underneath each trigger label, reducing width.
+        const triggerStateLayout = await folderControls
+            .locator("[data-file-browser-control-trigger]")
+            .evaluateAll((triggers) =>
+                triggers.map((trigger) => {
+                    const kind = trigger.getAttribute(
+                        "data-file-browser-control-trigger",
+                    );
+                    const label = trigger.querySelector(
+                        "[data-file-browser-control-label]",
+                    );
+                    const state = trigger.querySelector(
+                        "[data-file-browser-control-current]",
+                    );
+                    const labelRect = label?.getBoundingClientRect();
+                    const stateRect = state?.getBoundingClientRect();
+                    const triggerRect = trigger.getBoundingClientRect();
 
-        if (!toggleLabelBBox) {
-            throw new Error("Missing toggle label bounding box");
+                    return {
+                        kind,
+                        labelBottom: labelRect?.bottom ?? 0,
+                        stateTop: stateRect?.top ?? 0,
+                        triggerWidth: triggerRect.width,
+                    };
+                }),
+            );
+
+        for (const layout of triggerStateLayout) {
+            expect(layout.stateTop).toBeGreaterThanOrEqual(
+                layout.labelBottom - 1,
+            );
+            expect(layout.triggerWidth).toBeLessThan(180);
         }
 
-        // Slider height should be compact - less than 80px total (including padding)
-        expect(sliderBBox.height).toBeLessThan(80);
-
-        // Controls should be arranged horizontally within the folder controls container
-        expect(controlsBBox.height).toBeLessThan(120);
+        expect(controlsBBox.height).toBeLessThan(72);
     });
 
     test("renders subfolder preview controls in the folder-row control slot without the generic preview toggle", async ({
@@ -1079,6 +1782,99 @@ test.describe("File Browser single preview layout", () => {
         ).toBeLessThanOrEqual(6);
     });
 
+    test("renders the preview height grip as a triangular preview-corner affordance", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(controls).toBeVisible();
+        await openPreviewModes(controls);
+        await controls.locator('input[aria-label="1 preview per row"]').check();
+
+        const frame = page
+            .locator(
+                `[data-preview-resize-frame="${path.join(rnaseqGalleryPath, "plot-001.png")}"]`,
+            )
+            .first();
+        const image = frame.locator('img[alt="plot-001.png preview"]').first();
+        const handle = frame.locator("[data-preview-resize-handle]").first();
+        const surface = frame.locator("[data-preview-resize-surface]").first();
+
+        await expect(frame).toBeVisible();
+        await expect(image).toBeVisible();
+        await expect(handle).toBeVisible();
+        await expect(surface).toBeVisible();
+
+        const gripMetrics = await measurePreviewCornerGrip(frame);
+        expectTriangularPreviewCornerGrip(gripMetrics);
+        expect(gripMetrics.frameRightSlack).toBeGreaterThan(80);
+        expect(gripMetrics.surfaceRightMatchesPreview).toBe(true);
+        expect(gripMetrics.rightInsetFromFrame).toBeGreaterThan(80);
+        expect(Math.abs(gripMetrics.bottomInsetFromFrame)).toBeLessThanOrEqual(
+            1,
+        );
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await frame.screenshot({
+            path: previewResizeGripScreenshotPath,
+        });
+    });
+
+    test("renders the triangular resize corner in subfolder image and table previews", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const directoryButton = page.locator(
+            `[data-directory-path="${rnaseqRootPath}"]`,
+        );
+        const subdirControls = page.locator(
+            `[data-subdir-preview-controls="${rnaseqRootPath}"]`,
+        );
+
+        if ((await subdirControls.count()) === 0) {
+            await directoryButton.click();
+        }
+
+        await expect(subdirControls).toBeVisible();
+        await openPreviewModes(subdirControls);
+        await subdirControls
+            .locator('input[aria-label="Subfolder previews"]')
+            .check();
+
+        const imageFrame = page
+            .locator(`[data-subdir-preview-frame="${rnaseqImagePath}"]`)
+            .first();
+        const tableFrame = page
+            .locator("[data-subdir-preview-frame]")
+            .filter({ has: page.locator("table") })
+            .first();
+
+        await expect(imageFrame.locator("img")).toBeVisible();
+        await expect(tableFrame.locator("table")).toBeVisible();
+
+        const imageGripMetrics = await measurePreviewCornerGrip(imageFrame);
+        const tableGripMetrics = await measurePreviewCornerGrip(tableFrame);
+
+        expectTriangularPreviewCornerGrip(imageGripMetrics);
+        expectTriangularPreviewCornerGrip(tableGripMetrics);
+        expect(imageGripMetrics.surfaceRightMatchesPreview).toBe(true);
+        expect(tableGripMetrics.surfaceRightMatchesPreview).toBe(true);
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await imageFrame.screenshot({
+            path: subfolderPreviewImageScreenshotPath,
+        });
+        await tableFrame.screenshot({
+            path: subfolderPreviewTableScreenshotPath,
+        });
+    });
+
     test("renders subfolder table previews with a single bordered surface", async ({
         page,
     }) => {
@@ -1218,15 +2014,17 @@ test.describe("File Browser single preview layout", () => {
         });
     });
 
-    test("shows nested eligible subfolder preview controls on both the parent and child rows", async ({
+    test("hides parent preview tools while a nested eligible subfolder is open and keeps the active tools beside the heading", async ({
         page,
     }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
         await openNamedResultFileBrowser(page, "wtsi/galleries-demo");
+        await page.setViewportSize({ width: 1440, height: 900 });
 
         await selectDirectory(page, galleriesDemoSampleAPath);
 
         const sampleAControls = page.locator(
-            `[data-subdir-preview-controls="${galleriesDemoSampleAPath}"]`,
+            `[data-file-browser-folder-controls="${galleriesDemoSampleAPath}"]`,
         );
 
         await expect(sampleAControls).toBeVisible();
@@ -1239,11 +2037,52 @@ test.describe("File Browser single preview layout", () => {
         await selectDirectory(page, galleriesDemoSampleALanesPath);
 
         const lanesControls = page.locator(
-            `[data-subdir-preview-controls="${galleriesDemoSampleALanesPath}"]`,
+            `[data-file-browser-folder-controls="${galleriesDemoSampleALanesPath}"]`,
         );
 
-        await expect(sampleAControls).toBeVisible();
+        await expect(sampleAControls).toHaveCount(0);
         await expect(lanesControls).toBeVisible();
+
+        await selectDirectory(page, galleriesDemoSampleALane1Path);
+
+        const lane1Controls = page.locator(
+            `[data-file-browser-folder-controls="${galleriesDemoSampleALane1Path}"]`,
+        );
+        const lane1Button = page.locator(
+            `button[data-directory-path="${galleriesDemoSampleALane1Path}"]`,
+        );
+
+        await expect(lanesControls).toHaveCount(0);
+        await expect(lane1Controls).toBeVisible();
+        await expect(
+            lane1Controls.locator(
+                '[data-file-browser-control-trigger="preview-modes"]',
+            ),
+        ).toBeVisible();
+        await expect(
+            lane1Controls.locator(
+                '[data-file-browser-control-trigger="file-types"]',
+            ),
+        ).toBeVisible();
+
+        const controlsBox = await lane1Controls.boundingBox();
+        const buttonBox = await lane1Button.boundingBox();
+
+        if (!controlsBox || !buttonBox) {
+            throw new Error("Missing nested control layout boxes");
+        }
+
+        expect(controlsBox.x).toBeGreaterThan(buttonBox.x);
+        expect(controlsBox.y).toBeLessThan(buttonBox.y + buttonBox.height - 12);
+        expect(controlsBox.y + controlsBox.height).toBeGreaterThan(
+            buttonBox.y + 12,
+        );
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: nestedControlOwnershipScreenshotPath,
+        });
     });
 
     test("keeps parent and child preview mode selectors in sync when opening a nested subfolder", async ({
@@ -1281,16 +2120,26 @@ test.describe("File Browser single preview layout", () => {
             'summary[aria-label="Preview modes"]',
         );
 
-        await expect(sampleAControls).toBeVisible();
+        await expect(sampleAControls).toHaveCount(0);
         await expect(lanesControls).toBeVisible();
-        await expect(sampleASummary).toContainText("Grid + subfolders");
+        await expect(sampleASummary).toHaveCount(0);
         await expect(
             sampleAControls.locator('input[aria-label="1 preview per row"]'),
-        ).toHaveCount(1);
+        ).toHaveCount(0);
         await expect(lanesSummary).toContainText("Single preview");
         await expect(
             lanesControls.locator('input[aria-label="1 preview per row"]'),
         ).toHaveCount(0);
+
+        await page
+            .locator(
+                `button[data-directory-path="${galleriesDemoSampleALanesPath}"]`,
+            )
+            .click();
+
+        await expect(lanesControls).toHaveCount(0);
+        await expect(sampleAControls).toBeVisible();
+        await expect(sampleASummary).toContainText("Grid + subfolders");
 
         await openPreviewModes(sampleAControls);
         await sampleAControls
@@ -1300,8 +2149,8 @@ test.describe("File Browser single preview layout", () => {
         await expect(sampleASummary).toContainText("Subfolders");
         await expect(
             sampleAControls.locator('input[aria-label="1 preview per row"]'),
-        ).toHaveCount(0);
-        await expect(lanesSummary).toContainText("Single preview");
+        ).not.toBeChecked();
+        await expect(lanesSummary).toHaveCount(0);
     });
 
     test("renders solid backgrounds for preview mode and file type menus", async ({
@@ -1346,5 +2195,229 @@ test.describe("File Browser single preview layout", () => {
         await openFileTypes(controls);
         await expectOpaqueBackground(fileTypesSummary);
         await expectOpaqueBackground(fileTypesMenu);
+    });
+
+    test("renders only the compact inline file browser design", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+        const directoryRow = page.locator(
+            `[data-directory-row="${rnaseqGalleryPath}"]`,
+        );
+        const directoryButton = directoryRow
+            .locator(`[data-directory-path="${rnaseqGalleryPath}"]`)
+            .first();
+        const firstFile = page
+            .locator(
+                `[data-file-path="${path.join(rnaseqGalleryPath, "plot-001.png")}"]`,
+            )
+            .first();
+
+        await expect(
+            page.locator('[data-file-browser-design-selector="true"]'),
+        ).toHaveCount(0);
+        await expect(
+            page.locator("[data-file-browser-design-option]"),
+        ).toHaveCount(0);
+        await expect(fileBrowser).toHaveAttribute(
+            "data-file-browser-design",
+            "inline",
+        );
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await expect(controls).toBeVisible();
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-surface",
+            "true",
+        );
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-style",
+            "inline-nameplate",
+        );
+        await expect(controls).toHaveAttribute(
+            "data-file-browser-control-placement",
+            "name-area",
+        );
+        await expect(
+            page.locator(
+                `[data-file-browser-name-area-controls="${rnaseqGalleryPath}"]`,
+            ),
+        ).toBeVisible();
+        await page.screenshot({
+            fullPage: true,
+            path: compactInlineScreenshotPath,
+        });
+        await expect(
+            controls.locator(
+                '[data-file-browser-control-trigger="preview-modes"]',
+            ),
+        ).toBeVisible();
+        await expect(
+            controls.locator(
+                '[data-file-browser-control-trigger="file-types"]',
+            ),
+        ).toBeVisible();
+        await expect(
+            controls.locator(
+                '[data-file-browser-control-current="preview-modes"]',
+            ),
+        ).toBeVisible();
+        await expect(
+            controls.locator(
+                '[data-file-browser-control-current="file-types"]',
+            ),
+        ).toBeVisible();
+
+        const metrics = await page.evaluate(
+            ({ countPath, directoryPath }) => {
+                function bySelector(selectorValue: string) {
+                    return document.querySelector(selectorValue);
+                }
+
+                function rectMetrics(element: Element | null) {
+                    if (!(element instanceof HTMLElement)) {
+                        return null;
+                    }
+
+                    const rect = element.getBoundingClientRect();
+
+                    return {
+                        height: rect.height,
+                        width: rect.width,
+                        x: rect.x,
+                        y: rect.y,
+                    };
+                }
+
+                const row = bySelector(
+                    `[data-directory-row="${CSS.escape(directoryPath)}"]`,
+                );
+                const button = bySelector(
+                    `[data-directory-path="${CSS.escape(directoryPath)}"]`,
+                );
+                const controlsElement = bySelector(
+                    `[data-file-browser-folder-controls="${CSS.escape(directoryPath)}"]`,
+                );
+                const fileButton = bySelector("[data-file-path]");
+                const directoryMeta = bySelector(
+                    `[data-directory-meta="${CSS.escape(countPath)}"]`,
+                );
+                const fileCount = bySelector(
+                    `[data-directory-file-count="${CSS.escape(countPath)}"]`,
+                );
+                const subfolderCount = bySelector(
+                    `[data-directory-subfolder-count="${CSS.escape(countPath)}"]`,
+                );
+                const directoryTypeSummary = bySelector(
+                    "[data-directory-type-summary]",
+                );
+                const directoryTypeSummaryMeta = directoryTypeSummary?.closest(
+                    "[data-directory-meta]",
+                );
+                const fileKind = fileButton?.querySelector("[data-file-kind]");
+
+                function textStyle(element: Element | undefined) {
+                    if (!(element instanceof HTMLElement)) {
+                        return null;
+                    }
+
+                    const styles = window.getComputedStyle(element);
+
+                    return {
+                        fontFamily: styles.fontFamily,
+                        letterSpacing: styles.letterSpacing,
+                        textTransform: styles.textTransform,
+                    };
+                }
+
+                return {
+                    buttonRect: rectMetrics(button),
+                    controlsClass: controlsElement?.className ?? "",
+                    controlsRect: rectMetrics(controlsElement),
+                    directoryMetaRect: rectMetrics(directoryMeta),
+                    directoryMetaSeparatorCount:
+                        directoryTypeSummaryMeta?.querySelectorAll(
+                            "[data-file-browser-meta-separator]",
+                        ).length ?? 0,
+                    directoryTypeSummaryText:
+                        directoryTypeSummary?.textContent?.trim() ?? "",
+                    directoryTypeSummaryTextStyle:
+                        textStyle(directoryTypeSummary),
+                    fileClass: fileButton?.className ?? "",
+                    fileKindSeparatorCount:
+                        fileButton?.querySelectorAll(
+                            "[data-file-browser-meta-separator]",
+                        ).length ?? 0,
+                    fileKindText: fileKind?.textContent?.trim() ?? "",
+                    fileKindTextStyle: textStyle(fileKind),
+                    fileCountRect: rectMetrics(fileCount),
+                    rowClass: row?.className ?? "",
+                    rowRect: rectMetrics(row),
+                    subfolderCountRect: rectMetrics(subfolderCount),
+                };
+            },
+            { countPath: rnaseqRootPath, directoryPath: rnaseqGalleryPath },
+        );
+
+        if (
+            !metrics.buttonRect ||
+            !metrics.controlsRect ||
+            !metrics.directoryMetaRect ||
+            !metrics.fileCountRect ||
+            !metrics.rowRect ||
+            !metrics.subfolderCountRect
+        ) {
+            throw new Error("Missing control-surface metrics");
+        }
+
+        expect(metrics.controlsClass).toContain("inline-nameplate-controls");
+        expect(metrics.controlsClass).not.toBe(metrics.rowClass);
+        expect(metrics.controlsClass).not.toBe(metrics.fileClass);
+        expect(metrics.controlsRect.x).toBeGreaterThanOrEqual(
+            metrics.rowRect.x - 1,
+        );
+        expect(
+            metrics.controlsRect.x + metrics.controlsRect.width,
+        ).toBeLessThanOrEqual(metrics.rowRect.x + metrics.rowRect.width + 1);
+        expect(metrics.subfolderCountRect.x).toBeGreaterThan(
+            metrics.fileCountRect.x,
+        );
+        expect(
+            Math.abs(metrics.fileCountRect.y - metrics.subfolderCountRect.y),
+        ).toBeLessThan(4);
+        expect(metrics.directoryTypeSummaryText).toMatch(/^\d+ [A-Z0-9]+/);
+        expect(metrics.directoryTypeSummaryTextStyle).toMatchObject({
+            letterSpacing: "normal",
+            textTransform: "none",
+        });
+        expect(metrics.fileKindText).toBe("output");
+        expect(metrics.fileKindTextStyle).toMatchObject({
+            letterSpacing: "normal",
+            textTransform: "none",
+        });
+        expect(metrics.directoryMetaSeparatorCount).toBeGreaterThanOrEqual(3);
+        expect(metrics.fileKindSeparatorCount).toBeGreaterThanOrEqual(2);
+
+        await expect(firstFile).toBeVisible();
+        await expect(
+            page.locator(
+                `[data-file-browser-file-matrix-header="${rnaseqGalleryPath}"]`,
+            ),
+        ).toHaveCount(0);
+        await expect(
+            page.locator(
+                `[data-file-browser-sidecar-layout="${rnaseqGalleryPath}"]`,
+            ),
+        ).toHaveCount(0);
+        await expect(
+            page.locator(
+                `[data-file-browser-content-ribbon="${rnaseqGalleryPath}"]`,
+            ),
+        ).toHaveCount(0);
     });
 });

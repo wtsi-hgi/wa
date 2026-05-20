@@ -98,6 +98,7 @@ function MetadataValue({
                 enrichment={enrichments[lookupKey] ?? null}
                 error={errors[lookupKey]}
                 loading={Boolean(loading[lookupKey])}
+                statusPlacement={display === "strip" ? "overlay" : "inline"}
             />
         );
     }

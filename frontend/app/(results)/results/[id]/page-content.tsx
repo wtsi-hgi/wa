@@ -170,9 +170,9 @@ function resolveReturnHref(searchParams: DetailPageSearchParams): string {
 
 export function ResultDetailLoadingFallback() {
     return (
-        <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-6 sm:px-10 lg:px-12 lg:py-8">
+        <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-6 px-4 py-6 sm:px-8 lg:py-8">
             <section className="overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_8%,var(--card)_92%))] shadow-[0_28px_80px_-64px_rgba(41,58,85,0.78)]">
-                <div className="grid gap-5 px-5 py-5 sm:px-6 lg:px-7">
+                <div className="grid gap-5 p-3">
                     <div className="space-y-4">
                         <div className="space-y-3">
                             <h1 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
@@ -203,12 +203,12 @@ export async function ResultDetailPageContent({
     const fileSummary = summarizeFiles(files);
 
     return (
-        <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-6 py-6 sm:px-10 lg:px-12 lg:py-8">
+        <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-5 px-4 py-6 sm:px-8 lg:py-8">
             <section
                 className="overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_8%,var(--card)_92%))] shadow-[0_28px_80px_-64px_rgba(41,58,85,0.78)]"
                 data-result-detail-summary="true"
             >
-                <div className="space-y-4 px-5 py-5 sm:px-6 lg:px-7">
+                <div className="space-y-4 p-3">
                     <div className="min-w-0 space-y-3">
                         <div className="flex flex-wrap items-center gap-2">
                             <Link

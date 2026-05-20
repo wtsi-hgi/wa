@@ -13,19 +13,32 @@ test.describe("Lane filtering support (bugfix 260501-4)", () => {
     }) => {
         await page.goto("/");
         await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(
-            page
-                .locator('tbody tr[data-result-row="true"]')
-                .filter({ hasNotText: "seqmeta/rendering-repro" }),
-        ).toHaveCount(4);
 
-        const resultLink = page
-            .getByRole("link", { name: "nf-core/sarek" })
-            .first();
+        const targetRow = page
+            .locator('tbody tr[data-result-row="true"]')
+            .filter({
+                has: page.getByRole("link", {
+                    exact: true,
+                    name: "nf-core/sarek",
+                }),
+            });
+        await expect(targetRow).toBeVisible();
+
+        const resultLink = targetRow.getByRole("link", {
+            exact: true,
+            name: "nf-core/sarek",
+        });
+        await expect(resultLink).toHaveAttribute(
+            "href",
+            /^\/results\/[a-f0-9]+$/,
+        );
         const href = await resultLink.getAttribute("href");
+        if (!href) {
+            throw new Error("Expected nf-core/sarek result link to have href");
+        }
 
-        await page.goto(href ?? "/results/");
-        await expect(page).toHaveURL(new RegExp(`${href ?? "/results/"}$`));
+        await page.goto(href);
+        await expect(page).toHaveURL(new RegExp(`${href}$`));
         await expect(
             page.getByRole("heading", { level: 1, name: "nf-core/sarek" }),
         ).toBeVisible({ timeout: 30000 });

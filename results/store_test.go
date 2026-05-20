@@ -31,9 +31,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 	_ "modernc.org/sqlite"
 )
@@ -57,6 +59,7 @@ func TestNewStore(t *testing.T) {
 		for _, tableName := range []string{"result_sets", "result_files", "result_metadata"} {
 			convey.So(sqliteTableExists(db, tableName), convey.ShouldBeTrue)
 		}
+		convey.So(sqliteIndexExists(db, "idx_result_metadata_meta_key_value"), convey.ShouldBeTrue)
 	})
 
 	convey.Convey("C1.2: Given a valid store, when Close is called, then no error is returned", t, func() {
@@ -86,6 +89,68 @@ func TestNewStore(t *testing.T) {
 		convey.So(secondStore, convey.ShouldNotBeNil)
 		convey.So(secondStore.db, convey.ShouldEqual, db)
 	})
+
+	convey.Convey("C1.4: Given an existing results schema without the metadata value index, when NewStore opens it, then distinct metadata lookups use the covering meta key/value index", t, func() {
+		db, err := sql.Open("sqlite", ":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(createResultSetsTableSQL)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(createResultFilesTableSQL)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(createResultMetadataTableSQL)
+		convey.So(err, convey.ShouldBeNil)
+
+		store, err := NewStore(db)
+		convey.Reset(func() {
+			if store != nil {
+				_ = store.Close()
+			}
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sqliteIndexExists(db, "idx_result_metadata_meta_key_value"), convey.ShouldBeTrue)
+
+		queryPlan := sqliteQueryPlanForTest(
+			t,
+			db,
+			`SELECT DISTINCT value FROM result_metadata WHERE meta_key IN (?, ?)`,
+			SeqmetaSampleNameKey,
+			LegacySeqmetaSampleIDKey,
+		)
+
+		convey.So(queryPlan, convey.ShouldContainSubstring, "USING COVERING INDEX idx_result_metadata_meta_key_value")
+		convey.So(queryPlan, convey.ShouldNotContainSubstring, "SCAN result_metadata")
+	})
+
+	convey.Convey("C1.5: Given a MySQL results schema, when the SQLite index statement is unsupported, then NewStore can still create or tolerate the metadata value index", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		mock.ExpectExec("CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value").
+			WillReturnError(errors.New("Error 1064 (42000): syntax error near 'IF NOT EXISTS'"))
+		mock.ExpectExec("CREATE INDEX idx_result_metadata_meta_key_value").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		convey.So(ensureResultMetadataMetaKeyValueIndex(db), convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+
+		db, mock, err = sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		mock.ExpectExec("CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value").
+			WillReturnError(errors.New("Error 1064 (42000): syntax error near 'IF NOT EXISTS'"))
+		mock.ExpectExec("CREATE INDEX idx_result_metadata_meta_key_value").
+			WillReturnError(errors.New("Error 1061 (42000): Duplicate key name 'idx_result_metadata_meta_key_value'"))
+
+		convey.So(ensureResultMetadataMetaKeyValueIndex(db), convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
 }
 
 func sqliteTableExists(db *sql.DB, tableName string) bool {
@@ -97,6 +162,47 @@ func sqliteTableExists(db *sql.DB, tableName string) bool {
 	).Scan(&existingName)
 
 	return err == nil && existingName == tableName
+}
+
+func sqliteIndexExists(db *sql.DB, indexName string) bool {
+	var existingName string
+
+	err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`,
+		indexName,
+	).Scan(&existingName)
+
+	return err == nil && existingName == indexName
+}
+
+func sqliteQueryPlanForTest(t *testing.T, db *sql.DB, query string, args ...any) string {
+	t.Helper()
+
+	rows, err := db.Query(`EXPLAIN QUERY PLAN `+query, args...)
+	if err != nil {
+		t.Fatalf("explain sqlite query plan: %v", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	details := []string{}
+	for rows.Next() {
+		var id int
+		var parent int
+		var notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatalf("scan sqlite query plan: %v", err)
+		}
+
+		details = append(details, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate sqlite query plan: %v", err)
+	}
+
+	return strings.Join(details, "\n")
 }
 
 func TestStoreUpsert(t *testing.T) {
