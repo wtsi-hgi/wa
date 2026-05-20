@@ -62,6 +62,10 @@ type PreviewCornerGripMetrics = {
     handleWidth: number;
     markerBackgroundImage: string;
     markerBackgroundAlpha: number;
+    markerBorderBottomWidth: number;
+    markerBorderLeftWidth: number;
+    markerBorderRightWidth: number;
+    markerBorderTopWidth: number;
     markerBottomInset: number;
     markerClipPath: string;
     markerHeight: number;
@@ -458,6 +462,18 @@ async function measurePreviewCornerGrip(
             handleWidth: handleRect.width,
             markerBackgroundAlpha: alphaFromColor(markerStyles.backgroundColor),
             markerBackgroundImage: markerStyles.backgroundImage,
+            markerBorderBottomWidth: Number.parseFloat(
+                markerStyles.borderBottomWidth,
+            ),
+            markerBorderLeftWidth: Number.parseFloat(
+                markerStyles.borderLeftWidth,
+            ),
+            markerBorderRightWidth: Number.parseFloat(
+                markerStyles.borderRightWidth,
+            ),
+            markerBorderTopWidth: Number.parseFloat(
+                markerStyles.borderTopWidth,
+            ),
             markerBottomInset: handleRect.bottom - markerRect.bottom,
             markerClipPath: markerStyles.clipPath,
             markerHeight: markerRect.height,
@@ -506,6 +522,10 @@ function expectTriangularPreviewCornerGrip(metrics: PreviewCornerGripMetrics) {
     expect(metrics.markerHeight).toBeGreaterThanOrEqual(20);
     expect(metrics.markerHeight).toBeLessThanOrEqual(26);
     expect(metrics.markerBackgroundAlpha).toBeGreaterThanOrEqual(0.9);
+    expect(metrics.markerBorderTopWidth).toBe(0);
+    expect(metrics.markerBorderLeftWidth).toBe(0);
+    expect(metrics.markerBorderRightWidth).toBe(1);
+    expect(metrics.markerBorderBottomWidth).toBe(1);
     expect(metrics.markerClipPath).toContain("polygon");
     expect(metrics.markerBackgroundImage).toContain(
         "repeating-linear-gradient",
