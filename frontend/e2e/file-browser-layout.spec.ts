@@ -427,6 +427,10 @@ test.describe("File Browser single preview layout", () => {
         screenshotEvidenceDir,
         "file-browser-title-no-rule-postfix.png",
     );
+    const rootGapScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-root-gap-postfix.png",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -502,6 +506,67 @@ test.describe("File Browser single preview layout", () => {
         await page.screenshot({
             fullPage: true,
             path: titleNoRuleScreenshotPath,
+        });
+    });
+
+    test("keeps the root folder box close to the file browser title", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+        const header = fileBrowser.locator('[data-file-browser-header="true"]');
+        const treeShell = fileBrowser.locator("[data-preview-mode]").first();
+
+        await expect(header).toBeVisible();
+        await expect(treeShell).toBeVisible();
+
+        const metrics = await fileBrowser.evaluate((browser) => {
+            const headerElement = browser.querySelector(
+                '[data-file-browser-header="true"]',
+            );
+            const shellElement = browser.querySelector("[data-preview-mode]");
+
+            if (
+                !(headerElement instanceof HTMLElement) ||
+                !(shellElement instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const browserRect = browser.getBoundingClientRect();
+            const shellRect = shellElement.getBoundingClientRect();
+            const titleContentBottom = Array.from(headerElement.children)
+                .map((child) => child.getBoundingClientRect())
+                .filter((rect) => rect.width > 0 && rect.height > 0)
+                .reduce(
+                    (bottom, rect) => Math.max(bottom, rect.bottom),
+                    headerElement.getBoundingClientRect().top,
+                );
+
+            return {
+                bottomInset: browserRect.bottom - shellRect.bottom,
+                leftInset: shellRect.left - browserRect.left,
+                rightInset: browserRect.right - shellRect.right,
+                topGap: shellRect.top - titleContentBottom,
+            };
+        });
+
+        expect(metrics).not.toBeNull();
+
+        const sideInset = Math.min(
+            metrics?.leftInset ?? 0,
+            metrics?.rightInset ?? 0,
+        );
+        const surroundingInset = Math.min(sideInset, metrics?.bottomInset ?? 0);
+
+        expect(metrics?.topGap).toBeGreaterThanOrEqual(surroundingInset - 1);
+        expect(metrics?.topGap).toBeLessThanOrEqual(surroundingInset + 1);
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: rootGapScreenshotPath,
         });
     });
 

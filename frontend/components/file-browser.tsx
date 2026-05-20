@@ -450,7 +450,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass: "flex flex-wrap items-center gap-3 pb-4",
+    headerClass: "flex flex-wrap items-center gap-3",
     headerIconClass: "size-4 text-primary",
     headerTitleClass:
         "text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground",
@@ -477,7 +477,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
     treeInnerClass: "space-y-2",
     treeShellClass:
-        "mt-4 rounded-lg border border-border/70 bg-background/65 p-1",
+        "mt-3 rounded-lg border border-border/70 bg-background/65 p-1",
 };
 
 const inlineControlPlacement: FileBrowserControlPlacement = "name-area";
