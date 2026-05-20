@@ -634,15 +634,17 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
         event.preventDefault();
         commitHeight(height + delta);
     };
+    const fitVisiblePreviewSurface =
+        path !== undefined && previewKindForPath(path) === "image";
 
     return (
         <div
             {...attributes}
             ref={frameRef}
             className={cn(
-                "relative min-w-0 resize-y",
+                "relative min-w-0 overflow-hidden",
+                fitVisiblePreviewSurface && "flex items-start justify-center",
                 className,
-                "overflow-auto",
             )}
             data-preview-resize-frame={path ?? kind}
             data-preview-resize-kind={kind}
@@ -654,33 +656,44 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
                 minHeight: `${PREVIEW_HEIGHT_MIN}px`,
             }}
         >
-            {children}
-            <button
-                aria-label="Resize preview height"
-                aria-orientation="vertical"
-                aria-valuemax={PREVIEW_HEIGHT_MAX}
-                aria-valuemin={PREVIEW_HEIGHT_MIN}
-                aria-valuenow={height}
+            <div
                 className={cn(
-                    "absolute right-1 bottom-1 z-20 flex size-5 cursor-ns-resize items-end justify-end rounded-sm border border-border/70 bg-background/85 p-0.5 text-muted-foreground shadow-sm",
-                    "focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none",
+                    "relative h-full max-w-full",
+                    fitVisiblePreviewSurface
+                        ? "inline-flex w-fit"
+                        : "flex w-full",
                 )}
-                data-preview-resize-handle={path ?? kind}
-                onKeyDown={handleKeyDown}
-                onMouseDown={beginMouseResize}
-                onTouchStart={beginTouchResize}
-                role="separator"
-                type="button"
+                data-preview-resize-surface={path ?? kind}
             >
-                <span
-                    aria-hidden="true"
-                    className="block size-3 opacity-80"
-                    style={{
-                        backgroundImage:
-                            "repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4px)",
-                    }}
-                />
-            </button>
+                {children}
+                <button
+                    aria-label="Resize preview height"
+                    aria-orientation="vertical"
+                    aria-valuemax={PREVIEW_HEIGHT_MAX}
+                    aria-valuemin={PREVIEW_HEIGHT_MIN}
+                    aria-valuenow={height}
+                    className={cn(
+                        "absolute right-0 bottom-0 z-20 flex size-7 cursor-ns-resize touch-none items-end justify-end rounded-br-[inherit] border-0 bg-transparent p-1 text-muted-foreground/80 shadow-none",
+                        "hover:text-foreground",
+                        "focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none",
+                    )}
+                    data-preview-resize-handle={path ?? kind}
+                    onKeyDown={handleKeyDown}
+                    onMouseDown={beginMouseResize}
+                    onTouchStart={beginTouchResize}
+                    role="separator"
+                    type="button"
+                >
+                    <span
+                        aria-hidden="true"
+                        className="block size-3 opacity-80"
+                        style={{
+                            backgroundImage:
+                                "repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4px)",
+                        }}
+                    />
+                </button>
+            </div>
         </div>
     );
 });

@@ -809,7 +809,7 @@ export const FileImageThumbnail = memo(
 
         return (
             <LightboxImage
-                buttonClassName="group relative flex w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.25rem]"
+                buttonClassName="group relative inline-flex max-w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.25rem]"
                 downloadUrl={buildDownloadUrl(fullSizeUrl)}
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}
@@ -1015,7 +1015,7 @@ export function FilePreview({
 
     if (isImagePreview) {
         return (
-            <section className="h-full w-full">
+            <section className="inline-flex h-full max-w-full">
                 <ImagePreview
                     fileName={fileName}
                     maxHeightPx={maxHeight}

@@ -431,6 +431,10 @@ test.describe("File Browser single preview layout", () => {
         screenshotEvidenceDir,
         "file-browser-root-gap-postfix.png",
     );
+    const previewResizeGripScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "preview-resizer-handle-post-fix.png",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -1367,6 +1371,136 @@ test.describe("File Browser single preview layout", () => {
         expect(
             Math.abs(overlayMetrics.rightInset - overlayMetrics.leftInset),
         ).toBeLessThanOrEqual(6);
+    });
+
+    test("integrates the preview height resize grip into the preview corner", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(controls).toBeVisible();
+        await openPreviewModes(controls);
+        await controls.locator('input[aria-label="1 preview per row"]').check();
+
+        const frame = page
+            .locator(
+                `[data-preview-resize-frame="${path.join(rnaseqGalleryPath, "plot-001.png")}"]`,
+            )
+            .first();
+        const image = frame.locator('img[alt="plot-001.png preview"]').first();
+        const handle = frame.locator("[data-preview-resize-handle]").first();
+        const surface = frame.locator("[data-preview-resize-surface]").first();
+
+        await expect(frame).toBeVisible();
+        await expect(image).toBeVisible();
+        await expect(handle).toBeVisible();
+        await expect(surface).toBeVisible();
+
+        const gripMetrics = await handle.evaluate((element) => {
+            const styles = window.getComputedStyle(element);
+            const frame = element.closest("[data-preview-resize-frame]");
+            const surface = element.closest("[data-preview-resize-surface]");
+
+            if (
+                !(frame instanceof HTMLElement) ||
+                !(surface instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const image = frame.querySelector("img");
+
+            if (!(image instanceof HTMLElement)) {
+                return null;
+            }
+
+            const handleRect = element.getBoundingClientRect();
+            const frameRect = frame.getBoundingClientRect();
+            const imageRect = image.getBoundingClientRect();
+            const surfaceRect = surface.getBoundingClientRect();
+            const lineElement = element.firstElementChild;
+            const lineStyles =
+                lineElement instanceof HTMLElement
+                    ? window.getComputedStyle(lineElement)
+                    : null;
+
+            return {
+                backgroundAlpha:
+                    styles.backgroundColor === "transparent"
+                        ? 0
+                        : Number(
+                              styles.backgroundColor
+                                  .match(
+                                      /^rgba?\([^,]+,[^,]+,[^,]+(?:,[\s]*([0-9]*\.?[0-9]+))?\)$/,
+                                  )
+                                  ?.at(1) ?? "1",
+                          ),
+                backgroundImage: styles.backgroundImage,
+                borderBottomWidth: Number.parseFloat(styles.borderBottomWidth),
+                borderLeftWidth: Number.parseFloat(styles.borderLeftWidth),
+                borderRightWidth: Number.parseFloat(styles.borderRightWidth),
+                borderTopWidth: Number.parseFloat(styles.borderTopWidth),
+                bottomInsetFromFrame: frameRect.bottom - handleRect.bottom,
+                bottomInsetFromImage: imageRect.bottom - handleRect.bottom,
+                bottomInsetFromSurface: surfaceRect.bottom - handleRect.bottom,
+                cursor: styles.cursor,
+                frameRightSlack: frameRect.right - imageRect.right,
+                hasGripLines:
+                    lineStyles?.backgroundImage.includes(
+                        "repeating-linear-gradient",
+                    ) ?? false,
+                lineElementCount: element.children.length,
+                resizeMode: window.getComputedStyle(frame).resize,
+                rightInsetFromFrame: frameRect.right - handleRect.right,
+                rightInsetFromImage: imageRect.right - handleRect.right,
+                rightInsetFromSurface: surfaceRect.right - handleRect.right,
+                surfaceRightMatchesImage:
+                    Math.abs(surfaceRect.right - imageRect.right) <= 1,
+            };
+        });
+
+        if (!gripMetrics) {
+            throw new Error("Missing preview resize surface for grip metrics");
+        }
+
+        expect(gripMetrics.resizeMode).toBe("none");
+        expect(gripMetrics.backgroundAlpha).toBeLessThanOrEqual(0.05);
+        expect(gripMetrics.backgroundImage).toBe("none");
+        expect(gripMetrics.borderTopWidth).toBe(0);
+        expect(gripMetrics.borderRightWidth).toBe(0);
+        expect(gripMetrics.borderBottomWidth).toBe(0);
+        expect(gripMetrics.borderLeftWidth).toBe(0);
+        expect(gripMetrics.frameRightSlack).toBeGreaterThan(80);
+        expect(gripMetrics.surfaceRightMatchesImage).toBe(true);
+        expect(Math.abs(gripMetrics.bottomInsetFromImage)).toBeLessThanOrEqual(
+            1,
+        );
+        expect(Math.abs(gripMetrics.rightInsetFromImage)).toBeLessThanOrEqual(
+            1,
+        );
+        expect(
+            Math.abs(gripMetrics.bottomInsetFromSurface),
+        ).toBeLessThanOrEqual(1);
+        expect(Math.abs(gripMetrics.rightInsetFromSurface)).toBeLessThanOrEqual(
+            1,
+        );
+        expect(gripMetrics.rightInsetFromFrame).toBeGreaterThan(80);
+        expect(Math.abs(gripMetrics.bottomInsetFromFrame)).toBeLessThanOrEqual(
+            1,
+        );
+        expect(gripMetrics.cursor).toBe("ns-resize");
+        expect(gripMetrics.lineElementCount).toBe(1);
+        expect(gripMetrics.hasGripLines).toBe(true);
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await frame.screenshot({
+            path: previewResizeGripScreenshotPath,
+        });
     });
 
     test("renders subfolder table previews with a single bordered surface", async ({
