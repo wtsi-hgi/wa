@@ -444,7 +444,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     paginationClass:
         "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
     previewHeightControlClass:
-        "inline-flex min-h-10 w-56 shrink-0 flex-row items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1 text-foreground",
+        "inline-flex min-h-10 w-44 shrink-0 flex-col items-stretch gap-0.5 rounded-md border border-border/70 bg-background px-2 py-0.5 text-foreground",
     sectionClass:
         "rounded-xl border border-border/75 bg-card p-3 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)] sm:p-4",
     singlePreviewClass:
@@ -512,7 +512,7 @@ const PreviewHeightControl = memo(function PreviewHeightControl({
             )}
             data-file-browser-control-trigger="preview-height"
         >
-            <span className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-sm">
+            <span className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-sm leading-tight">
                 <Eye className="size-4 text-primary" aria-hidden="true" />
                 <span
                     className="whitespace-nowrap font-medium"
@@ -544,7 +544,7 @@ const PreviewHeightControl = memo(function PreviewHeightControl({
                     value={draftValue}
                 />
                 <span
-                    className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums"
+                    className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground tabular-nums"
                     data-file-browser-control-current="preview-height"
                 >
                     {draftValue}px

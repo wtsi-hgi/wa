@@ -854,12 +854,13 @@ test.describe("File Browser single preview layout", () => {
         ).toBeLessThan(2);
         expect(previewHeightBBox.width).toBeGreaterThanOrEqual(160);
 
-        const previewHeightInlineLayout = await previewHeightControl.evaluate(
+        const previewHeightStackedLayout = await previewHeightControl.evaluate(
             (control) => {
                 const rect = control.getBoundingClientRect();
 
                 return {
                     clientWidth: control.clientWidth,
+                    controlHeight: rect.height,
                     labelLine:
                         control
                             .querySelector(
@@ -867,6 +868,12 @@ test.describe("File Browser single preview layout", () => {
                             )
                             ?.getBoundingClientRect().y ?? 0,
                     scrollWidth: control.scrollWidth,
+                    sliderLine:
+                        control
+                            .querySelector(
+                                'input[type="range"][aria-label="Preview height"]',
+                            )
+                            ?.getBoundingClientRect().y ?? 0,
                     valueLine:
                         control
                             .querySelector(
@@ -878,15 +885,21 @@ test.describe("File Browser single preview layout", () => {
             },
         );
 
-        expect(previewHeightInlineLayout.scrollWidth).toBeLessThanOrEqual(
-            previewHeightInlineLayout.clientWidth + 1,
+        expect(previewHeightStackedLayout.scrollWidth).toBeLessThanOrEqual(
+            previewHeightStackedLayout.clientWidth + 1,
         );
         expect(previewHeightStateBBox.x).toBeGreaterThan(sliderBBox.x);
         expect(Math.abs(previewHeightStateBBox.y - sliderBBox.y)).toBeLessThan(
             8,
         );
-        expect(previewHeightInlineLayout.valueLine).toBeLessThan(
-            previewHeightInlineLayout.labelLine + 8,
+        expect(previewHeightStackedLayout.sliderLine).toBeGreaterThan(
+            previewHeightStackedLayout.labelLine + 8,
+        );
+        expect(previewHeightStackedLayout.valueLine).toBeGreaterThan(
+            previewHeightStackedLayout.labelLine + 8,
+        );
+        expect(previewHeightStackedLayout.controlHeight).toBeLessThanOrEqual(
+            previewModeBBox.height + 1,
         );
 
         // Current state should sit underneath each trigger label, reducing width.
