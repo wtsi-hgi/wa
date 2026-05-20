@@ -686,10 +686,12 @@ const ResizablePreviewFrame = memo(function ResizablePreviewFrame({
                 >
                     <span
                         aria-hidden="true"
-                        className="absolute right-0 bottom-0 block size-full opacity-80 [clip-path:polygon(100%_0,0_100%,100%_100%)]"
+                        className="absolute right-0 bottom-0 block size-6 [clip-path:polygon(100%_0,0_100%,100%_100%)]"
                         style={{
+                            backgroundColor:
+                                "color-mix(in oklab, var(--background) 88%, var(--muted-foreground) 12%)",
                             backgroundImage:
-                                "repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4px)",
+                                "repeating-linear-gradient(135deg, transparent 0 5px, currentColor 5px 6px, transparent 6px 8px)",
                         }}
                     />
                 </button>
