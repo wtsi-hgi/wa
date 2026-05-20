@@ -1734,6 +1734,7 @@ export function FileBrowser({
             const showsChildRows = isStructurallyExpanded && hasChildren;
             const isExpanded =
                 hasPreviewControls || showsDirectoryFiles || showsChildRows;
+            const isRootDirectoryRow = depth === 0;
             const controlPlacement = inlineControlPlacement;
             const folderControlsInNameArea =
                 controlPlacement === "name-area" && Boolean(folderControls);
@@ -1833,13 +1834,19 @@ export function FileBrowser({
                     <div
                         key={`dir-${node.path}`}
                         className={cn(
-                            activeDesign.directoryRowBaseClass,
-                            hasPreviewControls || groupedContent
-                                ? activeDesign.directoryRowWithContentClass
-                                : activeDesign.directoryRowCollapsedClass,
-                            isSelected
-                                ? activeDesign.directoryRowSelectedClass
-                                : activeDesign.directoryRowIdleClass,
+                            isRootDirectoryRow
+                                ? "grid w-full grid-cols-1 gap-2 transition"
+                                : activeDesign.directoryRowBaseClass,
+                            isRootDirectoryRow
+                                ? null
+                                : hasPreviewControls || groupedContent
+                                  ? activeDesign.directoryRowWithContentClass
+                                  : activeDesign.directoryRowCollapsedClass,
+                            isRootDirectoryRow
+                                ? null
+                                : isSelected
+                                  ? activeDesign.directoryRowSelectedClass
+                                  : activeDesign.directoryRowIdleClass,
                         )}
                         data-directory-row={node.path}
                         data-subdir-preview-row={
@@ -1989,7 +1996,11 @@ export function FileBrowser({
             const directoryRow = renderDirectoryRow(
                 showsGroupedContent ? (
                     <div
-                        className={activeDesign.directoryContentClass}
+                        className={
+                            isRootDirectoryRow
+                                ? "space-y-2 pt-0"
+                                : activeDesign.directoryContentClass
+                        }
                         data-directory-group-content={node.path}
                     >
                         {contentRows}

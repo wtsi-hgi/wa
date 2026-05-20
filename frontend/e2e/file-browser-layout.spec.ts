@@ -735,6 +735,128 @@ test.describe("File Browser single preview layout", () => {
         );
     });
 
+    test("uses the file browser shell as the visual container for the root directory", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqQcPath);
+
+        const rootRow = page.locator(
+            `[data-directory-row="${rnaseqRootPath}"]`,
+        );
+        const rootContent = page.locator(
+            `[data-directory-group-content="${rnaseqRootPath}"]`,
+        );
+        const nestedRow = page.locator(
+            `[data-directory-row="${rnaseqQcPath}"]`,
+        );
+
+        await expect(rootRow).toBeVisible();
+        await expect(rootContent).toBeVisible();
+        await expect(nestedRow).toBeVisible();
+
+        const metrics = await page.evaluate(
+            ({ nestedPath, rootPath }) => {
+                function byData(attributeName: string, value: string) {
+                    return document.querySelector(
+                        `[${attributeName}="${CSS.escape(value)}"]`,
+                    );
+                }
+
+                function surfaceMetrics(element: Element | null) {
+                    if (!(element instanceof HTMLElement)) {
+                        return null;
+                    }
+
+                    const styles = window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+
+                    return {
+                        backgroundAlpha: backgroundAlpha(
+                            styles.backgroundColor,
+                        ),
+                        borderBottomWidth: Number.parseFloat(
+                            styles.borderBottomWidth,
+                        ),
+                        borderLeftWidth: Number.parseFloat(
+                            styles.borderLeftWidth,
+                        ),
+                        borderRightWidth: Number.parseFloat(
+                            styles.borderRightWidth,
+                        ),
+                        borderTopWidth: Number.parseFloat(
+                            styles.borderTopWidth,
+                        ),
+                        paddingBottom: Number.parseFloat(styles.paddingBottom),
+                        paddingLeft: Number.parseFloat(styles.paddingLeft),
+                        paddingRight: Number.parseFloat(styles.paddingRight),
+                        paddingTop: Number.parseFloat(styles.paddingTop),
+                        rect: {
+                            height: rect.height,
+                            width: rect.width,
+                            x: rect.x,
+                            y: rect.y,
+                        },
+                    };
+                }
+
+                function backgroundAlpha(backgroundColor: string): number {
+                    const rgbaMatch = backgroundColor.match(
+                        /^rgba?\([^,]+,[^,]+,[^,]+(?:,[\s]*([0-9]*\.?[0-9]+))?\)$/,
+                    );
+
+                    if (rgbaMatch) {
+                        return rgbaMatch[1]
+                            ? Number.parseFloat(rgbaMatch[1])
+                            : 1;
+                    }
+
+                    return backgroundColor === "transparent" ? 0 : 1;
+                }
+
+                return {
+                    nestedRow: surfaceMetrics(
+                        byData("data-directory-row", nestedPath),
+                    ),
+                    rootContent: surfaceMetrics(
+                        byData("data-directory-group-content", rootPath),
+                    ),
+                    rootRow: surfaceMetrics(
+                        byData("data-directory-row", rootPath),
+                    ),
+                    rootRowContainsContent:
+                        byData("data-directory-row", rootPath)?.contains(
+                            byData("data-directory-group-content", rootPath),
+                        ) ?? false,
+                };
+            },
+            { nestedPath: rnaseqQcPath, rootPath: rnaseqRootPath },
+        );
+
+        expect(metrics.rootRow).not.toBeNull();
+        expect(metrics.rootContent).not.toBeNull();
+        expect(metrics.nestedRow).not.toBeNull();
+        expect(metrics.rootRowContainsContent).toBe(true);
+
+        expect(metrics.rootRow).toMatchObject({
+            backgroundAlpha: 0,
+            borderBottomWidth: 0,
+            borderLeftWidth: 0,
+            borderRightWidth: 0,
+            borderTopWidth: 0,
+            paddingBottom: 0,
+            paddingLeft: 0,
+            paddingRight: 0,
+            paddingTop: 0,
+        });
+        expect(metrics.rootContent).toMatchObject({
+            paddingLeft: 0,
+            paddingRight: 0,
+        });
+        expect(metrics.nestedRow?.borderTopWidth).toBeGreaterThan(0);
+        expect(metrics.nestedRow?.backgroundAlpha).toBeGreaterThan(0);
+    });
+
     test("keeps inline folder controls compact beside the directory heading when room allows", async ({
         page,
     }) => {
