@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS result_metadata (
 		REFERENCES result_sets(id) ON DELETE CASCADE
 );`
 
+const createResultMetadataMetaKeyValueIndexSQL = `
+CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value
+	ON result_metadata(meta_key, value);`
+
 // NewStore enables foreign keys and creates the SQL schema on demand.
 func NewStore(db *sql.DB) (*Store, error) {
 	if db == nil {
@@ -83,6 +87,7 @@ func NewStore(db *sql.DB) (*Store, error) {
 		createResultSetsTableSQL,
 		createResultFilesTableSQL,
 		createResultMetadataTableSQL,
+		createResultMetadataMetaKeyValueIndexSQL,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			if statement == enableForeignKeysSQL && isIgnorablePragmaError(err) {
@@ -992,7 +997,7 @@ func (s *Store) DistinctMetadataValues(ctx context.Context, keys []string) ([]st
 
 	rows, err := s.db.QueryContext(
 		ctx,
-		fmt.Sprintf(`SELECT DISTINCT value FROM result_metadata WHERE meta_key IN (%s) ORDER BY value`, placeholders),
+		fmt.Sprintf(`SELECT DISTINCT value FROM result_metadata WHERE meta_key IN (%s)`, placeholders),
 		args...,
 	)
 	if err != nil {
@@ -1014,6 +1019,8 @@ func (s *Store) DistinctMetadataValues(ctx context.Context, keys []string) ([]st
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate distinct metadata values: %w", err)
 	}
+
+	sort.Strings(values)
 
 	return values, nil
 }
