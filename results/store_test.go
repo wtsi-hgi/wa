@@ -59,6 +59,7 @@ func TestNewStore(t *testing.T) {
 		for _, tableName := range []string{"result_sets", "result_files", "result_metadata"} {
 			convey.So(sqliteTableExists(db, tableName), convey.ShouldBeTrue)
 		}
+		convey.So(sqliteColumnExists(db, "result_sets", "output_directory_gid"), convey.ShouldBeTrue)
 		convey.So(sqliteIndexExists(db, "idx_result_metadata_meta_key_value"), convey.ShouldBeTrue)
 	})
 
@@ -151,6 +152,98 @@ func TestNewStore(t *testing.T) {
 		convey.So(ensureResultMetadataMetaKeyValueIndex(db), convey.ShouldBeNil)
 		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
+
+	convey.Convey("B1.4/B1.5: Given an old database without output_directory_gid, when NewStore opens it, then the column exists, legacy rows remain NULL, and normal users cannot access them", t, func() {
+		db, err := sql.Open("sqlite", ":memory:")
+		convey.So(err, convey.ShouldBeNil)
+
+		_, err = db.Exec(`
+			CREATE TABLE result_sets (
+				id                  VARCHAR(64)  NOT NULL PRIMARY KEY,
+				pipeline_identifier VARCHAR(512) NOT NULL,
+				run_key             VARCHAR(512) NOT NULL,
+				requester           VARCHAR(255) NOT NULL,
+				operator            VARCHAR(255) NOT NULL,
+				command             TEXT         NOT NULL,
+				pipeline_name       VARCHAR(255) NOT NULL,
+				pipeline_version    VARCHAR(255) NOT NULL,
+				output_directory    TEXT         NOT NULL,
+				created_at          VARCHAR(30)  NOT NULL,
+				updated_at          VARCHAR(30)  NOT NULL
+			);`)
+		convey.So(err, convey.ShouldBeNil)
+
+		createdAt := time.Date(2026, time.May, 1, 10, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+		_, err = db.Exec(
+			`INSERT INTO result_sets (
+				id, pipeline_identifier, run_key, requester, operator, command,
+				pipeline_name, pipeline_version, output_directory, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"legacy-result",
+			"pipe",
+			"run",
+			"alice",
+			"bob",
+			"nextflow run pipe",
+			"nf-pipe",
+			"1.2.3",
+			"/tmp/results/run",
+			createdAt,
+			createdAt,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		store, err := NewStore(db)
+		convey.Reset(func() {
+			if store != nil {
+				_ = store.Close()
+			}
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sqliteColumnExists(db, "result_sets", "output_directory_gid"), convey.ShouldBeTrue)
+
+		storedGID := resultSetGIDForTest(t, db, "legacy-result")
+		convey.So(storedGID.Valid, convey.ShouldBeFalse)
+
+		result, err := store.Get(context.Background(), "legacy-result")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.OutputDirectoryGID, convey.ShouldBeNil)
+
+		access, err := AccessForResult(*result, &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{gids: []string{"100"}},
+		})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(access.CanView, convey.ShouldBeFalse)
+		convey.So(access.Locked, convey.ShouldBeTrue)
+	})
+
+	convey.Convey("Given a MySQL results schema, when output_directory_gid migration sees the column already present, then the duplicate-column error is ignored", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		mock.ExpectExec("ALTER TABLE result_sets ADD COLUMN output_directory_gid").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		convey.So(ensureResultSetsOutputDirectoryGIDColumn(db), convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+
+		db, mock, err = sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		mock.ExpectExec("ALTER TABLE result_sets ADD COLUMN output_directory_gid").
+			WillReturnError(errors.New("Error 1060 (42S21): Duplicate column name 'output_directory_gid'"))
+
+		convey.So(ensureResultSetsOutputDirectoryGIDColumn(db), convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
 }
 
 func sqliteTableExists(db *sql.DB, tableName string) bool {
@@ -162,6 +255,35 @@ func sqliteTableExists(db *sql.DB, tableName string) bool {
 	).Scan(&existingName)
 
 	return err == nil && existingName == tableName
+}
+
+func sqliteColumnExists(db *sql.DB, tableName, columnName string) bool {
+	rows, err := db.Query(`PRAGMA table_info(` + tableName + `)`)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var dataType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false
+		}
+
+		if name == columnName {
+			return true
+		}
+	}
+
+	return false
 }
 
 func sqliteIndexExists(db *sql.DB, indexName string) bool {
@@ -297,6 +419,34 @@ func TestStoreUpsert(t *testing.T) {
 
 		convey.So(result, convey.ShouldBeNil)
 		convey.So(errors.Is(err, ErrInvalidInput), convey.ShouldBeTrue)
+	})
+
+	convey.Convey("B1.1: Given a registration with a server-captured output directory GID, when Upsert stores it, then result_sets and loaded results contain that GID", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+		reg := testRegistration()
+		gid := int64(1234)
+		reg.OutputDirectoryGID = &gid
+
+		result, err := store.Upsert(ctx, reg)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.OutputDirectoryGID, convey.ShouldNotBeNil)
+		convey.So(*result.OutputDirectoryGID, convey.ShouldEqual, gid)
+
+		storedGID := resultSetGIDForTest(t, store.db, result.ID)
+		convey.So(storedGID.Valid, convey.ShouldBeTrue)
+		convey.So(storedGID.Int64, convey.ShouldEqual, gid)
+
+		loaded, err := store.Get(ctx, result.ID)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(loaded.OutputDirectoryGID, convey.ShouldNotBeNil)
+		convey.So(*loaded.OutputDirectoryGID, convey.ShouldEqual, gid)
+
+		searchResults, err := store.Search(ctx, SearchParams{})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(searchResults, convey.ShouldHaveLength, 1)
+		convey.So(searchResults[0].OutputDirectoryGID, convey.ShouldNotBeNil)
+		convey.So(*searchResults[0].OutputDirectoryGID, convey.ShouldEqual, gid)
 	})
 }
 
@@ -1199,4 +1349,19 @@ func resultFilesForTest(t *testing.T, db *sql.DB, resultID string) []FileEntry {
 	}
 
 	return files
+}
+
+func resultSetGIDForTest(t *testing.T, db *sql.DB, resultID string) sql.NullInt64 {
+	t.Helper()
+
+	var gid sql.NullInt64
+	err := db.QueryRow(
+		`SELECT output_directory_gid FROM result_sets WHERE id = ?`,
+		resultID,
+	).Scan(&gid)
+	if err != nil {
+		t.Fatalf("query result set output directory gid: %v", err)
+	}
+
+	return gid
 }

@@ -21,8 +21,8 @@ Implement `results/auth.go` with `AccessForResult`,
 user, group lookup error, and server-owner behavior. Covering all 7
 acceptance tests from B2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: B1 - Persist output directory GID
 
@@ -35,5 +35,5 @@ JSON output. Ignore client-supplied GID values and reject registrations
 when the output directory cannot be statted. Depends on item 1.1 for the
 legacy NULL-GID access case. Covering all 5 acceptance tests from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

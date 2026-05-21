@@ -601,6 +601,15 @@ func (s *Server) handlePostResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	outputDirectoryGID, err := OutputDirectoryGID(registration.OutputDirectory)
+	if err != nil {
+		writeDomainError(w, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+
+		return
+	}
+
+	registration.OutputDirectoryGID = outputDirectoryGID
+
 	if err := s.validator.ValidateMetadata(r.Context(), registration.Metadata); err != nil {
 		writeDomainError(w, err)
 

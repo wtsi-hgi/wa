@@ -32,7 +32,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
+	"syscall"
 	"testing"
 	"time"
 
@@ -121,7 +124,7 @@ func TestServerPostResults(t *testing.T) {
 		store := newSQLiteStoreForTest(t)
 		server := NewServer(store, nil, nil)
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, testRegistration()))
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, testServerRegistration(t)))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
@@ -137,7 +140,7 @@ func TestServerPostResults(t *testing.T) {
 	convey.Convey("E1.2: Given the same Registration POSTed twice, then the second response status is 200 and created_at matches the first", t, func() {
 		store := newSQLiteStoreForTest(t)
 		server := NewServer(store, nil, nil)
-		body := mustJSONBodyForTest(t, testRegistration())
+		body := mustJSONBodyForTest(t, testServerRegistration(t))
 
 		firstResponse := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", body)
 		secondResponse := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", body)
@@ -160,7 +163,7 @@ func TestServerPostResults(t *testing.T) {
 		defer seqmeta.Close()
 
 		validator := NewSeqmetaValidator(seqmeta.URL, time.Second)
-		reg := testRegistration()
+		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
 		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
@@ -176,7 +179,7 @@ func TestServerPostResults(t *testing.T) {
 		defer seqmeta.Close()
 
 		validator := NewSeqmetaValidator(seqmeta.URL, time.Second)
-		reg := testRegistration()
+		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
 		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
@@ -188,7 +191,7 @@ func TestServerPostResults(t *testing.T) {
 	convey.Convey("E1.5: Given seqmeta is unreachable, then status is 502", t, func() {
 		store := newSQLiteStoreForTest(t)
 		validator := NewSeqmetaValidator("http://127.0.0.1:1", 50*time.Millisecond)
-		reg := testRegistration()
+		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
 		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
@@ -198,7 +201,7 @@ func TestServerPostResults(t *testing.T) {
 
 	convey.Convey("E1.6: Given Registration missing pipeline_identifier, then status is 400", t, func() {
 		store := newSQLiteStoreForTest(t)
-		reg := testRegistration()
+		reg := testServerRegistration(t)
 		reg.PipelineIdentifier = ""
 
 		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
@@ -212,6 +215,66 @@ func TestServerPostResults(t *testing.T) {
 		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", []byte(`{"pipeline_identifier":`))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+	})
+
+	convey.Convey("B1.1: Given a directory with a Unix GID, when it is registered, then result_sets.output_directory_gid and JSON contain that GID", t, func() {
+		store := newSQLiteStoreForTest(t)
+		reg := testServerRegistration(t)
+		expectedGID := statGIDForTest(t, reg.OutputDirectory)
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
+		convey.So(response.Body.String(), convey.ShouldContainSubstring, fmt.Sprintf(`"output_directory_gid":%d`, expectedGID))
+
+		var result ResultSet
+		decodeJSONResponseForTest(t, response, &result)
+		convey.So(result.OutputDirectoryGID, convey.ShouldNotBeNil)
+		convey.So(*result.OutputDirectoryGID, convey.ShouldEqual, expectedGID)
+
+		storedGID := resultSetGIDForTest(t, store.db, result.ID)
+		convey.So(storedGID.Valid, convey.ShouldBeTrue)
+		convey.So(storedGID.Int64, convey.ShouldEqual, expectedGID)
+	})
+
+	convey.Convey("B1.2: Given registration JSON containing output_directory_gid, when the real directory has another GID, then the stored value is the server stat value", t, func() {
+		store := newSQLiteStoreForTest(t)
+		reg := testServerRegistration(t)
+		expectedGID := statGIDForTest(t, reg.OutputDirectory)
+		clientGID := expectedGID + 9999
+		body := mustJSONBodyForTest(t, struct {
+			*Registration
+			OutputDirectoryGID int64 `json:"output_directory_gid"`
+		}{
+			Registration:       reg,
+			OutputDirectoryGID: clientGID,
+		})
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", body)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
+
+		var result ResultSet
+		decodeJSONResponseForTest(t, response, &result)
+		convey.So(result.OutputDirectoryGID, convey.ShouldNotBeNil)
+		convey.So(*result.OutputDirectoryGID, convey.ShouldEqual, expectedGID)
+		convey.So(*result.OutputDirectoryGID, convey.ShouldNotEqual, clientGID)
+
+		storedGID := resultSetGIDForTest(t, store.db, result.ID)
+		convey.So(storedGID.Valid, convey.ShouldBeTrue)
+		convey.So(storedGID.Int64, convey.ShouldEqual, expectedGID)
+	})
+
+	convey.Convey("B1.3: Given the output directory cannot be statted, when registration is called, then status is 400 and the body explains output directory GID determination", t, func() {
+		store := newSQLiteStoreForTest(t)
+		reg := testRegistration()
+		reg.OutputDirectory = filepath.Join(t.TempDir(), "missing-output-directory")
+		reg.Files[0].Path = filepath.Join(reg.OutputDirectory, "out-1.txt")
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "determine output directory gid")
 	})
 }
 
@@ -1501,6 +1564,38 @@ func TestServerGetResults(t *testing.T) {
 		decodeJSONResponseForTest(t, response, &results)
 		convey.So(results, convey.ShouldHaveLength, 2)
 	})
+}
+
+func testServerRegistration(t *testing.T) *Registration {
+	t.Helper()
+
+	reg := testRegistration()
+	outputDirectory := t.TempDir()
+	reg.OutputDirectory = outputDirectory
+
+	for i := range reg.Files {
+		if reg.Files[i].Kind == "output" {
+			reg.Files[i].Path = filepath.Join(outputDirectory, filepath.Base(reg.Files[i].Path))
+		}
+	}
+
+	return reg
+}
+
+func statGIDForTest(t *testing.T, path string) int64 {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat output directory: %v", err)
+	}
+
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("stat output directory: missing syscall stat data")
+	}
+
+	return int64(stat.Gid)
 }
 
 func TestServerGetStats(t *testing.T) {

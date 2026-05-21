@@ -125,7 +125,9 @@ type ResultSet struct {
 	PipelineName       string            `json:"pipeline_name"`
 	PipelineVersion    string            `json:"pipeline_version"`
 	OutputDirectory    string            `json:"output_directory"`
+	OutputDirectoryGID *int64            `json:"output_directory_gid"`
 	Metadata           map[string]string `json:"metadata"`
+	Access             AccessState       `json:"access"`
 	CreatedAt          time.Time         `json:"created_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
@@ -148,6 +150,7 @@ type Registration struct {
 	PipelineName       string            `json:"pipeline_name"`
 	PipelineVersion    string            `json:"pipeline_version"`
 	OutputDirectory    string            `json:"output_directory"`
+	OutputDirectoryGID *int64            `json:"-"`
 	Files              []FileEntry       `json:"files"`
 	Metadata           map[string]string `json:"metadata"`
 }
