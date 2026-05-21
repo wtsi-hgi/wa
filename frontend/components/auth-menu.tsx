@@ -121,12 +121,14 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
             const nextSession = await logoutAction();
 
             setSession(nextSession);
+        } catch {
+            setSession(anonymousSession());
+        } finally {
             setUsername("");
             setPassword("");
             setLoginError(null);
             setLoginOpen(false);
             router.refresh();
-        } finally {
             setLogoutPending(false);
         }
     }

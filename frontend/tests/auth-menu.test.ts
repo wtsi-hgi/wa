@@ -181,4 +181,20 @@ describe("E3 auth menu", () => {
         });
         expect(screen.getByRole("button", { name: "Log in" })).toBeTruthy();
     });
+
+    it("shows Log in after logout clears the cookie but the backend call fails", async () => {
+        authActionMocks.logoutAction.mockRejectedValueOnce(
+            new Error("results backend request failed"),
+        );
+
+        await renderAuthMenu({ authenticated: true, username: "alice" });
+
+        fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
+        fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+
+        await waitFor(() => {
+            expect(screen.queryByText("alice")).toBeNull();
+        });
+        expect(screen.getByRole("button", { name: "Log in" })).toBeTruthy();
+    });
 });
