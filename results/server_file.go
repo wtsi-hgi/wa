@@ -260,6 +260,18 @@ func (s *Server) handleGetFile(c *gin.Context) {
 
 	r := c.Request
 	w := c.Writer
+	resultID := c.Param("id")
+	result, err := s.store.Get(c.Request.Context(), resultID)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
+	if !s.requireResultAccess(c, *result) {
+		return
+	}
+
 	requestedPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if requestedPath == "" {
 		writeServerError(c, http.StatusBadRequest, "path query parameter is required")
@@ -296,13 +308,6 @@ func (s *Server) handleGetFile(c *gin.Context) {
 	case previewModeDownload, previewModeUnspecified:
 		// previewModeDownload is handled below alongside the legacy
 		// download=true flag. previewModeUnspecified preserves legacy behaviour.
-	}
-
-	resultID := c.Param("id")
-	if _, err := s.store.Get(c.Request.Context(), resultID); err != nil {
-		writeDomainError(c, err)
-
-		return
 	}
 
 	files, err := s.store.GetFiles(c.Request.Context(), resultID)

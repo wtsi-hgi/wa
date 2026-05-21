@@ -34,9 +34,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/results"
 
 	_ "modernc.org/sqlite"
@@ -70,7 +72,7 @@ func TestResultsRescanCommand(t *testing.T) {
 
 		createResultsRescanFileForTest(t, dir, "nested/c.txt", "gamma")
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, dir})
@@ -97,7 +99,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		createResultsRescanFileForTest(t, dir, "a.txt", "alpha")
 
 		store := newResultsRescanStoreForTest(t)
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		_, err := executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, "missing-id", dir})
@@ -126,7 +128,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, wrongDir})
@@ -161,7 +163,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		stdout := &bytes.Buffer{}
@@ -185,8 +187,10 @@ func TestResultsRescanCommand(t *testing.T) {
 		convey.So(os.Symlink(externalDir, filepath.Join(dir, "escape")), convey.ShouldBeNil)
 
 		requestCount := 0
+		requestPathCh := make(chan string, 1)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
+			requestPathCh <- r.URL.Path
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(results.ResultSet{
 				ID:              "ignored-id",
@@ -200,6 +204,13 @@ func TestResultsRescanCommand(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "resolves outside")
 		convey.So(requestCount, convey.ShouldEqual, 1)
+
+		requestPath := ""
+		select {
+		case requestPath = <-requestPathCh:
+		default:
+		}
+		convey.So(requestPath, convey.ShouldEqual, gas.EndPointAuth+"/results/ignored-id")
 	})
 
 	convey.Convey("rescan rejects alias directories that are not the registered output directory", t, func() {
@@ -222,7 +233,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, aliasRoot})
@@ -279,4 +290,57 @@ func createResultsRescanFileForTest(t *testing.T, rootDir, relativePath, content
 		Size:  info.Size(),
 		Kind:  "output",
 	}
+}
+
+func newResultsRescanServerForTest(t *testing.T, store *results.Store) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const filesSuffix = "/files"
+
+		resultPathPrefix := gas.EndPointAuth + "/results/"
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, resultPathPrefix) && !strings.HasSuffix(r.URL.Path, filesSuffix):
+			resultID := strings.TrimPrefix(r.URL.Path, resultPathPrefix)
+			result, err := store.Get(r.Context(), resultID)
+			if err != nil {
+				writeResultsRescanErrorForTest(w, http.StatusNotFound, err)
+
+				return
+			}
+
+			_ = json.NewEncoder(w).Encode(result)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, resultPathPrefix) && strings.HasSuffix(r.URL.Path, filesSuffix):
+			resultID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, resultPathPrefix), filesSuffix)
+
+			var files []results.FileEntry
+			if err := json.NewDecoder(r.Body).Decode(&files); err != nil {
+				writeResultsRescanErrorForTest(w, http.StatusBadRequest, err)
+
+				return
+			}
+
+			if err := store.ReplaceOutputFiles(r.Context(), resultID, files); err != nil {
+				writeResultsRescanErrorForTest(w, http.StatusNotFound, err)
+
+				return
+			}
+
+			storedFiles, err := store.GetFiles(r.Context(), resultID)
+			if err != nil {
+				writeResultsRescanErrorForTest(w, http.StatusInternalServerError, err)
+
+				return
+			}
+
+			_ = json.NewEncoder(w).Encode(storedFiles)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func writeResultsRescanErrorForTest(w http.ResponseWriter, status int, err error) {
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }

@@ -552,6 +552,14 @@ type SessionResponse struct {
 	IsOwner       bool   `json:"is_owner"`
 }
 
+// LockedResponse is returned when a caller cannot access an existing result.
+type LockedResponse struct {
+	Error    string `json:"error"`
+	Locked   bool   `json:"locked"`
+	ResultID string `json:"result_id,omitempty"`
+	Message  string `json:"message"`
+}
+
 // Server serves the results REST API.
 type Server struct {
 	store           *Store
@@ -673,6 +681,12 @@ func (s *Server) handlePostResults(c *gin.Context) {
 		return
 	}
 
+	if err := s.applyRegistrationAuthPolicy(c, registration); err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
 	outputDirectoryGID, err := OutputDirectoryGID(registration.OutputDirectory)
 	if err != nil {
 		writeDomainError(c, fmt.Errorf("%w: %v", ErrInvalidInput, err))
@@ -701,6 +715,91 @@ func (s *Server) handlePostResults(c *gin.Context) {
 	}
 
 	writeJSON(c, status, result)
+}
+
+func (s *Server) applyRegistrationAuthPolicy(c *gin.Context, registration *Registration) error {
+	user, err := CurrentUserFromContext(c, s.ownerSessions)
+	if err != nil || user == nil || user.IsOwner {
+		return err
+	}
+
+	registration.Operator = user.Username
+
+	return nil
+}
+
+func (s *Server) accessUserFromContext(c *gin.Context) (*CurrentUser, error) {
+	if !isAuthResultsRoute(c) {
+		return nil, nil
+	}
+
+	return CurrentUserFromContext(c, s.ownerSessions)
+}
+
+func isAuthResultsRoute(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+
+	path := c.Request.URL.Path
+
+	return path == gas.EndPointAuth+"/results" || strings.HasPrefix(path, gas.EndPointAuth+"/results/")
+}
+
+func (s *Server) requireResultAccess(c *gin.Context, result ResultSet) bool {
+	user, err := s.accessUserFromContext(c)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return false
+	}
+
+	if err := RequireResultAccess(result, user); err != nil {
+		if errors.Is(err, ErrLocked) {
+			WriteLocked(c, result.ID)
+
+			return false
+		}
+
+		writeDomainError(c, err)
+
+		return false
+	}
+
+	return true
+}
+
+// WriteLocked writes the stable locked response for an existing inaccessible result.
+func WriteLocked(c *gin.Context, resultID string) {
+	writeJSON(c, http.StatusForbidden, LockedResponse{
+		Error:    "locked",
+		Locked:   true,
+		ResultID: resultID,
+		Message:  "You do not have access to this result set",
+	})
+}
+
+func (s *Server) requireServerOwner(c *gin.Context, resultID string) bool {
+	user, err := CurrentUserFromContext(c, s.ownerSessions)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return false
+	}
+
+	if err := RequireServerOwner(user); err != nil {
+		if errors.Is(err, ErrLocked) {
+			WriteLocked(c, resultID)
+
+			return false
+		}
+
+		writeDomainError(c, err)
+
+		return false
+	}
+
+	return true
 }
 
 func writeServerError(c *gin.Context, status int, message string) {
@@ -893,6 +992,23 @@ func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResol
 	return mergeSearchValues(resolvedSamples, samples), runs, lanes, true, nil
 }
 
+// AnnotateAccess returns results with per-row access calculated for user.
+func AnnotateAccess(results []ResultSet, user *CurrentUser) ([]ResultSet, error) {
+	annotated := make([]ResultSet, len(results))
+
+	for i, result := range results {
+		access, err := AccessForResult(result, user)
+		if err != nil {
+			return nil, err
+		}
+
+		result.Access = access
+		annotated[i] = result
+	}
+
+	return annotated, nil
+}
+
 func writeJSON(c *gin.Context, status int, payload any) {
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.JSON(status, payload)
@@ -906,14 +1022,17 @@ func (s *Server) handlePutResultFiles(c *gin.Context) {
 		return
 	}
 
+	resultID := c.Param("id")
+	if !s.requireServerOwner(c, resultID) {
+		return
+	}
+
 	files, err := decodeFileEntries(c.Request.Body)
 	if err != nil {
 		writeServerError(c, http.StatusBadRequest, "invalid JSON body")
 
 		return
 	}
-
-	resultID := c.Param("id")
 
 	if err := s.store.ReplaceOutputFiles(c.Request.Context(), resultID, files); err != nil {
 		writeDomainError(c, err)
@@ -1198,6 +1317,20 @@ func (s *Server) handleGetResults(c *gin.Context) {
 		return
 	}
 
+	accessUser, err := s.accessUserFromContext(c)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
+	results, err = AnnotateAccess(results, accessUser)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
 	if len(studyValues) > 0 && len(resolvedSamples) > 0 {
 		writeJSON(c, http.StatusOK, wrapSearchResults(results, resolvedSamples))
 
@@ -1279,6 +1412,20 @@ func (s *Server) handleGetStats(c *gin.Context) {
 		return
 	}
 
+	accessUser, err := s.accessUserFromContext(c)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
+	stats.Recent, err = AnnotateAccess(stats.Recent, accessUser)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
 	writeJSON(c, http.StatusOK, stats)
 }
 
@@ -1327,6 +1474,10 @@ func (s *Server) handleGetResultByID(c *gin.Context) {
 		return
 	}
 
+	if !s.requireResultAccess(c, *result) {
+		return
+	}
+
 	writeJSON(c, http.StatusOK, result)
 }
 
@@ -1338,19 +1489,22 @@ func (s *Server) handleGetResultFiles(c *gin.Context) {
 	}
 
 	resultID := c.Param("id")
-	files, err := s.store.GetFiles(c.Request.Context(), resultID)
+	result, err := s.store.Get(c.Request.Context(), resultID)
 	if err != nil {
 		writeDomainError(c, err)
 
 		return
 	}
 
-	if len(files) == 0 {
-		if _, err := s.store.Get(c.Request.Context(), resultID); err != nil {
-			writeDomainError(c, err)
+	if !s.requireResultAccess(c, *result) {
+		return
+	}
 
-			return
-		}
+	files, err := s.store.GetFiles(c.Request.Context(), resultID)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
 	}
 
 	writeJSON(c, http.StatusOK, files)
@@ -1363,7 +1517,12 @@ func (s *Server) handleDeleteResultByID(c *gin.Context) {
 		return
 	}
 
-	err := s.store.Delete(c.Request.Context(), c.Param("id"))
+	resultID := c.Param("id")
+	if !s.requireServerOwner(c, resultID) {
+		return
+	}
+
+	err := s.store.Delete(c.Request.Context(), resultID)
 	if err != nil {
 		writeDomainError(c, err)
 

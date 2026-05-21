@@ -753,12 +753,7 @@ type resultSetWithFiles struct {
 	Files []results.FileEntry `json:"files"`
 }
 
-type resultsCommandOptions struct {
-	serverURL string
-}
-
-func getResult(ctx context.Context, serverURL, resultID string, includeFiles bool) ([]byte, error) {
-	resultPath := "/results/" + url.PathEscape(resultID)
+func getResultFromPath(ctx context.Context, serverURL, resultPath string, includeFiles bool) ([]byte, error) {
 	resultBody, err := getResultsResource(ctx, serverURL, resultPath, http.StatusOK, "get result")
 	if err != nil {
 		return nil, err
@@ -784,6 +779,14 @@ func getResult(ctx context.Context, serverURL, resultID string, includeFiles boo
 	}
 
 	return marshalCommandJSON(resultSetWithFiles{ResultSet: result, Files: files})
+}
+
+type resultsCommandOptions struct {
+	serverURL string
+}
+
+func getResult(ctx context.Context, serverURL, resultID string, includeFiles bool) ([]byte, error) {
+	return getResultFromPath(ctx, serverURL, "/results/"+url.PathEscape(resultID), includeFiles)
 }
 
 func getResultsResource(ctx context.Context, serverURL, resourcePath string, successStatus int, operation string) ([]byte, error) {
@@ -1227,7 +1230,7 @@ func registerResults(ctx context.Context, serverURL string, registration *result
 		return nil, fmt.Errorf("marshal registration request: %w", err)
 	}
 
-	endpoint, err := resultsEndpointURL(serverURL, "/results")
+	endpoint, err := resultsEndpointURL(serverURL, gas.EndPointAuth+"/results")
 	if err != nil {
 		return nil, fmt.Errorf("parse --server URL: %w", err)
 	}
@@ -1391,7 +1394,7 @@ func parseResultsMetadataFilters(metaValues []string) (map[string]string, error)
 }
 
 func searchResults(ctx context.Context, serverURL string, query url.Values) ([]byte, error) {
-	endpoint, err := resultsEndpointURL(serverURL, "/results")
+	endpoint, err := resultsEndpointURL(serverURL, gas.EndPointREST+"/results")
 	if err != nil {
 		return nil, fmt.Errorf("parse --server URL: %w", err)
 	}
@@ -1477,7 +1480,7 @@ func newResultsDeleteCommand(options *resultsCommandOptions) *cobra.Command {
 }
 
 func deleteResult(ctx context.Context, serverURL, resultID string) error {
-	endpoint, err := resultsEndpointURL(serverURL, "/results/"+url.PathEscape(resultID))
+	endpoint, err := resultsEndpointURL(serverURL, gas.EndPointAuth+"/results/"+url.PathEscape(resultID))
 	if err != nil {
 		return fmt.Errorf("parse --server URL: %w", err)
 	}
@@ -1560,7 +1563,7 @@ func rescanResults(ctx context.Context, serverURL, resultID string, files []resu
 		return nil, fmt.Errorf("marshal rescan request: %w", err)
 	}
 
-	endpoint, err := resultsEndpointURL(serverURL, "/results/"+url.PathEscape(resultID)+"/files")
+	endpoint, err := resultsEndpointURL(serverURL, gas.EndPointAuth+"/results/"+url.PathEscape(resultID)+"/files")
 	if err != nil {
 		return nil, fmt.Errorf("parse --server URL: %w", err)
 	}
@@ -1835,7 +1838,7 @@ func validateResultsScanRoot(rootDir string, includeHidden bool) error {
 }
 
 func validateResultsRescanDirectory(ctx context.Context, serverURL, resultID, dir string) error {
-	resultBody, err := getResult(ctx, serverURL, resultID, false)
+	resultBody, err := getAuthenticatedResult(ctx, serverURL, resultID, false)
 	if err != nil {
 		return err
 	}
@@ -1850,6 +1853,10 @@ func validateResultsRescanDirectory(ctx context.Context, serverURL, resultID, di
 	}
 
 	return nil
+}
+
+func getAuthenticatedResult(ctx context.Context, serverURL, resultID string, includeFiles bool) ([]byte, error) {
+	return getResultFromPath(ctx, serverURL, gas.EndPointAuth+"/results/"+url.PathEscape(resultID), includeFiles)
 }
 
 func resultsSameCanonicalDirectory(firstPath, secondPath string) bool {

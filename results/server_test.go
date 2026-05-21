@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -53,6 +54,155 @@ type seqmetaStudySamplesResponseForTest struct {
 	body    string
 }
 
+func TestServerAnnotateAccessB3(t *testing.T) {
+	forbiddenAccess := AccessState{
+		CanView: false,
+		Locked:  true,
+		Reason:  "forbidden",
+	}
+	loginRequiredAccess := AccessState{
+		CanView: false,
+		Locked:  true,
+		Reason:  "login_required",
+	}
+
+	convey.Convey("B3.1: Given two stored results, when anonymous GET /rest/v1/results is called, then both rows are returned with login-required access", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, accessRegistrationForTest("run-b3-public-one", "alice", "bob", 200))
+		seedResultSetForTest(t, store, accessRegistrationForTest("run-b3-public-two", "carol", "dave", 300))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, gas.EndPointREST+"/results", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(resultAccessByRunKeyForTest(results)["run-b3-public-one"], convey.ShouldResemble, loginRequiredAccess)
+		convey.So(resultAccessByRunKeyForTest(results)["run-b3-public-two"], convey.ShouldResemble, loginRequiredAccess)
+	})
+
+	convey.Convey("B3.2: Given user alice can access one of two results, when GET /rest/v1/auth/results is called, then both rows are returned with per-row access", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, accessRegistrationForTest("run-b3-auth-allowed", "alice", "bob", 200))
+		seedResultSetForTest(t, store, accessRegistrationForTest("run-b3-auth-locked", "carol", "dave", 300))
+
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+		access := resultAccessByRunKeyForTest(results)
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(access["run-b3-auth-allowed"], convey.ShouldResemble, AccessState{CanView: true})
+		convey.So(access["run-b3-auth-locked"], convey.ShouldResemble, forbiddenAccess)
+	})
+
+	convey.Convey("B3.3: Given a study search that returns SearchResult, when the authenticated route is called, then nested result_set access is populated", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, studyAccessRegistrationForTest("run-b3-study-allowed", "SANG1", "alice", 200))
+		seedResultSetForTest(t, store, studyAccessRegistrationForTest("run-b3-study-locked", "SANG2", "carol", 300))
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		})
+		defer seqmeta.Close()
+
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, NewSeqmetaSampleResolver(seqmeta.URL, time.Second)), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results?study_id=6568", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+		access := searchResultAccessByRunKeyForTest(results)
+		convey.So(results, convey.ShouldHaveLength, 2)
+		convey.So(access["run-b3-study-allowed"], convey.ShouldResemble, AccessState{CanView: true})
+		convey.So(access["run-b3-study-locked"], convey.ShouldResemble, forbiddenAccess)
+	})
+
+	convey.Convey("B3.4: Given anonymous study search returns SearchResult, when GET /rest/v1/results is called, then all wrapped rows have login-required access", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, studyAccessRegistrationForTest("run-b3-public-study-one", "SANG1", "alice", 200))
+		seedResultSetForTest(t, store, studyAccessRegistrationForTest("run-b3-public-study-two", "SANG2", "carol", 300))
+		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
+			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		})
+		defer seqmeta.Close()
+
+		response := performResultsRequestForTest(
+			t,
+			NewServer(store, nil, NewSeqmetaSampleResolver(seqmeta.URL, time.Second)).Handler(),
+			http.MethodGet,
+			gas.EndPointREST+"/results?study_id=6568",
+			nil,
+		)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []SearchResult
+		decodeJSONResponseForTest(t, response, &results)
+		convey.So(results, convey.ShouldHaveLength, 2)
+		for _, result := range results {
+			convey.So(result.ResultSet.Access, convey.ShouldResemble, loginRequiredAccess)
+		}
+	})
+
+	convey.Convey("B3.5: Given stats recent contains accessible and inaccessible rows, when GET /rest/v1/auth/results/stats is called, then recent access is correct and aggregates are unchanged", t, func() {
+		store := newSQLiteStoreForTest(t)
+		now := time.Now().UTC()
+		seedStatsResultSetForTest(t, store, "run-b3-stats-allowed", now, func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-b3-stats-allowed"
+			reg.Requester = "alice"
+			reg.OutputDirectoryGID = gidForTest(200)
+			reg.PipelineName = "nf-core/rnaseq"
+		})
+		seedStatsResultSetForTest(t, store, "run-b3-stats-locked", now.Add(-time.Hour), func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-b3-stats-locked"
+			reg.Requester = "carol"
+			reg.Operator = "dave"
+			reg.OutputDirectoryGID = gidForTest(300)
+			reg.PipelineName = "nf-core/sarek"
+		})
+
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results/stats?recent=2", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var stats StatsResult
+		decodeJSONResponseForTest(t, response, &stats)
+		access := resultAccessByRunKeyForTest(stats.Recent)
+		convey.So(stats.Total, convey.ShouldEqual, 2)
+		convey.So(stats.Recent, convey.ShouldHaveLength, 2)
+		convey.So(stats.Pipelines, convey.ShouldResemble, []PipelineCount{
+			{PipelineName: "nf-core/rnaseq", Count: 1},
+			{PipelineName: "nf-core/sarek", Count: 1},
+		})
+		convey.So(access["run-b3-stats-allowed"], convey.ShouldResemble, AccessState{CanView: true})
+		convey.So(access["run-b3-stats-locked"], convey.ShouldResemble, forbiddenAccess)
+	})
+}
+
+func accessRegistrationForTest(runKey, requester, operator string, gid int64) *Registration {
+	return searchRegistrationForTest(runKey, func(reg *Registration) {
+		reg.PipelineIdentifier = "pipe-" + runKey
+		reg.Requester = requester
+		reg.Operator = operator
+		reg.OutputDirectoryGID = gidForTest(gid)
+	})
+}
+
 func normalizeResultsPathForTest(method, path string) string {
 	if strings.HasPrefix(path, gas.EndPointREST) {
 		return path
@@ -68,6 +218,36 @@ func normalizeResultsPathForTest(method, path string) string {
 	default:
 		return gas.EndPointREST + path
 	}
+}
+
+func resultAccessByRunKeyForTest(results []ResultSet) map[string]AccessState {
+	access := make(map[string]AccessState, len(results))
+
+	for _, result := range results {
+		access[result.RunKey] = result.Access
+	}
+
+	return access
+}
+
+func studyAccessRegistrationForTest(runKey, sampleID, requester string, gid int64) *Registration {
+	return searchRegistrationForTest(runKey, func(reg *Registration) {
+		reg.PipelineIdentifier = "pipe-" + runKey
+		reg.Requester = requester
+		reg.Operator = "operator-" + requester
+		reg.OutputDirectoryGID = gidForTest(gid)
+		reg.Metadata = map[string]string{SeqmetaSampleNameKey: sampleID}
+	})
+}
+
+func searchResultAccessByRunKeyForTest(results []SearchResult) map[string]AccessState {
+	access := make(map[string]AccessState, len(results))
+
+	for _, result := range results {
+		access[result.ResultSet.RunKey] = result.ResultSet.Access
+	}
+
+	return access
 }
 
 func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySamplesResponseForTest) *httptest.Server {
@@ -95,6 +275,26 @@ func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySample
 	mux.Handle("GET /study/{id}/samples", handler)
 
 	return httptest.NewServer(mux)
+}
+
+type lockedResponseForTest struct {
+	Error    string `json:"error"`
+	Locked   bool   `json:"locked"`
+	ResultID string `json:"result_id,omitempty"`
+	Message  string `json:"message"`
+}
+
+func assertLockedResponseForTest(t *testing.T, response *httptest.ResponseRecorder, resultID string) {
+	t.Helper()
+
+	var locked lockedResponseForTest
+	decodeJSONResponseForTest(t, response, &locked)
+	convey.So(locked, convey.ShouldResemble, lockedResponseForTest{
+		Error:    "locked",
+		Locked:   true,
+		ResultID: resultID,
+		Message:  "You do not have access to this result set",
+	})
 }
 
 type mockSearchExpander struct {
@@ -140,6 +340,88 @@ func (m *mockSearchExpander) ResolveSampleName(ctx context.Context, raw string) 
 	return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
 }
 
+func TestServerProtectDetailAndFileListC1(t *testing.T) {
+	convey.Convey("C1.1: Given no JWT and an existing result, when GET /rest/v1/results/<id> is called, then status is 403 with locked JSON", t, func() {
+		store := newSQLiteStoreForTest(t)
+		stored := seedResultSetForTest(t, store, accessRegistrationForTest("run-c1-public-detail", "alice", "carol", 200))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, gas.EndPointREST+"/results/"+stored.ID, nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusForbidden)
+		assertLockedResponseForTest(t, response, stored.ID)
+	})
+
+	convey.Convey("C1.2: Given no JWT and an existing result, when GET /rest/v1/results/<id>/files is called, then status is 403 and no file list is returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		stored := seedResultSetForTest(t, store, accessRegistrationForTest("run-c1-public-files", "alice", "carol", 200))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, gas.EndPointREST+"/results/"+stored.ID+"/files", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusForbidden)
+		assertLockedResponseForTest(t, response, stored.ID)
+	})
+
+	convey.Convey("C1.4: Given no JWT and a missing result, when GET /rest/v1/results/missing is called, then status is 404", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, gas.EndPointREST+"/results/missing", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusNotFound)
+	})
+
+	convey.Convey("C1.5: Given user bob lacks access, when GET /rest/v1/auth/results/<id> is called, then status is 403 with locked JSON", t, func() {
+		store := newSQLiteStoreForTest(t)
+		stored := seedResultSetForTest(t, store, accessRegistrationForTest("run-c1-auth-detail-locked", "alice", "carol", 200))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "bob",
+			User:     authUserForTest{gids: []string{"100"}},
+		})
+
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results/"+stored.ID, nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusForbidden)
+		assertLockedResponseForTest(t, response, stored.ID)
+	})
+
+	convey.Convey("C1.6: Given user bob lacks access, when GET /rest/v1/auth/results/<id>/files is called, then status is 403 and no file list is returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		stored := seedResultSetForTest(t, store, accessRegistrationForTest("run-c1-auth-files-locked", "alice", "carol", 200))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "bob",
+			User:     authUserForTest{gids: []string{"100"}},
+		})
+
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results/"+stored.ID+"/files", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusForbidden)
+		assertLockedResponseForTest(t, response, stored.ID)
+	})
+
+	convey.Convey("C1.8: Given user alice has access, when auth detail and file-list endpoints are called, then existing 200 behaviours are preserved", t, func() {
+		store := newSQLiteStoreForTest(t)
+		stored := seedResultSetForTest(t, store, accessRegistrationForTest("run-c1-auth-success", "alice", "carol", 200))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+
+		detailResponse := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results/"+stored.ID, nil)
+		filesResponse := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results/"+stored.ID+"/files", nil)
+
+		convey.So(detailResponse.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(detailResponse.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
+		var result ResultSet
+		decodeJSONResponseForTest(t, detailResponse, &result)
+		convey.So(result.ID, convey.ShouldEqual, stored.ID)
+
+		convey.So(filesResponse.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(filesResponse.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
+		var files []FileEntry
+		decodeJSONResponseForTest(t, filesResponse, &files)
+		convey.So(files, convey.ShouldHaveLength, 2)
+	})
+}
+
 func TestServerRegisterRoutesA1(t *testing.T) {
 	convey.Convey("A1.1: Given a Gin router with RegisterRoutes, when GET /rest/v1/results is called, then status 200 and body is a JSON array of all matching rows", t, func() {
 		store := newSQLiteStoreForTest(t)
@@ -160,7 +442,7 @@ func TestServerRegisterRoutesA1(t *testing.T) {
 
 	convey.Convey("A1.2: Given a registered result, when GET /rest/v1/auth/results/<id> is called with a fake authorized user, then status 200 and the JSON id equals the stored ID", t, func() {
 		store := newSQLiteStoreForTest(t)
-		stored := seedResultSetForTest(t, store, searchRegistrationForTest("run-a1-auth-detail", func(reg *Registration) {}))
+		stored := seedResultSetForTest(t, store, accessRegistrationForTest("run-a1-auth-detail", "alice", "bob", 200))
 		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
 			Username: "alice",
 			User:     authUserForTest{},
@@ -357,6 +639,210 @@ func loginJWTForTest(t *testing.T, handler http.Handler, username, password stri
 	decodeJSONResponseForTest(t, response, &token)
 
 	return token
+}
+
+func TestServerRegistrationAuthorizationC2(t *testing.T) {
+	convey.Convey("C2.1: Given a JWT marked owner by server-token login and registration requester alice, operator carol, when POST runs, then stored requester is alice and operator is carol", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ownerStore := NewOwnerSessionStore()
+		ownerToken := "owner-token-c2"
+		ownerStore.MarkOwner(ownerToken, time.Now().Add(time.Hour))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil, WithOwnerSessionStore(ownerStore)), &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
+		reg := testServerRegistration(t)
+		reg.RunKey = "run-c2-owner"
+		reg.Requester = "alice"
+		reg.Operator = "carol"
+
+		response := performResultsJWTRequestForTest(t, router, http.MethodPost, gas.EndPointAuth+"/results", ownerToken, mustJSONBodyForTest(t, reg))
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
+		assertStoredResultActorsForTest(t, store, response, "alice", "carol")
+	})
+
+	convey.Convey("C2.2: Given LDAP user bob and registration requester alice, operator carol, when POST runs, then stored requester is alice and operator is bob", t, func() {
+		store := newSQLiteStoreForTest(t)
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "bob",
+			User:     authUserForTest{},
+		})
+		reg := testServerRegistration(t)
+		reg.RunKey = "run-c2-ldap-bob"
+		reg.Requester = "alice"
+		reg.Operator = "carol"
+
+		response := performResultsJWTRequestForTest(t, router, http.MethodPost, gas.EndPointAuth+"/results", "ldap-token-bob", mustJSONBodyForTest(t, reg))
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
+		assertStoredResultActorsForTest(t, store, response, "alice", "bob")
+	})
+
+	convey.Convey("C2.3: Given the server-starting username is svc but the JWT came from LDAP/password login, when registration requester is alice and operator is carol, then stored requester is alice and operator is svc", t, func() {
+		store := newSQLiteStoreForTest(t)
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
+		reg := testServerRegistration(t)
+		reg.RunKey = "run-c2-ldap-svc"
+		reg.Requester = "alice"
+		reg.Operator = "carol"
+
+		response := performResultsJWTRequestForTest(t, router, http.MethodPost, gas.EndPointAuth+"/results", "ldap-token-svc", mustJSONBodyForTest(t, reg))
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
+		assertStoredResultActorsForTest(t, store, response, "alice", "svc")
+	})
+
+	convey.Convey("C2.5: Given unauthenticated POST to /rest/v1/results, when called, then status is 404 or 405", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, gas.EndPointREST+"/results", mustJSONBodyForTest(t, testServerRegistration(t)))
+
+		convey.So(response.Code == http.StatusNotFound || response.Code == http.StatusMethodNotAllowed, convey.ShouldBeTrue)
+	})
+}
+
+func TestServerOwnerOnlyMutationsC3(t *testing.T) {
+	convey.Convey("C3.1: Given LDAP user alice with result access, when DELETE /rest/v1/auth/results/<id> is called, then status is 403 locked and the row still exists", t, func() {
+		store := newSQLiteStoreForTest(t)
+		reg := testRegistration()
+		reg.OutputDirectoryGID = gidForTest(200)
+		result := seedResultSetForTest(t, store, reg)
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+
+		response := performResultsJWTRequestForTest(t, router, http.MethodDelete, gas.EndPointAuth+"/results/"+result.ID, "ldap-token-alice", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusForbidden)
+		assertLockedResponseForTest(t, response, result.ID)
+
+		stored, err := store.Get(t.Context(), result.ID)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stored.ID, convey.ShouldEqual, result.ID)
+	})
+
+	convey.Convey("C3.2: Given server-owner-token user, when the same delete is called, then status is 204 and the row is removed", t, func() {
+		store := newSQLiteStoreForTest(t)
+		result := seedResultSetForTest(t, store, testRegistration())
+		ownerToken := "owner-token-c3-delete"
+		ownerStore := NewOwnerSessionStore()
+		ownerStore.MarkOwner(ownerToken, time.Now().Add(time.Hour))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil, WithOwnerSessionStore(ownerStore)), &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
+
+		response := performResultsJWTRequestForTest(t, router, http.MethodDelete, gas.EndPointAuth+"/results/"+result.ID, ownerToken, nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusNoContent)
+		convey.So(response.Body.Len(), convey.ShouldEqual, 0)
+
+		_, err := store.Get(t.Context(), result.ID)
+		convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+	})
+
+	convey.Convey("C3.3: Given LDAP user alice, when PUT /rest/v1/auth/results/<id>/files is called, then status is 403 and files are unchanged", t, func() {
+		store := newSQLiteStoreForTest(t)
+		reg := testRegistration()
+		reg.OutputDirectoryGID = gidForTest(200)
+		result := seedResultSetForTest(t, store, reg)
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+
+		response := performResultsJWTRequestForTest(
+			t,
+			router,
+			http.MethodPut,
+			gas.EndPointAuth+"/results/"+result.ID+"/files",
+			"ldap-token-alice",
+			mustJSONBodyForTest(t, replacementOutputFilesForTest()),
+		)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusForbidden)
+		assertLockedResponseForTest(t, response, result.ID)
+
+		files, err := store.GetFiles(t.Context(), result.ID)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(files, convey.ShouldResemble, []FileEntry{
+			{Path: "/tmp/input-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 1, 0, 0, time.UTC), Size: 202, Kind: "input"},
+			{Path: "/tmp/results/run/out-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC), Size: 101, Kind: "output"},
+		})
+	})
+
+	convey.Convey("C3.4: Given server-owner-token user, when rescan is called with valid output files, then status is 200 and files are replaced", t, func() {
+		store := newSQLiteStoreForTest(t)
+		result := seedResultSetForTest(t, store, testRegistration())
+		ownerToken := "owner-token-c3-rescan"
+		ownerStore := NewOwnerSessionStore()
+		ownerStore.MarkOwner(ownerToken, time.Now().Add(time.Hour))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil, WithOwnerSessionStore(ownerStore)), &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
+
+		response := performResultsJWTRequestForTest(
+			t,
+			router,
+			http.MethodPut,
+			gas.EndPointAuth+"/results/"+result.ID+"/files",
+			ownerToken,
+			mustJSONBodyForTest(t, replacementOutputFilesForTest()),
+		)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var files []FileEntry
+		decodeJSONResponseForTest(t, response, &files)
+		convey.So(files, convey.ShouldResemble, []FileEntry{
+			{Path: "/tmp/input-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 1, 0, 0, time.UTC), Size: 202, Kind: "input"},
+			{Path: "/tmp/results/run/out-new.txt", Mtime: time.Date(2026, time.April, 2, 12, 0, 0, 0, time.UTC), Size: 404, Kind: "output"},
+		})
+	})
+
+	convey.Convey("C3.5: Given server-starting username svc logged in by LDAP password, when delete and rescan are called, then status is 403 and no mutation occurs", t, func() {
+		store := newSQLiteStoreForTest(t)
+		reg := testRegistration()
+		reg.Requester = "svc"
+		reg.OutputDirectoryGID = gidForTest(200)
+		result := seedResultSetForTest(t, store, reg)
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
+
+		deleteResponse := performResultsJWTRequestForTest(t, router, http.MethodDelete, gas.EndPointAuth+"/results/"+result.ID, "ldap-token-svc", nil)
+		rescanResponse := performResultsJWTRequestForTest(
+			t,
+			router,
+			http.MethodPut,
+			gas.EndPointAuth+"/results/"+result.ID+"/files",
+			"ldap-token-svc",
+			mustJSONBodyForTest(t, replacementOutputFilesForTest()),
+		)
+
+		convey.So(deleteResponse.Code, convey.ShouldEqual, http.StatusForbidden)
+		assertLockedResponseForTest(t, deleteResponse, result.ID)
+		convey.So(rescanResponse.Code, convey.ShouldEqual, http.StatusForbidden)
+		assertLockedResponseForTest(t, rescanResponse, result.ID)
+
+		stored, err := store.Get(t.Context(), result.ID)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stored.ID, convey.ShouldEqual, result.ID)
+
+		files, err := store.GetFiles(t.Context(), result.ID)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(files, convey.ShouldResemble, []FileEntry{
+			{Path: "/tmp/input-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 1, 0, 0, time.UTC), Size: 202, Kind: "input"},
+			{Path: "/tmp/results/run/out-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC), Size: 101, Kind: "output"},
+		})
+	})
 }
 
 func performResultsJWTRequestForTest(t *testing.T, handler http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {
@@ -1852,6 +2338,29 @@ func statGIDForTest(t *testing.T, path string) int64 {
 	return int64(stat.Gid)
 }
 
+func replacementOutputFilesForTest() []FileEntry {
+	return []FileEntry{{
+		Path:  "/tmp/results/run/out-new.txt",
+		Mtime: time.Date(2026, time.April, 2, 12, 0, 0, 0, time.UTC),
+		Size:  404,
+		Kind:  "output",
+	}}
+}
+
+func assertStoredResultActorsForTest(t *testing.T, store *Store, response *httptest.ResponseRecorder, requester, operator string) {
+	t.Helper()
+
+	var result ResultSet
+	decodeJSONResponseForTest(t, response, &result)
+
+	stored, err := store.Get(context.Background(), result.ID)
+	convey.So(err, convey.ShouldBeNil)
+	convey.So(stored.Requester, convey.ShouldEqual, requester)
+	convey.So(stored.Operator, convey.ShouldEqual, operator)
+	convey.So(result.Requester, convey.ShouldEqual, requester)
+	convey.So(result.Operator, convey.ShouldEqual, operator)
+}
+
 func TestServerGetStats(t *testing.T) {
 	convey.Convey("B1.1/B1.5: Given stored and empty stats data, when GET /results/stats is called, then chi routes to the stats handler and returns aggregated JSON", t, func() {
 		store := newSQLiteStoreForTest(t)
@@ -1990,9 +2499,16 @@ func TestServerDeleteResult(t *testing.T) {
 		result, err := store.Upsert(t.Context(), testRegistration())
 		convey.So(err, convey.ShouldBeNil)
 
-		server := NewServer(store, nil, nil)
+		ownerToken := "owner-token-delete-e6"
+		ownerStore := NewOwnerSessionStore()
+		ownerStore.MarkOwner(ownerToken, time.Now().Add(time.Hour))
+		server := NewServer(store, nil, nil, WithOwnerSessionStore(ownerStore))
+		router := newResultsGinHandlerForTest(t, server, &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
 
-		deleteResponse := performResultsRequestForTest(t, server.Handler(), http.MethodDelete, "/results/"+result.ID, nil)
+		deleteResponse := performResultsJWTRequestForTest(t, router, http.MethodDelete, gas.EndPointAuth+"/results/"+result.ID, ownerToken, nil)
 		getResponse := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+result.ID, nil)
 
 		convey.So(deleteResponse.Code, convey.ShouldEqual, http.StatusNoContent)
@@ -2003,9 +2519,15 @@ func TestServerDeleteResult(t *testing.T) {
 
 	convey.Convey("E6.2: Given a non-existent ID, when DELETE /results/{id} is called, then status is 404", t, func() {
 		store := newSQLiteStoreForTest(t)
-		server := NewServer(store, nil, nil)
+		ownerToken := "owner-token-delete-missing-e6"
+		ownerStore := NewOwnerSessionStore()
+		ownerStore.MarkOwner(ownerToken, time.Now().Add(time.Hour))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil, WithOwnerSessionStore(ownerStore)), &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodDelete, "/results/missing-id", nil)
+		response := performResultsJWTRequestForTest(t, router, http.MethodDelete, gas.EndPointAuth+"/results/missing-id", ownerToken, nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusNotFound)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldNotBeBlank)
@@ -2013,16 +2535,21 @@ func TestServerDeleteResult(t *testing.T) {
 }
 
 func TestServerGetResultByID(t *testing.T) {
-	convey.Convey("E3.1: Given a stored result set, when GET /results/<valid-id> is called, then status is 200 and body matches the stored data including metadata", t, func() {
+	convey.Convey("E3.1: Given a stored result set, when authenticated GET /results/<valid-id> is called, then status is 200 and body matches the stored data including metadata", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := t.Context()
 		reg := testRegistration()
 		reg.Metadata = map[string]string{"library": "exon", "study": "alpha"}
+		reg.OutputDirectoryGID = gidForTest(200)
 
 		stored, err := store.Upsert(ctx, reg)
 		convey.So(err, convey.ShouldBeNil)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/"+stored.ID, nil)
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results/"+stored.ID, nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
@@ -2044,9 +2571,10 @@ func TestServerGetResultByID(t *testing.T) {
 }
 
 func TestServerGetResultFiles(t *testing.T) {
-	convey.Convey("E4.1: Given a result set with 5 files (3 output, 1 input, 1 pipeline), when GET /results/{id}/files, then status 200 and JSON array has 5 entries with correct kind values", t, func() {
+	convey.Convey("E4.1: Given a result set with 5 files (3 output, 1 input, 1 pipeline), when authenticated GET /results/{id}/files, then status 200 and JSON array has 5 entries with correct kind values", t, func() {
 		store := newSQLiteStoreForTest(t)
 		reg := testRegistration()
+		reg.OutputDirectoryGID = gidForTest(200)
 		reg.Files = []FileEntry{
 			{Path: "/tmp/input-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 1, 0, 0, time.UTC), Size: 202, Kind: "input"},
 			{Path: "/tmp/results/run/out-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC), Size: 101, Kind: "output"},
@@ -2058,7 +2586,11 @@ func TestServerGetResultFiles(t *testing.T) {
 		result, err := store.Upsert(t.Context(), reg)
 		convey.So(err, convey.ShouldBeNil)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/"+result.ID+"/files", nil)
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results/"+result.ID+"/files", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
@@ -2089,6 +2621,7 @@ func TestServerPutResultFiles(t *testing.T) {
 	convey.Convey("E5.1: Given a result set with 2 output files and 1 input file, when PUT /results/{id}/files with 3 new output files, then status is 200 and stored files contain 4 entries with the input preserved", t, func() {
 		store := newSQLiteStoreForTest(t)
 		reg := testRegistration()
+		reg.OutputDirectoryGID = gidForTest(200)
 		reg.Files = []FileEntry{
 			{Path: "/tmp/input-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 2, 0, 0, time.UTC), Size: 303, Kind: "input"},
 			{Path: "/tmp/results/run/out-1.txt", Mtime: time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC), Size: 101, Kind: "output"},
@@ -2098,7 +2631,14 @@ func TestServerPutResultFiles(t *testing.T) {
 		result, err := store.Upsert(context.Background(), reg)
 		convey.So(err, convey.ShouldBeNil)
 
-		server := NewServer(store, nil, nil)
+		ownerToken := "owner-token-put-files-e5"
+		ownerStore := NewOwnerSessionStore()
+		ownerStore.MarkOwner(ownerToken, time.Now().Add(time.Hour))
+		server := NewServer(store, nil, nil, WithOwnerSessionStore(ownerStore))
+		ownerHandler := newResultsGinHandlerForTest(t, server, &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
 
 		replacement := []FileEntry{
 			{Path: "/tmp/results/run/out-new-1.txt", Mtime: time.Date(2026, time.April, 2, 12, 0, 0, 0, time.UTC), Size: 404, Kind: "output"},
@@ -2106,18 +2646,23 @@ func TestServerPutResultFiles(t *testing.T) {
 			{Path: "/tmp/results/run/out-new-3.txt", Mtime: time.Date(2026, time.April, 2, 12, 2, 0, 0, time.UTC), Size: 606, Kind: "output"},
 		}
 
-		response := performResultsRequestForTest(
+		response := performResultsJWTRequestForTest(
 			t,
-			server.Handler(),
+			ownerHandler,
 			http.MethodPut,
-			"/results/"+result.ID+"/files",
+			gas.EndPointAuth+"/results/"+result.ID+"/files",
+			ownerToken,
 			mustJSONBodyForTest(t, replacement),
 		)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
 
-		getResponse := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+result.ID+"/files", nil)
+		authHandler := newResultsGinHandlerForTest(t, server, &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+		getResponse := performResultsRequestForTest(t, authHandler, http.MethodGet, gas.EndPointAuth+"/results/"+result.ID+"/files", nil)
 
 		convey.So(getResponse.Code, convey.ShouldEqual, http.StatusOK)
 
@@ -2133,12 +2678,20 @@ func TestServerPutResultFiles(t *testing.T) {
 
 	convey.Convey("E5.2: Given non-existent ID, when PUT /results/{id}/files is called, then status is 404", t, func() {
 		store := newSQLiteStoreForTest(t)
+		ownerToken := "owner-token-put-files-missing-e5"
+		ownerStore := NewOwnerSessionStore()
+		ownerStore.MarkOwner(ownerToken, time.Now().Add(time.Hour))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil, WithOwnerSessionStore(ownerStore)), &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
 
-		response := performResultsRequestForTest(
+		response := performResultsJWTRequestForTest(
 			t,
-			NewServer(store, nil, nil).Handler(),
+			router,
 			http.MethodPut,
-			"/results/missing-id/files",
+			gas.EndPointAuth+"/results/missing-id/files",
+			ownerToken,
 			mustJSONBodyForTest(t, []FileEntry{{
 				Path:  "/tmp/results/run/out-new-1.txt",
 				Mtime: time.Date(2026, time.April, 2, 12, 0, 0, 0, time.UTC),
@@ -2153,12 +2706,20 @@ func TestServerPutResultFiles(t *testing.T) {
 
 	convey.Convey("E5.3: Given malformed JSON, when PUT /results/{id}/files is called, then status is 400", t, func() {
 		store := newSQLiteStoreForTest(t)
+		ownerToken := "owner-token-put-files-malformed-e5"
+		ownerStore := NewOwnerSessionStore()
+		ownerStore.MarkOwner(ownerToken, time.Now().Add(time.Hour))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil, WithOwnerSessionStore(ownerStore)), &CurrentUser{
+			Username: "svc",
+			User:     authUserForTest{},
+		})
 
-		response := performResultsRequestForTest(
+		response := performResultsJWTRequestForTest(
 			t,
-			NewServer(store, nil, nil).Handler(),
+			router,
 			http.MethodPut,
-			"/results/any-id/files",
+			gas.EndPointAuth+"/results/any-id/files",
+			ownerToken,
 			[]byte(`[{"path":`),
 		)
 

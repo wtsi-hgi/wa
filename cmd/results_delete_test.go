@@ -26,83 +26,71 @@
 package cmd
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/wtsi-hgi/wa/results"
+	gas "github.com/wtsi-hgi/go-authserver"
 )
 
 func TestResultsDeleteCommand(t *testing.T) {
-	convey.Convey("G4.1: Given a valid ID, when delete <id> is run, then exit code 0 and subsequent GET returns error", t, func() {
-		store := newResultsDeleteStoreForTest(t)
-		stored, err := store.Upsert(t.Context(), resultsDeleteRegistrationForTest())
-		convey.So(err, convey.ShouldBeNil)
+	convey.Convey("C3 CLI: Given a valid ID, when delete <id> is run, then it calls the authenticated owner-protected endpoint", t, func() {
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				handlerErrCh <- errors.New("unexpected request method")
+				http.NotFound(w, r)
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+				return
+			}
+
+			if r.URL.Path != gas.EndPointAuth+"/results/result-123" {
+				handlerErrCh <- errors.New("unexpected request path")
+				http.NotFound(w, r)
+
+				return
+			}
+
+			w.WriteHeader(http.StatusNoContent)
+			handlerErrCh <- nil
+		}))
 		defer server.Close()
 
-		output, err := executeRootCommandForTest(t, []string{"results", "delete", "--server", server.URL, stored.ID})
+		output, err := executeRootCommandForTest(t, []string{"results", "delete", "--server", server.URL, "result-123"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldBeBlank)
-
-		response, err := http.Get(server.URL + "/results/" + stored.ID)
-		convey.So(err, convey.ShouldBeNil)
-		defer func() { _ = response.Body.Close() }()
-		convey.So(response.StatusCode, convey.ShouldEqual, http.StatusNotFound)
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 	})
 
 	convey.Convey("G4.2: Given non-existent ID, then exit code is non-zero", t, func() {
-		store := newResultsDeleteStoreForTest(t)
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				handlerErrCh <- errors.New("unexpected request method")
+				http.NotFound(w, r)
+
+				return
+			}
+
+			if r.URL.Path != gas.EndPointAuth+"/results/missing-id" {
+				handlerErrCh <- errors.New("unexpected request path")
+				http.NotFound(w, r)
+
+				return
+			}
+
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			handlerErrCh <- nil
+		}))
 		defer server.Close()
 
 		_, err := executeRootCommandForTest(t, []string{"results", "delete", "--server", server.URL, "missing-id"})
 
 		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 	})
-}
-
-func newResultsDeleteStoreForTest(t *testing.T) *results.Store {
-	t.Helper()
-
-	db, err := openResultsDB(":memory:")
-	if err != nil {
-		t.Fatalf("open results db: %v", err)
-	}
-
-	store, err := results.NewStore(db)
-	if err != nil {
-		_ = db.Close()
-		t.Fatalf("create results store: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = store.Close()
-	})
-
-	return store
-}
-
-func resultsDeleteRegistrationForTest() *results.Registration {
-	return &results.Registration{
-		PipelineIdentifier: "pipe",
-		RunKey:             "runid=48522",
-		Requester:          "alice",
-		Operator:           "bob",
-		Command:            "nextflow run pipe",
-		PipelineName:       "nf-pipe",
-		PipelineVersion:    "1.2.3",
-		OutputDirectory:    "/tmp/results/run",
-		Files: []results.FileEntry{{
-			Path:  "/tmp/results/run/out.txt",
-			Mtime: time.Date(2026, time.April, 16, 12, 0, 0, 0, time.UTC),
-			Size:  123,
-			Kind:  "output",
-		}},
-		Metadata: map[string]string{"library": "exon"},
-	}
 }

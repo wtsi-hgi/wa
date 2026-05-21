@@ -22,8 +22,8 @@ use the current go-authserver user. Preserve query matching and aggregate
 counts while populating nested `ResultSet.Access` values. Covering all 5
 acceptance tests from B3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.2: C1 - Protect detail and file APIs
 
@@ -36,8 +36,8 @@ serving detail or bytes; auth routes must use `RequireResultAccess`.
 Preserve 404 behavior and existing successful file headers for authorized
 users. Covering all 8 acceptance tests from C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.3: C2 - Registration authorization
 
@@ -50,8 +50,8 @@ sessions preserve requester but force operator to the authenticated
 username before validation and upsert. Covering all 5 acceptance tests
 from C2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.4: C3 - Server-owner-only mutations
 
@@ -64,5 +64,5 @@ logged in by LDAP password, must receive locked 403 responses and leave
 data unchanged; owner-token sessions retain delete/rescan behavior.
 Covering all 5 acceptance tests from C3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
