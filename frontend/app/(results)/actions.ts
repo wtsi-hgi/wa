@@ -1,7 +1,10 @@
 "use server";
 
+import { cookies } from "next/headers";
+
 import {
     BackendRequestError,
+    resultsAuthCookieName,
     resultsJson,
     resultsRaw,
     seqmetaJson,
@@ -52,13 +55,34 @@ function buildStatsQuery(recent?: number, days?: number): string {
     return rendered ? `?${rendered}` : "";
 }
 
+async function readResultsAuthJwt(): Promise<string | null> {
+    try {
+        const cookieStore = await cookies();
+
+        return cookieStore.get(resultsAuthCookieName)?.value ?? null;
+    } catch {
+        return null;
+    }
+}
+
+function resultsCollectionPath(jwt: string | null): string {
+    return jwt ? "/rest/v1/auth/results" : "/rest/v1/results";
+}
+
+function authenticatedOptions(jwt: string | null): { jwt: string } | undefined {
+    return jwt ? { jwt } : undefined;
+}
+
 export async function fetchStats(
     recent?: number,
     days?: number,
 ): Promise<StatsResult> {
+    const jwt = await readResultsAuthJwt();
+
     return resultsJson(
-        `/results/stats${buildStatsQuery(recent, days)}`,
+        `${resultsCollectionPath(jwt)}/stats${buildStatsQuery(recent, days)}`,
         statsResultSchema,
+        authenticatedOptions(jwt),
     );
 }
 
@@ -71,14 +95,17 @@ export async function fetchStats(
 export async function searchResults(
     params: Record<string, string[]>,
 ): Promise<ResultSet[] | SearchResult[]> {
+    const jwt = await readResultsAuthJwt();
+
     return resultsJson(
-        `/results${buildQueryString(params)}`,
+        `${resultsCollectionPath(jwt)}${buildQueryString(params)}`,
         resultSetSchema.array().or(searchResultSchema.array()),
+        authenticatedOptions(jwt),
     );
 }
 
 export async function fetchMetaKeys(): Promise<string[]> {
-    return resultsJson("/results/meta-keys", metaKeysSchema);
+    return resultsJson("/rest/v1/results/meta-keys", metaKeysSchema);
 }
 
 export async function fetchStudies(): Promise<Study[]> {
@@ -86,13 +113,22 @@ export async function fetchStudies(): Promise<Study[]> {
 }
 
 export async function fetchResult(id: string): Promise<ResultSet> {
-    return resultsJson(`/results/${encodeURIComponent(id)}`, resultSetSchema);
+    const jwt = await readResultsAuthJwt();
+
+    return resultsJson(
+        `${resultsCollectionPath(jwt)}/${encodeURIComponent(id)}`,
+        resultSetSchema,
+        authenticatedOptions(jwt),
+    );
 }
 
 export async function fetchFiles(id: string): Promise<FileEntry[]> {
+    const jwt = await readResultsAuthJwt();
+
     return resultsJson(
-        `/results/${encodeURIComponent(id)}/files`,
+        `${resultsCollectionPath(jwt)}/${encodeURIComponent(id)}/files`,
         fileEntrySchema.array(),
+        authenticatedOptions(jwt),
     );
 }
 
@@ -100,8 +136,10 @@ export async function fetchFileContent(
     id: string,
     path: string,
 ): Promise<{ content: string; contentType: string }> {
+    const jwt = await readResultsAuthJwt();
     const response = await resultsRaw(
-        `/results/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`,
+        `${resultsCollectionPath(jwt)}/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`,
+        authenticatedOptions(jwt),
     );
 
     if (!response.ok) {

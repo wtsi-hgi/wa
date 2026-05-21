@@ -30,8 +30,8 @@ SameSite=Lax cookie, expire it on logout, and tolerate backend logout
 404/501 by still clearing the cookie. Covering all 6 acceptance tests from
 E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.2: E2 - Secure backend client
 
@@ -46,5 +46,5 @@ HTTP-only cookie, and preserves locked 403 JSON responses. Depends on item
 6.1 for cookie/session conventions. Covering all 10 acceptance tests from
 E2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
