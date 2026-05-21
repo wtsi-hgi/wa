@@ -114,6 +114,10 @@ func resolveResultsServeMode(cert, key, acme, cache string) (resultsServeMode, e
 		return 0, errors.New("you must supply --cert and --key, or --acme and --cache")
 	}
 
+	if hasCert && hasACME {
+		return 0, errors.New("you must supply either --cert and --key, or --acme and --cache, not both")
+	}
+
 	if hasACME && hasCache {
 		return resultsServeModeACME, nil
 	}

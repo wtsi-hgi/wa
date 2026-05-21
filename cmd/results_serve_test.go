@@ -550,6 +550,19 @@ func TestResultsServeCommandA2(t *testing.T) {
 		convey.So(fakeAuth.enableCalls[0].tokenBasename, convey.ShouldEqual, resultsServerTokenBasename)
 	})
 
+	convey.Convey("A2.3b: Given both cert/key and ACME flags, when validation runs, then TLS mode selection is rejected as ambiguous", t, func() {
+		cacheDir := filepath.Join(t.TempDir(), "certs")
+		convey.So(os.Mkdir(cacheDir, 0o700), convey.ShouldBeNil)
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs(
+			"--acme", "https://acme.example/dir",
+			"--cache", cacheDir,
+		))
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldEqual, "you must supply either --cert and --key, or --acme and --cache, not both")
+	})
+
 	convey.Convey("A2.4: Given ACME cache dir with loose permissions, when startup runs, then it fails before serving", t, func() {
 		cacheDir := filepath.Join(t.TempDir(), "certs")
 		convey.So(os.Mkdir(cacheDir, 0o755), convey.ShouldBeNil)
