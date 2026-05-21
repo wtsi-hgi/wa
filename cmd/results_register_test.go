@@ -46,6 +46,8 @@ import (
 )
 
 func TestResultsRegisterCommand(t *testing.T) {
+	installPassthroughResultsAuthClientForTest(t)
+
 	convey.Convey("G1.1: Given a results server and an output directory with 2 files, when register is run, then stdout is valid JSON with an id and the server receives 2 output files", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")

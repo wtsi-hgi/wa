@@ -45,6 +45,8 @@ import (
 )
 
 func TestResultsRescanCommand(t *testing.T) {
+	installPassthroughResultsAuthClientForTest(t)
+
 	convey.Convey("G5.1: Given a registered result set and a t.TempDir() with 3 files (1 new since registration), when rescan <id> <dir> is run, then the server's file list for that ID has 3 output files", t, func() {
 		store := newResultsRescanStoreForTest(t)
 		dir := t.TempDir()
@@ -296,6 +298,13 @@ func newResultsRescanServerForTest(t *testing.T, store *results.Store) *httptest
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-jwt" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "authentication failed"})
+
+			return
+		}
+
 		const filesSuffix = "/files"
 
 		resultPathPrefix := gas.EndPointAuth + "/results/"

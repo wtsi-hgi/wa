@@ -36,8 +36,11 @@ import (
 )
 
 func TestResultsDeleteCommand(t *testing.T) {
+	installPassthroughResultsAuthClientForTest(t)
+
 	convey.Convey("C3 CLI: Given a valid ID, when delete <id> is run, then it calls the authenticated owner-protected endpoint", t, func() {
 		handlerErrCh := make(chan error, 1)
+		authHeaderCh := make(chan string, 1)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodDelete {
 				handlerErrCh <- errors.New("unexpected request method")
@@ -53,6 +56,7 @@ func TestResultsDeleteCommand(t *testing.T) {
 				return
 			}
 
+			authHeaderCh <- r.Header.Get("Authorization")
 			w.WriteHeader(http.StatusNoContent)
 			handlerErrCh <- nil
 		}))
@@ -63,6 +67,7 @@ func TestResultsDeleteCommand(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldBeBlank)
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(<-authHeaderCh, convey.ShouldEqual, "Bearer test-jwt")
 	})
 
 	convey.Convey("G4.2: Given non-existent ID, then exit code is non-zero", t, func() {

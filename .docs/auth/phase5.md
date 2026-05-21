@@ -22,8 +22,8 @@ the HTTPS WA server URL, pass `host[:port]` to gas auth, reject paths in
 the auth URL, pass the backend CA/cert path from `--cert`, and surface token
 permission errors without prompting. Cover all 5 acceptance tests from D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.2: D2 - CLI endpoint permissions
 
@@ -36,5 +36,5 @@ register, delete, and rescan use authenticated requests and
 inaccessible reads. Depends on item 5.1. Cover all 4 acceptance tests from
 D2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
