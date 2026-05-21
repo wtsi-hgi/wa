@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { installResultsAuthCookie } from "./results-auth-helpers";
+
 type BoxSpacing = {
     border: EdgeSpacing;
     margin: EdgeSpacing;
@@ -101,6 +103,10 @@ const postFixMeasurementPath = path.join(
     evidenceDir,
     "bug2-results-detail-spacing-postfix-measurements.json",
 );
+
+test.beforeEach(async ({ context }) => {
+    await installResultsAuthCookie(context);
+});
 
 function recentRows(page: Page) {
     return page

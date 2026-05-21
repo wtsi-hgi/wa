@@ -249,6 +249,18 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(resultsDBDriverName("user:pass@tcp(localhost:3306)/results"), convey.ShouldEqual, "mysql")
 	})
 
+	convey.Convey("SQLite file paths use WAL and a busy timeout for concurrent e2e reads and writes", t, func() {
+		dbPath := filepath.Join(t.TempDir(), "results.db")
+
+		convey.So(
+			resultsSQLiteDSN(dbPath),
+			convey.ShouldEqual,
+			"file:"+filepath.ToSlash(dbPath)+"?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)",
+		)
+		convey.So(resultsSQLiteDSN(":memory:"), convey.ShouldEqual, ":memory:")
+		convey.So(resultsSQLiteDSN("file:/tmp/results.db?mode=ro"), convey.ShouldEqual, "file:/tmp/results.db?mode=ro")
+	})
+
 	convey.Convey("E5.2: Given MLWH env vars and no flag overrides, when results serve boots, then the resolved DSN includes the env password and the cache path comes from the environment", t, func() {
 		fakeAuth := newFakeResultsServeAuthServer()
 		installFakeResultsServeAuthServer(t, fakeAuth)
@@ -516,6 +528,9 @@ func TestResultsServeCommandA2(t *testing.T) {
 	})
 
 	convey.Convey("A2.2: Given cert/key but no LDAP flags, when validation runs in non-test mode, then LDAP is required", t, func() {
+		t.Setenv("WA_RESULTS_LDAP_SERVER", "")
+		t.Setenv("WA_RESULTS_LDAP_DN", "")
+
 		_, err := executeRootCommandForTest(t, []string{"results", "serve", "--db", ":memory:", "--cert", "cert.pem", "--key", "key.pem"})
 
 		convey.So(err, convey.ShouldNotBeNil)

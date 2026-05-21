@@ -3,6 +3,12 @@ import { mkdirSync } from "node:fs";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { installResultsAuthCookie } from "./results-auth-helpers";
+
+test.beforeEach(async ({ context }) => {
+    await installResultsAuthCookie(context);
+});
+
 type PreviewBorderSurfaceMetrics = {
     root: {
         height: number;

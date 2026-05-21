@@ -32,9 +32,9 @@ server-owner-token-only.
 ### Upstream behaviours to follow
 
 - go-authserver constants:
-  - `gas.EndPointREST == "/rest/v1"`
-  - `gas.EndPointJWT == "/rest/v1/jwt"`
-  - `gas.EndPointAuth == "/rest/v1/auth"`
+    - `gas.EndPointREST == "/rest/v1"`
+    - `gas.EndPointJWT == "/rest/v1/jwt"`
+    - `gas.EndPointAuth == "/rest/v1/auth"`
 - `POST /rest/v1/jwt` accepts form or JSON `username` and `password` and
   returns a JSON string JWT.
 - `GET /rest/v1/jwt` refreshes a valid JWT.
@@ -58,24 +58,24 @@ server-owner-token-only.
 Use go-authserver/Gin route groups. Keep result paths under `/results`, but
 prefix them with go-authserver's route bases.
 
-| Method | Path                              | Auth | Action |
-| ------ | --------------------------------- | ---- | ------ |
-| GET    | `/rest/v1/results`                | opt  | search/list |
-| GET    | `/rest/v1/results/stats`          | opt  | public stats/latest |
-| GET    | `/rest/v1/results/meta-keys`      | no   | metadata keys |
-| GET    | `/rest/v1/results/:id`            | opt  | locked detail check |
-| GET    | `/rest/v1/results/:id/files`      | opt  | locked file list check |
-| GET    | `/rest/v1/results/:id/file`       | opt  | locked file check |
-| GET    | `/rest/v1/auth/session`           | yes  | current user |
-| POST   | `/rest/v1/auth/logout`            | yes  | clear owner marker |
-| GET    | `/rest/v1/auth/results`           | yes  | search/list with access |
-| GET    | `/rest/v1/auth/results/stats`     | yes  | stats/latest with access |
-| POST   | `/rest/v1/auth/results`           | yes  | register/upsert |
-| GET    | `/rest/v1/auth/results/:id`       | yes  | result detail |
-| GET    | `/rest/v1/auth/results/:id/files` | yes  | result file list |
-| GET    | `/rest/v1/auth/results/:id/file`  | yes  | file content |
-| PUT    | `/rest/v1/auth/results/:id/files` | owner | rescan |
-| DELETE | `/rest/v1/auth/results/:id`       | owner | delete |
+| Method | Path                              | Auth  | Action                   |
+| ------ | --------------------------------- | ----- | ------------------------ |
+| GET    | `/rest/v1/results`                | opt   | search/list              |
+| GET    | `/rest/v1/results/stats`          | opt   | public stats/latest      |
+| GET    | `/rest/v1/results/meta-keys`      | no    | metadata keys            |
+| GET    | `/rest/v1/results/:id`            | opt   | locked detail check      |
+| GET    | `/rest/v1/results/:id/files`      | opt   | locked file list check   |
+| GET    | `/rest/v1/results/:id/file`       | opt   | locked file check        |
+| GET    | `/rest/v1/auth/session`           | yes   | current user             |
+| POST   | `/rest/v1/auth/logout`            | yes   | clear owner marker       |
+| GET    | `/rest/v1/auth/results`           | yes   | search/list with access  |
+| GET    | `/rest/v1/auth/results/stats`     | yes   | stats/latest with access |
+| POST   | `/rest/v1/auth/results`           | yes   | register/upsert          |
+| GET    | `/rest/v1/auth/results/:id`       | yes   | result detail            |
+| GET    | `/rest/v1/auth/results/:id/files` | yes   | result file list         |
+| GET    | `/rest/v1/auth/results/:id/file`  | yes   | file content             |
+| PUT    | `/rest/v1/auth/results/:id/files` | owner | rescan                   |
+| DELETE | `/rest/v1/auth/results/:id`       | owner | delete                   |
 
 `opt` means unauthenticated callers are allowed. Public detail/file routes must
 not sit behind auth middleware: they load the result, evaluate access with nil
@@ -191,17 +191,17 @@ const (
 
 `wa results serve` flags:
 
-| Flag | Default | Meaning |
-| ---- | ------- | ------- |
-| `--url` | `WA_RESULTS_SERVER_URL` or `127.0.0.1:<port>` | HTTPS bind addr |
-| `--port` | `8080` | Deprecated alias used only when `--url` unset |
-| `--cert` | `WA_RESULTS_SERVER_CERT` | TLS cert/root cert path |
-| `--key`, `-k` | `WA_RESULTS_SERVER_KEY` | TLS key path |
-| `--acme`, `-a` | `WA_RESULTS_SERVER_ACME` | ACME directory URL |
-| `--cache`, `-c` | `WA_RESULTS_SERVER_CACHE` | ACME cert cache dir |
-| `--ldap_server`, `-s` | `WA_RESULTS_LDAP_SERVER` | LDAP FQDN |
-| `--ldap_dn`, `-l` | `WA_RESULTS_LDAP_DN` | bind DN with `%s` |
-| `--server-token` | basename const | server token basename or abs path |
+| Flag                  | Default                                       | Meaning                                       |
+| --------------------- | --------------------------------------------- | --------------------------------------------- |
+| `--url`               | `WA_RESULTS_SERVER_URL` or `127.0.0.1:<port>` | HTTPS bind addr                               |
+| `--port`              | `8080`                                        | Deprecated alias used only when `--url` unset |
+| `--cert`              | `WA_RESULTS_SERVER_CERT`                      | TLS cert/root cert path                       |
+| `--key`, `-k`         | `WA_RESULTS_SERVER_KEY`                       | TLS key path                                  |
+| `--acme`, `-a`        | `WA_RESULTS_SERVER_ACME`                      | ACME directory URL                            |
+| `--cache`, `-c`       | `WA_RESULTS_SERVER_CACHE`                     | ACME cert cache dir                           |
+| `--ldap_server`, `-s` | `WA_RESULTS_LDAP_SERVER`                      | LDAP FQDN                                     |
+| `--ldap_dn`, `-l`     | `WA_RESULTS_LDAP_DN`                          | bind DN with `%s`                             |
+| `--server-token`      | basename const                                | server token basename or abs path             |
 
 Real served modes must reject startup unless:
 
@@ -280,7 +280,7 @@ server.
 2. Given cert/key but no LDAP flags, when validation runs in non-test mode,
    then it returns `--ldap_server and --ldap_dn are required`.
 3. Given `--cert cert.pem --key key.pem --ldap_server ldap.example.org
-   --ldap_dn 'uid=%s,ou=people,dc=example,dc=org'`, when the server is wired
+--ldap_dn 'uid=%s,ou=people,dc=example,dc=org'`, when the server is wired
    with fakes, then `EnableAuthWithServerToken` receives those cert/key paths
    and `resultsServerTokenBasename`.
 4. Given `--acme https://acme.example/dir --cache .tmp/certs`, when cache dir
@@ -501,10 +501,10 @@ Locked response:
 
 ```json
 {
-  "error": "locked",
-  "locked": true,
-  "result_id": "abc",
-  "message": "You do not have access to this result set"
+    "error": "locked",
+    "locked": true,
+    "result_id": "abc",
+    "message": "You do not have access to this result set"
 }
 ```
 
@@ -618,10 +618,10 @@ func newResultsAuthClient(
 
 Add persistent flags to `wa results`:
 
-| Flag | Default | Meaning |
-| ---- | ------- | ------- |
+| Flag       | Default                           | Meaning            |
+| ---------- | --------------------------------- | ------------------ |
 | `--server` | `https://127.0.0.1:<active port>` | results server URL |
-| `--cert` | `WA_RESULTS_SERVER_CERT` | CA/cert to trust |
+| `--cert`   | `WA_RESULTS_SERVER_CERT`          | CA/cert to trust   |
 
 **Acceptance tests:**
 
@@ -772,11 +772,11 @@ uses `/rest/v1/auth/results/<id>` when `wa_results_jwt` exists and public
    `/rest/v1/auth/results/abc/file?path=%2Fout%2Fa.txt` with
    `Authorization: Bearer <jwt>`.
 10. Given any of `fetchResult`, `fetchFiles`, `fetchFileContent`, or
-   `/api/file` receives status 403 with locked JSON, then the locked response
-   is preserved for the detail locked page or returned by the proxy with
-   status 403 and body containing `"error":"locked"`, `"locked":true`,
-   `"result_id":"abc"`, and message
-   `You do not have access to this result set`.
+    `/api/file` receives status 403 with locked JSON, then the locked response
+    is preserved for the detail locked page or returned by the proxy with
+    status 403 and body containing `"error":"locked"`, `"locked":true`,
+    `"result_id":"abc"`, and message
+    `You do not have access to this result set`.
 
 ### E3: Compact login/logout tool
 
@@ -840,7 +840,7 @@ a link back to `/` or `returnTo`.
    detail page as before.
 3. Given `fetchResult` receives 403 locked JSON, when the detail page renders,
    then it shows only the lock icon, text `You do not have access to this
-   result set`, and a link with accessible name `Back to dashboard`.
+result set`, and a link with accessible name `Back to dashboard`.
 4. Given no `wa_results_jwt` cookie and direct navigation to `/results/abc`,
    when the backend public detail route returns 403 locked JSON, then the page
    renders only the lock state and a link with accessible name

@@ -2,6 +2,12 @@ import path from "node:path";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { installResultsAuthCookie } from "./results-auth-helpers";
+
+test.beforeEach(async ({ context }) => {
+    await installResultsAuthCookie(context);
+});
+
 function recentRows(page: Page): Locator {
     return page
         .locator('tbody tr[data-result-row="true"]')

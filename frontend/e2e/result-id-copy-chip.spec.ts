@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+import { installResultsAuthCookie } from "./results-auth-helpers";
+
+test.beforeEach(async ({ context }) => {
+    await installResultsAuthCookie(context);
+});
+
 test.describe("result detail title identity", () => {
     test("keeps the old copy chip out of the result detail title", async ({
         page,

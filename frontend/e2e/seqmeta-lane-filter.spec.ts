@@ -7,6 +7,12 @@
 
 import { expect, test } from "@playwright/test";
 
+import { installResultsAuthCookie } from "./results-auth-helpers";
+
+test.beforeEach(async ({ context }) => {
+    await installResultsAuthCookie(context);
+});
+
 test.describe("Lane filtering support (bugfix 260501-4)", () => {
     test("lane rows show a Filter button that links to seqmeta_lane filter", async ({
         page,

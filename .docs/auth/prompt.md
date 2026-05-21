@@ -3,8 +3,10 @@ Use the spec-writer skill workflow to create `.docs/auth/spec.md`, to specify th
 The backend server should use LDAP to verify a user is who they say they are. Follow https://github.com/wtsi-hgi/ibackup/blob/master/cmd/server.go on how it works with LDAP; specify using the same command line options. The server will have to be https-only with LDAP auth activated, and the frontend will have to talk to the backend securely and with a self-signed cert in dev mode.
 
 Once we know the username of the logged in user, access control should work along these lines, where the user can view a result set page if:
-* They are the requester or operator of the result set
-* They belong to the same unix group that owns the result set output directory
+
+- They are the requester or operator of the result set
+- They belong to the same unix group that owns the result set output directory
+
 If we do not currently capture the gid of output directories during result set registration, this will need to be spec’d, with a database schema update (as opposed to doing live file system checks each time, which would be too slow). (For backwards compatability, a null gid should be treated as no one having access; an admin will have to populate the gid column manually.)
 All users (including users who have not logged in yet) will be able to search for and see search results for all registered results sets, but the search results and listing of latest result sets will show a “locked” icon, be greyed out and not be clickable if they don’t have access. Direct url access to result set pages they don’t have access to will also just show a locked symbol with a link back to the front page.
 

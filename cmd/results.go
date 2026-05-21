@@ -1856,6 +1856,8 @@ func openResultsDB(dsn string) (*sql.DB, error) {
 		if err := validateResultsSQLiteDBPath(dsn); err != nil {
 			return nil, err
 		}
+
+		dsn = resultsSQLiteDSN(dsn)
 	}
 
 	db, err := sql.Open(driverName, dsn)
@@ -1869,6 +1871,15 @@ func openResultsDB(dsn string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+func resultsSQLiteDSN(dsn string) string {
+	trimmed := strings.TrimSpace(dsn)
+	if trimmed == ":memory:" || strings.HasPrefix(trimmed, "file:") {
+		return trimmed
+	}
+
+	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", filepath.ToSlash(trimmed))
 }
 
 func resultsDBDriverName(dsn string) string {

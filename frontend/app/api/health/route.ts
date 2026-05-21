@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
     try {
-        await resultsJson("/results/stats", statsResultSchema);
+        await resultsJson("/rest/v1/results/stats", statsResultSchema);
 
         return NextResponse.json({ status: "healthy" });
     } catch {
