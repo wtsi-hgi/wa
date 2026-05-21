@@ -153,6 +153,88 @@ describe("E2 authenticated results server actions", () => {
         );
     });
 
+    it("falls back to public landing page data when the JWT cookie is stale", async () => {
+        headerMocks.getCookie.mockReturnValue({ value: "jwt-stale" });
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(
+                Response.json(
+                    { error: "authentication required" },
+                    { status: 401 },
+                ),
+            )
+            .mockResolvedValueOnce(Response.json([resultSetPayload]))
+            .mockResolvedValueOnce(
+                Response.json(
+                    { error: "authentication required" },
+                    { status: 401 },
+                ),
+            )
+            .mockResolvedValueOnce(Response.json(statsPayload));
+
+        const { fetchStats, searchResults } =
+            await import("@/app/(results)/actions");
+
+        await expect(searchResults({ requester: ["alice"] })).resolves.toEqual([
+            resultSet,
+        ]);
+        await expect(fetchStats()).resolves.toEqual(statsResult());
+
+        expect(fetch).toHaveBeenNthCalledWith(
+            1,
+            "https://results.example/api/rest/v1/auth/results?requester=alice",
+            expect.any(Object),
+        );
+        expectAuthorization(0, "jwt-stale");
+        expect(fetch).toHaveBeenNthCalledWith(
+            2,
+            "https://results.example/api/rest/v1/results?requester=alice",
+        );
+        expectNoAuthorization(1);
+        expect(fetch).toHaveBeenNthCalledWith(
+            3,
+            "https://results.example/api/rest/v1/auth/results/stats",
+            expect.any(Object),
+        );
+        expectAuthorization(2, "jwt-stale");
+        expect(fetch).toHaveBeenNthCalledWith(
+            4,
+            "https://results.example/api/rest/v1/results/stats",
+        );
+        expectNoAuthorization(3);
+    });
+
+    it("falls back to the public locked response when a stale JWT is used for detail", async () => {
+        headerMocks.getCookie.mockReturnValue({ value: "jwt-stale" });
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(
+                Response.json(
+                    { error: "authentication required" },
+                    { status: 401 },
+                ),
+            )
+            .mockResolvedValueOnce(Response.json(lockedBody, { status: 403 }));
+
+        const { fetchResult } = await import("@/app/(results)/actions");
+        const result = fetchResult("abc");
+
+        await expect(result).rejects.toMatchObject({
+            name: "BackendRequestError",
+            status: 403,
+            body: lockedBody,
+        });
+        expect(fetch).toHaveBeenNthCalledWith(
+            1,
+            "https://results.example/api/rest/v1/auth/results/abc",
+            expect.any(Object),
+        );
+        expectAuthorization(0, "jwt-stale");
+        expect(fetch).toHaveBeenNthCalledWith(
+            2,
+            "https://results.example/api/rest/v1/results/abc",
+        );
+        expectNoAuthorization(1);
+    });
+
     it("fetches files from the authenticated endpoint when the JWT cookie exists", async () => {
         headerMocks.getCookie.mockReturnValue({ value: "jwt-1" });
         vi.mocked(fetch).mockResolvedValue(

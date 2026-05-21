@@ -71,6 +71,50 @@ describe("P1 file content streaming API route", () => {
         await expect(response.text()).resolves.toBe("alpha\n");
     });
 
+    it("falls back to the public file endpoint when the JWT cookie is stale", async () => {
+        resultsRawMock
+            .mockResolvedValueOnce(
+                Response.json(
+                    { error: "authentication required" },
+                    { status: 401 },
+                ),
+            )
+            .mockResolvedValueOnce(
+                Response.json(
+                    {
+                        error: "locked",
+                        locked: true,
+                        result_id: "abc",
+                        message: "You do not have access to this result set",
+                    },
+                    { status: 403 },
+                ),
+            );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest("id=abc&path=%2Fout%2Fa.txt", "wa_results_jwt=stale"),
+        );
+
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            1,
+            "/rest/v1/auth/results/abc/file?path=%2Fout%2Fa.txt",
+            { jwt: "stale" },
+        );
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            2,
+            "/rest/v1/results/abc/file?path=%2Fout%2Fa.txt",
+        );
+        expect(response.status).toBe(403);
+        await expect(response.json()).resolves.toEqual({
+            error: "locked",
+            locked: true,
+            result_id: "abc",
+            message: "You do not have access to this result set",
+        });
+    });
+
     it("preserves content disposition when download=true is requested", async () => {
         resultsRawMock.mockResolvedValue(
             new Response(new Uint8Array([1, 2, 3]), {

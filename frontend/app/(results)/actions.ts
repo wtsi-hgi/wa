@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { type ZodType } from "zod";
 
 import {
     BackendRequestError,
@@ -65,24 +66,57 @@ async function readResultsAuthJwt(): Promise<string | null> {
     }
 }
 
-function resultsCollectionPath(jwt: string | null): string {
-    return jwt ? "/rest/v1/auth/results" : "/rest/v1/results";
+async function resultsJsonForCurrentAuth<T>(
+    publicPath: string,
+    authPath: string,
+    schema: ZodType<T>,
+): Promise<T> {
+    const jwt = await readResultsAuthJwt();
+
+    if (!jwt) {
+        return resultsJson(publicPath, schema);
+    }
+
+    try {
+        return await resultsJson(authPath, schema, { jwt });
+    } catch (error) {
+        if (error instanceof BackendRequestError && error.status === 401) {
+            return resultsJson(publicPath, schema);
+        }
+
+        throw error;
+    }
 }
 
-function authenticatedOptions(jwt: string | null): { jwt: string } | undefined {
-    return jwt ? { jwt } : undefined;
+async function resultsRawForCurrentAuth(
+    publicPath: string,
+    authPath: string,
+): Promise<Response> {
+    const jwt = await readResultsAuthJwt();
+
+    if (!jwt) {
+        return resultsRaw(publicPath);
+    }
+
+    const response = await resultsRaw(authPath, { jwt });
+
+    if (response.status === 401) {
+        return resultsRaw(publicPath);
+    }
+
+    return response;
 }
 
 export async function fetchStats(
     recent?: number,
     days?: number,
 ): Promise<StatsResult> {
-    const jwt = await readResultsAuthJwt();
+    const suffix = `/stats${buildStatsQuery(recent, days)}`;
 
-    return resultsJson(
-        `${resultsCollectionPath(jwt)}/stats${buildStatsQuery(recent, days)}`,
+    return resultsJsonForCurrentAuth(
+        `/rest/v1/results${suffix}`,
+        `/rest/v1/auth/results${suffix}`,
         statsResultSchema,
-        authenticatedOptions(jwt),
     );
 }
 
@@ -95,12 +129,12 @@ export async function fetchStats(
 export async function searchResults(
     params: Record<string, string[]>,
 ): Promise<ResultSet[] | SearchResult[]> {
-    const jwt = await readResultsAuthJwt();
+    const query = buildQueryString(params);
 
-    return resultsJson(
-        `${resultsCollectionPath(jwt)}${buildQueryString(params)}`,
+    return resultsJsonForCurrentAuth(
+        `/rest/v1/results${query}`,
+        `/rest/v1/auth/results${query}`,
         resultSetSchema.array().or(searchResultSchema.array()),
-        authenticatedOptions(jwt),
     );
 }
 
@@ -113,22 +147,22 @@ export async function fetchStudies(): Promise<Study[]> {
 }
 
 export async function fetchResult(id: string): Promise<ResultSet> {
-    const jwt = await readResultsAuthJwt();
+    const suffix = `/${encodeURIComponent(id)}`;
 
-    return resultsJson(
-        `${resultsCollectionPath(jwt)}/${encodeURIComponent(id)}`,
+    return resultsJsonForCurrentAuth(
+        `/rest/v1/results${suffix}`,
+        `/rest/v1/auth/results${suffix}`,
         resultSetSchema,
-        authenticatedOptions(jwt),
     );
 }
 
 export async function fetchFiles(id: string): Promise<FileEntry[]> {
-    const jwt = await readResultsAuthJwt();
+    const suffix = `/${encodeURIComponent(id)}/files`;
 
-    return resultsJson(
-        `${resultsCollectionPath(jwt)}/${encodeURIComponent(id)}/files`,
+    return resultsJsonForCurrentAuth(
+        `/rest/v1/results${suffix}`,
+        `/rest/v1/auth/results${suffix}`,
         fileEntrySchema.array(),
-        authenticatedOptions(jwt),
     );
 }
 
@@ -136,10 +170,10 @@ export async function fetchFileContent(
     id: string,
     path: string,
 ): Promise<{ content: string; contentType: string }> {
-    const jwt = await readResultsAuthJwt();
-    const response = await resultsRaw(
-        `${resultsCollectionPath(jwt)}/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`,
-        authenticatedOptions(jwt),
+    const suffix = `/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`;
+    const response = await resultsRawForCurrentAuth(
+        `/rest/v1/results${suffix}`,
+        `/rest/v1/auth/results${suffix}`,
     );
 
     if (!response.ok) {

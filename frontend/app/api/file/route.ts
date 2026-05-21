@@ -151,10 +151,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     let response: Response;
     try {
+        const publicBackendPath = `/rest/v1/results/${encodeURIComponent(id)}/file?${query.toString()}`;
         const backendPath = `${resultsPath}/${encodeURIComponent(id)}/file?${query.toString()}`;
         response = jwt
             ? await resultsRaw(backendPath, { jwt })
             : await resultsRaw(backendPath);
+
+        if (jwt && response.status === 401) {
+            response = await resultsRaw(publicBackendPath);
+        }
     } catch {
         return NextResponse.json(
             { error: "results backend request failed" },
