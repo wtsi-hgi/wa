@@ -747,26 +747,33 @@ func isAuthResultsRoute(c *gin.Context) bool {
 }
 
 func (s *Server) requireResultAccess(c *gin.Context, result ResultSet) bool {
+	_, ok := s.resultAccessForRequest(c, result)
+
+	return ok
+}
+
+func (s *Server) resultAccessForRequest(c *gin.Context, result ResultSet) (AccessState, bool) {
 	user, err := s.accessUserFromContext(c)
 	if err != nil {
 		writeDomainError(c, err)
 
-		return false
+		return AccessState{}, false
 	}
 
-	if err := RequireResultAccess(result, user); err != nil {
-		if errors.Is(err, ErrLocked) {
-			WriteLocked(c, result.ID)
-
-			return false
-		}
-
+	access, err := AccessForResult(result, user)
+	if err != nil {
 		writeDomainError(c, err)
 
-		return false
+		return AccessState{}, false
 	}
 
-	return true
+	if !access.CanView {
+		WriteLocked(c, result.ID)
+
+		return access, false
+	}
+
+	return access, true
 }
 
 // WriteLocked writes the stable locked response for an existing inaccessible result.
@@ -1474,10 +1481,12 @@ func (s *Server) handleGetResultByID(c *gin.Context) {
 		return
 	}
 
-	if !s.requireResultAccess(c, *result) {
+	access, ok := s.resultAccessForRequest(c, *result)
+	if !ok {
 		return
 	}
 
+	result.Access = access
 	writeJSON(c, http.StatusOK, result)
 }
 

@@ -413,6 +413,7 @@ func TestServerProtectDetailAndFileListC1(t *testing.T) {
 		var result ResultSet
 		decodeJSONResponseForTest(t, detailResponse, &result)
 		convey.So(result.ID, convey.ShouldEqual, stored.ID)
+		convey.So(result.Access, convey.ShouldResemble, AccessState{CanView: true})
 
 		convey.So(filesResponse.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(filesResponse.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
@@ -2557,7 +2558,9 @@ func TestServerGetResultByID(t *testing.T) {
 		var result ResultSet
 		decodeJSONResponseForTest(t, response, &result)
 
-		convey.So(result, convey.ShouldResemble, *stored)
+		expected := *stored
+		expected.Access = AccessState{CanView: true}
+		convey.So(result, convey.ShouldResemble, expected)
 	})
 
 	convey.Convey("E3.2: Given a non-existent ID, when GET /results/<id> is called, then status is 404 with an error key", t, func() {
