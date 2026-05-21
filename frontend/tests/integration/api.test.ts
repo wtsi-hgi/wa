@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
     fetchFileContent,
@@ -9,7 +9,25 @@ import {
 } from "@/app/(results)/actions";
 import type { FileEntry, ResultSet } from "@/lib/contracts";
 
+const headerMocks = vi.hoisted(() => ({
+    cookies: vi.fn(),
+}));
+
+vi.mock("next/headers", () => ({
+    cookies: headerMocks.cookies,
+}));
+
 type SearchResultRow = ResultSet | { result_set: ResultSet };
+
+function resultsTestJWT(): string {
+    const jwt = process.env.WA_RESULTS_TEST_JWT;
+
+    if (!jwt) {
+        throw new Error("WA_RESULTS_TEST_JWT is required");
+    }
+
+    return jwt;
+}
 
 function extractResultSet(row: SearchResultRow): ResultSet {
     return "result_set" in row ? row.result_set : row;
@@ -36,6 +54,19 @@ async function getSeededAliceResult(): Promise<ResultSet> {
 }
 
 describe("Q2 API-level integration", () => {
+    beforeEach(() => {
+        headerMocks.cookies.mockResolvedValue({
+            get: (name: string) =>
+                name === "wa_results_jwt"
+                    ? { name, value: resultsTestJWT() }
+                    : undefined,
+        });
+    });
+
+    afterEach(() => {
+        headerMocks.cookies.mockReset();
+    });
+
     it("returns seeded stats from the Go server", async () => {
         const stats = await fetchStats();
 
@@ -92,6 +123,11 @@ describe("Q2 API-level integration", () => {
         const imageFile = findFile(files, "image.png");
         const request = new NextRequest(
             `http://localhost/api/file?id=${encodeURIComponent(result.id)}&path=${encodeURIComponent(imageFile.path)}`,
+            {
+                headers: {
+                    cookie: `wa_results_jwt=${resultsTestJWT()}`,
+                },
+            },
         );
         const { GET } = await import("@/app/api/file/route");
 
@@ -105,6 +141,11 @@ describe("Q2 API-level integration", () => {
         const result = await getSeededAliceResult();
         const request = new NextRequest(
             `http://localhost/api/file?id=${encodeURIComponent(result.id)}&path=${encodeURIComponent("/tmp/not-registered.txt")}`,
+            {
+                headers: {
+                    cookie: `wa_results_jwt=${resultsTestJWT()}`,
+                },
+            },
         );
         const { GET } = await import("@/app/api/file/route");
 

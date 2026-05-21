@@ -21,6 +21,7 @@ function expectFetchInit(callIndex = 0): RequestInit {
 describe("E1 auth server actions", () => {
     beforeEach(() => {
         process.env.WA_RESULTS_BACKEND_URL = "https://results.example/api";
+        delete process.env.WA_RESULTS_BACKEND_CA_CERT;
         headerMocks.cookies.mockResolvedValue({
             get: headerMocks.getCookie,
             set: headerMocks.setCookie,
@@ -30,6 +31,7 @@ describe("E1 auth server actions", () => {
 
     afterEach(() => {
         delete process.env.WA_RESULTS_BACKEND_URL;
+        delete process.env.WA_RESULTS_BACKEND_CA_CERT;
         headerMocks.cookies.mockReset();
         headerMocks.getCookie.mockReset();
         headerMocks.setCookie.mockReset();

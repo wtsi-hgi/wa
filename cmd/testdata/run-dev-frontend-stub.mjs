@@ -16,6 +16,8 @@ fs.writeFileSync(
     JSON.stringify(
         {
             WA_RESULTS_BACKEND_URL: process.env.WA_RESULTS_BACKEND_URL ?? "",
+            WA_RESULTS_BACKEND_CA_CERT:
+                process.env.WA_RESULTS_BACKEND_CA_CERT ?? "",
             WA_SEQMETA_BACKEND_URL: process.env.WA_SEQMETA_BACKEND_URL ?? "",
             WA_RESULTS_DB_PATH: process.env.WA_RESULTS_DB_PATH ?? "",
             WA_MLWH_CACHE_PATH: process.env.WA_MLWH_CACHE_PATH ?? "",

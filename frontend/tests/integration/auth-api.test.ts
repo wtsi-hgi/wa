@@ -15,11 +15,13 @@ function setCookieHeader(response: Response): string {
 describe("E1 auth API route handlers", () => {
     beforeEach(() => {
         process.env.WA_RESULTS_BACKEND_URL = "https://results.example/api";
+        delete process.env.WA_RESULTS_BACKEND_CA_CERT;
         vi.stubGlobal("fetch", vi.fn());
     });
 
     afterEach(() => {
         delete process.env.WA_RESULTS_BACKEND_URL;
+        delete process.env.WA_RESULTS_BACKEND_CA_CERT;
         vi.resetModules();
         vi.unstubAllGlobals();
     });

@@ -32,5 +32,5 @@ assembles `next dev` with experimental HTTPS key/cert flags. Ensure fake
 auth is test-only and development without LDAP flags still fails. Covering
 all 4 acceptance tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

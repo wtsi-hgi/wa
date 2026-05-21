@@ -27,6 +27,8 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,8 +36,10 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	osuser "os/user"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -52,6 +56,7 @@ import (
 
 type runDevEnvSnapshot struct {
 	ResultsBackendURL string `json:"WA_RESULTS_BACKEND_URL"`
+	ResultsCACert     string `json:"WA_RESULTS_BACKEND_CA_CERT"`
 	SeqmetaBackendURL string `json:"WA_SEQMETA_BACKEND_URL"`
 	ResultsDBPath     string `json:"WA_RESULTS_DB_PATH"`
 	MLWHCachePath     string `json:"WA_MLWH_CACHE_PATH"`
@@ -62,8 +67,225 @@ func runDevUnsetSeqmetaEnvForTest() []string {
 	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL"}
 }
 
+func runDevEnsureTLSCertificateForTest(t *testing.T, repoRoot string) (string, string) {
+	t.Helper()
+
+	certPath, keyPath := runDevTLSCertPathsForTest(repoRoot)
+	convey.So(os.MkdirAll(filepath.Dir(certPath), 0o755), convey.ShouldBeNil)
+
+	command := exec.Command(
+		"openssl",
+		"req",
+		"-x509",
+		"-newkey",
+		"rsa:2048",
+		"-nodes",
+		"-days",
+		"7",
+		"-keyout",
+		keyPath,
+		"-out",
+		certPath,
+		"-subj",
+		"/CN=localhost",
+		"-addext",
+		"subjectAltName=DNS:localhost,IP:127.0.0.1",
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generate run-dev TLS certificate: %v\n%s", err, output)
+	}
+
+	convey.So(os.Chmod(keyPath, 0o600), convey.ShouldBeNil)
+	convey.So(os.Chmod(certPath, 0o644), convey.ShouldBeNil)
+
+	return certPath, keyPath
+}
+
+func runDevTLSCertPathsForTest(repoRoot string) (string, string) {
+	return filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"),
+		filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem")
+}
+
+func TestRunDevScriptF1DevCertificates(t *testing.T) {
+	convey.Convey("F1.1: Given run-dev.sh --mode dev with LDAP configured, then Next receives an HTTPS backend URL and existing CA PEM", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "dev",
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			env: map[string]string{
+				"WA_ENV":                                "development",
+				"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+				"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+				"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+				"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+				"WA_RUN_DEV_SEQMETA_CMD":                fmt.Sprintf(`node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(%d, '127.0.0.1')"`, seqmetaPort),
+				"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+
+		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
+		convey.So(snapshot.ResultsCACert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
+		convey.So(runDevPathExistsForTest(snapshot.ResultsCACert), convey.ShouldBeTrue)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("F1.2: Given test mode, results serve gets explicit test-only LDAP flags and no LDAP bind is needed for startup", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     append(runDevUnsetSeqmetaEnvForTest(), "WA_RESULTS_LDAP_SERVER", "WA_RESULTS_LDAP_DN"),
+			env: map[string]string{
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q "$WA_TEST_FRONTEND_PORT"`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs")),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+		cmdline := waitForRunDevChildCommandLineForTest(t, process.Command.Process.Pid, " results serve ")
+
+		convey.So(cmdline, convey.ShouldContainSubstring, " --cert ")
+		convey.So(cmdline, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
+		convey.So(cmdline, convey.ShouldContainSubstring, " --key ")
+		convey.So(cmdline, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"))
+		convey.So(cmdline, convey.ShouldContainSubstring, " --ldap_server wa-test-ldap.invalid ")
+		convey.So(cmdline, convey.ShouldContainSubstring, " --ldap_dn uid=%s,ou=people,dc=example,dc=org ")
+		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "ldap")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("F1.3: Given development mode without LDAP env, results serve exits with the LDAP requirement", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{
+			"--mode", "dev",
+			"--frontend-port", fmt.Sprintf("%d", frontendPort),
+			"--results-port", fmt.Sprintf("%d", resultsPort),
+			"--seqmeta-port", fmt.Sprintf("%d", seqmetaPort),
+		}, map[string]string{
+			"WA_ENV":                                "development",
+			"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+			"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+			"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+			"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+			"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+			"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+			"WA_RUN_DEV_SEQMETA_CMD":                runDevSeqmetaStubCommandForTest(),
+		}, []string{"WA_RESULTS_LDAP_SERVER", "WA_RESULTS_LDAP_DN"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout, convey.ShouldContainSubstring, "Starting results server")
+		convey.So(stderr, convey.ShouldContainSubstring, "--ldap_server and --ldap_dn are required")
+	})
+}
+
 func runDevSeqmetaStubCommandForTest() string {
 	return `node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(Number(process.env.WA_TEST_SEQMETA_PORT), '127.0.0.1')"`
+}
+
+func runDevHTTPSClientForTest(t *testing.T) *http.Client {
+	t.Helper()
+
+	certPath, _ := runDevTLSCertPathsForTest(runDevRepoRootForTest(t))
+	caPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read run-dev CA cert %s: %v", certPath, err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		t.Fatalf("parse run-dev CA cert %s", certPath)
+	}
+
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12,
+				RootCAs:    pool,
+			},
+		},
+	}
+}
+
+func runDevOwnerJWTForTest(t *testing.T, resultsPort int) string {
+	t.Helper()
+
+	repoRoot := runDevRepoRootForTest(t)
+	tokenPath := filepath.Join(repoRoot, ".tmp", "state-test", ".wa-results-server.token")
+	token, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("read run-dev server token %s: %v", tokenPath, err)
+	}
+
+	currentUser, err := osuser.Current()
+	if err != nil {
+		t.Fatalf("get current user: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("username", currentUser.Username)
+	form.Set("password", strings.TrimSpace(string(token)))
+
+	endpoint := fmt.Sprintf("https://127.0.0.1:%d/rest/v1/jwt", resultsPort)
+	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("build JWT request for %s: %v", endpoint, err)
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := runDevHTTPSClientForTest(t).Do(request)
+	if err != nil {
+		t.Fatalf("login to run-dev results server at %s: %v", endpoint, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	if response.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			t.Fatalf("JWT request returned %d and unreadable body: %v", response.StatusCode, readErr)
+		}
+
+		t.Fatalf("JWT request returned %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var jwt string
+	if err := json.NewDecoder(response.Body).Decode(&jwt); err != nil {
+		t.Fatalf("decode JWT response: %v", err)
+	}
+
+	return jwt
 }
 
 func TestRunDevSeqmetaDefaultReadinessBudgetAllowsColdMLWHSync(t *testing.T) {
@@ -129,10 +351,13 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 		frontendSentinelPath := filepath.Join(t.TempDir(), "frontend-started.txt")
 		seqmetaSentinelPath := filepath.Join(t.TempDir(), "seqmeta-started.txt")
 		resultsDBPath := filepath.Join(t.TempDir(), "results-dev.sqlite")
+		stateDir := t.TempDir()
 		var seededResultsMu sync.Mutex
 		seededResults := 0
 
-		startRunDevResultsStubForTest(t, resultsPort, func() {
+		convey.So(os.WriteFile(filepath.Join(stateDir, ".wa-results-server.token"), []byte("stub-token"), 0o600), convey.ShouldBeNil)
+
+		startRunDevResultsStubForTest(t, repoRoot, resultsPort, func() {
 			seededResultsMu.Lock()
 			defer seededResultsMu.Unlock()
 			seededResults++
@@ -151,6 +376,7 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 			omitPortFlags: true,
 			env: map[string]string{
 				"WA_ENV":                                "development",
+				"XDG_STATE_HOME":                        stateDir,
 				"WA_RESULTS_DB_PATH":                    resultsDBPath,
 				"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
 				"WA_DEV_FRONTEND_PORT":                  fmt.Sprintf("%d", frontendPort),
@@ -174,8 +400,8 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 		seqmetaURL := runDevExtractURLForTest(t, stdout, "Seqmeta")
 		frontendURL := runDevExtractURLForTest(t, stdout, "Frontend")
 
-		convey.So(frontendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", frontendPort))
-		convey.So(resultsURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", resultsPort))
+		convey.So(frontendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", frontendPort))
+		convey.So(resultsURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
 		convey.So(seqmetaURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		seededResultsMu.Lock()
 		convey.So(seededResults, convey.ShouldEqual, 4)
@@ -231,7 +457,9 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(fixtureSummary.fileKinds, convey.ShouldContain, "output")
 		convey.So(fixtureSummary.fileKinds, convey.ShouldContain, "pipeline")
 		convey.So(fixtureSummary.maxPreviewableImagesInDirectory, convey.ShouldBeGreaterThan, 100)
-		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", resultsPort))
+		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
+		convey.So(snapshot.ResultsCACert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
+		convey.So(runDevPathExistsForTest(snapshot.ResultsCACert), convey.ShouldBeTrue)
 		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
 		convey.So(snapshot.ResultsDBPath, convey.ShouldNotBeBlank)
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
@@ -330,6 +558,8 @@ func TestRunDevScript(t *testing.T) {
 			"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results.db"),
 			"WA_MLWH_DSN":                           "mlwh_humgen@tcp(mlwh-db-ro:3435)/mlwarehouse",
 			"WA_MLWH_CACHE_PATH":                    filepath.Join(t.TempDir(), "mlwh-cache.sqlite"),
+			"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+			"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
 			"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('seqmeta boot failed: source db unavailable'); process.exit(23)"`,
 			"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
 			"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
@@ -575,11 +805,15 @@ if [[ "$1" == "dev" ]]; then
 		printf 'unexpected pnpm dev args: %%s\n' "$*" >&2
 		exit 1
 	fi
+	if [[ "$4" != "--experimental-https" || "$5" != "--experimental-https-key" || "$6" != %q || "$7" != "--experimental-https-cert" || "$8" != %q ]]; then
+		printf 'missing experimental HTTPS args: %%s\n' "$*" >&2
+		exit 1
+	fi
 	exec node %q "$3"
 fi
 
 exit 0
-`, pnpmLogPath, fmt.Sprintf("%d", frontendPort), filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"))
+`, pnpmLogPath, fmt.Sprintf("%d", frontendPort), filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"), filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"), filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"))
 
 		convey.So(os.WriteFile(pnpmPath, []byte(stub), 0o755), convey.ShouldBeNil)
 
@@ -602,7 +836,12 @@ exit 0
 		loggedArgs := waitForRunDevStepsForTest(t, pnpmLogPath, 1)
 
 		convey.So(loggedArgs, convey.ShouldResemble, []string{
-			fmt.Sprintf("dev --port %d", frontendPort),
+			fmt.Sprintf(
+				"dev --port %d --experimental-https --experimental-https-key %s --experimental-https-cert %s",
+				frontendPort,
+				filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"),
+				filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"),
+			),
 		})
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
@@ -673,7 +912,7 @@ exec %q "$@"
 
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
 		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
-		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", resultsPort))
+		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -946,11 +1185,18 @@ func summarizeRunDevFixturesForTest(t *testing.T, repoRoot string, resultsPort i
 
 func listRunDevResultFilesForTest(t *testing.T, resultsPort int, resultID string) []results.FileEntry {
 	t.Helper()
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/results/%s/files", resultsPort, resultID)
-	response, err := http.Get(endpoint)
+	endpoint := fmt.Sprintf("https://127.0.0.1:%d/rest/v1/auth/results/%s/files", resultsPort, resultID)
+	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatalf("build result files request for %s: %v", endpoint, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+runDevOwnerJWTForTest(t, resultsPort))
+
+	response, err := runDevHTTPSClientForTest(t).Do(request)
 	if err != nil {
 		t.Fatalf("get result files from %s: %v", endpoint, err)
 	}
+
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
@@ -1359,17 +1605,22 @@ func startStaticEndpointServerForTest(t *testing.T, port int, responses map[stri
 	})
 }
 
-func startRunDevResultsStubForTest(t *testing.T, port int, onSeed func()) {
+func startRunDevResultsStubForTest(t *testing.T, repoRoot string, port int, onSeed func()) {
 	t.Helper()
+	certPath, keyPath := runDevEnsureTLSCertificateForTest(t, repoRoot)
 
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			switch {
-			case request.Method == http.MethodGet && request.URL.Path == "/results/stats":
+			case request.Method == http.MethodGet && request.URL.Path == "/rest/v1/results/stats":
 				writer.Header().Set("Content-Type", "application/json")
 				writer.WriteHeader(http.StatusOK)
 				_, _ = writer.Write([]byte(`{"ok":true}`))
-			case request.Method == http.MethodPost && request.URL.Path == "/results":
+			case request.Method == http.MethodPost && request.URL.Path == "/rest/v1/jwt":
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusOK)
+				_, _ = writer.Write([]byte(`"stub-jwt"`))
+			case request.Method == http.MethodPost && request.URL.Path == "/rest/v1/auth/results":
 				if onSeed != nil {
 					onSeed()
 				}
@@ -1390,7 +1641,7 @@ func startRunDevResultsStubForTest(t *testing.T, port int, onSeed func()) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- server.Serve(listener)
+		errCh <- server.ServeTLS(listener, certPath, keyPath)
 	}()
 
 	t.Cleanup(func() {
@@ -1432,11 +1683,12 @@ func waitForRunDevSnapshotForTest(t *testing.T, snapshotPath string) runDevEnvSn
 func waitForSeededResultsForTest(t *testing.T, resultsPort int) []results.ResultSet {
 	t.Helper()
 
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/results", resultsPort)
+	endpoint := fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results", resultsPort)
 	deadline := time.Now().Add(20 * time.Second)
+	client := runDevHTTPSClientForTest(t)
 
 	for time.Now().Before(deadline) {
-		response, err := http.Get(endpoint)
+		response, err := client.Get(endpoint)
 		if err == nil {
 			var stored []results.ResultSet
 			func() {

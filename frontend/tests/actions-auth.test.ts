@@ -79,6 +79,7 @@ function expectNoAuthorization(callIndex: number): void {
 describe("E2 authenticated results server actions", () => {
     beforeEach(() => {
         process.env.WA_RESULTS_BACKEND_URL = "https://results.example/api";
+        delete process.env.WA_RESULTS_BACKEND_CA_CERT;
         headerMocks.cookies.mockResolvedValue({
             get: headerMocks.getCookie,
         });
@@ -87,6 +88,7 @@ describe("E2 authenticated results server actions", () => {
 
     afterEach(() => {
         delete process.env.WA_RESULTS_BACKEND_URL;
+        delete process.env.WA_RESULTS_BACKEND_CA_CERT;
         headerMocks.cookies.mockReset();
         headerMocks.getCookie.mockReset();
         vi.resetModules();
