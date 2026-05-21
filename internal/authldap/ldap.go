@@ -27,6 +27,7 @@ package authldap
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -59,6 +60,10 @@ func CheckPassword(
 	username string,
 	password string,
 ) (bool, string) {
+	if strings.TrimSpace(username) == "" || password == "" {
+		return false, ""
+	}
+
 	uid, err := lookup(username)
 	if err != nil {
 		return false, ""

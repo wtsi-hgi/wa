@@ -139,4 +139,33 @@ func TestCheckPassword(t *testing.T) {
 		convey.So(dialer.boundPassword, convey.ShouldEqual, "secret")
 		convey.So(dialer.closed, convey.ShouldBeTrue)
 	})
+
+	convey.Convey("Given blank LDAP credentials, then CheckPassword returns false and does not dial LDAP", t, func() {
+		dialCount := 0
+		lookupCount := 0
+		dial := func(address string) (Dialer, error) {
+			dialCount++
+
+			return &fakeDialer{}, nil
+		}
+		lookup := func(username string) (string, error) {
+			lookupCount++
+
+			return "1001", nil
+		}
+
+		ok, uid := CheckPassword(
+			dial,
+			lookup,
+			"ldap.example.org",
+			"uid=%s,ou=people,dc=example,dc=org",
+			"alice",
+			"",
+		)
+
+		convey.So(ok, convey.ShouldBeFalse)
+		convey.So(uid, convey.ShouldEqual, "")
+		convey.So(dialCount, convey.ShouldEqual, 0)
+		convey.So(lookupCount, convey.ShouldEqual, 0)
+	})
 }
