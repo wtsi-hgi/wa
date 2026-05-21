@@ -82,6 +82,32 @@ func TestCheckPassword(t *testing.T) {
 		convey.So(dialer.closed, convey.ShouldBeTrue)
 	})
 
+	convey.Convey("Given LDAP username contains DN metacharacters, then CheckPassword escapes it before binding", t, func() {
+		dialer := &fakeDialer{}
+		dial := func(address string) (Dialer, error) {
+			return dialer, nil
+		}
+		lookup := func(username string) (string, error) {
+			convey.So(username, convey.ShouldEqual, "ali,ce+svc")
+
+			return "1002", nil
+		}
+
+		ok, uid := CheckPassword(
+			dial,
+			lookup,
+			"ldap.example.org",
+			"uid=%s,ou=people,dc=example,dc=org",
+			"ali,ce+svc",
+			"secret",
+		)
+
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(uid, convey.ShouldEqual, "1002")
+		convey.So(dialer.boundUsername, convey.ShouldEqual, `uid=ali\,ce\+svc,ou=people,dc=example,dc=org`)
+		convey.So(dialer.boundPassword, convey.ShouldEqual, "secret")
+	})
+
 	convey.Convey("A3.2: Given UID lookup fails, then CheckPassword returns false and does not dial LDAP", t, func() {
 		lookupErr := errors.New("uid lookup failed")
 		dialCount := 0

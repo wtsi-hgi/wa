@@ -75,7 +75,7 @@ func CheckPassword(
 	}
 	defer conn.Close()
 
-	if err := conn.Bind(fmt.Sprintf(bindDN, username), password); err != nil {
+	if err := conn.Bind(fmt.Sprintf(bindDN, ldap.EscapeDN(username)), password); err != nil {
 		return false, ""
 	}
 
