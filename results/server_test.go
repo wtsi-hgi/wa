@@ -476,6 +476,14 @@ func TestServerRegisterRoutesA1(t *testing.T) {
 			IsOwner:       false,
 		})
 	})
+
+	convey.Convey("A1.4: Given the standalone handler, when an auth mutation route is called, then it is not registered without auth middleware", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, gas.EndPointAuth+"/results", mustJSONBodyForTest(t, testServerRegistration(t)))
+
+		convey.So(response.Code == http.StatusNotFound || response.Code == http.StatusMethodNotAllowed, convey.ShouldBeTrue)
+	})
 }
 
 func newResultsGinHandlerForTest(t *testing.T, server *Server, user *CurrentUser) http.Handler {
@@ -860,12 +868,29 @@ func performResultsJWTRequestForTest(t *testing.T, handler http.Handler, method,
 	return response
 }
 
+func performOwnerResultsRequestForTest(t *testing.T, server *Server, method, path string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+
+	token := "owner-token-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	if server.ownerSessions == nil {
+		server.ownerSessions = NewOwnerSessionStore()
+	}
+	server.ownerSessions.MarkOwner(token, time.Now().Add(time.Hour))
+
+	handler := newResultsGinHandlerForTest(t, server, &CurrentUser{
+		Username: "svc",
+		User:     authUserForTest{},
+	})
+
+	return performResultsJWTRequestForTest(t, handler, method, path, token, body)
+}
+
 func TestServerPostResults(t *testing.T) {
 	convey.Convey("E1.1: Given an empty store and valid Registration JSON, when POST /results is called, then status is 201 with JSON result fields and application/json content type", t, func() {
 		store := newSQLiteStoreForTest(t)
 		server := NewServer(store, nil, nil)
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, testServerRegistration(t)))
+		response := performOwnerResultsRequestForTest(t, server, http.MethodPost, "/results", mustJSONBodyForTest(t, testServerRegistration(t)))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
@@ -883,8 +908,8 @@ func TestServerPostResults(t *testing.T) {
 		server := NewServer(store, nil, nil)
 		body := mustJSONBodyForTest(t, testServerRegistration(t))
 
-		firstResponse := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", body)
-		secondResponse := performResultsRequestForTest(t, server.Handler(), http.MethodPost, "/results", body)
+		firstResponse := performOwnerResultsRequestForTest(t, server, http.MethodPost, "/results", body)
+		secondResponse := performOwnerResultsRequestForTest(t, server, http.MethodPost, "/results", body)
 
 		var firstResult ResultSet
 		var secondResult ResultSet
@@ -907,7 +932,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
-		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performOwnerResultsRequestForTest(t, NewServer(store, validator, nil), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
 	})
@@ -923,7 +948,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
-		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performOwnerResultsRequestForTest(t, NewServer(store, validator, nil), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusUnprocessableEntity)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldNotBeBlank)
@@ -935,7 +960,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
-		response := performResultsRequestForTest(t, NewServer(store, validator, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performOwnerResultsRequestForTest(t, NewServer(store, validator, nil), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
 	})
@@ -945,7 +970,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testServerRegistration(t)
 		reg.PipelineIdentifier = ""
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performOwnerResultsRequestForTest(t, NewServer(store, nil, nil), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
 	})
@@ -953,7 +978,7 @@ func TestServerPostResults(t *testing.T) {
 	convey.Convey("E1.7: Given a malformed JSON body, then status is 400", t, func() {
 		store := newSQLiteStoreForTest(t)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", []byte(`{"pipeline_identifier":`))
+		response := performOwnerResultsRequestForTest(t, NewServer(store, nil, nil), http.MethodPost, "/results", []byte(`{"pipeline_identifier":`))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
 	})
@@ -963,7 +988,7 @@ func TestServerPostResults(t *testing.T) {
 		reg := testServerRegistration(t)
 		expectedGID := statGIDForTest(t, reg.OutputDirectory)
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performOwnerResultsRequestForTest(t, NewServer(store, nil, nil), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
 		convey.So(response.Body.String(), convey.ShouldContainSubstring, fmt.Sprintf(`"output_directory_gid":%d`, expectedGID))
@@ -991,7 +1016,7 @@ func TestServerPostResults(t *testing.T) {
 			OutputDirectoryGID: clientGID,
 		})
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", body)
+		response := performOwnerResultsRequestForTest(t, NewServer(store, nil, nil), http.MethodPost, "/results", body)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
 
@@ -1012,7 +1037,7 @@ func TestServerPostResults(t *testing.T) {
 		reg.OutputDirectory = filepath.Join(t.TempDir(), "missing-output-directory")
 		reg.Files[0].Path = filepath.Join(reg.OutputDirectory, "out-1.txt")
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
+		response := performOwnerResultsRequestForTest(t, NewServer(store, nil, nil), http.MethodPost, "/results", mustJSONBodyForTest(t, reg))
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "determine output directory gid")

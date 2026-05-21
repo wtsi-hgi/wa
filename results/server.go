@@ -593,9 +593,8 @@ func (s *Server) newHandler() http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.New()
-	auth := router.Group(gas.EndPointAuth)
 
-	s.RegisterRoutes(router, auth)
+	s.RegisterRoutes(router, nil)
 
 	return router
 }
