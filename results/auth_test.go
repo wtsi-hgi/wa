@@ -27,9 +27,13 @@ package results
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 )
 
 func TestRequireServerOwner(t *testing.T) {
@@ -37,6 +41,24 @@ func TestRequireServerOwner(t *testing.T) {
 		convey.So(RequireServerOwner(&CurrentUser{IsOwner: true}), convey.ShouldBeNil)
 		convey.So(errors.Is(RequireServerOwner(&CurrentUser{IsOwner: false}), ErrLocked), convey.ShouldBeTrue)
 		convey.So(errors.Is(RequireServerOwner(nil), ErrLocked), convey.ShouldBeTrue)
+	})
+}
+
+func TestCurrentUserFromContextOwnerSessionsA4(t *testing.T) {
+	convey.Convey("A4.6: Given an unknown JWT with Username svc, when CurrentUserFromContext builds the user, then IsOwner is false", t, func() {
+		gin.SetMode(gin.TestMode)
+
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(http.MethodGet, gas.EndPointAuth+"/session", nil)
+		context.Request.Header.Set("Authorization", "Bearer unknown-jwt")
+		context.Set(goAuthserverUserGinContextKey, &gas.User{Username: "svc", UID: "1234"})
+
+		user, err := CurrentUserFromContext(context, NewOwnerSessionStore())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(user, convey.ShouldNotBeNil)
+		convey.So(user.Username, convey.ShouldEqual, "svc")
+		convey.So(user.IsOwner, convey.ShouldBeFalse)
 	})
 }
 

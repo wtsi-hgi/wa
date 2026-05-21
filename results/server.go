@@ -559,6 +559,7 @@ type Server struct {
 	resolver        SearchResolver
 	handler         http.Handler
 	maxPreviewBytes int64
+	ownerSessions   OwnerSessionStore
 }
 
 // NewServer constructs a results API server.
@@ -568,6 +569,7 @@ func NewServer(store *Store, validator *SeqmetaValidator, resolver SearchResolve
 		validator:       validator,
 		resolver:        resolver,
 		maxPreviewBytes: DefaultMaxPreviewBytes,
+		ownerSessions:   NewOwnerSessionStore(),
 	}
 
 	for _, opt := range opts {
@@ -629,7 +631,13 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleGetSession(c *gin.Context) {
-	user := currentUserFromGin(c)
+	user, err := CurrentUserFromContext(c, s.ownerSessions)
+	if err != nil {
+		writeServerError(c, http.StatusInternalServerError, err.Error())
+
+		return
+	}
+
 	if user == nil || user.Username == "" {
 		writeServerError(c, http.StatusUnauthorized, "authentication required")
 
@@ -643,25 +651,11 @@ func (s *Server) handleGetSession(c *gin.Context) {
 	})
 }
 
-func currentUserFromGin(c *gin.Context) *CurrentUser {
-	if c == nil {
-		return nil
-	}
-
-	if value, ok := c.Get(currentUserGinContextKey); ok {
-		if user := currentUserFromValue(value); user != nil {
-			return user
-		}
-	}
-
-	if value, ok := c.Get(goAuthserverUserGinContextKey); ok {
-		return currentUserFromValue(value)
-	}
-
-	return nil
-}
-
 func (s *Server) handlePostLogout(c *gin.Context) {
+	if s != nil && s.ownerSessions != nil {
+		s.ownerSessions.Delete(rawJWTFromRequest(c.Request))
+	}
+
 	c.Status(http.StatusNoContent)
 }
 

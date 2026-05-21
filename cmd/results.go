@@ -33,20 +33,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	osuser "os/user"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/wa/internal/authldap"
 	"github.com/wtsi-hgi/wa/mlwh"
 	"github.com/wtsi-hgi/wa/results"
 
 	_ "modernc.org/sqlite"
+)
+
+const (
+	resultsServerTokenBasename = ".wa-results-server.token"
+	resultsJWTBasename         = ".wa-results.jwt"
 )
 
 var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -54,6 +64,10 @@ var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
 var resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
 
 var resultsRegisterResolverOpener = openResultsRegisterResolver
+
+var resultsServeNewAuthServer = func(logWriter io.Writer) resultsServeAuthServer {
+	return gas.New(logWriter)
+}
 
 //nolint:unused // Overridden by results serve tests to avoid wall-clock waits.
 var resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
@@ -65,6 +79,34 @@ var resultsRegisterSeqmetaFlagMetaKeys = map[string]string{
 	"study":   results.SeqmetaIDStudyLimsKey,
 	"sample":  results.SeqmetaSampleNameKey,
 	"library": results.SeqmetaPipelineIDLimsKey,
+}
+
+type resultsServeMode int
+
+const (
+	resultsServeModeTLS resultsServeMode = iota + 1
+	resultsServeModeACME
+)
+
+func resolveResultsServeMode(cert, key, acme, cache string) (resultsServeMode, error) {
+	hasCert := strings.TrimSpace(cert) != ""
+	hasKey := strings.TrimSpace(key) != ""
+	hasACME := strings.TrimSpace(acme) != ""
+	hasCache := strings.TrimSpace(cache) != ""
+
+	if hasCert != hasKey || hasACME != hasCache {
+		return 0, errors.New("you must supply --cert and --key, or --acme and --cache")
+	}
+
+	if hasACME && hasCache {
+		return resultsServeModeACME, nil
+	}
+
+	if hasCert && hasKey {
+		return resultsServeModeTLS, nil
+	}
+
+	return 0, errors.New("you must supply --cert and --key, or --acme and --cache")
 }
 
 type resultsServeMLWHConfig struct {
@@ -99,6 +141,256 @@ func resolveResultsServeMLWHConfig(flagValue string, flagChanged bool) (resultsS
 		DSN:       resolvedDSN,
 		CachePath: cachePath,
 	}, true, nil
+}
+
+func resolveResultsServeSecurityConfig(
+	rawURL string,
+	port int,
+	cert string,
+	key string,
+	acme string,
+	cache string,
+	ldapServer string,
+	ldapDN string,
+	serverToken string,
+) (resultsServeSecurityConfig, error) {
+	addr, err := resolveResultsServeBindAddr(rawURL, port)
+	if err != nil {
+		return resultsServeSecurityConfig{}, err
+	}
+
+	mode, err := resolveResultsServeMode(cert, key, acme, cache)
+	if err != nil {
+		return resultsServeSecurityConfig{}, err
+	}
+
+	config := resultsServeSecurityConfig{
+		addr:        addr,
+		cert:        strings.TrimSpace(cert),
+		key:         strings.TrimSpace(key),
+		acme:        strings.TrimSpace(acme),
+		cache:       strings.TrimSpace(cache),
+		ldapServer:  strings.TrimSpace(ldapServer),
+		ldapDN:      strings.TrimSpace(ldapDN),
+		serverToken: strings.TrimSpace(serverToken),
+		mode:        mode,
+	}
+
+	if err := validateResultsServeLDAP(config.ldapServer, config.ldapDN); err != nil {
+		return resultsServeSecurityConfig{}, err
+	}
+
+	if err := validateResultsServeServerToken(config.serverToken); err != nil {
+		return resultsServeSecurityConfig{}, err
+	}
+
+	if mode == resultsServeModeACME {
+		if err := validateResultsServeACMECache(config.cache); err != nil {
+			return resultsServeSecurityConfig{}, err
+		}
+	}
+
+	return config, nil
+}
+
+func resolveResultsServeBindAddr(rawURL string, port int) (string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		if port < 0 || port > 65535 {
+			return "", fmt.Errorf("invalid --port %d", port)
+		}
+
+		return fmt.Sprintf("127.0.0.1:%d", port), nil
+	}
+
+	if strings.Contains(trimmed, "://") {
+		parsed, err := url.Parse(trimmed)
+		if err != nil {
+			return "", fmt.Errorf("invalid --url: %w", err)
+		}
+		if parsed.Scheme != "https" {
+			return "", errors.New("results serve URL must use https")
+		}
+		if parsed.User != nil || parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", errors.New("results serve URL must be a host[:port] with no path")
+		}
+
+		trimmed = parsed.Host
+	}
+
+	if strings.ContainsAny(trimmed, "/?#") {
+		return "", errors.New("results serve bind address must be host:port")
+	}
+
+	if _, portValue, err := net.SplitHostPort(trimmed); err != nil {
+		return "", fmt.Errorf("results serve bind address must be host:port: %w", err)
+	} else if portValue == "" {
+		return "", errors.New("results serve bind address must include a port")
+	}
+
+	return trimmed, nil
+}
+
+func validateResultsServeLDAP(ldapServer, ldapDN string) error {
+	if ldapServer == "" || ldapDN == "" {
+		return errors.New("--ldap_server and --ldap_dn are required")
+	}
+
+	if !strings.Contains(ldapDN, "%s") {
+		return errors.New("--ldap_dn must contain %s")
+	}
+
+	return nil
+}
+
+func validateResultsServeServerToken(serverToken string) error {
+	if serverToken == "" {
+		return errors.New("--server-token is required")
+	}
+
+	if !filepath.IsAbs(serverToken) && filepath.Base(serverToken) != serverToken {
+		return errors.New("--server-token must be a basename or absolute path")
+	}
+
+	return nil
+}
+
+func validateResultsServeACMECache(cacheDir string) error {
+	stat, err := os.Stat(cacheDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("cert cache directory does not exist")
+		}
+
+		return fmt.Errorf("stat cert cache directory: %w", err)
+	}
+
+	if !stat.IsDir() {
+		return errors.New("cert cache path must be a directory")
+	}
+
+	if stat.Mode().Perm() != 0o700 {
+		return errors.New("cert cache directory must only be readable by the server user")
+	}
+
+	return nil
+}
+
+func resultsServeOwnerSessionConfig(tokenBasename string, store results.OwnerSessionStore) (results.OwnerSessionConfig, error) {
+	currentUser, err := osuser.Current()
+	if err != nil {
+		return results.OwnerSessionConfig{}, err
+	}
+
+	tokenPath, err := resultsServeServerTokenPath(tokenBasename)
+	if err != nil {
+		return results.OwnerSessionConfig{}, err
+	}
+
+	serverToken, err := gas.GenerateAndStoreTokenForSelfClient(tokenPath)
+	if err != nil {
+		return results.OwnerSessionConfig{}, err
+	}
+
+	return results.OwnerSessionConfig{
+		ServerUsername: currentUser.Username,
+		ServerToken:    serverToken,
+		Store:          store,
+	}, nil
+}
+
+func resultsServeServerTokenPath(tokenBasename string) (string, error) {
+	if filepath.IsAbs(tokenBasename) {
+		return tokenBasename, nil
+	}
+
+	tokenDir, err := gas.TokenDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(tokenDir, tokenBasename), nil
+}
+
+func startResultsServeAuthServer(ctx context.Context, authServer resultsServeAuthServer, config resultsServeSecurityConfig) error {
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+	defer authServer.Stop()
+
+	go func() {
+		<-serveCtx.Done()
+		authServer.Stop()
+	}()
+
+	switch config.mode {
+	case resultsServeModeTLS:
+		return authServer.Start(config.addr, config.cert, config.key)
+	case resultsServeModeACME:
+		if resultsServeUseACMETLSOnly(config.addr) {
+			return authServer.StartACMETLSOnly(config.addr, config.acme, config.cache)
+		}
+
+		return authServer.StartACME(config.addr, config.acme, config.cache)
+	default:
+		return errors.New("results serve mode is not configured")
+	}
+}
+
+func resultsServeUseACMETLSOnly(addr string) bool {
+	_, port, err := net.SplitHostPort(addr)
+
+	return err == nil && (port == "443" || port == "https")
+}
+
+type resultsServeAuthServer interface {
+	Router() *gin.Engine
+	AuthRouter() *gin.RouterGroup
+	EnableAuthWithServerToken(certFile, keyFile, tokenBasename string, acb gas.AuthCallback) error
+	Start(addr, certFile, keyFile string) error
+	StartACME(addr string, acmeURL, cacheDir string) error
+	StartACMETLSOnly(addr string, acmeURL, cacheDir string) error
+	Stop()
+}
+
+type resultsServeSecurityConfig struct {
+	addr        string
+	cert        string
+	key         string
+	acme        string
+	cache       string
+	ldapServer  string
+	ldapDN      string
+	serverToken string
+	mode        resultsServeMode
+}
+
+func (c resultsServeSecurityConfig) authCertFile() string {
+	return c.cert
+}
+
+func (c resultsServeSecurityConfig) authKeyFile() string {
+	if c.key != "" {
+		return c.key
+	}
+
+	if c.mode == resultsServeModeACME {
+		return filepath.Join(c.cache, "wa-results-jwt.key")
+	}
+
+	return ""
+}
+
+func (c resultsServeSecurityConfig) authCallback() gas.AuthCallback {
+	return func(username, password string) (bool, string) {
+		return authldap.CheckPassword(
+			authldap.Dial,
+			gas.UserNameToUID,
+			c.ldapServer,
+			c.ldapDN,
+			username,
+			password,
+		)
+	}
 }
 
 type resultsRegisterResolver interface {
@@ -1319,6 +1611,14 @@ func resultsEndpointURL(serverURL, resourcePath string) (*url.URL, error) {
 
 func newResultsServeCommand() *cobra.Command {
 	var port int
+	var bindURL string
+	var cert string
+	var key string
+	var acme string
+	var cache string
+	var ldapServer string
+	var ldapDN string
+	var serverToken string
 	var dbPath string
 	var mlwhCache string
 	var seqmetaURL string
@@ -1329,6 +1629,21 @@ func newResultsServeCommand() *cobra.Command {
 		Short: "Serve the results HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := commandContext(cmd)
+
+			securityConfig, err := resolveResultsServeSecurityConfig(
+				bindURL,
+				port,
+				cert,
+				key,
+				acme,
+				cache,
+				ldapServer,
+				ldapDN,
+				serverToken,
+			)
+			if err != nil {
+				return err
+			}
 
 			dsn, err := resolveResultsServeDBDSN(dbPath, cmd.Flags().Changed("db"))
 			if err != nil {
@@ -1371,31 +1686,44 @@ func newResultsServeCommand() *cobra.Command {
 				resolver = results.NewMLWHSearchResolver(mlwhClient)
 			}
 
-			listener, err := listenFunc("tcp", fmt.Sprintf(":%d", port))
+			authServer := resultsServeNewAuthServer(cmd.ErrOrStderr())
+			ownerStore := results.NewOwnerSessionStore()
+
+			ownerConfig, err := resultsServeOwnerSessionConfig(securityConfig.serverToken, ownerStore)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = listener.Close() }()
 
-			httpServer := &http.Server{Handler: results.NewServer(store, validator, resolver).Handler()}
-			serveCtx, cancelServe := context.WithCancel(ctx)
-
-			go func() {
-				<-serveCtx.Done()
-				_ = httpServer.Shutdown(context.Background())
-			}()
-
-			err = httpServer.Serve(listener)
-			cancelServe()
-			if errors.Is(err, http.ErrServerClosed) {
-				return nil
+			authServer.Router().Use(results.OwnerSessionMiddleware(ownerConfig))
+			if err := authServer.EnableAuthWithServerToken(
+				securityConfig.authCertFile(),
+				securityConfig.authKeyFile(),
+				securityConfig.serverToken,
+				securityConfig.authCallback(),
+			); err != nil {
+				return err
 			}
 
-			return err
+			results.NewServer(
+				store,
+				validator,
+				resolver,
+				results.WithOwnerSessionStore(ownerStore),
+			).RegisterRoutes(authServer.Router(), authServer.AuthRouter())
+
+			return startResultsServeAuthServer(ctx, authServer, securityConfig)
 		},
 	}
 
-	command.Flags().IntVar(&port, "port", 8080, "Port to bind")
+	command.Flags().StringVar(&bindURL, "url", firstEnv("WA_RESULTS_SERVER_URL"), "HTTPS bind address (defaults to WA_RESULTS_SERVER_URL or 127.0.0.1:<port>)")
+	command.Flags().IntVar(&port, "port", 8080, "Deprecated HTTPS port alias used only when --url is unset")
+	command.Flags().StringVar(&cert, "cert", firstEnv("WA_RESULTS_SERVER_CERT"), "TLS certificate path")
+	command.Flags().StringVarP(&key, "key", "k", firstEnv("WA_RESULTS_SERVER_KEY"), "TLS private key path")
+	command.Flags().StringVarP(&acme, "acme", "a", firstEnv("WA_RESULTS_SERVER_ACME"), "ACME directory URL")
+	command.Flags().StringVarP(&cache, "cache", "c", firstEnv("WA_RESULTS_SERVER_CACHE"), "ACME certificate cache directory")
+	command.Flags().StringVarP(&ldapServer, "ldap_server", "s", firstEnv("WA_RESULTS_LDAP_SERVER"), "LDAP server FQDN")
+	command.Flags().StringVarP(&ldapDN, "ldap_dn", "l", firstEnv("WA_RESULTS_LDAP_DN"), "LDAP bind DN template containing %s")
+	command.Flags().StringVar(&serverToken, "server-token", resultsServerTokenBasename, "Server token basename or absolute path")
 	command.Flags().StringVar(&dbPath, "db", "results.db", "SQLite database path or MySQL DSN without a password; defaults to WA_RESULTS_DB_PATH when unset")
 	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
 	command.Flags().StringVar(&seqmetaURL, "seqmeta-url", firstEnv("WA_SEQMETA_BACKEND_URL"), "Base URL for seqmeta validation (defaults to WA_SEQMETA_BACKEND_URL)")

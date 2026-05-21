@@ -22,8 +22,8 @@ format the bind DN with the username, perform UID lookup before dialing,
 and return `(false, "")` for lookup or bind failures. Covering all 3
 acceptance tests from A3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: A4 - Owner session tracking and logout
 
@@ -37,8 +37,8 @@ server-starting user logs in with the server token, carry owner state
 through JWT refresh, and clear owner markers on logout. Covering all 6
 acceptance tests from A4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.3: A2 - HTTPS-only serving
 
@@ -51,5 +51,5 @@ validation in `cmd/results_serve_test.go`, including strict ACME cache
 permissions and legacy `--port` handling. Depends on items 3.1 and 3.2.
 Covering all 5 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

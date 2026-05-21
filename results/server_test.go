@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -211,6 +212,165 @@ func newResultsGinHandlerForTest(t *testing.T, server *Server, user *CurrentUser
 	server.RegisterRoutes(router, auth)
 
 	return router
+}
+
+func TestServerOwnerSessionsA4(t *testing.T) {
+	convey.Convey("A4.1: Given server user svc and the server token, when POST /rest/v1/jwt logs in, then the returned JWT is marked owner and session reports owner", t, func() {
+		handler, ownerStore := newOwnerSessionAuthHandlerForTest(t)
+		token := loginJWTForTest(t, handler, "svc", "server-token")
+
+		convey.So(ownerStore.IsOwner(token), convey.ShouldBeTrue)
+
+		response := performResultsJWTRequestForTest(t, handler, http.MethodGet, gas.EndPointAuth+"/session", token, nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var session SessionResponse
+		decodeJSONResponseForTest(t, response, &session)
+		convey.So(session, convey.ShouldResemble, SessionResponse{
+			Authenticated: true,
+			Username:      "svc",
+			IsOwner:       true,
+		})
+	})
+
+	convey.Convey("A4.2: Given server-starting username svc, when svc logs in with LDAP/password instead of the server token, then the returned JWT is not marked owner", t, func() {
+		handler, ownerStore := newOwnerSessionAuthHandlerForTest(t)
+		token := loginJWTForTest(t, handler, "svc", "ldap-password")
+
+		convey.So(ownerStore.IsOwner(token), convey.ShouldBeFalse)
+
+		response := performResultsJWTRequestForTest(t, handler, http.MethodGet, gas.EndPointAuth+"/session", token, nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var session SessionResponse
+		decodeJSONResponseForTest(t, response, &session)
+		convey.So(session.IsOwner, convey.ShouldBeFalse)
+	})
+
+	convey.Convey("A4.3: Given an owner JWT, when GET /rest/v1/jwt refreshes it, then the refreshed JWT is marked owner", t, func() {
+		handler, ownerStore := newOwnerSessionAuthHandlerForTest(t)
+		token := loginJWTForTest(t, handler, "svc", "server-token")
+
+		response := performResultsJWTRequestForTest(t, handler, http.MethodGet, gas.EndPointJWT, token, nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var refreshed string
+		decodeJSONResponseForTest(t, response, &refreshed)
+		convey.So(ownerStore.IsOwner(refreshed), convey.ShouldBeTrue)
+
+		sessionResponse := performResultsJWTRequestForTest(t, handler, http.MethodGet, gas.EndPointAuth+"/session", refreshed, nil)
+		convey.So(sessionResponse.Code, convey.ShouldEqual, http.StatusOK)
+
+		var session SessionResponse
+		decodeJSONResponseForTest(t, sessionResponse, &session)
+		convey.So(session.IsOwner, convey.ShouldBeTrue)
+	})
+
+	convey.Convey("A4.4: Given an LDAP/password JWT for server username svc, when it is refreshed, then the refreshed JWT is not marked owner", t, func() {
+		handler, ownerStore := newOwnerSessionAuthHandlerForTest(t)
+		token := loginJWTForTest(t, handler, "svc", "ldap-password")
+
+		response := performResultsJWTRequestForTest(t, handler, http.MethodGet, gas.EndPointJWT, token, nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var refreshed string
+		decodeJSONResponseForTest(t, response, &refreshed)
+		convey.So(ownerStore.IsOwner(refreshed), convey.ShouldBeFalse)
+
+		sessionResponse := performResultsJWTRequestForTest(t, handler, http.MethodGet, gas.EndPointAuth+"/session", refreshed, nil)
+		convey.So(sessionResponse.Code, convey.ShouldEqual, http.StatusOK)
+
+		var session SessionResponse
+		decodeJSONResponseForTest(t, sessionResponse, &session)
+		convey.So(session.IsOwner, convey.ShouldBeFalse)
+	})
+
+	convey.Convey("A4.5: Given any authenticated JWT, when POST /rest/v1/auth/logout is called, then status is 204 and any owner marker is deleted", t, func() {
+		handler, ownerStore := newOwnerSessionAuthHandlerForTest(t)
+		token := loginJWTForTest(t, handler, "svc", "server-token")
+		convey.So(ownerStore.IsOwner(token), convey.ShouldBeTrue)
+
+		response := performResultsJWTRequestForTest(t, handler, http.MethodPost, gas.EndPointAuth+"/logout", token, nil)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusNoContent)
+		convey.So(ownerStore.IsOwner(token), convey.ShouldBeFalse)
+
+		sessionResponse := performResultsJWTRequestForTest(t, handler, http.MethodGet, gas.EndPointAuth+"/session", token, nil)
+		convey.So(sessionResponse.Code, convey.ShouldEqual, http.StatusOK)
+
+		var session SessionResponse
+		decodeJSONResponseForTest(t, sessionResponse, &session)
+		convey.So(session.IsOwner, convey.ShouldBeFalse)
+	})
+}
+
+func newOwnerSessionAuthHandlerForTest(t *testing.T) (http.Handler, OwnerSessionStore) {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+
+	ownerStore := NewOwnerSessionStore()
+	authServer := gas.New(io.Discard)
+	authServer.Router().Use(OwnerSessionMiddleware(OwnerSessionConfig{
+		ServerUsername: "svc",
+		ServerToken:    []byte("server-token"),
+		Store:          ownerStore,
+	}))
+
+	keyPath := filepath.Join(t.TempDir(), "jwt.key")
+	err := authServer.EnableAuth("", keyPath, func(username, password string) (bool, string) {
+		switch {
+		case username == "svc" && password == "server-token":
+			return true, "1234"
+		case username == "svc" && password == "ldap-password":
+			return true, "1234"
+		default:
+			return false, ""
+		}
+	})
+	if err != nil {
+		t.Fatalf("enable auth: %v", err)
+	}
+
+	resultsServer := NewServer(
+		newSQLiteStoreForTest(t),
+		nil,
+		nil,
+		WithOwnerSessionStore(ownerStore),
+	)
+	resultsServer.RegisterRoutes(authServer.Router(), authServer.AuthRouter())
+
+	return authServer.Router(), ownerStore
+}
+
+func loginJWTForTest(t *testing.T, handler http.Handler, username, password string) string {
+	t.Helper()
+
+	response := performResultsRequestForTest(t, handler, http.MethodPost, gas.EndPointJWT, mustJSONBodyForTest(t, map[string]string{
+		"username": username,
+		"password": password,
+	}))
+	if response.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	var token string
+	decodeJSONResponseForTest(t, response, &token)
+
+	return token
+}
+
+func performResultsJWTRequestForTest(t *testing.T, handler http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+
+	path = normalizeResultsPathForTest(method, path)
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	return response
 }
 
 func TestServerPostResults(t *testing.T) {
