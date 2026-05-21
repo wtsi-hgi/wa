@@ -307,7 +307,7 @@ func resultsServeOwnerSessionConfig(tokenBasename string, store results.OwnerSes
 		return results.OwnerSessionConfig{}, err
 	}
 
-	serverToken, err := gas.GenerateAndStoreTokenForSelfClient(tokenPath)
+	serverToken, err := resultsServeServerToken(tokenPath)
 	if err != nil {
 		return results.OwnerSessionConfig{}, err
 	}
@@ -317,6 +317,46 @@ func resultsServeOwnerSessionConfig(tokenBasename string, store results.OwnerSes
 		ServerToken:    serverToken,
 		Store:          store,
 	}, nil
+}
+
+func resultsServeServerToken(tokenPath string) ([]byte, error) {
+	if token, err := gas.GetStoredToken(tokenPath); err == nil && token != nil {
+		return token, nil
+	}
+
+	token, err := gas.GenerateToken()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := writeResultsServeServerToken(tokenPath, token); err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
+
+func writeResultsServeServerToken(tokenPath string, token []byte) error {
+	file, err := os.OpenFile(tokenPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		_ = file.Close()
+	}()
+
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+
+	if n, err := file.Write(token); err != nil {
+		return err
+	} else if n != len(token) {
+		return io.ErrShortWrite
+	}
+
+	return nil
 }
 
 func resultsServeServerTokenPath(tokenBasename string) (string, error) {

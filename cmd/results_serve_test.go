@@ -550,6 +550,25 @@ func TestResultsServeCommandA2(t *testing.T) {
 		convey.So(fakeAuth.enableCalls[0].tokenBasename, convey.ShouldEqual, resultsServerTokenBasename)
 	})
 
+	convey.Convey("Given an existing server token with loose permissions, owner-session setup rotates it and keeps authserver token reuse aligned", t, func() {
+		tokenPath := filepath.Join(t.TempDir(), "server.token")
+		leakedToken, err := gas.GenerateToken()
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(os.WriteFile(tokenPath, leakedToken, 0o644), convey.ShouldBeNil)
+
+		ownerConfig, err := resultsServeOwnerSessionConfig(tokenPath, results.NewOwnerSessionStore())
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(bytes.Equal(ownerConfig.ServerToken, leakedToken), convey.ShouldBeFalse)
+
+		info, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o600)
+
+		authServerToken, err := gas.GenerateAndStoreTokenForSelfClient(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(authServerToken, convey.ShouldResemble, ownerConfig.ServerToken)
+	})
+
 	convey.Convey("A2.3b: Given both cert/key and ACME flags, when validation runs, then TLS mode selection is rejected as ambiguous", t, func() {
 		cacheDir := filepath.Join(t.TempDir(), "certs")
 		convey.So(os.Mkdir(cacheDir, 0o700), convey.ShouldBeNil)

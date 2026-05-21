@@ -899,6 +899,7 @@ func TestServerPostResults(t *testing.T) {
 		decodeJSONResponseForTest(t, response, &result)
 
 		convey.So(result.Requester, convey.ShouldEqual, "alice")
+		convey.So(result.Access, convey.ShouldResemble, AccessState{CanView: true})
 		convey.So(result.CreatedAt.IsZero(), convey.ShouldBeFalse)
 		convey.So(regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(result.ID), convey.ShouldBeTrue)
 	})

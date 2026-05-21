@@ -713,6 +713,7 @@ func (s *Server) handlePostResults(c *gin.Context) {
 		status = http.StatusCreated
 	}
 
+	result.Access = AccessState{CanView: true}
 	writeJSON(c, status, result)
 }
 
