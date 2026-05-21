@@ -24,5 +24,5 @@ auth *gin.RouterGroup)`, and migrate `results/server_test.go` plus
 existing route behavior while moving paths under `/rest/v1` and
 `/rest/v1/auth`. Covering all 4 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

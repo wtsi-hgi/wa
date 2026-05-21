@@ -35,11 +35,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
@@ -47,6 +50,23 @@ type seqmetaStudySamplesResponseForTest struct {
 	status  int
 	samples []seqmetaSampleForSearch
 	body    string
+}
+
+func normalizeResultsPathForTest(method, path string) string {
+	if strings.HasPrefix(path, gas.EndPointREST) {
+		return path
+	}
+
+	if !strings.HasPrefix(path, "/results") {
+		return path
+	}
+
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodDelete:
+		return gas.EndPointAuth + path
+	default:
+		return gas.EndPointREST + path
+	}
 }
 
 func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySamplesResponseForTest) *httptest.Server {
@@ -117,6 +137,80 @@ func (m *mockSearchExpander) ResolveSampleName(ctx context.Context, raw string) 
 	}
 
 	return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
+}
+
+func TestServerRegisterRoutesA1(t *testing.T) {
+	convey.Convey("A1.1: Given a Gin router with RegisterRoutes, when GET /rest/v1/results is called, then status 200 and body is a JSON array of all matching rows", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-a1-one", func(reg *Registration) {}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-a1-two", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-a1-two"
+		}))
+
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), nil)
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointREST+"/results", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+		convey.So(results, convey.ShouldHaveLength, 2)
+	})
+
+	convey.Convey("A1.2: Given a registered result, when GET /rest/v1/auth/results/<id> is called with a fake authorized user, then status 200 and the JSON id equals the stored ID", t, func() {
+		store := newSQLiteStoreForTest(t)
+		stored := seedResultSetForTest(t, store, searchRegistrationForTest("run-a1-auth-detail", func(reg *Registration) {}))
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/results/"+stored.ID, nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var result ResultSet
+		decodeJSONResponseForTest(t, response, &result)
+		convey.So(result.ID, convey.ShouldEqual, stored.ID)
+	})
+
+	convey.Convey("A1.3: Given a valid JWT for user alice, when GET /rest/v1/auth/session is called, then status is 200 with the current session JSON", t, func() {
+		router := newResultsGinHandlerForTest(t, NewServer(newSQLiteStoreForTest(t), nil, nil), &CurrentUser{
+			Username: "alice",
+			User:     authUserForTest{},
+		})
+
+		response := performResultsRequestForTest(t, router, http.MethodGet, gas.EndPointAuth+"/session", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var session SessionResponse
+		decodeJSONResponseForTest(t, response, &session)
+		convey.So(session, convey.ShouldResemble, SessionResponse{
+			Authenticated: true,
+			Username:      "alice",
+			IsOwner:       false,
+		})
+	})
+}
+
+func newResultsGinHandlerForTest(t *testing.T, server *Server, user *CurrentUser) http.Handler {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	auth := router.Group(gas.EndPointAuth)
+	if user != nil {
+		auth.Use(func(c *gin.Context) {
+			c.Set(currentUserGinContextKey, user)
+			c.Next()
+		})
+	}
+
+	server.RegisterRoutes(router, auth)
+
+	return router
 }
 
 func TestServerPostResults(t *testing.T) {
@@ -1916,6 +2010,7 @@ func TestServerPutResultFiles(t *testing.T) {
 func performResultsRequestForTest(t *testing.T, handler http.Handler, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 
+	path = normalizeResultsPathForTest(method, path)
 	request := httptest.NewRequest(method, path, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 

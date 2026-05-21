@@ -38,7 +38,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
@@ -93,6 +94,11 @@ var candidateSampleNameMetaKeys = []string{
 var combinedLaneMetaKeys = []string{"seqmeta_lane"}
 
 const defaultSeqmetaResolverCacheTTL = 5 * time.Minute
+
+const (
+	currentUserGinContextKey      = "wa_current_user"
+	goAuthserverUserGinContextKey = "user"
+)
 
 type sampleMetadataSearchKey struct {
 	key  string
@@ -539,6 +545,13 @@ func uniqueSangerIDs(samples []seqmetaSampleForSearch) []string {
 	return ids
 }
 
+// SessionResponse reports the authenticated caller's current session state.
+type SessionResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	Username      string `json:"username"`
+	IsOwner       bool   `json:"is_owner"`
+}
+
 // Server serves the results REST API.
 type Server struct {
 	store           *Store
@@ -563,62 +576,127 @@ func NewServer(store *Store, validator *SeqmetaValidator, resolver SearchResolve
 		}
 	}
 
-	router := chi.NewRouter()
-	router.Get("/results", server.handleGetResults)
-	router.Post("/results", server.handlePostResults)
-	router.Get("/results/stats", server.handleGetStats)
-	router.Get("/results/meta-keys", server.handleGetMetaKeys)
-	router.Get("/results/{id}/file", server.handleGetFile)
-	router.Get("/results/{id}/files", server.handleGetResultFiles)
-	router.Put("/results/{id}/files", server.handlePutResultFiles)
-	router.Get("/results/{id}", server.handleGetResultByID)
-	router.Delete("/results/{id}", server.handleDeleteResultByID)
-	server.handler = router
-
 	return server
+}
+
+func (s *Server) newHandler() http.Handler {
+	gin.SetMode(gin.ReleaseMode)
+
+	router := gin.New()
+	auth := router.Group(gas.EndPointAuth)
+
+	s.RegisterRoutes(router, auth)
+
+	return router
+}
+
+// RegisterRoutes registers the results API routes on the provided Gin routers.
+func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
+	if router != nil {
+		router.GET(gas.EndPointREST+"/results", s.handleGetResults)
+		router.GET(gas.EndPointREST+"/results/stats", s.handleGetStats)
+		router.GET(gas.EndPointREST+"/results/meta-keys", s.handleGetMetaKeys)
+		router.GET(gas.EndPointREST+"/results/:id/file", s.handleGetFile)
+		router.GET(gas.EndPointREST+"/results/:id/files", s.handleGetResultFiles)
+		router.GET(gas.EndPointREST+"/results/:id", s.handleGetResultByID)
+	}
+
+	if auth != nil {
+		auth.GET("/session", s.handleGetSession)
+		auth.POST("/logout", s.handlePostLogout)
+		auth.GET("/results", s.handleGetResults)
+		auth.GET("/results/stats", s.handleGetStats)
+		auth.POST("/results", s.handlePostResults)
+		auth.GET("/results/:id/file", s.handleGetFile)
+		auth.GET("/results/:id/files", s.handleGetResultFiles)
+		auth.PUT("/results/:id/files", s.handlePutResultFiles)
+		auth.GET("/results/:id", s.handleGetResultByID)
+		auth.DELETE("/results/:id", s.handleDeleteResultByID)
+	}
 }
 
 // Handler returns the configured HTTP handler.
 func (s *Server) Handler() http.Handler {
-	if s == nil || s.handler == nil {
+	if s == nil {
 		return http.NotFoundHandler()
+	}
+
+	if s.handler == nil {
+		s.handler = s.newHandler()
 	}
 
 	return s.handler
 }
 
-func (s *Server) handlePostResults(w http.ResponseWriter, r *http.Request) {
-	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+func (s *Server) handleGetSession(c *gin.Context) {
+	user := currentUserFromGin(c)
+	if user == nil || user.Username == "" {
+		writeServerError(c, http.StatusUnauthorized, "authentication required")
 
 		return
 	}
 
-	registration, err := decodeRegistration(r.Body)
+	writeJSON(c, http.StatusOK, SessionResponse{
+		Authenticated: true,
+		Username:      user.Username,
+		IsOwner:       user.IsOwner,
+	})
+}
+
+func currentUserFromGin(c *gin.Context) *CurrentUser {
+	if c == nil {
+		return nil
+	}
+
+	if value, ok := c.Get(currentUserGinContextKey); ok {
+		if user := currentUserFromValue(value); user != nil {
+			return user
+		}
+	}
+
+	if value, ok := c.Get(goAuthserverUserGinContextKey); ok {
+		return currentUserFromValue(value)
+	}
+
+	return nil
+}
+
+func (s *Server) handlePostLogout(c *gin.Context) {
+	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) handlePostResults(c *gin.Context) {
+	if s == nil || s.store == nil {
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
+
+		return
+	}
+
+	registration, err := decodeRegistration(c.Request.Body)
 	if err != nil {
-		writeServerError(w, http.StatusBadRequest, "invalid JSON body")
+		writeServerError(c, http.StatusBadRequest, "invalid JSON body")
 
 		return
 	}
 
 	outputDirectoryGID, err := OutputDirectoryGID(registration.OutputDirectory)
 	if err != nil {
-		writeDomainError(w, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+		writeDomainError(c, fmt.Errorf("%w: %v", ErrInvalidInput, err))
 
 		return
 	}
 
 	registration.OutputDirectoryGID = outputDirectoryGID
 
-	if err := s.validator.ValidateMetadata(r.Context(), registration.Metadata); err != nil {
-		writeDomainError(w, err)
+	if err := s.validator.ValidateMetadata(c.Request.Context(), registration.Metadata); err != nil {
+		writeDomainError(c, err)
 
 		return
 	}
 
-	result, err := s.store.Upsert(r.Context(), registration)
+	result, err := s.store.Upsert(c.Request.Context(), registration)
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
@@ -628,11 +706,11 @@ func (s *Server) handlePostResults(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 
-	writeJSON(w, status, result)
+	writeJSON(c, status, result)
 }
 
-func writeServerError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+func writeServerError(c *gin.Context, status int, message string) {
+	writeJSON(c, status, map[string]string{"error": message})
 }
 
 func decodeRegistration(body io.ReadCloser) (*Registration, error) {
@@ -733,22 +811,24 @@ func canonicalStudySearchValues(ctx context.Context, resolver SearchResolver, va
 	return searchValues, expansionValues, nil
 }
 
-func writeDomainError(w http.ResponseWriter, err error) {
+func writeDomainError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
-		writeServerError(w, http.StatusBadRequest, err.Error())
+		writeServerError(c, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrFileGone):
-		writeServerError(w, http.StatusGone, "file not found on disk")
+		writeServerError(c, http.StatusGone, "file not found on disk")
 	case errors.Is(err, ErrFileTooLarge):
-		writeServerError(w, http.StatusRequestEntityTooLarge, "file exceeds preview limit")
+		writeServerError(c, http.StatusRequestEntityTooLarge, "file exceeds preview limit")
+	case errors.Is(err, ErrLocked):
+		writeServerError(c, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrNotFound):
-		writeServerError(w, http.StatusNotFound, err.Error())
+		writeServerError(c, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrSeqmetaRejected):
-		writeServerError(w, http.StatusUnprocessableEntity, err.Error())
+		writeServerError(c, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, ErrSeqmetaFailed):
-		writeServerError(w, http.StatusBadGateway, err.Error())
+		writeServerError(c, http.StatusBadGateway, err.Error())
 	default:
-		writeServerError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(c, http.StatusInternalServerError, err.Error())
 	}
 }
 
@@ -819,43 +899,42 @@ func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResol
 	return mergeSearchValues(resolvedSamples, samples), runs, lanes, true, nil
 }
 
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	_ = json.NewEncoder(w).Encode(payload)
+func writeJSON(c *gin.Context, status int, payload any) {
+	c.Writer.Header().Set("Content-Type", "application/json")
+	c.JSON(status, payload)
+	_, _ = c.Writer.Write([]byte("\n"))
 }
 
-func (s *Server) handlePutResultFiles(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePutResultFiles(c *gin.Context) {
 	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
 
 		return
 	}
 
-	files, err := decodeFileEntries(r.Body)
+	files, err := decodeFileEntries(c.Request.Body)
 	if err != nil {
-		writeServerError(w, http.StatusBadRequest, "invalid JSON body")
+		writeServerError(c, http.StatusBadRequest, "invalid JSON body")
 
 		return
 	}
 
-	resultID := chi.URLParam(r, "id")
+	resultID := c.Param("id")
 
-	if err := s.store.ReplaceOutputFiles(r.Context(), resultID, files); err != nil {
-		writeDomainError(w, err)
+	if err := s.store.ReplaceOutputFiles(c.Request.Context(), resultID, files); err != nil {
+		writeDomainError(c, err)
 
 		return
 	}
 
-	storedFiles, err := s.store.GetFiles(r.Context(), resultID)
+	storedFiles, err := s.store.GetFiles(c.Request.Context(), resultID)
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, storedFiles)
+	writeJSON(c, http.StatusOK, storedFiles)
 }
 
 func decodeFileEntries(body io.ReadCloser) ([]FileEntry, error) {
@@ -868,13 +947,14 @@ func decodeFileEntries(body io.ReadCloser) ([]FileEntry, error) {
 	return files, nil
 }
 
-func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetResults(c *gin.Context) {
 	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
 
 		return
 	}
 
+	r := c.Request
 	params := multiSearchParamsFromRequest(r)
 	studyValues := combinedStudySearchValues(r)
 	libraryTypeValues := combinedSearchValues(r, "library")
@@ -940,23 +1020,23 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 	if len(studyValues) > 0 {
 		if s.resolver == nil {
 			if legacyStudyIDUsed {
-				writeServerError(w, http.StatusBadRequest, "seqmeta not configured")
+				writeServerError(c, http.StatusBadRequest, "seqmeta not configured")
 
 				return
 			}
 		} else {
-			studySearchValues, studyExpansionValues, err := canonicalStudySearchValues(r.Context(), s.resolver, studyValues)
+			studySearchValues, studyExpansionValues, err := canonicalStudySearchValues(c.Request.Context(), s.resolver, studyValues)
 			if err != nil {
-				writeDomainError(w, err)
+				writeDomainError(c, err)
 
 				return
 			}
 
 			studyValues = studySearchValues
 			for _, studyValue := range studyExpansionValues {
-				samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindStudyLimsID, studyValue)
+				samples, runs, lanes, err := s.resolver.Expand(c.Request.Context(), mlwh.KindStudyLimsID, studyValue)
 				if err != nil {
-					writeDomainError(w, err)
+					writeDomainError(c, err)
 
 					return
 				}
@@ -974,9 +1054,9 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	if len(libraryTypeValues) > 0 && s.resolver != nil {
 		for _, libraryValue := range libraryTypeValues {
-			samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindLibraryType, libraryValue)
+			samples, runs, lanes, err := s.resolver.Expand(c.Request.Context(), mlwh.KindLibraryType, libraryValue)
 			if err != nil {
-				writeDomainError(w, err)
+				writeDomainError(c, err)
 
 				return
 			}
@@ -989,9 +1069,9 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	if len(libraryIDValues) > 0 && s.resolver != nil {
 		for _, libraryValue := range libraryIDValues {
-			samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindLibraryID, libraryValue)
+			samples, runs, lanes, err := s.resolver.Expand(c.Request.Context(), mlwh.KindLibraryID, libraryValue)
 			if err != nil {
-				writeDomainError(w, err)
+				writeDomainError(c, err)
 
 				return
 			}
@@ -1004,9 +1084,9 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	if len(libraryLimsValues) > 0 && s.resolver != nil {
 		for _, libraryValue := range libraryLimsValues {
-			samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindLibraryLimsID, libraryValue)
+			samples, runs, lanes, err := s.resolver.Expand(c.Request.Context(), mlwh.KindLibraryLimsID, libraryValue)
 			if err != nil {
-				writeDomainError(w, err)
+				writeDomainError(c, err)
 
 				return
 			}
@@ -1019,9 +1099,9 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 
 	if len(directRunValues) > 0 && s.resolver != nil {
 		for _, runValue := range directRunValues {
-			samples, runs, lanes, err := s.resolver.Expand(r.Context(), mlwh.KindRunID, runValue)
+			samples, runs, lanes, err := s.resolver.Expand(c.Request.Context(), mlwh.KindRunID, runValue)
 			if err != nil {
-				writeDomainError(w, err)
+				writeDomainError(c, err)
 
 				return
 			}
@@ -1037,29 +1117,29 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		!hasLibraryValues &&
 		len(directRunValues) == 0 &&
 		s.resolver != nil {
-		candidateSampleNames, err := s.store.DistinctMetadataValues(r.Context(), candidateSampleNameMetaKeys)
+		candidateSampleNames, err := s.store.DistinctMetadataValues(c.Request.Context(), candidateSampleNameMetaKeys)
 		if err != nil {
-			writeDomainError(w, err)
+			writeDomainError(c, err)
 
 			return
 		}
 
 		samples, runs, lanes, expanded, err := expandCandidateSampleSearchValues(
-			r.Context(),
+			c.Request.Context(),
 			s.resolver,
 			candidateSampleNames,
 			sampleExpansionRequests,
 		)
 		if err != nil {
-			writeDomainError(w, err)
+			writeDomainError(c, err)
 
 			return
 		}
 		if !expanded {
-			samples, runs, lanes, err = expandSampleSearchValues(r.Context(), s.resolver, sampleExpansionRequests)
+			samples, runs, lanes, err = expandSampleSearchValues(c.Request.Context(), s.resolver, sampleExpansionRequests)
 		}
 		if err != nil {
-			writeDomainError(w, err)
+			writeDomainError(c, err)
 
 			return
 		}
@@ -1117,20 +1197,20 @@ func (s *Server) handleGetResults(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	results, err := s.store.SearchMulti(r.Context(), params)
+	results, err := s.store.SearchMulti(c.Request.Context(), params)
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
 
 	if len(studyValues) > 0 && len(resolvedSamples) > 0 {
-		writeJSON(w, http.StatusOK, wrapSearchResults(results, resolvedSamples))
+		writeJSON(c, http.StatusOK, wrapSearchResults(results, resolvedSamples))
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, results)
+	writeJSON(c, http.StatusOK, results)
 }
 
 func mergeSearchValues(existing []string, incoming []string) []string {
@@ -1176,35 +1256,36 @@ func wrapSearchResults(results []ResultSet, resolvedSamples []string) []SearchRe
 	return wrapped
 }
 
-func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetStats(c *gin.Context) {
 	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
 
 		return
 	}
 
+	r := c.Request
 	recent, err := nonNegativeIntQueryValue(r, "recent", 10)
 	if err != nil {
-		writeServerError(w, http.StatusBadRequest, err.Error())
+		writeServerError(c, http.StatusBadRequest, err.Error())
 
 		return
 	}
 
 	days, err := nonNegativeIntQueryValue(r, "days", 30)
 	if err != nil {
-		writeServerError(w, http.StatusBadRequest, err.Error())
+		writeServerError(c, http.StatusBadRequest, err.Error())
 
 		return
 	}
 
-	stats, err := s.store.Stats(r.Context(), recent, days)
+	stats, err := s.store.Stats(c.Request.Context(), recent, days)
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, stats)
+	writeJSON(c, http.StatusOK, stats)
 }
 
 func nonNegativeIntQueryValue(r *http.Request, key string, defaultValue int) (int, error) {
@@ -1221,81 +1302,98 @@ func nonNegativeIntQueryValue(r *http.Request, key string, defaultValue int) (in
 	return value, nil
 }
 
-func (s *Server) handleGetMetaKeys(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetMetaKeys(c *gin.Context) {
 	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
 
 		return
 	}
 
-	keys, err := s.store.MetaKeys(r.Context())
+	keys, err := s.store.MetaKeys(c.Request.Context())
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, keys)
+	writeJSON(c, http.StatusOK, keys)
 }
 
-func (s *Server) handleGetResultByID(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetResultByID(c *gin.Context) {
 	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
 
 		return
 	}
 
-	result, err := s.store.Get(r.Context(), chi.URLParam(r, "id"))
+	result, err := s.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(c, http.StatusOK, result)
 }
 
-func (s *Server) handleGetResultFiles(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetResultFiles(c *gin.Context) {
 	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
 
 		return
 	}
 
-	resultID := chi.URLParam(r, "id")
-	files, err := s.store.GetFiles(r.Context(), resultID)
+	resultID := c.Param("id")
+	files, err := s.store.GetFiles(c.Request.Context(), resultID)
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
 
 	if len(files) == 0 {
-		if _, err := s.store.Get(r.Context(), resultID); err != nil {
-			writeDomainError(w, err)
+		if _, err := s.store.Get(c.Request.Context(), resultID); err != nil {
+			writeDomainError(c, err)
 
 			return
 		}
 	}
 
-	writeJSON(w, http.StatusOK, files)
+	writeJSON(c, http.StatusOK, files)
 }
 
-func (s *Server) handleDeleteResultByID(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDeleteResultByID(c *gin.Context) {
 	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
 
 		return
 	}
 
-	err := s.store.Delete(r.Context(), chi.URLParam(r, "id"))
+	err := s.store.Delete(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
+}
+
+func currentUserFromValue(value any) *CurrentUser {
+	switch user := value.(type) {
+	case *CurrentUser:
+		return user
+	case CurrentUser:
+		return &user
+	case *gas.User:
+		return &CurrentUser{Username: user.Username, User: user}
+	case gas.User:
+		userCopy := user
+
+		return &CurrentUser{Username: user.Username, User: &userCopy}
+	default:
+		return nil
+	}
 }
 
 func resultSampleName(metadata map[string]string) string {

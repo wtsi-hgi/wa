@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 )
 
 func TestServerGetFile(t *testing.T) {
@@ -47,7 +48,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 0, 0, 0, time.UTC), Size: 18, Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "text/html; charset=utf-8")
@@ -61,7 +62,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 1, 0, 0, time.UTC), Size: 8, Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "text/csv")
@@ -74,7 +75,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 2, 0, 0, time.UTC), Size: 6, Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/octet-stream")
@@ -88,7 +89,7 @@ func TestServerGetFile(t *testing.T) {
 		})
 		missingRegistrationPath := writeTestFileForServer(t, filepath.Join(t.TempDir(), "not-registered.txt"), []byte("not registered"))
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(missingRegistrationPath), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(missingRegistrationPath), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusForbidden)
 	})
@@ -103,7 +104,7 @@ func TestServerGetFile(t *testing.T) {
 			Kind:  "output",
 		}})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(missingPath), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(missingPath), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusGone)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "file not found on disk")
@@ -114,7 +115,7 @@ func TestServerGetFile(t *testing.T) {
 		server := NewServer(store, nil, nil)
 		path := writeTestFileForServer(t, filepath.Join(t.TempDir(), "report.html"), []byte("<html>hello</html>"))
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/missing-id/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/missing-id/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusNotFound)
 	})
@@ -126,7 +127,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 5, 0, 0, time.UTC), Size: 18, Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
 	})
@@ -139,7 +140,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 6, 0, 0, time.UTC), Size: int64(len(compressed)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "text/csv")
@@ -154,7 +155,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 7, 0, 0, time.UTC), Size: int64(len(compressed)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&download=true", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&download=true", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/gzip")
@@ -170,7 +171,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 8, 0, 0, time.UTC), Size: 200, Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusRequestEntityTooLarge)
 		convey.So(response.Header().Get("X-File-Size"), convey.ShouldEqual, "200")
@@ -184,7 +185,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 9, 0, 0, time.UTC), Size: 200, Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&download=true", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&download=true", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, payload)
@@ -197,7 +198,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 10, 0, 0, time.UTC), Size: 3, Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "image/png")
@@ -212,7 +213,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 11, 0, 0, time.UTC), Size: int64(len(compressed)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Body.Len(), convey.ShouldBeLessThanOrEqualTo, 50)
@@ -227,7 +228,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 12, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Body.String(), convey.ShouldEqual, "h\n1111\n2222\n")
@@ -242,7 +243,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 13, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&line_limit=2", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&line_limit=2", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Body.String(), convey.ShouldEqual, "sample\tstatus\nalpha\tready\n")
@@ -262,7 +263,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 14, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=inline", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=inline", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		lineCount := bytes.Count(response.Body.Bytes(), []byte("\n"))
@@ -282,7 +283,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 15, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=inline&line_limit=9999", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=inline&line_limit=9999", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		lineCount := bytes.Count(response.Body.Bytes(), []byte("\n"))
@@ -304,7 +305,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 16, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=enlarged", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=enlarged", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(int64(response.Body.Len()), convey.ShouldBeLessThanOrEqualTo, byteCap)
@@ -326,7 +327,7 @@ func TestServerGetFile(t *testing.T) {
 			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.April, 16, 10, 17, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
 		})
 
-		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, "/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=download", nil)
+		response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, gas.EndPointREST+"/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&mode=download", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Body.Len(), convey.ShouldEqual, len(payload))
