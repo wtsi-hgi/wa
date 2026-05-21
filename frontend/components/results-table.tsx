@@ -15,6 +15,7 @@ import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 
 import {
     getResultsColumns,
+    isResultsTableRowLocked,
     toResultsTableRows,
     type ResultsTableRow,
 } from "@/components/results-columns";
@@ -25,6 +26,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { ResultSet, SearchResult } from "@/lib/contracts";
+import { cn } from "@/lib/utils";
 
 type ResultsTableProps = {
     data: ResultSet[] | SearchResult[];
@@ -183,25 +185,41 @@ export function ResultsTable({
                             ))}
                         </thead>
                         <tbody className="divide-y divide-border/60">
-                            {table.getRowModel().rows.map((row) => (
-                                <tr
-                                    key={row.id}
-                                    data-result-row="true"
-                                    className="bg-card/60"
-                                >
-                                    {row.getVisibleCells().map((cell) => (
-                                        <td
-                                            key={cell.id}
-                                            className="px-6 py-4 align-top"
-                                        >
-                                            {flexRender(
-                                                cell.column.columnDef.cell,
-                                                cell.getContext(),
-                                            )}
-                                        </td>
-                                    ))}
-                                </tr>
-                            ))}
+                            {table.getRowModel().rows.map((row) => {
+                                const locked = isResultsTableRowLocked(
+                                    row.original,
+                                );
+
+                                return (
+                                    <tr
+                                        key={row.id}
+                                        aria-disabled={
+                                            locked ? "true" : undefined
+                                        }
+                                        data-result-row="true"
+                                        data-result-row-locked={
+                                            locked ? "true" : undefined
+                                        }
+                                        className={cn(
+                                            "bg-card/60",
+                                            locked &&
+                                                "cursor-not-allowed opacity-60",
+                                        )}
+                                    >
+                                        {row.getVisibleCells().map((cell) => (
+                                            <td
+                                                key={cell.id}
+                                                className="px-6 py-4 align-top"
+                                            >
+                                                {flexRender(
+                                                    cell.column.columnDef.cell,
+                                                    cell.getContext(),
+                                                )}
+                                            </td>
+                                        ))}
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>

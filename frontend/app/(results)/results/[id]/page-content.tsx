@@ -1,12 +1,18 @@
 import Link from "next/link";
 
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, LockKeyhole } from "lucide-react";
 
 import { fetchFiles, fetchResult } from "@/app/(results)/actions";
 import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
 import { ResultRegistrationSummary } from "@/components/result-registration-summary";
-import type { FileEntry, ResultSet } from "@/lib/contracts";
+import { BackendRequestError } from "@/lib/backend-client";
+import {
+    lockedResponseSchema,
+    type FileEntry,
+    type LockedResponse,
+    type ResultSet,
+} from "@/lib/contracts";
 import { formatRegistrationUnique } from "@/lib/result-identity";
 import { formatBytes } from "@/lib/utils";
 
@@ -168,6 +174,52 @@ function resolveReturnHref(searchParams: DetailPageSearchParams): string {
     return returnTo;
 }
 
+function lockedResponseFromError(error: unknown): LockedResponse | null {
+    if (!(error instanceof BackendRequestError) || error.status !== 403) {
+        return null;
+    }
+
+    const parsed = lockedResponseSchema.safeParse(error.body);
+
+    return parsed.success ? parsed.data : null;
+}
+
+function LockedResultDetailState({
+    locked,
+    returnHref,
+}: {
+    locked: LockedResponse;
+    returnHref: string;
+}) {
+    return (
+        <main
+            className="mx-auto flex min-h-screen w-full max-w-[84rem] items-center justify-center px-4 py-6 sm:px-8 lg:py-8"
+            data-locked-result-detail="true"
+        >
+            <section className="flex max-w-xl flex-col items-center gap-5 text-center">
+                <span className="inline-flex h-16 w-16 items-center justify-center rounded-full border border-border/70 bg-muted text-muted-foreground">
+                    <LockKeyhole
+                        aria-hidden="true"
+                        className="h-8 w-8"
+                        data-locked-detail-icon="true"
+                    />
+                </span>
+                <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+                    {locked.message}
+                </h1>
+                <Link
+                    aria-label="Back to dashboard"
+                    className="inline-flex min-h-9 items-center rounded-full border border-border/70 bg-background/85 px-4 py-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
+                    data-return-link="true"
+                    href={returnHref}
+                >
+                    Back to dashboard
+                </Link>
+            </section>
+        </main>
+    );
+}
+
 export function ResultDetailLoadingFallback() {
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-6 px-4 py-6 sm:px-8 lg:py-8">
@@ -196,10 +248,44 @@ export async function ResultDetailPageContent({
     const returnHref = resolveReturnHref(searchParams ?? {});
     const returnLabel =
         returnHref === "/" ? "Back to dashboard" : "Back to search results";
-    const [result, files] = await Promise.all([
-        fetchResult(id),
-        fetchFiles(id),
-    ]);
+    let result: ResultSet;
+
+    try {
+        result = await fetchResult(id);
+    } catch (error) {
+        const locked = lockedResponseFromError(error);
+
+        if (locked) {
+            return (
+                <LockedResultDetailState
+                    locked={locked}
+                    returnHref={returnHref}
+                />
+            );
+        }
+
+        throw error;
+    }
+
+    let files: FileEntry[];
+
+    try {
+        files = await fetchFiles(id);
+    } catch (error) {
+        const locked = lockedResponseFromError(error);
+
+        if (locked) {
+            return (
+                <LockedResultDetailState
+                    locked={locked}
+                    returnHref={returnHref}
+                />
+            );
+        }
+
+        throw error;
+    }
+
     const fileSummary = summarizeFiles(files);
 
     return (

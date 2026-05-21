@@ -21,6 +21,11 @@ function buildResultSet(index: number): ResultSet {
         pipeline_name: `pipeline-${String.fromCharCode(65 + (index % 26))}`,
         pipeline_version: `1.${index}.0`,
         output_directory: `/tmp/results/${index}`,
+        output_directory_gid: 200,
+        access: {
+            can_view: true,
+            locked: false,
+        },
         metadata: {
             seqmeta_sampleid: `SANG${index}`,
         },
@@ -36,6 +41,17 @@ function buildSearchResult(
     return {
         result_set: buildResultSet(index),
         matched_samples: matchedSamples,
+    };
+}
+
+function lockResultSet(result: ResultSet): ResultSet {
+    return {
+        ...result,
+        access: {
+            can_view: false,
+            locked: true,
+            reason: "login_required",
+        },
     };
 }
 
@@ -278,5 +294,77 @@ describe("L1 results table", () => {
                 'a[href="/results/result-1?returnTo=%2F%3Fuser%3Dalice"]',
             ),
         ).not.toBeNull();
+    });
+
+    it("renders locked rows as disabled muted rows without detail links", async () => {
+        const locked = lockResultSet(buildResultSet(1));
+
+        await act(async () => {
+            root.render(createElement(ResultsTable, { data: [locked] }));
+        });
+
+        const row = getBodyRows(container)[0];
+
+        expect(row.getAttribute("aria-disabled")).toBe("true");
+        expect(row.className).toContain("opacity-");
+        expect(
+            row.querySelector('[data-locked-result-icon="true"]'),
+        ).not.toBeNull();
+        expect(row.querySelector('[role="tooltip"]')?.textContent).toContain(
+            "Log in to view this result set",
+        );
+        expect(
+            container.querySelector('a[href="/results/result-1"]'),
+        ).toBeNull();
+    });
+
+    it("keeps accessible result identity cells linked to detail pages", async () => {
+        const result = {
+            ...buildResultSet(1),
+            run_key: "runid=48522&unique=random_exon",
+        };
+
+        await act(async () => {
+            root.render(createElement(ResultsTable, { data: [result] }));
+        });
+
+        const row = getBodyRows(container)[0];
+        const linkedCells = Array.from(row.children)
+            .slice(0, 5)
+            .map((cell) => cell.querySelector("a")?.getAttribute("href"));
+
+        expect(row.getAttribute("aria-disabled")).toBeNull();
+        expect(linkedCells).toEqual([
+            "/results/result-1",
+            "/results/result-1",
+            "/results/result-1",
+            "/results/result-1",
+            "/results/result-1",
+        ]);
+        expect(row.children[0].textContent).toContain(result.pipeline_name);
+        expect(row.children[1].textContent).toContain("48522 / random_exon");
+        expect(row.children[2].textContent).toContain(result.requester);
+        expect(row.children[3].textContent).toContain("2 Apr 2026");
+        expect(row.children[4].textContent).toContain(result.output_directory);
+    });
+
+    it("renders anonymous latest rows as locked and non-clickable", async () => {
+        const data = [1, 2, 3].map((index) =>
+            lockResultSet(buildResultSet(index)),
+        );
+
+        await act(async () => {
+            root.render(createElement(ResultsTable, { data }));
+        });
+
+        const rows = getBodyRows(container);
+
+        expect(rows).toHaveLength(3);
+        expect(
+            rows.every((row) => row.getAttribute("aria-disabled") === "true"),
+        ).toBe(true);
+        expect(
+            container.querySelectorAll('tbody a[href^="/results/"]'),
+        ).toHaveLength(0);
     });
 });

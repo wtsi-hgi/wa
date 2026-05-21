@@ -11,7 +11,7 @@ vi.mock("next/headers", () => ({
     cookies: headerMocks.cookies,
 }));
 
-const resultSet: ResultSet = {
+const resultSetPayload = {
     id: "abc",
     pipeline_identifier: "pipeline-1",
     run_key: "run-1",
@@ -24,6 +24,22 @@ const resultSet: ResultSet = {
     metadata: {},
     created_at: "2026-05-21T00:00:00Z",
     updated_at: "2026-05-21T00:00:00Z",
+};
+
+const resultSet: ResultSet = {
+    ...resultSetPayload,
+    output_directory_gid: null,
+    access: {
+        can_view: true,
+        locked: false,
+    },
+};
+
+const statsPayload = {
+    total: 1,
+    recent: [resultSetPayload],
+    daily: [],
+    pipelines: [],
 };
 
 const lockedBody = {
@@ -79,7 +95,7 @@ describe("E2 authenticated results server actions", () => {
 
     it("fetches result details from the authenticated endpoint when the JWT cookie exists", async () => {
         headerMocks.getCookie.mockReturnValue({ value: "jwt-1" });
-        vi.mocked(fetch).mockResolvedValue(Response.json(resultSet));
+        vi.mocked(fetch).mockResolvedValue(Response.json(resultSetPayload));
 
         const { fetchResult } = await import("@/app/(results)/actions");
 
@@ -114,8 +130,8 @@ describe("E2 authenticated results server actions", () => {
 
     it("loads anonymous landing page data from public search and stats endpoints", async () => {
         vi.mocked(fetch)
-            .mockResolvedValueOnce(Response.json([resultSet]))
-            .mockResolvedValueOnce(Response.json(statsResult()));
+            .mockResolvedValueOnce(Response.json([resultSetPayload]))
+            .mockResolvedValueOnce(Response.json(statsPayload));
 
         const { fetchStats, searchResults } =
             await import("@/app/(results)/actions");

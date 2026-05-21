@@ -1,9 +1,9 @@
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown, LockKeyhole } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 
 import type { ResultSet, SearchResult } from "@/lib/contracts";
 import { formatRegistrationUnique } from "@/lib/result-identity";
-import { formatUtcDate } from "@/lib/utils";
+import { cn, formatUtcDate } from "@/lib/utils";
 
 export type ResultsTableRow = {
     id: string;
@@ -46,14 +46,73 @@ function detailHref(id: string, returnHref: string): string {
     return `/results/${id}?${searchParams.toString()}`;
 }
 
-function linkedCell(
-    id: string,
+export function isResultsTableRowLocked(row: ResultsTableRow): boolean {
+    return row.result.access?.locked === true;
+}
+
+function lockedTooltipMessage(result: ResultSet): string {
+    if (result.access?.reason === "login_required") {
+        return "Log in to view this result set";
+    }
+
+    return "You do not have access to this result set";
+}
+
+function tooltipId(id: string): string {
+    return `locked-result-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}-tooltip`;
+}
+
+function LockedResultIndicator({ result }: { result: ResultSet }) {
+    const message = lockedTooltipMessage(result);
+    const id = tooltipId(result.id);
+
+    return (
+        <span
+            aria-describedby={id}
+            aria-label={`Locked result: ${message}`}
+            className="group relative inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted text-muted-foreground"
+            title={message}
+        >
+            <LockKeyhole
+                aria-hidden="true"
+                className="h-3.5 w-3.5"
+                data-locked-result-icon="true"
+            />
+            <span
+                className="pointer-events-none absolute left-0 top-full z-20 mt-2 w-max max-w-56 rounded-md border border-border/70 bg-popover px-2 py-1 text-xs font-medium text-popover-foreground opacity-0 shadow-lg transition group-hover:opacity-100"
+                id={id}
+                role="tooltip"
+            >
+                {message}
+            </span>
+        </span>
+    );
+}
+
+function resultCell(
+    row: ResultsTableRow,
     value: string,
     className: string,
     returnHref: string,
+    options: { showLock?: boolean } = {},
 ) {
+    const isLocked = isResultsTableRowLocked(row);
+
+    if (isLocked) {
+        return (
+            <span className="inline-flex min-w-0 items-center gap-2">
+                {options.showLock ? (
+                    <LockedResultIndicator result={row.result} />
+                ) : null}
+                <span className={cn(className, "text-muted-foreground")}>
+                    {value}
+                </span>
+            </span>
+        );
+    }
+
     return (
-        <a href={detailHref(id, returnHref)} className={className}>
+        <a href={detailHref(row.id, returnHref)} className={className}>
             {value}
         </a>
     );
@@ -100,11 +159,12 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.result.pipeline_name,
                     "font-medium text-foreground transition hover:text-primary",
                     returnHref,
+                    { showLock: true },
                 ),
         },
         {
@@ -121,8 +181,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     formatRegistrationUnique(row.original.result.run_key),
                     "font-mono text-xs text-foreground",
                     returnHref,
@@ -142,8 +202,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.result.requester,
                     "text-foreground",
                     returnHref,
@@ -163,8 +223,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     formatRegisteredDate(row.original.result.created_at),
                     "text-muted-foreground",
                     returnHref,
@@ -184,8 +244,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.result.output_directory,
                     "font-mono text-xs text-muted-foreground",
                     returnHref,
@@ -205,8 +265,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.result.operator,
                     "text-muted-foreground",
                     returnHref,
@@ -226,8 +286,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.result.command,
                     "font-mono text-xs text-muted-foreground",
                     returnHref,
@@ -247,8 +307,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.result.pipeline_version,
                     "text-muted-foreground",
                     returnHref,
@@ -268,8 +328,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.result.pipeline_identifier,
                     "font-mono text-xs text-muted-foreground",
                     returnHref,
@@ -289,8 +349,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.result.run_key,
                     "font-mono text-xs text-muted-foreground",
                     returnHref,
@@ -310,8 +370,8 @@ export function getResultsColumns(
                 />
             ),
             cell: ({ row }) =>
-                linkedCell(
-                    row.original.id,
+                resultCell(
+                    row.original,
                     row.original.id,
                     "font-mono text-xs text-muted-foreground",
                     returnHref,
@@ -333,16 +393,15 @@ export function getResultsColumns(
                     }
                 />
             ),
-            cell: ({ row }) => (
-                <a
-                    href={detailHref(row.original.id, returnHref)}
-                    className="text-muted-foreground"
-                >
-                    {row.original.matchedSamples.length > 0
+            cell: ({ row }) =>
+                resultCell(
+                    row.original,
+                    row.original.matchedSamples.length > 0
                         ? row.original.matchedSamples.join(", ")
-                        : "-"}
-                </a>
-            ),
+                        : "-",
+                    "text-muted-foreground",
+                    returnHref,
+                ),
         });
     }
 

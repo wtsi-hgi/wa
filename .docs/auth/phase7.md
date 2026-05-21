@@ -31,8 +31,8 @@ icons. Implement anonymous login, signed-in account menu, accessible
 logout, and failed-login focus/error behavior. Covering all 4 acceptance
 tests from E3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.2: E4 - Locked rows and direct locked page [parallel with 7.1]
 
@@ -47,8 +47,8 @@ with tooltip, and remove detail links; locked detail responses render only
 the locked state and dashboard return link. Covering all 5 acceptance
 tests from E4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer` skill
