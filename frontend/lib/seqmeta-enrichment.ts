@@ -1,4 +1,4 @@
-import { BackendRequestError } from "@/lib/backend-client";
+import { BackendRequestError } from "@/lib/backend-shared";
 import type { EnrichmentResult } from "@/lib/contracts";
 import type { SeqmetaCacheStore } from "@/lib/seqmeta-cache-core";
 import {

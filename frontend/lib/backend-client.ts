@@ -4,7 +4,16 @@ import { Readable } from "node:stream";
 
 import { type ZodType } from "zod";
 
-export const resultsAuthCookieName = "wa_results_jwt";
+import {
+    BackendRequestError,
+    BackendUnavailableError,
+} from "@/lib/backend-shared";
+
+export {
+    BackendRequestError,
+    BackendUnavailableError,
+    resultsAuthCookieName,
+} from "@/lib/backend-shared";
 
 type BackendEnvVar = "WA_RESULTS_BACKEND_URL" | "WA_SEQMETA_BACKEND_URL";
 type BackendFetchOptions = Omit<RequestInit, "headers"> & {
@@ -14,25 +23,6 @@ type BackendFetchOptions = Omit<RequestInit, "headers"> & {
 type FetchInitWithAgent = RequestInit & {
     agent?: https.Agent;
 };
-
-export class BackendRequestError extends Error {
-    status: number;
-    body: unknown;
-
-    constructor(status: number, body: unknown, message?: string) {
-        super(message ?? `Backend request failed: ${status}`);
-        this.name = "BackendRequestError";
-        this.status = status;
-        this.body = body;
-    }
-}
-
-export class BackendUnavailableError extends Error {
-    constructor(service: string) {
-        super(`${service} backend URL not configured`);
-        this.name = "BackendUnavailableError";
-    }
-}
 
 function getBackendUrl(service: string, envVar: BackendEnvVar): string {
     const url = process.env[envVar]?.trim();
@@ -206,7 +196,7 @@ async function fetchWithHttpsAgent(
                 agent,
                 headers: Object.fromEntries(headers.entries()),
                 method: init.method ?? "GET",
-                signal: init.signal,
+                signal: init.signal ?? undefined,
             },
             (response) => {
                 resolve(
