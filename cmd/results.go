@@ -775,9 +775,23 @@ func matchLibraryType(match mlwh.Match) string {
 }
 
 func resultsAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
+	return resultsAuthenticatedRequestWithOwnerLogin(serverURL, certPath, false)
+}
+
+func resultsOwnerAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
+	return resultsAuthenticatedRequestWithOwnerLogin(serverURL, certPath, true)
+}
+
+func resultsAuthenticatedRequestWithOwnerLogin(serverURL, certPath string, ownerLogin bool) (*resty.Request, error) {
 	authClient, err := resultsNewAuthClient(serverURL, certPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if ownerLogin {
+		if ownerClient, ok := authClient.(resultsOwnerAuthClient); ok {
+			return ownerClient.OwnerAuthenticatedRequest()
+		}
 	}
 
 	request, err := authClient.AuthenticatedRequest()
@@ -883,6 +897,14 @@ type resultsAuthClient interface {
 	CanReadServerToken() bool
 }
 
+type resultsAuthLoginClient interface {
+	Login(usernameAndPassword ...string) error
+}
+
+type resultsOwnerAuthClient interface {
+	OwnerAuthenticatedRequest() (*resty.Request, error)
+}
+
 func newResultsAuthClient(serverURL string, certPath string, username ...string) (resultsAuthClient, error) {
 	addr, err := resultsAuthAddr(serverURL)
 	if err != nil {
@@ -915,12 +937,28 @@ type permissionCheckingResultsAuthClient struct {
 }
 
 func (c *permissionCheckingResultsAuthClient) AuthenticatedRequest() (*resty.Request, error) {
+	return c.authenticatedRequest(false)
+}
+
+func (c *permissionCheckingResultsAuthClient) OwnerAuthenticatedRequest() (*resty.Request, error) {
+	return c.authenticatedRequest(true)
+}
+
+func (c *permissionCheckingResultsAuthClient) authenticatedRequest(ownerLogin bool) (*resty.Request, error) {
 	if err := resultsTokenPermissionError(c.jwtBasename); err != nil {
 		return nil, err
 	}
 
 	if err := resultsTokenPermissionError(c.serverTokenBasename); err != nil {
 		return nil, err
+	}
+
+	if ownerLogin && c.client.CanReadServerToken() {
+		if loginClient, ok := c.client.(resultsAuthLoginClient); ok {
+			if err := loginClient.Login(); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return c.client.AuthenticatedRequest()
@@ -1364,7 +1402,7 @@ func registerResults(ctx context.Context, serverURL string, certPath string, reg
 		return nil, fmt.Errorf("marshal registration request: %w", err)
 	}
 
-	request, err := resultsAuthenticatedRequest(serverURL, certPath)
+	request, err := resultsOwnerAuthenticatedRequest(serverURL, certPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1612,7 +1650,7 @@ func newResultsDeleteCommand(options *resultsCommandOptions) *cobra.Command {
 }
 
 func deleteResult(ctx context.Context, serverURL, certPath, resultID string) error {
-	request, err := resultsAuthenticatedRequest(serverURL, certPath)
+	request, err := resultsOwnerAuthenticatedRequest(serverURL, certPath)
 	if err != nil {
 		return err
 	}
@@ -1686,7 +1724,7 @@ func rescanResults(ctx context.Context, serverURL, certPath, resultID string, fi
 		return nil, fmt.Errorf("marshal rescan request: %w", err)
 	}
 
-	request, err := resultsAuthenticatedRequest(serverURL, certPath)
+	request, err := resultsOwnerAuthenticatedRequest(serverURL, certPath)
 	if err != nil {
 		return nil, err
 	}

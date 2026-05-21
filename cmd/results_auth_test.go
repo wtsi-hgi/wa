@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/go-resty/resty/v2"
@@ -63,6 +64,7 @@ type resultsAuthTestServer struct {
 	authHeaderCh chan string
 	certPath     string
 	passwordCh   chan string
+	refreshCh    chan string
 }
 
 func newResultsAuthTestServer(t *testing.T, password, jwt string) *resultsAuthTestServer {
@@ -71,6 +73,7 @@ func newResultsAuthTestServer(t *testing.T, password, jwt string) *resultsAuthTe
 	server := &resultsAuthTestServer{
 		authHeaderCh: make(chan string, 1),
 		passwordCh:   make(chan string, 1),
+		refreshCh:    make(chan string, 1),
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +94,10 @@ func newResultsAuthTestServer(t *testing.T, password, jwt string) *resultsAuthTe
 
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(w, "%q", jwt)
+		case r.Method == http.MethodGet && r.URL.Path == gas.EndPointJWT:
+			server.refreshCh <- r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, "%q", "jwt-refreshed")
 		case r.Method == http.MethodPost && r.URL.Path == gas.EndPointAuth+"/results":
 			server.authHeaderCh <- r.Header.Get("Authorization")
 			w.Header().Set("Content-Type", "application/json")
@@ -128,7 +135,33 @@ func TestResultsAuthClient(t *testing.T) {
 		convey.So(stderr.String(), convey.ShouldBeBlank)
 		convey.So(passwordHandler.out, convey.ShouldBeBlank)
 		convey.So(passwordHandler.readCalled, convey.ShouldBeFalse)
-		convey.So(<-server.authHeaderCh, convey.ShouldEqual, "Bearer jwt-owner")
+		convey.So(receiveResultsAuthValueForTest(t, server.authHeaderCh, "auth header"), convey.ShouldEqual, "Bearer jwt-owner")
+	})
+
+	convey.Convey("D1.1b: Given a readable server token and stale owner JWT, register logs in with the server token instead of refreshing the stale JWT", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		token := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+		writeResultsAuthTokenForTest(t, filepath.Join(stateDir, resultsServerTokenBasename), token, 0o600)
+		writeResultsAuthTokenForTest(t, filepath.Join(stateDir, resultsJWTBasename), "stale-owner-jwt-abcdefghijklmnopqrstuvwxyz", 0o600)
+
+		passwordHandler := &resultsAuthPasswordHandler{password: "wrong", terminal: true}
+		installGasResultsClientCLIForTest(t, passwordHandler)
+
+		server := newResultsAuthTestServer(t, token, "jwt-owner")
+		defer server.Close()
+
+		stdout, stderr, err := executeRootCommandWithInputForRegisterTest(t, resultsAuthRegisterArgs(t, server), nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stdout.String(), convey.ShouldContainSubstring, "result-123")
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(passwordHandler.out, convey.ShouldBeBlank)
+		convey.So(passwordHandler.readCalled, convey.ShouldBeFalse)
+		convey.So(receiveResultsAuthValueForTest(t, server.passwordCh, "login password"), convey.ShouldEqual, token)
+		convey.So(receiveResultsAuthValueForTest(t, server.authHeaderCh, "auth header"), convey.ShouldEqual, "Bearer jwt-owner")
+		convey.So(len(server.refreshCh), convey.ShouldEqual, 0)
 	})
 
 	convey.Convey("D1.2: Given no token files and a terminal, register prompts for a password and stores a private JWT", t, func() {
@@ -146,7 +179,7 @@ func TestResultsAuthClient(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(passwordHandler.out, convey.ShouldEqual, "Password: \n")
 		convey.So(passwordHandler.readCalled, convey.ShouldBeTrue)
-		convey.So(<-server.passwordCh, convey.ShouldEqual, resultsAuthTestPassword)
+		convey.So(receiveResultsAuthValueForTest(t, server.passwordCh, "login password"), convey.ShouldEqual, resultsAuthTestPassword)
 
 		jwtPath := filepath.Join(stateDir, resultsJWTBasename)
 		stat, statErr := os.Stat(jwtPath)
@@ -217,6 +250,45 @@ func TestResultsAuthClient(t *testing.T) {
 		convey.So(call.oktaMode, convey.ShouldBeFalse)
 		convey.So(call.usernames, convey.ShouldResemble, []string{"alice"})
 	})
+
+	convey.Convey("D1: owner requests refresh owner login without changing ordinary authenticated requests", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		client := &trackingResultsAuthClient{canReadServerToken: true}
+		wrapped := &permissionCheckingResultsAuthClient{
+			client:              client,
+			jwtBasename:         "missing-results.jwt",
+			serverTokenBasename: "missing-results-server.token",
+		}
+
+		request, err := wrapped.AuthenticatedRequest()
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(request, convey.ShouldNotBeNil)
+		convey.So(client.loginCalls, convey.ShouldEqual, 0)
+		convey.So(client.authenticatedRequestCalls, convey.ShouldEqual, 1)
+
+		request, err = wrapped.OwnerAuthenticatedRequest()
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(request, convey.ShouldNotBeNil)
+		convey.So(client.loginCalls, convey.ShouldEqual, 1)
+		convey.So(client.authenticatedRequestCalls, convey.ShouldEqual, 2)
+	})
+}
+
+func receiveResultsAuthValueForTest(t *testing.T, ch <-chan string, label string) string {
+	t.Helper()
+
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for %s", label)
+
+		return ""
+	}
 }
 
 func writeResultsAuthTokenForTest(t *testing.T, tokenPath, token string, mode os.FileMode) {
@@ -363,6 +435,28 @@ func (f *fakeResultsAuthClient) AuthenticatedRequest() (*resty.Request, error) {
 
 func (f *fakeResultsAuthClient) CanReadServerToken() bool {
 	return false
+}
+
+type trackingResultsAuthClient struct {
+	canReadServerToken        bool
+	loginCalls                int
+	authenticatedRequestCalls int
+}
+
+func (t *trackingResultsAuthClient) AuthenticatedRequest() (*resty.Request, error) {
+	t.authenticatedRequestCalls++
+
+	return resty.New().R(), nil
+}
+
+func (t *trackingResultsAuthClient) CanReadServerToken() bool {
+	return t.canReadServerToken
+}
+
+func (t *trackingResultsAuthClient) Login(_ ...string) error {
+	t.loginCalls++
+
+	return nil
 }
 
 type passthroughResultsAuthClient struct {
