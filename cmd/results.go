@@ -28,6 +28,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -531,6 +533,50 @@ func (r *resultsServeMLWHRuntime) Close() error {
 	}
 
 	return errors.Join(closeErrs...)
+}
+
+func resultsPublicHTTPClient(certPath string) (*http.Client, error) {
+	trimmedCertPath := strings.TrimSpace(certPath)
+	if trimmedCertPath == "" {
+		if resultsHTTPClient != nil {
+			return resultsHTTPClient, nil
+		}
+
+		return &http.Client{Timeout: 30 * time.Second}, nil
+	}
+
+	certPEM, err := os.ReadFile(trimmedCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("read results server cert: %w", err)
+	}
+
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil || rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if !rootCAs.AppendCertsFromPEM(certPEM) {
+		return nil, errors.New("results server cert did not contain a PEM certificate")
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	timeout := 30 * time.Second
+	if resultsHTTPClient != nil {
+		if resultsHTTPClient.Timeout != 0 {
+			timeout = resultsHTTPClient.Timeout
+		}
+		if baseTransport, ok := resultsHTTPClient.Transport.(*http.Transport); ok && baseTransport != nil {
+			transport = baseTransport.Clone()
+		}
+	}
+
+	tlsConfig := &tls.Config{RootCAs: rootCAs}
+	if transport.TLSClientConfig != nil {
+		tlsConfig = transport.TLSClientConfig.Clone()
+		tlsConfig.RootCAs = rootCAs
+	}
+	transport.TLSClientConfig = tlsConfig
+
+	return &http.Client{Timeout: timeout, Transport: transport}, nil
 }
 
 type resultsRegisterLookupValues struct {
@@ -1375,7 +1421,7 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 				ctx = context.Background()
 			}
 
-			responseBody, err := searchResults(ctx, options.serverURL, query)
+			responseBody, err := searchResults(ctx, options.serverURL, options.certPath, query)
 			if err != nil {
 				return err
 			}
@@ -1474,7 +1520,7 @@ func parseResultsMetadataFilters(metaValues []string) (map[string]string, error)
 	return metadata, nil
 }
 
-func searchResults(ctx context.Context, serverURL string, query url.Values) ([]byte, error) {
+func searchResults(ctx context.Context, serverURL string, certPath string, query url.Values) ([]byte, error) {
 	endpoint, err := resultsEndpointURL(serverURL, gas.EndPointREST+"/results")
 	if err != nil {
 		return nil, fmt.Errorf("parse --server URL: %w", err)
@@ -1486,7 +1532,12 @@ func searchResults(ctx context.Context, serverURL string, query url.Values) ([]b
 		return nil, fmt.Errorf("create search request: %w", err)
 	}
 
-	response, err := resultsHTTPClient.Do(request)
+	client, err := resultsPublicHTTPClient(certPath)
+	if err != nil {
+		return nil, err
+	}
+
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("request search results: %w", err)
 	}

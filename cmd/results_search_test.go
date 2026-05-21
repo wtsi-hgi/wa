@@ -61,6 +61,23 @@ func TestResultsSearchCommand(t *testing.T) {
 		convey.So(<-authHeaderCh, convey.ShouldBeBlank)
 	})
 
+	convey.Convey("Given public HTTPS search and --cert, search trusts the configured certificate", t, func() {
+		pathCh := make(chan string, 1)
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			pathCh <- r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		}))
+		defer server.Close()
+		certPath := writeResultsAuthServerCertForTest(t, server.Certificate())
+
+		output, err := executeRootCommandForTest(t, []string{"results", "--server", server.URL, "--cert", certPath, "search"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldEqual, "[]")
+		convey.So(<-pathCh, convey.ShouldEqual, "/rest/v1/results")
+	})
+
 	convey.Convey("G2.1: Given a server with 2 result sets, when search --user alice is run, then stdout is a valid JSON array with matching results", t, func() {
 		store := newResultsSearchStoreForTest(t)
 		seedResultsSearchRegistrationForTest(t, store, func(reg *results.Registration) {
