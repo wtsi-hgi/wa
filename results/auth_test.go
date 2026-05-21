@@ -152,6 +152,17 @@ func TestAccessForResult(t *testing.T) {
 		convey.So(access.Locked, convey.ShouldBeTrue)
 	})
 
+	convey.Convey("Given an owner session, then access is allowed without requester or group membership", t, func() {
+		result := authResultForTest(nil)
+		user := &CurrentUser{Username: "svc", IsOwner: true}
+
+		access, err := AccessForResult(result, user)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(access, convey.ShouldResemble, AccessState{CanView: true})
+		convey.So(RequireResultAccess(result, user), convey.ShouldBeNil)
+	})
+
 	convey.Convey("Given legacy NULL output_directory_gid, then normal users cannot access the result", t, func() {
 		result := authResultForTest(nil)
 		result.Requester = "alice"

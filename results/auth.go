@@ -355,6 +355,10 @@ func AccessForResult(result ResultSet, user *CurrentUser) (AccessState, error) {
 		return lockedAccess("login_required"), nil
 	}
 
+	if user.IsOwner {
+		return AccessState{CanView: true}, nil
+	}
+
 	if result.OutputDirectoryGID == nil {
 		return lockedAccess("forbidden"), nil
 	}

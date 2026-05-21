@@ -873,8 +873,22 @@ func getResultFromPath(ctx context.Context, serverURL, certPath, resultPath stri
 	return marshalCommandJSON(resultSetWithFiles{ResultSet: result, Files: files})
 }
 
+type resultsRequestFactory func(serverURL, certPath string) (*resty.Request, error)
+
 func getAuthenticatedResultsResource(ctx context.Context, serverURL, certPath, resourcePath string, successStatus int, operation string) ([]byte, error) {
-	request, err := resultsAuthenticatedRequest(serverURL, certPath)
+	return getResultsResourceWithAuth(ctx, serverURL, certPath, resourcePath, successStatus, operation, resultsAuthenticatedRequest)
+}
+
+func getResultsResourceWithAuth(
+	ctx context.Context,
+	serverURL,
+	certPath,
+	resourcePath string,
+	successStatus int,
+	operation string,
+	requestFactory resultsRequestFactory,
+) ([]byte, error) {
+	request, err := requestFactory(serverURL, certPath)
 	if err != nil {
 		return nil, err
 	}
@@ -2006,7 +2020,15 @@ func validateResultsScanRoot(rootDir string, includeHidden bool) error {
 }
 
 func validateResultsRescanDirectory(ctx context.Context, serverURL, certPath, resultID, dir string) error {
-	resultBody, err := getAuthenticatedResult(ctx, serverURL, certPath, resultID, false)
+	resultBody, err := getResultsResourceWithAuth(
+		ctx,
+		serverURL,
+		certPath,
+		gas.EndPointAuth+"/results/"+url.PathEscape(resultID),
+		http.StatusOK,
+		"get result",
+		resultsOwnerAuthenticatedRequest,
+	)
 	if err != nil {
 		return err
 	}
@@ -2021,10 +2043,6 @@ func validateResultsRescanDirectory(ctx context.Context, serverURL, certPath, re
 	}
 
 	return nil
-}
-
-func getAuthenticatedResult(ctx context.Context, serverURL, certPath, resultID string, includeFiles bool) ([]byte, error) {
-	return getResultFromPath(ctx, serverURL, certPath, gas.EndPointAuth+"/results/"+url.PathEscape(resultID), includeFiles)
 }
 
 func resultsSameCanonicalDirectory(firstPath, secondPath string) bool {

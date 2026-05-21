@@ -37,6 +37,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/results"
@@ -107,6 +108,49 @@ func TestResultsRescanCommand(t *testing.T) {
 		_, err := executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, "missing-id", dir})
 
 		convey.So(err, convey.ShouldNotBeNil)
+	})
+
+	convey.Convey("rescan uses owner authentication while loading the registered output directory", t, func() {
+		dir := t.TempDir()
+		resultID := "result-owner-rescan"
+		authClient := &rescanOwnerAuthClientForTest{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != gas.EndPointAuth+"/results/"+resultID {
+				http.NotFound(w, r)
+
+				return
+			}
+
+			if r.Header.Get("Authorization") != "Bearer owner-jwt" {
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "locked"})
+
+				return
+			}
+
+			_ = json.NewEncoder(w).Encode(results.ResultSet{
+				ID:              resultID,
+				OutputDirectory: dir,
+			})
+		}))
+		defer server.Close()
+
+		authClient.serverURL = server.URL
+		previousNewAuthClient := resultsNewAuthClient
+		resultsNewAuthClient = func(serverURL, _ string, _ ...string) (resultsAuthClient, error) {
+			authClient.serverURL = serverURL
+
+			return authClient, nil
+		}
+		defer func() {
+			resultsNewAuthClient = previousNewAuthClient
+		}()
+
+		err := validateResultsRescanDirectory(context.Background(), server.URL, "", resultID, dir)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(authClient.ownerRequestCalls, convey.ShouldEqual, 1)
+		convey.So(authClient.authenticatedRequestCalls, convey.ShouldEqual, 0)
 	})
 
 	convey.Convey("rescan rejects a directory that does not match the registered output directory", t, func() {
@@ -267,6 +311,36 @@ func newResultsRescanStoreForTest(t *testing.T) *results.Store {
 	})
 
 	return store
+}
+
+type rescanOwnerAuthClientForTest struct {
+	serverURL                 string
+	authenticatedRequestCalls int
+	ownerRequestCalls         int
+}
+
+func (c *rescanOwnerAuthClientForTest) AuthenticatedRequest() (*resty.Request, error) {
+	c.authenticatedRequestCalls++
+
+	client := resty.New()
+	client.SetBaseURL(c.serverURL)
+	client.SetAuthToken("stale-jwt")
+
+	return client.R(), nil
+}
+
+func (c *rescanOwnerAuthClientForTest) OwnerAuthenticatedRequest() (*resty.Request, error) {
+	c.ownerRequestCalls++
+
+	client := resty.New()
+	client.SetBaseURL(c.serverURL)
+	client.SetAuthToken("owner-jwt")
+
+	return client.R(), nil
+}
+
+func (c *rescanOwnerAuthClientForTest) CanReadServerToken() bool {
+	return true
 }
 
 func createResultsRescanFileForTest(t *testing.T, rootDir, relativePath, content string) results.FileEntry {
