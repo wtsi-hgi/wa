@@ -110,7 +110,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
                 window.setTimeout(callback, 0));
 
         schedule(() => {
-            usernameInputRef.current?.focus();
+            usernameInputRef.current?.focus({ preventScroll: true });
         });
     }
 
