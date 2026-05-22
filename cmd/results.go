@@ -1209,8 +1209,9 @@ Registrations are keyed by the detected pipeline identity and the unique key.
 The server replaces an existing result set instead of adding a new one when a
 registration has the same pipeline identity and unique key.
 The pipeline identity comes from --nextflow-workflow: files inside git use
-repository/commit metadata, while files outside git use the workflow path and
-content hash.
+repository/commit metadata, GitHub URLs and owner/repo shorthands use GitHub
+repository metadata, and files outside git use the workflow path and content
+hash.
 The unique key is built from --unique. Use the same value
 when rerunning the same logical result and you want the stored registration,
 files and metadata to be refreshed.
@@ -1258,7 +1259,7 @@ create a new result set.`,
 	command.Flags().StringVar(&requester, "user", "", "Requester name")
 	command.Flags().StringVar(&operator, "operator", "", "Operator name")
 	command.Flags().StringVar(&commandLine, "command", "", "Pipeline command line")
-	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path to the Nextflow workflow used for the run")
+	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path, GitHub URL, or owner/repo shorthand for the Nextflow workflow used for the run")
 	command.Flags().StringVar(&unique, "unique", "", "Stable unique label for this result set")
 	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
@@ -1368,7 +1369,7 @@ func buildResultsRegistrationForCommand(
 		return nil, err
 	}
 
-	pipelineFile, err := resultsRegisterPipelineFile(workflowPath)
+	pipelineFiles, err := resultsRegisterPipelineFiles(workflowPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1382,7 +1383,7 @@ func buildResultsRegistrationForCommand(
 		PipelineName:       pipelineName,
 		PipelineVersion:    pipelineVersion,
 		OutputDirectory:    outputDir,
-		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, pipelineFile),
+		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, pipelineFiles...),
 		Metadata:           metadata,
 	}, nil
 }
@@ -2024,8 +2025,8 @@ func writeResultsScanWarnings(output io.Writer, warnings int) {
 	_, _ = fmt.Fprintf(output, "warning: skipped %d path(s) while scanning output files\n", warnings)
 }
 
-func deduplicateResultsTrackedFiles(outputFiles, inputFiles []results.FileEntry, pipelineFile results.FileEntry) []results.FileEntry {
-	files := append(append(append(make([]results.FileEntry, 0, len(outputFiles)+len(inputFiles)+1), outputFiles...), inputFiles...), pipelineFile)
+func deduplicateResultsTrackedFiles(outputFiles, inputFiles []results.FileEntry, pipelineFiles ...results.FileEntry) []results.FileEntry {
+	files := append(append(append(make([]results.FileEntry, 0, len(outputFiles)+len(inputFiles)+len(pipelineFiles)), outputFiles...), inputFiles...), pipelineFiles...)
 	keepIndexByPath := make(map[string]int, len(files))
 	for index, file := range files {
 		keepIndexByPath[file.Path] = index
@@ -2159,27 +2160,31 @@ func resultsPathWithinDirectory(rootPath, candidatePath string) bool {
 	return relPath == "." || (relPath != ".." && !strings.HasPrefix(relPath, ".."+string(os.PathSeparator)))
 }
 
-func resultsRegisterPipelineFile(workflowPath string) (results.FileEntry, error) {
+func resultsRegisterPipelineFiles(workflowPath string) ([]results.FileEntry, error) {
+	if results.RemotePipelineReference(workflowPath) {
+		return nil, nil
+	}
+
 	absPath, err := filepath.Abs(workflowPath)
 	if err != nil {
-		return results.FileEntry{}, fmt.Errorf("resolve workflow file %q: %w", workflowPath, err)
+		return nil, fmt.Errorf("resolve workflow file %q: %w", workflowPath, err)
 	}
 
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return results.FileEntry{}, fmt.Errorf("stat workflow file %q: %w", workflowPath, err)
+		return nil, fmt.Errorf("stat workflow file %q: %w", workflowPath, err)
 	}
 
 	if info.IsDir() {
-		return results.FileEntry{}, fmt.Errorf("workflow file %q: is a directory", workflowPath)
+		return nil, fmt.Errorf("workflow file %q: is a directory", workflowPath)
 	}
 
-	return results.FileEntry{
+	return []results.FileEntry{{
 		Path:  absPath,
 		Mtime: info.ModTime(),
 		Size:  info.Size(),
 		Kind:  "pipeline",
-	}, nil
+	}}, nil
 }
 
 func resultsAuthAddr(serverURL string) (string, error) {

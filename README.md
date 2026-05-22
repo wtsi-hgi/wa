@@ -47,12 +47,16 @@ wa results register /path/to/output \
   --user jdoe \
   --operator jdoe \
   --command "nextflow run pipeline" \
-  --nextflow-workflow /path/to/main.nf \
+  --nextflow-workflow nf-core/sarek \
   --unique my-run-001 \
 	--study 6568 \
 	--sample SANG123
 
 ```
+
+`--nextflow-workflow` accepts a local workflow file, a GitHub URL such as
+`https://github.com/nf-core/sarek`, or an `owner/repo` shorthand such as
+`seqeralabs/nf-hello-world`.
 
 The `--run`, `--study`, `--sample`, and `--library` flags resolve through MLWH
 and store canonical `seqmeta_*` metadata entries for search and validation.

@@ -1118,6 +1118,20 @@ func countRegisterCommandFilesByKind(files []results.FileEntry, kind string) int
 	return count
 }
 
+func TestResultsRegisterPipelineFiles(t *testing.T) {
+	convey.Convey("register does not stat online Nextflow workflow references as local pipeline files", t, func() {
+		for _, workflowPath := range []string{
+			"https://github.com/nf-core/sarek",
+			"seqeralabs/nf-hello-world",
+		} {
+			files, err := resultsRegisterPipelineFiles(workflowPath)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(files, convey.ShouldBeEmpty)
+		}
+	})
+}
+
 func findRegisterCommandFileByKind(files []results.FileEntry, kind string) (results.FileEntry, error) {
 	for _, file := range files {
 		if file.Kind == kind {
