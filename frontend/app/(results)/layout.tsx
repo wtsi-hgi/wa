@@ -14,9 +14,12 @@ export default async function ResultsLayout({
     return (
         <SeqmetaCacheProvider>
             <div className="min-h-screen">
-                <div className="fixed top-4 right-4 z-40 sm:top-6 sm:right-6">
+                <header
+                    className="mx-auto flex w-full max-w-[84rem] justify-end px-4 pt-4 sm:px-8 sm:pt-6"
+                    data-results-auth-bar="true"
+                >
                     <AuthMenu initialSession={session} />
-                </div>
+                </header>
                 {children}
             </div>
         </SeqmetaCacheProvider>

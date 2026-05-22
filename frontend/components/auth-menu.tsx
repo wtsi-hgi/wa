@@ -176,7 +176,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
     }
 
     return (
-        <div className="relative inline-flex">
+        <div className="flex max-w-full flex-col items-end gap-2">
             <Tooltip>
                 <TooltipTrigger asChild>
                     <Button
@@ -194,7 +194,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
             </Tooltip>
 
             {loginOpen ? (
-                <div className="absolute right-0 top-[calc(100%+0.5rem)] z-30 w-80 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-[0_20px_60px_-28px_rgba(41,58,85,0.55)]">
+                <div className="w-[min(20rem,calc(100vw-2rem))] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-[0_20px_60px_-28px_rgba(41,58,85,0.55)]">
                     <form
                         aria-label="Log in"
                         aria-describedby={

@@ -106,6 +106,30 @@ describe("E3 auth menu", () => {
         expect(markup).toContain("Landing page");
     });
 
+    it("reserves layout space for the auth menu before page content", async () => {
+        authActionMocks.currentSession.mockResolvedValueOnce({
+            authenticated: false,
+            username: null,
+        });
+
+        const { default: ResultsLayout } =
+            await import("@/app/(results)/layout");
+
+        const layout = await ResultsLayout({
+            children: createElement("main", undefined, "Landing page"),
+        });
+
+        const markup = renderToStaticMarkup(
+            createElement(AppProviders, undefined, layout),
+        );
+
+        expect(markup).toContain('data-results-auth-bar="true"');
+        expect(markup.indexOf('data-results-auth-bar="true"')).toBeLessThan(
+            markup.indexOf("Landing page"),
+        );
+        expect(markup).not.toContain("fixed top-4 right-4");
+    });
+
     it("shows the username and a Log out menu item for signed-in sessions", async () => {
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
