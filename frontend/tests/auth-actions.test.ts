@@ -66,6 +66,7 @@ describe("E1 auth server actions", () => {
             "jwt-1",
             expect.objectContaining({
                 httpOnly: true,
+                maxAge: 86_400,
                 path: "/",
                 sameSite: "lax",
                 secure: true,
@@ -119,6 +120,7 @@ describe("E1 auth server actions", () => {
             "wa_results_jwt",
             "jwt-new",
             expect.objectContaining({
+                maxAge: 86_400,
                 secure: true,
             }),
         );

@@ -5,6 +5,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+    act,
     cleanup,
     fireEvent,
     render,
@@ -120,6 +121,16 @@ describe("E3 auth menu", () => {
     });
 
     it("shows the username and a Log out menu item for signed-in sessions", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                Response.json({
+                    authenticated: true,
+                    username: "alice",
+                }),
+            ),
+        );
+
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
         expect(screen.getByText("alice")).toBeTruthy();
@@ -127,6 +138,31 @@ describe("E3 auth menu", () => {
         fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
 
         expect(screen.getByRole("menuitem", { name: "Log out" })).toBeTruthy();
+    });
+
+    it("refreshes an authenticated session through the browser on access", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                Response.json({
+                    authenticated: true,
+                    username: "alice",
+                }),
+            ),
+        );
+
+        await renderAuthMenu({ authenticated: true, username: "alice" });
+
+        await waitFor(() => {
+            expect(fetch).toHaveBeenCalledWith(
+                "/api/auth/refresh",
+                expect.objectContaining({
+                    cache: "no-store",
+                    credentials: "same-origin",
+                    method: "POST",
+                }),
+            );
+        });
     });
 
     it("keeps focus in the login control and announces Authentication failed", async () => {
@@ -179,20 +215,41 @@ describe("E3 auth menu", () => {
     });
 
     it("removes the username and shows Log in after successful logout", async () => {
-        vi.stubGlobal(
-            "fetch",
-            vi.fn().mockResolvedValue(
-                Response.json({
-                    authenticated: false,
-                    username: null,
-                }),
+        const fetchMock = vi.fn((url: string) =>
+            Promise.resolve(
+                Response.json(
+                    url === "/api/auth/refresh"
+                        ? {
+                              authenticated: true,
+                              username: "alice",
+                          }
+                        : {
+                              authenticated: false,
+                              username: null,
+                          },
+                ),
             ),
         );
+        vi.stubGlobal("fetch", fetchMock);
 
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/auth/refresh",
+                expect.any(Object),
+            );
+        });
+
         fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
-        fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+        await act(async () => {
+            fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/auth/logout",
+            expect.any(Object),
+        );
 
         await waitFor(() => {
             expect(screen.queryByText("alice")).toBeNull();

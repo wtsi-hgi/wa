@@ -51,6 +51,7 @@ describe("E1 auth API route handlers", () => {
             expect.objectContaining({ method: "POST" }),
         );
         expect(setCookieHeader(response)).toContain("wa_results_jwt=jwt-1");
+        expect(setCookieHeader(response)).toContain("Max-Age=86400");
         expect(setCookieHeader(response)).toContain("HttpOnly");
         expect(setCookieHeader(response)).toContain("Secure");
         expect(setCookieHeader(response)).toMatch(/SameSite=Lax/i);
@@ -91,6 +92,7 @@ describe("E1 auth API route handlers", () => {
             }),
         );
         expect(setCookieHeader(response)).toContain("wa_results_jwt=jwt-new");
+        expect(setCookieHeader(response)).toContain("Max-Age=86400");
     });
 
     it("expires the JWT cookie even when the backend logout endpoint is unavailable", async () => {

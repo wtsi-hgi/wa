@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { resultsRaw } from "@/lib/backend-client";
+import {
+    resultsAuthCookieName as authCookieName,
+    resultsAuthCookieOptions as authCookieOptions,
+} from "@/lib/results-auth-cookie";
 
 export const dynamic = "force-dynamic";
-
-const authCookieName = "wa_results_jwt";
-const authCookieOptions = {
-    httpOnly: true,
-    path: "/",
-    sameSite: "lax",
-    secure: true,
-} as const;
 
 function anonymousSession() {
     return {

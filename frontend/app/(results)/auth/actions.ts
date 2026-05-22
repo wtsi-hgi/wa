@@ -4,14 +4,10 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 
 import { resultsRaw } from "@/lib/backend-client";
-
-const authCookieName = "wa_results_jwt";
-const authCookieOptions = {
-    httpOnly: true,
-    path: "/",
-    sameSite: "lax",
-    secure: true,
-} as const;
+import {
+    resultsAuthCookieName as authCookieName,
+    resultsAuthCookieOptions as authCookieOptions,
+} from "@/lib/results-auth-cookie";
 
 const jwtSchema = z.string().min(1);
 const backendSessionSchema = z.object({

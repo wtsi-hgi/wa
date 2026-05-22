@@ -1,6 +1,12 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import {
+    type FormEvent,
+    type ReactNode,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
 import { LogIn, LogOut, LockKeyhole, User } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -66,8 +72,27 @@ async function logoutFromBrowser(): Promise<CurrentSession> {
     return body?.authenticated ? body : anonymousSession();
 }
 
+async function refreshFromBrowser(): Promise<CurrentSession> {
+    const response = await fetch("/api/auth/refresh", {
+        cache: "no-store",
+        credentials: "same-origin",
+        method: "POST",
+    });
+
+    if (!response.ok) {
+        return anonymousSession();
+    }
+
+    const body = (await response
+        .json()
+        .catch(() => null)) as CurrentSession | null;
+
+    return body?.authenticated ? body : anonymousSession();
+}
+
 export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
     const router = useRouter();
+    const refreshRoute = router.refresh;
     const [session, setSession] = useState<CurrentSession>(initialSession);
     const [loginOpen, setLoginOpen] = useState(false);
     const [username, setUsername] = useState("");
@@ -75,6 +100,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
     const [loginError, setLoginError] = useState<string | null>(null);
     const [loginPending, setLoginPending] = useState(false);
     const [logoutPending, setLogoutPending] = useState(false);
+    const refreshGenerationRef = useRef(0);
     const usernameInputRef = useRef<HTMLInputElement | null>(null);
 
     function focusUsernameInput(): void {
@@ -93,6 +119,47 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
         setLoginError(null);
         focusUsernameInput();
     }
+
+    useEffect(() => {
+        if (!session.authenticated) {
+            return;
+        }
+
+        let cancelled = false;
+        const refreshGeneration = refreshGenerationRef.current;
+
+        async function refreshSession(): Promise<void> {
+            try {
+                const nextSession = await refreshFromBrowser();
+
+                if (
+                    cancelled ||
+                    refreshGeneration !== refreshGenerationRef.current
+                ) {
+                    return;
+                }
+
+                setSession((currentSession) =>
+                    currentSession.authenticated ===
+                        nextSession.authenticated &&
+                    currentSession.username === nextSession.username
+                        ? currentSession
+                        : nextSession,
+                );
+                if (!nextSession.authenticated) {
+                    refreshRoute();
+                }
+            } catch {
+                // Keep the rendered session if the browser cannot reach Next.
+            }
+        }
+
+        void refreshSession();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [refreshRoute, session.authenticated]);
 
     async function handleLoginSubmit(
         event: FormEvent<HTMLFormElement>,
@@ -114,7 +181,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
             );
             setPassword("");
             setLoginOpen(false);
-            router.refresh();
+            refreshRoute();
         } catch {
             setLoginError("Authentication failed");
             setLoginOpen(true);
@@ -130,6 +197,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
         }
 
         setLogoutPending(true);
+        refreshGenerationRef.current += 1;
 
         try {
             const nextSession = await logoutFromBrowser();
@@ -142,7 +210,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
             setPassword("");
             setLoginError(null);
             setLoginOpen(false);
-            router.refresh();
+            refreshRoute();
             setLogoutPending(false);
         }
     }
