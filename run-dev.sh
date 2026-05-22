@@ -598,6 +598,43 @@ http_is_healthy() {
   curl_probe "$url" "$ca_cert"
 }
 
+tcp_port_is_open() {
+  local port="$1"
+
+  (exec 3<>"/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
+}
+
+ensure_port_available_or_reusable() {
+  local label="$1"
+  local flag_name="$2"
+  local env_name="$3"
+  local port="$4"
+  local health_url="$5"
+  local ca_cert="${6:-}"
+
+  if ! tcp_port_is_open "$port"; then
+    return
+  fi
+
+  if [[ "$scenario" == "dev" ]] && http_is_healthy "$health_url" "strict" "$ca_cert"; then
+    return
+  fi
+
+  printf 'run-dev.sh: %s port %s is already in use on 127.0.0.1.\n' "$label" "$port" >&2
+  printf 'Stop the process using that port, or choose another port with --%s-port or %s.\n' "$flag_name" "$env_name" >&2
+  exit 1
+}
+
+preflight_service_ports() {
+  ensure_port_available_or_reusable "results" "results" "WA_${scenario_env_prefix}_RESULTS_PORT" "$results_port" "$RESULTS_HEALTH_URL" "$WA_RESULTS_BACKEND_CA_CERT"
+
+  if [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" ]]; then
+    ensure_port_available_or_reusable "seqmeta" "seqmeta" "WA_${scenario_env_prefix}_SEQMETA_PORT" "$seqmeta_port" "$SEQMETA_HEALTH_URL"
+  fi
+
+  ensure_port_available_or_reusable "frontend" "frontend" "WA_${scenario_env_prefix}_FRONTEND_PORT" "$frontend_port" "$FRONTEND_HEALTH_URL" "$DEV_TLS_CERT"
+}
+
 seed_results() {
   NODE_EXTRA_CA_CERTS="$WA_RESULTS_BACKEND_CA_CERT" node - "$REPO_ROOT" "$SEED_PATH" "$WA_RESULTS_BACKEND_URL" <<'NODE'
 const fs = require("node:fs");
@@ -675,6 +712,14 @@ main().catch((error) => {
 });
 NODE
 }
+
+case "$scenario" in
+  test) scenario_env_prefix="TEST" ;;
+  dev) scenario_env_prefix="DEV" ;;
+  prod) scenario_env_prefix="PROD" ;;
+esac
+
+preflight_service_ports
 
 printf 'Building Go binary at %s\n' "$BIN_PATH"
 go build -o "$BIN_PATH" .

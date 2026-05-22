@@ -27,10 +27,13 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 )
@@ -42,6 +45,38 @@ import (
 // were mixed across scenarios so a stray test invocation could touch a
 // configured dev/prod database.
 func TestRunDevModeGuards(t *testing.T) {
+	convey.Convey("run-dev.sh --mode dev refuses an occupied results port before building", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			convey.So(listener.Close(), convey.ShouldBeNil)
+		}()
+
+		resultsPort := listener.Addr().(*net.TCPAddr).Port
+		stdout, stderr, err := runRunDevExpectingFailureWithinForTest(t, repoRoot, []string{
+			"--mode", "dev",
+			"--frontend-port", fmt.Sprintf("%d", frontendPort),
+			"--results-port", fmt.Sprintf("%d", resultsPort),
+			"--seqmeta-port", fmt.Sprintf("%d", seqmetaPort),
+		}, map[string]string{
+			"WA_ENV":                 "development",
+			"WA_RESULTS_DB_PATH":     filepath.Join(t.TempDir(), "results-dev.sqlite"),
+			"WA_RESULTS_LDAP_DN":     "uid=%s,ou=people,dc=example,dc=org",
+			"WA_RESULTS_LDAP_SERVER": "ldap.example.org",
+			"WA_MLWH_DSN":            "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+		}, nil, 5*time.Second)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout, convey.ShouldNotContainSubstring, "Building Go binary")
+		convey.So(stderr, convey.ShouldContainSubstring, "results port")
+		convey.So(stderr, convey.ShouldContainSubstring, fmt.Sprintf("%d", resultsPort))
+		convey.So(stderr, convey.ShouldContainSubstring, "already in use")
+		convey.So(stderr, convey.ShouldContainSubstring, "WA_DEV_RESULTS_PORT")
+	})
+
 	convey.Convey("run-dev.sh --mode prod refuses without WA_ENV=production", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
