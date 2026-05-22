@@ -18,11 +18,7 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-    loginAction,
-    logoutAction,
-    type CurrentSession,
-} from "@/app/(results)/auth/actions";
+import { loginAction, type CurrentSession } from "@/app/(results)/auth/actions";
 
 type AuthMenuProps = {
     initialSession: CurrentSession;
@@ -50,6 +46,24 @@ function anonymousSession(): CurrentSession {
         authenticated: false,
         username: null,
     };
+}
+
+async function logoutFromBrowser(): Promise<CurrentSession> {
+    const response = await fetch("/api/auth/logout", {
+        cache: "no-store",
+        credentials: "same-origin",
+        method: "POST",
+    });
+
+    if (!response.ok) {
+        return anonymousSession();
+    }
+
+    const body = (await response
+        .json()
+        .catch(() => null)) as CurrentSession | null;
+
+    return body?.authenticated ? body : anonymousSession();
 }
 
 export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
@@ -118,7 +132,7 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
         setLogoutPending(true);
 
         try {
-            const nextSession = await logoutAction();
+            const nextSession = await logoutFromBrowser();
 
             setSession(nextSession);
         } catch {
