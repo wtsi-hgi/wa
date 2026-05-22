@@ -415,6 +415,56 @@ MLWH_CACHE_PATH=""
 MLWH_CACHE_EPHEMERAL=0
 CLEANED_UP=0
 
+process_is_running() {
+  local pid="$1"
+  local stat
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+
+  stat="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+  if [[ -z "$stat" || "$stat" == Z* ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+wait_for_process_exit() {
+  local pid="$1"
+  local max_attempts="${2:-20}"
+  local attempt=0
+
+  while (( attempt < max_attempts )); do
+    if ! process_is_running "$pid"; then
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+
+  return 1
+}
+
+terminate_child_process() {
+  local pid="$1"
+
+  if ! process_is_running "$pid"; then
+    wait "$pid" 2>/dev/null || true
+    return
+  fi
+
+  kill "$pid" 2>/dev/null || true
+  if ! wait_for_process_exit "$pid"; then
+    printf 'run-dev.sh: process %s did not exit after SIGTERM; sending SIGKILL.\n' "$pid" >&2
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+
+  wait "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   local exit_code="$1"
 
@@ -426,15 +476,7 @@ cleanup() {
   trap - EXIT INT TERM
 
   for pid in "${PIDS[@]:-}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-    fi
-  done
-
-  for pid in "${PIDS[@]:-}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      wait "$pid" 2>/dev/null || true
-    fi
+    terminate_child_process "$pid"
   done
 
   if (( DB_EPHEMERAL )) && [[ -n "$DB_PATH" ]]; then

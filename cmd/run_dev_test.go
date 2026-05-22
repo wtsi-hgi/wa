@@ -197,6 +197,8 @@ func TestRunDevScriptF1DevCertificates(t *testing.T) {
 		}, map[string]string{
 			"WA_ENV":                                "development",
 			"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+			"WA_RESULTS_LDAP_DN":                    "",
+			"WA_RESULTS_LDAP_SERVER":                "",
 			"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
 			"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
 			"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
@@ -286,6 +288,48 @@ func runDevOwnerJWTForTest(t *testing.T, resultsPort int) string {
 	}
 
 	return jwt
+}
+
+func runRunDevExpectingFailureWithinForTest(
+	t *testing.T,
+	repoRoot string,
+	args []string,
+	env map[string]string,
+	unsetEnv []string,
+	limit time.Duration,
+) (string, string, error) {
+	t.Helper()
+
+	command := exec.Command("bash", append([]string{filepath.Join(repoRoot, "run-dev.sh")}, args...)...) //nolint:gosec
+	command.Dir = repoRoot
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = applyTestEnvForTest(env, unsetEnv)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	command.Stdout = stdout
+	command.Stderr = stderr
+
+	if err := command.Start(); err != nil {
+		t.Fatalf("start run-dev.sh: %v", err)
+	}
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- command.Wait()
+	}()
+
+	select {
+	case err := <-waitCh:
+		return stdout.String(), stderr.String(), err
+	case <-time.After(limit):
+		signalRunDevProcessGroupForTest(command, syscall.SIGKILL)
+		select {
+		case err := <-waitCh:
+			return stdout.String(), stderr.String(), fmt.Errorf("run-dev.sh did not exit within %s: %w", limit, err)
+		case <-time.After(2 * time.Second):
+			return stdout.String(), stderr.String(), fmt.Errorf("run-dev.sh did not exit within %s", limit)
+		}
+	}
 }
 
 func TestRunDevSeqmetaDefaultReadinessBudgetAllowsColdMLWHSync(t *testing.T) {
@@ -1816,4 +1860,115 @@ type runDevFixtureSummary struct {
 	hasRepeatedFileTypes            bool
 	maxPreviewableImagesInDirectory int
 	fileKinds                       []string
+}
+
+func TestRunDevScriptCleansUpHungResultsAfterReadinessTimeout(t *testing.T) {
+	convey.Convey("Bug 1: run-dev.sh escalates cleanup when a timed-out results server ignores SIGTERM", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		binDir := t.TempDir()
+		fakeResultsPIDPath := filepath.Join(t.TempDir(), "fake-results.pid")
+		fakeWaPath := filepath.Join(repoRoot, ".tmp", "wa")
+
+		writeRunDevHungResultsToolchainForTest(t, binDir)
+		t.Cleanup(func() {
+			_ = os.Remove(fakeWaPath)
+		})
+
+		stdout, stderr, err := runRunDevExpectingFailureWithinForTest(t, repoRoot, []string{
+			"--mode", "dev",
+			"--frontend-port", fmt.Sprintf("%d", frontendPort),
+			"--results-port", fmt.Sprintf("%d", resultsPort),
+			"--seqmeta-port", fmt.Sprintf("%d", seqmetaPort),
+		}, map[string]string{
+			"PATH":                           binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"WA_FAKE_RESULTS_PID_PATH":       fakeResultsPIDPath,
+			"WA_RESULTS_DB_PATH":             filepath.Join(t.TempDir(), "results-dev.sqlite"),
+			"WA_MLWH_DSN":                    "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+			"WA_RESULTS_LDAP_SERVER":         "ldap.example.org",
+			"WA_RESULTS_LDAP_DN":             "uid=%s,ou=people,dc=example,dc=org",
+			"WA_RUN_DEV_FRONTEND_DEV_CMD":    `node -e "process.exit(1)"`,
+			"WA_RUN_DEV_FRONTEND_HEALTH_URL": fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+		}, []string{"WA_ENV"}, 5*time.Second)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout, convey.ShouldContainSubstring, "Starting results server")
+		convey.So(stderr, convey.ShouldContainSubstring, "Timed out waiting for results server")
+		convey.So(stderr, convey.ShouldContainSubstring, "did not exit after SIGTERM; sending SIGKILL")
+
+		fakeResultsPID := runDevReadPIDForTest(t, fakeResultsPIDPath)
+		t.Cleanup(func() {
+			if runDevPIDExistsForTest(fakeResultsPID) {
+				_ = syscall.Kill(fakeResultsPID, syscall.SIGKILL)
+			}
+		})
+		convey.So(runDevPIDExistsForTest(fakeResultsPID), convey.ShouldBeFalse)
+	})
+}
+
+func writeRunDevHungResultsToolchainForTest(t *testing.T, binDir string) {
+	t.Helper()
+
+	fakeGo := `#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "build" && "${2:-}" == "-o" && -n "${3:-}" ]]; then
+	output="$3"
+	mkdir -p "$(dirname "$output")"
+	cat >"$output" <<'WAEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "results" && "${2:-}" == "serve" ]]; then
+	printf '%s\n' "$$" > "${WA_FAKE_RESULTS_PID_PATH:?}"
+	trap "" TERM
+	exec /bin/sleep 60
+fi
+
+printf 'unexpected fake wa args: %s\n' "$*" >&2
+exit 2
+WAEOF
+	chmod +x "$output"
+	exit 0
+fi
+
+printf 'unexpected fake go args: %s\n' "$*" >&2
+exit 2
+`
+	convey.So(os.WriteFile(filepath.Join(binDir, "go"), []byte(fakeGo), 0o755), convey.ShouldBeNil)
+	convey.So(os.WriteFile(filepath.Join(binDir, "curl"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 22\n"), 0o755), convey.ShouldBeNil)
+	convey.So(os.WriteFile(filepath.Join(binDir, "sleep"), []byte("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"), 0o755), convey.ShouldBeNil)
+}
+
+func runDevReadPIDForTest(t *testing.T, pidPath string) int {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		body, err := os.ReadFile(pidPath)
+		if err == nil {
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(body)))
+			convey.So(parseErr, convey.ShouldBeNil)
+
+			return pid
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for fake results pid at %s", pidPath)
+
+	return 0
+}
+
+func runDevPIDExistsForTest(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+
+	err := syscall.Kill(pid, 0)
+
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
