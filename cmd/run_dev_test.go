@@ -868,6 +868,8 @@ exit 0
 			resultsPort:  resultsPort,
 			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
 			env: map[string]string{
+				"WA_RESULTS_SERVER_CERT":                ".tmp/wa-dev-cert.pem",
+				"WA_RESULTS_SERVER_KEY":                 ".tmp/wa-dev-key.pem",
 				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
 				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
@@ -878,9 +880,11 @@ exit 0
 			},
 		})
 
-		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
 		loggedArgs := waitForRunDevStepsForTest(t, pnpmLogPath, 1)
 
+		convey.So(snapshot.ResultsServerCert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
+		convey.So(snapshot.ResultsServerKey, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"))
 		convey.So(loggedArgs, convey.ShouldResemble, []string{
 			fmt.Sprintf(
 				"dev --port %d --experimental-https --experimental-https-key %s --experimental-https-cert %s",

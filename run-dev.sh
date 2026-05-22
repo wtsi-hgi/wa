@@ -327,8 +327,6 @@ SEED_PATH="$REPO_ROOT/.docs/results-web/fixtures/seed.json"
 FRONTEND_DIR="${WA_RUN_DEV_FRONTEND_CWD:-$REPO_ROOT/frontend}"
 DEFAULT_DEV_TLS_CERT="$TMP_DIR/wa-dev-cert.pem"
 DEFAULT_DEV_TLS_KEY="$TMP_DIR/wa-dev-key.pem"
-DEV_TLS_CERT="${WA_RESULTS_SERVER_CERT:-$DEFAULT_DEV_TLS_CERT}"
-DEV_TLS_KEY="${WA_RESULTS_SERVER_KEY:-$DEFAULT_DEV_TLS_KEY}"
 RESULTS_LOG="$LOG_DIR/results.log"
 SEQMETA_LOG="$LOG_DIR/seqmeta.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
@@ -340,6 +338,19 @@ SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-1200}"
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-https://127.0.0.1:$results_port/rest/v1/results/stats}"
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-https://127.0.0.1:$frontend_port/api/health}"
 SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$seqmeta_port/studies}"
+
+repo_absolute_path() {
+  local value="$1"
+
+  if [[ "$value" == /* ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s/%s' "$REPO_ROOT" "$value"
+  fi
+}
+
+DEV_TLS_CERT="$(repo_absolute_path "${WA_RESULTS_SERVER_CERT:-$DEFAULT_DEV_TLS_CERT}")"
+DEV_TLS_KEY="$(repo_absolute_path "${WA_RESULTS_SERVER_KEY:-$DEFAULT_DEV_TLS_KEY}")"
 
 if [[ ! "$FRONTEND_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
   printf 'frontend health max attempts must be an integer\n' >&2

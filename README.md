@@ -147,8 +147,9 @@ make prod
 
 `run-dev.sh` creates or reuses self-signed development certificates at
 the `WA_RESULTS_SERVER_CERT` and `WA_RESULTS_SERVER_KEY` paths from the active
-env file, defaulting to `.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`. It exports
-`WA_RESULTS_BACKEND_URL=https://127.0.0.1:<port>` and
+env file, defaulting to `.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`.
+Relative paths are resolved from the repo root before child processes are
+started. It exports `WA_RESULTS_BACKEND_URL=https://127.0.0.1:<port>` and
 `WA_RESULTS_BACKEND_CA_CERT` pointing at the same certificate for the Next.js
 server, and starts `next dev` with matching experimental HTTPS key/cert flags. Development
 mode still requires real `WA_RESULTS_LDAP_SERVER` and `WA_RESULTS_LDAP_DN`

@@ -405,17 +405,17 @@ WA_SEQMETA_BACKEND_URL=http://localhost:8091 \
 
 ### Environment variables for production
 
-| Variable                       | Required     | Description                                      |
-| ------------------------------ | ------------ | ------------------------------------------------ |
-| `WA_RESULTS_DB_PATH`           | For results  | SQLite path, full DSN, or passwordless MySQL DSN |
-| `WA_RESULTS_DB_PASSWORD`       | Optional     | MySQL password paired with a passwordless DSN    |
-| `WA_MLWH_DSN`                  | For seqmeta  | Passwordless MLWH DSN                            |
-| `WA_MLWH_PASSWORD`             | Optional     | MLWH password paired with a passwordless DSN     |
-| `WA_MLWH_CACHE_PATH`           | For seqmeta  | SQLite path or passwordless MySQL cache DSN      |
-| `WA_MLWH_CACHE_PASSWORD`       | Optional     | MLWH cache MySQL password                        |
-| `WA_RESULTS_SERVER_CERT`       | For results  | TLS certificate path and CLI trust root          |
-| `WA_RESULTS_SERVER_KEY`        | For results  | TLS private key path for `wa results serve`      |
-| `WA_RESULTS_BACKEND_URL`       | For frontend | Results API URL (server-side only)               |
-| `WA_SEQMETA_BACKEND_URL`       | For frontend | Seqmeta API URL (server-side only)               |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | No           | Study list cache TTL (default: 300)              |
-| `PORT`                         | No           | Frontend listen port (default: 3000)             |
+| Variable                       | Required     | Description                                                                                          |
+| ------------------------------ | ------------ | ---------------------------------------------------------------------------------------------------- |
+| `WA_RESULTS_DB_PATH`           | For results  | SQLite path, full DSN, or passwordless MySQL DSN                                                     |
+| `WA_RESULTS_DB_PASSWORD`       | Optional     | MySQL password paired with a passwordless DSN                                                        |
+| `WA_MLWH_DSN`                  | For seqmeta  | Passwordless MLWH DSN                                                                                |
+| `WA_MLWH_PASSWORD`             | Optional     | MLWH password paired with a passwordless DSN                                                         |
+| `WA_MLWH_CACHE_PATH`           | For seqmeta  | SQLite path or passwordless MySQL cache DSN                                                          |
+| `WA_MLWH_CACHE_PASSWORD`       | Optional     | MLWH cache MySQL password                                                                            |
+| `WA_RESULTS_SERVER_CERT`       | For results  | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root     |
+| `WA_RESULTS_SERVER_KEY`        | For results  | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root |
+| `WA_RESULTS_BACKEND_URL`       | For frontend | Results API URL (server-side only)                                                                   |
+| `WA_SEQMETA_BACKEND_URL`       | For frontend | Seqmeta API URL (server-side only)                                                                   |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | No           | Study list cache TTL (default: 300)                                                                  |
+| `PORT`                         | No           | Frontend listen port (default: 3000)                                                                 |
