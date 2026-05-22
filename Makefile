@@ -2,9 +2,10 @@
 
 SHELL := bash
 FRONTEND_DIR := frontend
-# Force pure-Go builds for all `go` invocations below (matches the `-tags
-# netgo` builds used in test/dev/prod recipes).
-export CGO_ENABLED := 0
+# Force cgo enabled builds for all `go` invocations below, since we need group
+# lookups to work for the LDAP auth in the results service and netgo doesn't
+# support that.
+export CGO_ENABLED := 1
 
 # Scenario loaders source the dotenv-style files directly so `make` targets and
 # `wa --env ...` share the same environment naming.
