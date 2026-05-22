@@ -6,6 +6,7 @@ import { fetchFiles, fetchResult } from "@/app/(results)/actions";
 import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
 import { ResultRegistrationSummary } from "@/components/result-registration-summary";
+import { ReturnLinkHeaderAction } from "@/app/(results)/results/[id]/return-link-header-action";
 import { BackendRequestError } from "@/lib/backend-client";
 import {
     lockedResponseSchema,
@@ -196,6 +197,10 @@ function LockedResultDetailState({
             className="mx-auto flex min-h-screen w-full max-w-[84rem] items-center justify-center px-4 py-6 sm:px-8 lg:py-8"
             data-locked-result-detail="true"
         >
+            <ReturnLinkHeaderAction
+                href={returnHref}
+                label="Back to dashboard"
+            />
             <section className="flex max-w-xl flex-col items-center gap-5 text-center">
                 <span className="inline-flex h-16 w-16 items-center justify-center rounded-full border border-border/70 bg-muted text-muted-foreground">
                     <LockKeyhole
@@ -207,14 +212,6 @@ function LockedResultDetailState({
                 <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
                     {locked.message}
                 </h1>
-                <Link
-                    aria-label="Back to dashboard"
-                    className="inline-flex min-h-9 items-center rounded-full border border-border/70 bg-background/85 px-4 py-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
-                    data-return-link="true"
-                    href={returnHref}
-                >
-                    Back to dashboard
-                </Link>
             </section>
         </main>
     );

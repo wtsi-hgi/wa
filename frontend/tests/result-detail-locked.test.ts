@@ -72,6 +72,11 @@ describe("E4 locked result detail", () => {
                 ?.getAttribute("href"),
         ).toBe("/?requester=alice");
         expect(
+            container
+                .querySelector('[data-locked-result-detail="true"] section')
+                ?.querySelector('a[aria-label="Back to dashboard"]'),
+        ).toBeNull();
+        expect(
             container.querySelector('[data-result-detail-summary="true"]'),
         ).toBeNull();
         expect(container.textContent).not.toContain("Registered files");
