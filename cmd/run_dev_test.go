@@ -57,6 +57,8 @@ import (
 type runDevEnvSnapshot struct {
 	ResultsBackendURL string `json:"WA_RESULTS_BACKEND_URL"`
 	ResultsCACert     string `json:"WA_RESULTS_BACKEND_CA_CERT"`
+	ResultsServerCert string `json:"WA_RESULTS_SERVER_CERT"`
+	ResultsServerKey  string `json:"WA_RESULTS_SERVER_KEY"`
 	SeqmetaBackendURL string `json:"WA_SEQMETA_BACKEND_URL"`
 	ResultsDBPath     string `json:"WA_RESULTS_DB_PATH"`
 	MLWHCachePath     string `json:"WA_MLWH_CACHE_PATH"`
@@ -168,13 +170,13 @@ func TestRunDevScriptF1DevCertificates(t *testing.T) {
 			},
 		})
 
-		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
 		cmdline := waitForRunDevChildCommandLineForTest(t, process.Command.Process.Pid, " results serve ")
 
-		convey.So(cmdline, convey.ShouldContainSubstring, " --cert ")
-		convey.So(cmdline, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
-		convey.So(cmdline, convey.ShouldContainSubstring, " --key ")
-		convey.So(cmdline, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"))
+		convey.So(snapshot.ResultsServerCert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
+		convey.So(snapshot.ResultsServerKey, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"))
+		convey.So(cmdline, convey.ShouldNotContainSubstring, " --cert ")
+		convey.So(cmdline, convey.ShouldNotContainSubstring, " --key ")
 		convey.So(cmdline, convey.ShouldContainSubstring, " --ldap_server wa-test-ldap.invalid ")
 		convey.So(cmdline, convey.ShouldContainSubstring, " --ldap_dn uid=%s,ou=people,dc=example,dc=org ")
 		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "ldap")

@@ -325,8 +325,10 @@ BIN_PATH="$TMP_DIR/wa"
 LOG_DIR="$REPO_ROOT/logs"
 SEED_PATH="$REPO_ROOT/.docs/results-web/fixtures/seed.json"
 FRONTEND_DIR="${WA_RUN_DEV_FRONTEND_CWD:-$REPO_ROOT/frontend}"
-DEV_TLS_CERT="$TMP_DIR/wa-dev-cert.pem"
-DEV_TLS_KEY="$TMP_DIR/wa-dev-key.pem"
+DEFAULT_DEV_TLS_CERT="$TMP_DIR/wa-dev-cert.pem"
+DEFAULT_DEV_TLS_KEY="$TMP_DIR/wa-dev-key.pem"
+DEV_TLS_CERT="${WA_RESULTS_SERVER_CERT:-$DEFAULT_DEV_TLS_CERT}"
+DEV_TLS_KEY="${WA_RESULTS_SERVER_KEY:-$DEFAULT_DEV_TLS_KEY}"
 RESULTS_LOG="$LOG_DIR/results.log"
 SEQMETA_LOG="$LOG_DIR/seqmeta.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
@@ -790,7 +792,7 @@ if [[ "$scenario" == "dev" ]] && http_is_healthy "$RESULTS_HEALTH_URL" "strict" 
   printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL" >"$RESULTS_LOG"
 else
   printf 'Starting results server on %s (mode=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario"
-  results_serve_args=(results serve --port "$results_port" --cert "$DEV_TLS_CERT" --key "$DEV_TLS_KEY")
+  results_serve_args=(results serve --port "$results_port")
 
   if [[ "$scenario" == "test" ]]; then
     results_serve_args+=(--ldap_server "${WA_RESULTS_LDAP_SERVER:-wa-test-ldap.invalid}")

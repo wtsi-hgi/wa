@@ -89,6 +89,8 @@ wa results serve --port 8090 --db results.db \
   --ldap_dn 'uid=%s,ou=people,dc=example,dc=org'
 ```
 
+`--cert` defaults to `WA_RESULTS_SERVER_CERT`, and `results serve --key`
+defaults to `WA_RESULTS_SERVER_KEY`.
 For MySQL, either export `WA_RESULTS_DB_PATH='user:pass@tcp(host:3306)/dbname'`
 and run `wa results serve` with the TLS and LDAP flags above, or pass a
 passwordless DSN with `--db 'user@tcp(host:3306)/dbname'` and export
@@ -140,10 +142,11 @@ make prod
 ```
 
 `run-dev.sh` creates or reuses self-signed development certificates at
-`.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`. It exports
+the `WA_RESULTS_SERVER_CERT` and `WA_RESULTS_SERVER_KEY` paths from the active
+env file, defaulting to `.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`. It exports
 `WA_RESULTS_BACKEND_URL=https://127.0.0.1:<port>` and
-`WA_RESULTS_BACKEND_CA_CERT=.tmp/wa-dev-cert.pem` for the Next.js server, and
-starts `next dev` with matching experimental HTTPS key/cert flags. Development
+`WA_RESULTS_BACKEND_CA_CERT` pointing at the same certificate for the Next.js
+server, and starts `next dev` with matching experimental HTTPS key/cert flags. Development
 mode still requires real `WA_RESULTS_LDAP_SERVER` and `WA_RESULTS_LDAP_DN`
 values, usually in `.env.development.local`; only test mode uses the committed
 test LDAP placeholders.
