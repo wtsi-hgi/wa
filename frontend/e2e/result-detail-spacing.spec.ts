@@ -214,7 +214,7 @@ async function measureResultDetailSpacing(
         const main = requiredElement("main");
         const infoBox = requiredElement('[data-result-detail-summary="true"]');
         const infoInner = infoBox.firstElementChild;
-        const infoFirstContent = infoBox.querySelector("[data-return-link]");
+        const infoFirstContent = infoBox.querySelector("h1");
         const fileBrowser = requiredElement('[data-file-browser="true"]');
         const fileHeader = requiredElement('[data-file-browser-header="true"]');
         const fileHeaderIcon = fileHeader.querySelector("svg");

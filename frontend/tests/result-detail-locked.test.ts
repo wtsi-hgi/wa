@@ -64,17 +64,12 @@ describe("E4 locked result detail", () => {
             "You do not have access to this result set",
         );
         expect(
-            container.querySelector('a[aria-label="Back to dashboard"]'),
-        ).not.toBeNull();
-        expect(
             container
-                .querySelector('a[aria-label="Back to dashboard"]')
-                ?.getAttribute("href"),
-        ).toBe("/?requester=alice");
+                .querySelector('[data-locked-result-detail="true"]')
+                ?.querySelector('a[data-return-link="true"]'),
+        ).toBeNull();
         expect(
-            container
-                .querySelector('[data-locked-result-detail="true"] section')
-                ?.querySelector('a[aria-label="Back to dashboard"]'),
+            container.querySelector('a[data-return-link="true"]'),
         ).toBeNull();
         expect(
             container.querySelector('[data-result-detail-summary="true"]'),
@@ -93,11 +88,11 @@ describe("E4 locked result detail", () => {
         ).not.toBeNull();
         expect(
             container
-                .querySelector('a[aria-label="Back to dashboard"]')
-                ?.getAttribute("href"),
-        ).toBe("/");
-        expect(container.querySelector("a")?.textContent).toBe(
-            "Back to dashboard",
-        );
+                .querySelector('[data-locked-result-detail="true"]')
+                ?.querySelector('a[data-return-link="true"]'),
+        ).toBeNull();
+        expect(
+            container.querySelector('a[data-return-link="true"]'),
+        ).toBeNull();
     });
 });

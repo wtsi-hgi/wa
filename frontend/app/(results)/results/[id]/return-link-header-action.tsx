@@ -42,7 +42,9 @@ export function ReturnLinkHeaderAction(props: ReturnLinkHeaderActionProps) {
         };
     }, []);
 
-    const link = returnLink(props);
+    if (!target) {
+        return null;
+    }
 
-    return target ? createPortal(link, target) : link;
+    return createPortal(returnLink(props), target);
 }

@@ -1,6 +1,4 @@
-import Link from "next/link";
-
-import { ChevronLeft, LockKeyhole } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
 
 import { fetchFiles, fetchResult } from "@/app/(results)/actions";
 import { ResultDetailFiles } from "@/components/result-detail-files";
@@ -287,26 +285,13 @@ export async function ResultDetailPageContent({
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-5 px-4 py-6 sm:px-8 lg:py-8">
+            <ReturnLinkHeaderAction href={returnHref} label={returnLabel} />
             <section
                 className="overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_8%,var(--card)_92%))] shadow-[0_28px_80px_-64px_rgba(41,58,85,0.78)]"
                 data-result-detail-summary="true"
             >
                 <div className="space-y-4 p-3">
                     <div className="min-w-0 space-y-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                            <Link
-                                href={returnHref}
-                                className="inline-flex min-h-8 items-center gap-2 rounded-full border border-border/70 bg-background/85 px-3 py-1 text-xs font-medium text-muted-foreground transition hover:text-foreground"
-                                data-return-link="true"
-                            >
-                                <ChevronLeft
-                                    className="h-3.5 w-3.5"
-                                    aria-hidden="true"
-                                />
-                                <span>{returnLabel}</span>
-                            </Link>
-                        </div>
-
                         <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-baseline lg:justify-between">
                             <h1 className="min-w-0 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
                                 {result.pipeline_name}
