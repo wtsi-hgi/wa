@@ -26,37 +26,28 @@ function expireAuthCookie(response: NextResponse): void {
     });
 }
 
+async function notifyBackendLogout(jwt: string): Promise<void> {
+    try {
+        await resultsRaw("/rest/v1/auth/logout", {
+            cache: "no-store",
+            headers: {
+                authorization: `Bearer ${jwt}`,
+            },
+            method: "POST",
+        });
+    } catch {
+        // Browser logout is complete once the auth cookie is expired.
+    }
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
     const jwt = request.cookies.get(authCookieName)?.value;
-    let status = 200;
-    let body: { authenticated: boolean; username: null } | { error: string } =
-        anonymousSession();
 
     if (jwt) {
-        try {
-            const response = await resultsRaw("/rest/v1/auth/logout", {
-                cache: "no-store",
-                headers: {
-                    authorization: `Bearer ${jwt}`,
-                },
-                method: "POST",
-            });
-
-            if (
-                !response.ok &&
-                response.status !== 404 &&
-                response.status !== 501
-            ) {
-                status = 502;
-                body = { error: "logout failed" };
-            }
-        } catch {
-            status = 503;
-            body = { error: "results backend request failed" };
-        }
+        void notifyBackendLogout(jwt);
     }
 
-    const response = NextResponse.json(body, { status });
+    const response = NextResponse.json(anonymousSession());
     expireAuthCookie(response);
 
     return response;

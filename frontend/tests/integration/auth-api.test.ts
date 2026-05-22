@@ -121,4 +121,41 @@ describe("E1 auth API route handlers", () => {
         expect(setCookieHeader(response)).toContain("wa_results_jwt=");
         expect(setCookieHeader(response)).toContain("Max-Age=0");
     });
+
+    it("expires the JWT cookie immediately when the backend logout endpoint does not answer", async () => {
+        vi.mocked(fetch).mockReturnValue(new Promise<Response>(() => {}));
+
+        const { POST } = await import("@/app/api/auth/logout/route");
+        const response = await Promise.race([
+            POST(
+                makeRequest("/api/auth/logout", {
+                    headers: { cookie: "wa_results_jwt=jwt-old" },
+                    method: "POST",
+                }),
+            ),
+            new Promise<"timed out">((resolve) => {
+                setTimeout(() => {
+                    resolve("timed out");
+                }, 50);
+            }),
+        ]);
+
+        expect(response).not.toBe("timed out");
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual({
+            authenticated: false,
+            username: null,
+        });
+        expect(setCookieHeader(response)).toContain("wa_results_jwt=");
+        expect(setCookieHeader(response)).toContain("Max-Age=0");
+        expect(fetch).toHaveBeenCalledWith(
+            "https://results.example/api/rest/v1/auth/logout",
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    authorization: "Bearer jwt-old",
+                }),
+                method: "POST",
+            }),
+        );
+    });
 });
