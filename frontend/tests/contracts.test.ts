@@ -9,6 +9,7 @@ import {
     healthSchema,
     identifierResultSchema,
     irodsPathSchema,
+    lockedResponseSchema,
     metaKeysSchema,
     pipelineCountSchema,
     resultSetSchema,
@@ -39,6 +40,11 @@ describe("contract schemas", () => {
             pipeline_name: "nf-core/rnaseq",
             pipeline_version: "3.18.0",
             output_directory: "/tmp/out",
+            output_directory_gid: 200,
+            access: {
+                can_view: true,
+                locked: false,
+            },
             metadata: {
                 seqmeta_sampleid: "SANG123",
             },
@@ -49,6 +55,45 @@ describe("contract schemas", () => {
         expect(parsed.id).toBe("result-1");
         expect(parsed.pipeline_name).toBe("nf-core/rnaseq");
         expect(parsed.metadata.seqmeta_sampleid).toBe("SANG123");
+    });
+
+    it("parses access-aware ResultSet rows and locked detail responses", () => {
+        const lockedResult = resultSetSchema.parse({
+            id: "result-locked",
+            pipeline_identifier: "gh://repo/workflow.nf",
+            run_key: "runid=456",
+            requester: "alice",
+            operator: "bob",
+            command: "nextflow run workflow.nf",
+            pipeline_name: "nf-core/rnaseq",
+            pipeline_version: "3.18.0",
+            output_directory: "/tmp/out",
+            output_directory_gid: null,
+            access: {
+                can_view: false,
+                locked: true,
+                reason: "login_required",
+            },
+            metadata: {},
+            created_at: "2026-04-16T09:00:00Z",
+            updated_at: "2026-04-16T10:00:00Z",
+        });
+        const lockedResponse = lockedResponseSchema.parse({
+            error: "locked",
+            locked: true,
+            result_id: "result-locked",
+            message: "You do not have access to this result set",
+        });
+
+        expect(lockedResult.access).toEqual({
+            can_view: false,
+            locked: true,
+            reason: "login_required",
+        });
+        expect(lockedResult.output_directory_gid).toBeNull();
+        expect(lockedResponse.message).toBe(
+            "You do not have access to this result set",
+        );
     });
 
     it("rejects a ResultSet missing the id field", () => {

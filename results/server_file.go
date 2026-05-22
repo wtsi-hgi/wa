@@ -39,7 +39,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 )
 
 const DefaultMaxPreviewBytes int64 = 10 * 1024 * 1024
@@ -251,16 +251,30 @@ func readPreviewLinesWithinLimits(reader io.Reader, byteLimit int64, lineLimit i
 	}
 }
 
-func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetFile(c *gin.Context) {
 	if s == nil || s.store == nil {
-		writeServerError(w, http.StatusInternalServerError, "server store is not configured")
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
 
+		return
+	}
+
+	r := c.Request
+	w := c.Writer
+	resultID := c.Param("id")
+	result, err := s.store.Get(c.Request.Context(), resultID)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
+	if !s.requireResultAccess(c, *result) {
 		return
 	}
 
 	requestedPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if requestedPath == "" {
-		writeServerError(w, http.StatusBadRequest, "path query parameter is required")
+		writeServerError(c, http.StatusBadRequest, "path query parameter is required")
 
 		return
 	}
@@ -269,7 +283,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	if lineLimitQuery := strings.TrimSpace(r.URL.Query().Get("line_limit")); lineLimitQuery != "" {
 		parsedLineLimit, err := strconv.Atoi(lineLimitQuery)
 		if err != nil || parsedLineLimit < 1 {
-			writeServerError(w, http.StatusBadRequest, "line_limit query parameter must be a positive integer")
+			writeServerError(c, http.StatusBadRequest, "line_limit query parameter must be a positive integer")
 
 			return
 		}
@@ -279,7 +293,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 
 	mode, ok := parsePreviewMode(r.URL.Query().Get("mode"))
 	if !ok {
-		writeServerError(w, http.StatusBadRequest, "mode query parameter must be one of: inline, enlarged, download")
+		writeServerError(c, http.StatusBadRequest, "mode query parameter must be one of: inline, enlarged, download")
 
 		return
 	}
@@ -296,22 +310,15 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		// download=true flag. previewModeUnspecified preserves legacy behaviour.
 	}
 
-	resultID := chi.URLParam(r, "id")
-	if _, err := s.store.Get(r.Context(), resultID); err != nil {
-		writeDomainError(w, err)
-
-		return
-	}
-
-	files, err := s.store.GetFiles(r.Context(), resultID)
+	files, err := s.store.GetFiles(c.Request.Context(), resultID)
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 
 		return
 	}
 
 	if !hasRegisteredFile(files, requestedPath) {
-		writeServerError(w, http.StatusForbidden, "requested file is not registered")
+		writeServerError(c, http.StatusForbidden, "requested file is not registered")
 
 		return
 	}
@@ -322,26 +329,26 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	fileInfo, err := os.Stat(requestedPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			writeDomainError(w, ErrFileGone)
+			writeDomainError(c, ErrFileGone)
 
 			return
 		}
 
-		writeServerError(w, http.StatusInternalServerError, fmt.Sprintf("stat file: %v", err))
+		writeServerError(c, http.StatusInternalServerError, fmt.Sprintf("stat file: %v", err))
 
 		return
 	}
 
 	if !download && !allowReadablePreview && fileInfo.Size() > s.maxPreviewBytes {
 		w.Header().Set("X-File-Size", strconv.FormatInt(fileInfo.Size(), 10))
-		writeDomainError(w, ErrFileTooLarge)
+		writeDomainError(c, ErrFileTooLarge)
 
 		return
 	}
 
 	reader, contentType, err := openFileForResponse(requestedPath, download)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(c, http.StatusInternalServerError, err.Error())
 
 		return
 	}
@@ -356,7 +363,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	if allowReadablePreview {
 		preview, truncated, err := readPreviewLinesWithinLimits(reader, s.maxPreviewBytes, lineLimit)
 		if err != nil {
-			writeServerError(w, http.StatusInternalServerError, fmt.Sprintf("read preview lines: %v", err))
+			writeServerError(c, http.StatusInternalServerError, fmt.Sprintf("read preview lines: %v", err))
 
 			return
 		}

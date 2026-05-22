@@ -47,12 +47,16 @@ wa results register /path/to/output \
   --user jdoe \
   --operator jdoe \
   --command "nextflow run pipeline" \
-  --nextflow-workflow /path/to/main.nf \
+  --nextflow-workflow nf-core/sarek \
   --unique my-run-001 \
 	--study 6568 \
 	--sample SANG123
 
 ```
+
+`--nextflow-workflow` accepts a local workflow file, a GitHub URL such as
+`https://github.com/nf-core/sarek`, or an `owner/repo` shorthand such as
+`seqeralabs/nf-hello-world`.
 
 The `--run`, `--study`, `--sample`, and `--library` flags resolve through MLWH
 and store canonical `seqmeta_*` metadata entries for search and validation.
@@ -71,7 +75,7 @@ wa results get --files <id>
 
 When you run the CLI against a stack started via the scenario env files, select
 the matching environment with `--env` or `WA_ENV`. `wa results ...` then
-defaults `--server` to `http://127.0.0.1:<active results port>` from that
+defaults `--server` to `https://127.0.0.1:<active results port>` from that
 scenario's `WA_*_RESULTS_PORT`.
 
 ```bash
@@ -82,12 +86,19 @@ wa --env production results register /path/to/output --user jdoe
 ### Start the results API server
 
 ```bash
-wa results serve --port 8090 --db results.db
+wa results serve --port 8090 --db results.db \
+  --cert .tmp/wa-dev-cert.pem \
+  --key .tmp/wa-dev-key.pem \
+  --ldap_server ldap.example.org \
+  --ldap_dn 'uid=%s,ou=people,dc=example,dc=org'
 ```
 
+`--cert` defaults to `WA_RESULTS_SERVER_CERT`, and `results serve --key`
+defaults to `WA_RESULTS_SERVER_KEY`.
 For MySQL, either export `WA_RESULTS_DB_PATH='user:pass@tcp(host:3306)/dbname'`
-and run `wa results serve --port 8090`, or pass a passwordless DSN with
-`--db 'user@tcp(host:3306)/dbname'` and export `WA_RESULTS_DB_PASSWORD`.
+and run `wa results serve` with the TLS and LDAP flags above, or pass a
+passwordless DSN with `--db 'user@tcp(host:3306)/dbname'` and export
+`WA_RESULTS_DB_PASSWORD`.
 Password-bearing DSNs are rejected on the command line.
 Add `--seqmeta-url http://host:8091` to enable seqmeta validation of
 `seqmeta_*` metadata fields.
@@ -133,6 +144,17 @@ make test
 # Run the production stack (uses .env.production + .env.production.local)
 make prod
 ```
+
+`run-dev.sh` creates or reuses self-signed development certificates at
+the `WA_RESULTS_SERVER_CERT` and `WA_RESULTS_SERVER_KEY` paths from the active
+env file, defaulting to `.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`.
+Relative paths are resolved from the repo root before child processes are
+started. It exports `WA_RESULTS_BACKEND_URL=https://127.0.0.1:<port>` and
+`WA_RESULTS_BACKEND_CA_CERT` pointing at the same certificate for the Next.js
+server, and starts `next dev` with matching experimental HTTPS key/cert flags. Development
+mode still requires real `WA_RESULTS_LDAP_SERVER` and `WA_RESULTS_LDAP_DN`
+values, usually in `.env.development.local`; only test mode uses the committed
+test LDAP placeholders.
 
 `make test` skips live MLWH integration tests by default. Set
 `WA_LIVE_MLWH_TESTS=1` explicitly to run live MLWH checks; real cold-sync

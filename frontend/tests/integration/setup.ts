@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { request as httpsRequest } from "node:https";
 import { createServer } from "node:net";
+import { userInfo } from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -162,11 +164,12 @@ function collectProcessOutput(child: ServerProcess): {
 
 async function waitForServer(
     baseUrl: string,
+    caCertPath: string,
     child: ServerProcess,
     stdout: string[],
     stderr: string[],
 ): Promise<void> {
-    const healthUrl = new URL("/results/stats", baseUrl);
+    const healthPath = "/rest/v1/results/stats";
 
     for (let attempt = 0; attempt < 120; attempt += 1) {
         if (child.exitCode !== null) {
@@ -178,9 +181,13 @@ async function waitForServer(
         }
 
         try {
-            const response = await fetch(healthUrl, { cache: "no-store" });
+            const response = await httpsRequestWithCA(
+                baseUrl,
+                caCertPath,
+                healthPath,
+            );
 
-            if (response.ok) {
+            if (response.statusCode >= 200 && response.statusCode < 300) {
                 return;
             }
         } catch {
@@ -191,15 +198,106 @@ async function waitForServer(
     }
 
     throw createCommandError(
-        `Timed out waiting for ${healthUrl.toString()}`,
+        `Timed out waiting for ${new URL(healthPath, baseUrl).toString()}`,
         stderr.join(""),
         stdout.join(""),
     );
 }
 
-async function seedResults(baseUrl: string): Promise<void> {
+type HTTPSResponse = {
+    statusCode: number;
+    body: string;
+};
+
+async function httpsRequestWithCA(
+    baseUrl: string,
+    caCertPath: string,
+    resourcePath: string,
+    options: {
+        method?: string;
+        headers?: Record<string, string>;
+        body?: string;
+    } = {},
+): Promise<HTTPSResponse> {
+    const ca = await readFile(caCertPath);
+    const endpoint = new URL(resourcePath, baseUrl);
+
+    return new Promise<HTTPSResponse>((resolve, reject) => {
+        const request = httpsRequest(
+            endpoint,
+            {
+                ca,
+                headers: options.headers,
+                method: options.method ?? "GET",
+            },
+            (response) => {
+                const chunks: Buffer[] = [];
+
+                response.on("data", (chunk: Buffer) => {
+                    chunks.push(chunk);
+                });
+                response.on("end", () => {
+                    resolve({
+                        body: Buffer.concat(chunks).toString("utf8"),
+                        statusCode: response.statusCode ?? 0,
+                    });
+                });
+            },
+        );
+
+        request.on("error", reject);
+
+        if (options.body !== undefined) {
+            request.write(options.body);
+        }
+
+        request.end();
+    });
+}
+
+async function ownerJWT(
+    baseUrl: string,
+    caCertPath: string,
+    tokenDir: string,
+): Promise<string> {
+    const token = (
+        await readFile(path.join(tokenDir, ".wa-results-server.token"), "utf8")
+    ).trim();
+    const body = new URLSearchParams({
+        password: token,
+        username: userInfo().username,
+    }).toString();
+
+    const response = await httpsRequestWithCA(
+        baseUrl,
+        caCertPath,
+        "/rest/v1/jwt",
+        {
+            body,
+            headers: {
+                "content-type": "application/x-www-form-urlencoded",
+            },
+            method: "POST",
+        },
+    );
+
+    if (response.statusCode !== 200) {
+        throw new Error(
+            `Owner login failed with ${response.statusCode}: ${response.body}`,
+        );
+    }
+
+    return JSON.parse(response.body) as string;
+}
+
+async function seedResults(
+    baseUrl: string,
+    caCertPath: string,
+    tokenDir: string,
+): Promise<string> {
     const rawSeed = await readFile(seedPath, "utf8");
     const registrations = JSON.parse(rawSeed) as SeedRegistration[];
+    const jwt = await ownerJWT(baseUrl, caCertPath, tokenDir);
 
     for (const registration of registrations) {
         const outputDirectory = path.resolve(
@@ -227,20 +325,57 @@ async function seedResults(baseUrl: string): Promise<void> {
             output_directory: outputDirectory,
             files,
         };
-        const response = await fetch(new URL("/results", baseUrl), {
-            method: "POST",
-            headers: {
-                "content-type": "application/json",
+        const response = await httpsRequestWithCA(
+            baseUrl,
+            caCertPath,
+            "/rest/v1/auth/results",
+            {
+                body: JSON.stringify(payload),
+                headers: {
+                    authorization: `Bearer ${jwt}`,
+                    "content-type": "application/json",
+                },
+                method: "POST",
             },
-            body: JSON.stringify(payload),
-        });
+        );
 
-        if (!response.ok) {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
             throw new Error(
-                `Seeding fixtures failed with ${response.status}: ${await response.text()}`,
+                `Seeding fixtures failed with ${response.statusCode}: ${response.body}`,
             );
         }
     }
+
+    return jwt;
+}
+
+async function createSelfSignedCertificate(
+    certPath: string,
+    keyPath: string,
+): Promise<void> {
+    await runCommand(
+        "openssl",
+        [
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "7",
+            "-keyout",
+            keyPath,
+            "-out",
+            certPath,
+            "-subj",
+            "/CN=localhost",
+            "-addext",
+            "subjectAltName=DNS:localhost,IP:127.0.0.1",
+        ],
+        repoRoot,
+    );
+    await chmod(keyPath, 0o600);
+    await chmod(certPath, 0o644);
 }
 
 export async function stopProcess(child: ServerProcess): Promise<void> {
@@ -280,34 +415,67 @@ export default async function setup(): Promise<() => Promise<void>> {
         path.join(agentTmpRoot, "results-integration-"),
     );
     const binaryPath = path.join(tempDir, "wa");
+    const certPath = path.join(tempDir, "wa-dev-cert.pem");
+    const keyPath = path.join(tempDir, "wa-dev-key.pem");
     const dbPath = path.join(tempDir, "results.sqlite");
     const port = await getFreePort();
-    const baseUrl = `http://127.0.0.1:${port}`;
+    const baseUrl = `https://127.0.0.1:${port}`;
     const previousBackendUrl = process.env.WA_RESULTS_BACKEND_URL;
+    const previousBackendCACert = process.env.WA_RESULTS_BACKEND_CA_CERT;
+    const previousResultsTestJWT = process.env.WA_RESULTS_TEST_JWT;
 
     await runCommand("go", ["build", "-o", binaryPath, "."], repoRoot);
+    await createSelfSignedCertificate(certPath, keyPath);
 
     const server = spawn(
         binaryPath,
-        ["results", "serve", "--port", String(port), "--db", dbPath],
+        [
+            "results",
+            "serve",
+            "--port",
+            String(port),
+            "--db",
+            dbPath,
+            "--cert",
+            certPath,
+            "--key",
+            keyPath,
+            "--ldap_server",
+            "wa-test-ldap.invalid",
+            "--ldap_dn",
+            "uid=%s,ou=people,dc=example,dc=org",
+        ],
         {
             cwd: repoRoot,
             detached: true,
-            env: buildResultsServerEnv(process.env) as NodeJS.ProcessEnv,
+            env: buildResultsServerEnv({
+                ...process.env,
+                XDG_STATE_HOME: tempDir,
+            }) as NodeJS.ProcessEnv,
             stdio: ["ignore", "pipe", "pipe"],
         },
     );
     const { stdout, stderr } = collectProcessOutput(server);
 
-    await waitForServer(baseUrl, server, stdout, stderr);
-    await seedResults(baseUrl);
+    await waitForServer(baseUrl, certPath, server, stdout, stderr);
+    const ownerJWT = await seedResults(baseUrl, certPath, tempDir);
 
     process.env.WA_RESULTS_BACKEND_URL = baseUrl;
+    process.env.WA_RESULTS_BACKEND_CA_CERT = certPath;
+    process.env.WA_RESULTS_TEST_JWT = ownerJWT;
 
     return async () => {
         delete process.env.WA_RESULTS_BACKEND_URL;
+        delete process.env.WA_RESULTS_BACKEND_CA_CERT;
+        delete process.env.WA_RESULTS_TEST_JWT;
         if (previousBackendUrl) {
             process.env.WA_RESULTS_BACKEND_URL = previousBackendUrl;
+        }
+        if (previousBackendCACert) {
+            process.env.WA_RESULTS_BACKEND_CA_CERT = previousBackendCACert;
+        }
+        if (previousResultsTestJWT) {
+            process.env.WA_RESULTS_TEST_JWT = previousResultsTestJWT;
         }
 
         await stopProcess(server);

@@ -1,7 +1,11 @@
 "use server";
 
+import { cookies } from "next/headers";
+import { type ZodType } from "zod";
+
 import {
     BackendRequestError,
+    resultsAuthCookieName,
     resultsJson,
     resultsRaw,
     seqmetaJson,
@@ -52,12 +56,66 @@ function buildStatsQuery(recent?: number, days?: number): string {
     return rendered ? `?${rendered}` : "";
 }
 
+async function readResultsAuthJwt(): Promise<string | null> {
+    try {
+        const cookieStore = await cookies();
+
+        return cookieStore.get(resultsAuthCookieName)?.value ?? null;
+    } catch {
+        return null;
+    }
+}
+
+async function resultsJsonForCurrentAuth<T>(
+    publicPath: string,
+    authPath: string,
+    schema: ZodType<T>,
+): Promise<T> {
+    const jwt = await readResultsAuthJwt();
+
+    if (!jwt) {
+        return resultsJson(publicPath, schema);
+    }
+
+    try {
+        return await resultsJson(authPath, schema, { jwt });
+    } catch (error) {
+        if (error instanceof BackendRequestError && error.status === 401) {
+            return resultsJson(publicPath, schema);
+        }
+
+        throw error;
+    }
+}
+
+async function resultsRawForCurrentAuth(
+    publicPath: string,
+    authPath: string,
+): Promise<Response> {
+    const jwt = await readResultsAuthJwt();
+
+    if (!jwt) {
+        return resultsRaw(publicPath);
+    }
+
+    const response = await resultsRaw(authPath, { jwt });
+
+    if (response.status === 401) {
+        return resultsRaw(publicPath);
+    }
+
+    return response;
+}
+
 export async function fetchStats(
     recent?: number,
     days?: number,
 ): Promise<StatsResult> {
-    return resultsJson(
-        `/results/stats${buildStatsQuery(recent, days)}`,
+    const suffix = `/stats${buildStatsQuery(recent, days)}`;
+
+    return resultsJsonForCurrentAuth(
+        `/rest/v1/results${suffix}`,
+        `/rest/v1/auth/results${suffix}`,
         statsResultSchema,
     );
 }
@@ -71,14 +129,17 @@ export async function fetchStats(
 export async function searchResults(
     params: Record<string, string[]>,
 ): Promise<ResultSet[] | SearchResult[]> {
-    return resultsJson(
-        `/results${buildQueryString(params)}`,
+    const query = buildQueryString(params);
+
+    return resultsJsonForCurrentAuth(
+        `/rest/v1/results${query}`,
+        `/rest/v1/auth/results${query}`,
         resultSetSchema.array().or(searchResultSchema.array()),
     );
 }
 
 export async function fetchMetaKeys(): Promise<string[]> {
-    return resultsJson("/results/meta-keys", metaKeysSchema);
+    return resultsJson("/rest/v1/results/meta-keys", metaKeysSchema);
 }
 
 export async function fetchStudies(): Promise<Study[]> {
@@ -86,12 +147,21 @@ export async function fetchStudies(): Promise<Study[]> {
 }
 
 export async function fetchResult(id: string): Promise<ResultSet> {
-    return resultsJson(`/results/${encodeURIComponent(id)}`, resultSetSchema);
+    const suffix = `/${encodeURIComponent(id)}`;
+
+    return resultsJsonForCurrentAuth(
+        `/rest/v1/results${suffix}`,
+        `/rest/v1/auth/results${suffix}`,
+        resultSetSchema,
+    );
 }
 
 export async function fetchFiles(id: string): Promise<FileEntry[]> {
-    return resultsJson(
-        `/results/${encodeURIComponent(id)}/files`,
+    const suffix = `/${encodeURIComponent(id)}/files`;
+
+    return resultsJsonForCurrentAuth(
+        `/rest/v1/results${suffix}`,
+        `/rest/v1/auth/results${suffix}`,
         fileEntrySchema.array(),
     );
 }
@@ -100,8 +170,10 @@ export async function fetchFileContent(
     id: string,
     path: string,
 ): Promise<{ content: string; contentType: string }> {
-    const response = await resultsRaw(
-        `/results/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`,
+    const suffix = `/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`;
+    const response = await resultsRawForCurrentAuth(
+        `/rest/v1/results${suffix}`,
+        `/rest/v1/auth/results${suffix}`,
     );
 
     if (!response.ok) {

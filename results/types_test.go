@@ -28,6 +28,9 @@ package results
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,6 +116,50 @@ func TestCompositeKeyID(t *testing.T) {
 }
 
 func TestDetectPipeline(t *testing.T) {
+	convey.Convey("DetectPipeline resolves a GitHub repository URL as an online Nextflow workflow", t, func() {
+		restore := installGitHubPipelineServerForTest(t, map[string]string{
+			"nf-core/sarek": "abc123",
+		})
+		defer restore()
+
+		identifier, name, version, err := DetectPipeline("https://github.com/nf-core/sarek")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(identifier, convey.ShouldEqual, "https://github.com/nf-core/sarek::main.nf")
+		convey.So(name, convey.ShouldEqual, "nf-core/sarek")
+		convey.So(version, convey.ShouldEqual, "abc123")
+	})
+
+	convey.Convey("DetectPipeline resolves owner/repo shorthand through GitHub when no local path exists", t, func() {
+		restore := installGitHubPipelineServerForTest(t, map[string]string{
+			"seqeralabs/nf-hello-world": "def456",
+		})
+		defer restore()
+
+		identifier, name, version, err := DetectPipeline("seqeralabs/nf-hello-world")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(identifier, convey.ShouldEqual, "https://github.com/seqeralabs/nf-hello-world::main.nf")
+		convey.So(name, convey.ShouldEqual, "seqeralabs/nf-hello-world")
+		convey.So(version, convey.ShouldEqual, "def456")
+	})
+
+	convey.Convey("RemotePipelineReference keeps owner/repo-shaped local paths local", t, func() {
+		cwd, err := os.Getwd()
+		convey.So(err, convey.ShouldBeNil)
+
+		repoRoot := t.TempDir()
+		localWorkflowPath := filepath.Join(repoRoot, "seqeralabs", "nf-hello-world")
+		convey.So(os.MkdirAll(filepath.Dir(localWorkflowPath), 0o755), convey.ShouldBeNil)
+		writeFileForTest(t, localWorkflowPath, "workflow { }\n")
+		convey.So(os.Chdir(repoRoot), convey.ShouldBeNil)
+		defer func() {
+			_ = os.Chdir(cwd)
+		}()
+
+		convey.So(RemotePipelineReference("seqeralabs/nf-hello-world"), convey.ShouldBeFalse)
+	})
+
 	convey.Convey("A3.1: DetectPipeline uses git remote, repo name, and HEAD commit for files inside a git repo", t, func() {
 		repoRoot := t.TempDir()
 		workflowPath := filepath.Join(repoRoot, "main.nf")
@@ -302,6 +349,60 @@ func bytesTrimSpace(value []byte) []byte {
 	}
 
 	return value
+}
+
+func installGitHubPipelineServerForTest(t *testing.T, versions map[string]string) func() {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		for fullName, sha := range versions {
+			switch request.URL.Path {
+			case "/repos/" + fullName:
+				if err := json.NewEncoder(writer).Encode(map[string]string{
+					"default_branch": "main",
+					"full_name":      fullName,
+				}); err != nil {
+					t.Errorf("write repository response: %v", err)
+				}
+
+				return
+			case "/repos/" + fullName + "/commits/main":
+				if err := json.NewEncoder(writer).Encode(map[string]string{
+					"sha": sha,
+				}); err != nil {
+					t.Errorf("write commit response: %v", err)
+				}
+
+				return
+			case "/repos/" + fullName + "/contents/main.nf":
+				if ref := request.URL.Query().Get("ref"); ref != "main" {
+					t.Errorf("content request ref = %q, want main", ref)
+				}
+
+				if err := json.NewEncoder(writer).Encode(map[string]string{
+					"name": "main.nf",
+				}); err != nil {
+					t.Errorf("write workflow response: %v", err)
+				}
+
+				return
+			}
+		}
+
+		http.NotFound(writer, request)
+	}))
+
+	oldAPIBaseURL := detectPipelineGitHubAPIBaseURL
+	oldHTTPClient := detectPipelineHTTPClient
+	detectPipelineGitHubAPIBaseURL = server.URL
+	detectPipelineHTTPClient = server.Client()
+
+	return func() {
+		detectPipelineGitHubAPIBaseURL = oldAPIBaseURL
+		detectPipelineHTTPClient = oldHTTPClient
+		server.Close()
+	}
 }
 
 func sha256Hex(value string) string {

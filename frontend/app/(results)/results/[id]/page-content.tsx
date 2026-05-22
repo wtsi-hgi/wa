@@ -1,12 +1,17 @@
-import Link from "next/link";
-
-import { ChevronLeft } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
 
 import { fetchFiles, fetchResult } from "@/app/(results)/actions";
 import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
 import { ResultRegistrationSummary } from "@/components/result-registration-summary";
-import type { FileEntry, ResultSet } from "@/lib/contracts";
+import { ReturnLinkHeaderAction } from "@/app/(results)/results/[id]/return-link-header-action";
+import { BackendRequestError } from "@/lib/backend-client";
+import {
+    lockedResponseSchema,
+    type FileEntry,
+    type LockedResponse,
+    type ResultSet,
+} from "@/lib/contracts";
 import { formatRegistrationUnique } from "@/lib/result-identity";
 import { formatBytes } from "@/lib/utils";
 
@@ -168,6 +173,48 @@ function resolveReturnHref(searchParams: DetailPageSearchParams): string {
     return returnTo;
 }
 
+function lockedResponseFromError(error: unknown): LockedResponse | null {
+    if (!(error instanceof BackendRequestError) || error.status !== 403) {
+        return null;
+    }
+
+    const parsed = lockedResponseSchema.safeParse(error.body);
+
+    return parsed.success ? parsed.data : null;
+}
+
+function LockedResultDetailState({
+    locked,
+    returnHref,
+}: {
+    locked: LockedResponse;
+    returnHref: string;
+}) {
+    return (
+        <main
+            className="mx-auto flex min-h-screen w-full max-w-[84rem] items-center justify-center px-4 py-6 sm:px-8 lg:py-8"
+            data-locked-result-detail="true"
+        >
+            <ReturnLinkHeaderAction
+                href={returnHref}
+                label="Back to dashboard"
+            />
+            <section className="flex max-w-xl flex-col items-center gap-5 text-center">
+                <span className="inline-flex h-16 w-16 items-center justify-center rounded-full border border-border/70 bg-muted text-muted-foreground">
+                    <LockKeyhole
+                        aria-hidden="true"
+                        className="h-8 w-8"
+                        data-locked-detail-icon="true"
+                    />
+                </span>
+                <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+                    {locked.message}
+                </h1>
+            </section>
+        </main>
+    );
+}
+
 export function ResultDetailLoadingFallback() {
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-6 px-4 py-6 sm:px-8 lg:py-8">
@@ -196,34 +243,55 @@ export async function ResultDetailPageContent({
     const returnHref = resolveReturnHref(searchParams ?? {});
     const returnLabel =
         returnHref === "/" ? "Back to dashboard" : "Back to search results";
-    const [result, files] = await Promise.all([
-        fetchResult(id),
-        fetchFiles(id),
-    ]);
+    let result: ResultSet;
+
+    try {
+        result = await fetchResult(id);
+    } catch (error) {
+        const locked = lockedResponseFromError(error);
+
+        if (locked) {
+            return (
+                <LockedResultDetailState
+                    locked={locked}
+                    returnHref={returnHref}
+                />
+            );
+        }
+
+        throw error;
+    }
+
+    let files: FileEntry[];
+
+    try {
+        files = await fetchFiles(id);
+    } catch (error) {
+        const locked = lockedResponseFromError(error);
+
+        if (locked) {
+            return (
+                <LockedResultDetailState
+                    locked={locked}
+                    returnHref={returnHref}
+                />
+            );
+        }
+
+        throw error;
+    }
+
     const fileSummary = summarizeFiles(files);
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-5 px-4 py-6 sm:px-8 lg:py-8">
+            <ReturnLinkHeaderAction href={returnHref} label={returnLabel} />
             <section
                 className="overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_8%,var(--card)_92%))] shadow-[0_28px_80px_-64px_rgba(41,58,85,0.78)]"
                 data-result-detail-summary="true"
             >
                 <div className="space-y-4 p-3">
                     <div className="min-w-0 space-y-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                            <Link
-                                href={returnHref}
-                                className="inline-flex min-h-8 items-center gap-2 rounded-full border border-border/70 bg-background/85 px-3 py-1 text-xs font-medium text-muted-foreground transition hover:text-foreground"
-                                data-return-link="true"
-                            >
-                                <ChevronLeft
-                                    className="h-3.5 w-3.5"
-                                    aria-hidden="true"
-                                />
-                                <span>{returnLabel}</span>
-                            </Link>
-                        </div>
-
                         <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-baseline lg:justify-between">
                             <h1 className="min-w-0 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
                                 {result.pipeline_name}

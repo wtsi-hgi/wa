@@ -40,11 +40,14 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/mlwh"
 	"github.com/wtsi-hgi/wa/results"
 )
 
 func TestResultsRegisterCommand(t *testing.T) {
+	installPassthroughResultsAuthClientForTest(t)
+
 	convey.Convey("G1.1: Given a results server and an output directory with 2 files, when register is run, then stdout is valid JSON with an id and the server receives 2 output files", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -61,7 +64,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 				return
 			}
 
-			if r.URL.Path != "/results" {
+			if r.URL.Path != gas.EndPointAuth+"/results" {
 				handlerErrCh <- errors.New("unexpected request path")
 
 				return
@@ -217,6 +220,62 @@ func TestResultsRegisterCommand(t *testing.T) {
 		var result results.ResultSet
 		convey.So(json.Unmarshal(stdout.Bytes(), &result), convey.ShouldBeNil)
 		convey.So(result.ID, convey.ShouldEqual, "json-result")
+	})
+
+	convey.Convey("C2.4: Given LDAP user bob and --json registration with operator carol, when CLI register posts it, then backend response contains operator bob", t, func() {
+		payload := registerCommandRegistrationForTest()
+		payload.Operator = "carol"
+
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != gas.EndPointAuth+"/results" {
+				handlerErrCh <- fmt.Errorf("unexpected request path: %s", r.URL.Path)
+				http.NotFound(w, r)
+
+				return
+			}
+
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			if registration.Requester != "alice" || registration.Operator != "carol" {
+				handlerErrCh <- fmt.Errorf("unexpected registration actors: requester=%s operator=%s", registration.Requester, registration.Operator)
+
+				return
+			}
+
+			w.WriteHeader(http.StatusCreated)
+			if err := json.NewEncoder(w).Encode(results.ResultSet{
+				ID:        "ldap-result",
+				Requester: "alice",
+				Operator:  "bob",
+			}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		stdout, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--json",
+		}, mustRegisterCommandJSONBody(t, payload))
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+
+		var result results.ResultSet
+		convey.So(json.Unmarshal(stdout.Bytes(), &result), convey.ShouldBeNil)
+		convey.So(result.Operator, convey.ShouldEqual, "bob")
 	})
 
 	convey.Convey("register --json rejects trailing JSON input", t, func() {
@@ -1057,6 +1116,20 @@ func countRegisterCommandFilesByKind(files []results.FileEntry, kind string) int
 	}
 
 	return count
+}
+
+func TestResultsRegisterPipelineFiles(t *testing.T) {
+	convey.Convey("register does not stat online Nextflow workflow references as local pipeline files", t, func() {
+		for _, workflowPath := range []string{
+			"https://github.com/nf-core/sarek",
+			"seqeralabs/nf-hello-world",
+		} {
+			files, err := resultsRegisterPipelineFiles(workflowPath)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(files, convey.ShouldBeEmpty)
+		}
+	})
 }
 
 func findRegisterCommandFileByKind(files []results.FileEntry, kind string) (results.FileEntry, error) {

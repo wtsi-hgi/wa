@@ -325,18 +325,32 @@ BIN_PATH="$TMP_DIR/wa"
 LOG_DIR="$REPO_ROOT/logs"
 SEED_PATH="$REPO_ROOT/.docs/results-web/fixtures/seed.json"
 FRONTEND_DIR="${WA_RUN_DEV_FRONTEND_CWD:-$REPO_ROOT/frontend}"
+DEFAULT_DEV_TLS_CERT="$TMP_DIR/wa-dev-cert.pem"
+DEFAULT_DEV_TLS_KEY="$TMP_DIR/wa-dev-key.pem"
 RESULTS_LOG="$LOG_DIR/results.log"
 SEQMETA_LOG="$LOG_DIR/seqmeta.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
-FRONTEND_DEV_CMD="${WA_RUN_DEV_FRONTEND_DEV_CMD:-pnpm dev --port $frontend_port}"
 SEQMETA_CMD="${WA_RUN_DEV_SEQMETA_CMD:-}"
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
 SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-1200}"
 
-RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-http://127.0.0.1:$results_port/results/stats}"
-FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-http://127.0.0.1:$frontend_port/api/health}"
+RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-https://127.0.0.1:$results_port/rest/v1/results/stats}"
+FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-https://127.0.0.1:$frontend_port/api/health}"
 SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$seqmeta_port/studies}"
+
+repo_absolute_path() {
+  local value="$1"
+
+  if [[ "$value" == /* ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s/%s' "$REPO_ROOT" "$value"
+  fi
+}
+
+DEV_TLS_CERT="$(repo_absolute_path "${WA_RESULTS_SERVER_CERT:-$DEFAULT_DEV_TLS_CERT}")"
+DEV_TLS_KEY="$(repo_absolute_path "${WA_RESULTS_SERVER_KEY:-$DEFAULT_DEV_TLS_KEY}")"
 
 if [[ ! "$FRONTEND_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
   printf 'frontend health max attempts must be an integer\n' >&2
@@ -358,9 +372,54 @@ if (( SEQMETA_HEALTH_MAX_ATTEMPTS < 1 )); then
   exit 1
 fi
 
+ensure_dev_tls_certificate() {
+  if [[ -s "$DEV_TLS_CERT" && -s "$DEV_TLS_KEY" ]]; then
+    chmod 0600 "$DEV_TLS_KEY"
+    chmod 0644 "$DEV_TLS_CERT"
+
+    return
+  fi
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    printf 'run-dev.sh: openssl is required to create dev TLS certificates.\n' >&2
+    exit 1
+  fi
+
+  printf 'Creating self-signed dev TLS certificate at %s\n' "$DEV_TLS_CERT"
+  openssl req \
+    -x509 \
+    -newkey rsa:2048 \
+    -nodes \
+    -days 365 \
+    -keyout "$DEV_TLS_KEY" \
+    -out "$DEV_TLS_CERT" \
+    -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+    >/dev/null 2>&1
+
+  chmod 0600 "$DEV_TLS_KEY"
+  chmod 0644 "$DEV_TLS_CERT"
+}
+
 cd "$REPO_ROOT"
 
 mkdir -p "$TMP_DIR" "$LOG_DIR"
+ensure_dev_tls_certificate
+
+export WA_RESULTS_BACKEND_CA_CERT="$DEV_TLS_CERT"
+export WA_RESULTS_SERVER_CERT="$DEV_TLS_CERT"
+export WA_RESULTS_SERVER_KEY="$DEV_TLS_KEY"
+
+if [[ -n "${WA_RUN_DEV_FRONTEND_DEV_CMD:-}" ]]; then
+  FRONTEND_DEV_CMD="$WA_RUN_DEV_FRONTEND_DEV_CMD"
+else
+  FRONTEND_DEV_CMD="pnpm dev --port $frontend_port --experimental-https --experimental-https-key $DEV_TLS_KEY --experimental-https-cert $DEV_TLS_CERT"
+fi
+
+if [[ "$scenario" == "test" ]]; then
+  export XDG_STATE_HOME="$TMP_DIR/state-test"
+  mkdir -p "$XDG_STATE_HOME"
+fi
 
 PIDS=()
 DB_PATH=""
@@ -368,6 +427,56 @@ DB_EPHEMERAL=0
 MLWH_CACHE_PATH=""
 MLWH_CACHE_EPHEMERAL=0
 CLEANED_UP=0
+
+process_is_running() {
+  local pid="$1"
+  local stat
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+
+  stat="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+  if [[ -z "$stat" || "$stat" == Z* ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+wait_for_process_exit() {
+  local pid="$1"
+  local max_attempts="${2:-20}"
+  local attempt=0
+
+  while (( attempt < max_attempts )); do
+    if ! process_is_running "$pid"; then
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+
+  return 1
+}
+
+terminate_child_process() {
+  local pid="$1"
+
+  if ! process_is_running "$pid"; then
+    wait "$pid" 2>/dev/null || true
+    return
+  fi
+
+  kill "$pid" 2>/dev/null || true
+  if ! wait_for_process_exit "$pid"; then
+    printf 'run-dev.sh: process %s did not exit after SIGTERM; sending SIGKILL.\n' "$pid" >&2
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+
+  wait "$pid" 2>/dev/null || true
+}
 
 cleanup() {
   local exit_code="$1"
@@ -380,15 +489,7 @@ cleanup() {
   trap - EXIT INT TERM
 
   for pid in "${PIDS[@]:-}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-    fi
-  done
-
-  for pid in "${PIDS[@]:-}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      wait "$pid" 2>/dev/null || true
-    fi
+    terminate_child_process "$pid"
   done
 
   if (( DB_EPHEMERAL )) && [[ -n "$DB_PATH" ]]; then
@@ -451,6 +552,18 @@ print_service_wait_diagnostics() {
   print_service_log_tail "$log_path"
 }
 
+curl_probe() {
+  local url="$1"
+  local ca_cert="${2:-}"
+  local -a args=(-fsS --max-time 2 -o /dev/null)
+
+  if [[ "$url" == https://* && -n "$ca_cert" ]]; then
+    args+=(--cacert "$ca_cert")
+  fi
+
+  curl "${args[@]}" "$url" >/dev/null 2>&1
+}
+
 wait_for_http() {
   local label="$1"
   local url="$2"
@@ -458,18 +571,13 @@ wait_for_http() {
   local max_attempts="${4:-120}"
   local pid="${5:-}"
   local log_path="${6:-}"
+  local ca_cert="${7:-}"
   local attempt=0
   local exit_status
 
   while (( attempt < max_attempts )); do
-    if [[ "$mode" == "strict" ]]; then
-      if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
-        return 0
-      fi
-    else
-      if curl -fsS --max-time 2 -o /dev/null "$url" 2>/dev/null; then
-        return 0
-      fi
+    if curl_probe "$url" "$ca_cert"; then
+      return 0
     fi
 
     if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
@@ -498,23 +606,81 @@ wait_for_http() {
 http_is_healthy() {
   local url="$1"
   local mode="${2:-strict}"
+  local ca_cert="${3:-}"
 
-  if [[ "$mode" == "strict" ]]; then
-    curl -fsS --max-time 2 "$url" >/dev/null 2>&1
-    return $?
+  curl_probe "$url" "$ca_cert"
+}
+
+tcp_port_is_open() {
+  local port="$1"
+
+  (exec 3<>"/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
+}
+
+ensure_port_available_or_reusable() {
+  local label="$1"
+  local flag_name="$2"
+  local env_name="$3"
+  local port="$4"
+  local health_url="$5"
+  local ca_cert="${6:-}"
+
+  if ! tcp_port_is_open "$port"; then
+    return
   fi
 
-  curl -fsS --max-time 2 -o /dev/null "$url" 2>/dev/null
+  if [[ "$scenario" == "dev" ]] && http_is_healthy "$health_url" "strict" "$ca_cert"; then
+    return
+  fi
+
+  printf 'run-dev.sh: %s port %s is already in use on 127.0.0.1.\n' "$label" "$port" >&2
+  printf 'Stop the process using that port, or choose another port with --%s-port or %s.\n' "$flag_name" "$env_name" >&2
+  exit 1
+}
+
+preflight_service_ports() {
+  ensure_port_available_or_reusable "results" "results" "WA_${scenario_env_prefix}_RESULTS_PORT" "$results_port" "$RESULTS_HEALTH_URL" "$WA_RESULTS_BACKEND_CA_CERT"
+
+  if [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" ]]; then
+    ensure_port_available_or_reusable "seqmeta" "seqmeta" "WA_${scenario_env_prefix}_SEQMETA_PORT" "$seqmeta_port" "$SEQMETA_HEALTH_URL"
+  fi
+
+  ensure_port_available_or_reusable "frontend" "frontend" "WA_${scenario_env_prefix}_FRONTEND_PORT" "$frontend_port" "$FRONTEND_HEALTH_URL" "$DEV_TLS_CERT"
 }
 
 seed_results() {
-  node - "$REPO_ROOT" "$SEED_PATH" "$WA_RESULTS_BACKEND_URL" <<'NODE'
+  NODE_EXTRA_CA_CERTS="$WA_RESULTS_BACKEND_CA_CERT" node - "$REPO_ROOT" "$SEED_PATH" "$WA_RESULTS_BACKEND_URL" <<'NODE'
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+
+async function ownerJWT(resultsBaseUrl) {
+  const tokenDir = process.env.XDG_STATE_HOME || os.homedir();
+  const tokenPath = path.join(tokenDir, ".wa-results-server.token");
+  const token = fs.readFileSync(tokenPath, "utf8").trim();
+  const form = new URLSearchParams({
+    username: os.userInfo().username,
+    password: token,
+  });
+  const response = await fetch(new URL("/rest/v1/jwt", resultsBaseUrl), {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: form,
+  });
+
+  if (!response.ok) {
+    throw new Error(`owner login failed with ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+}
 
 async function main() {
   const [repoRoot, seedPath, resultsBaseUrl] = process.argv.slice(2);
   const registrations = JSON.parse(fs.readFileSync(seedPath, "utf8"));
+  const jwt = await ownerJWT(resultsBaseUrl);
 
   for (const registration of registrations) {
     const outputDirectory = path.resolve(repoRoot, registration.output_directory);
@@ -538,9 +704,10 @@ async function main() {
       files,
     };
 
-    const response = await fetch(new URL("/results", resultsBaseUrl), {
+    const response = await fetch(new URL("/rest/v1/auth/results", resultsBaseUrl), {
       method: "POST",
       headers: {
+        authorization: `Bearer ${jwt}`,
         "content-type": "application/json",
       },
       body: JSON.stringify(payload),
@@ -558,6 +725,14 @@ main().catch((error) => {
 });
 NODE
 }
+
+case "$scenario" in
+  test) scenario_env_prefix="TEST" ;;
+  dev) scenario_env_prefix="DEV" ;;
+  prod) scenario_env_prefix="PROD" ;;
+esac
+
+preflight_service_ports
 
 printf 'Building Go binary at %s\n' "$BIN_PATH"
 go build -o "$BIN_PATH" .
@@ -613,7 +788,7 @@ else
   unset WA_MLWH_CACHE_PATH
 fi
 
-export WA_RESULTS_BACKEND_URL="http://127.0.0.1:$results_port"
+export WA_RESULTS_BACKEND_URL="https://127.0.0.1:$results_port"
 unset WA_SEQMETA_BACKEND_URL
 
 RESULTS_STARTED=0
@@ -623,16 +798,31 @@ FRONTEND_STARTED=0
 : >"$RESULTS_LOG"
 : >"$FRONTEND_LOG"
 
-if [[ "$scenario" == "dev" ]] && http_is_healthy "$RESULTS_HEALTH_URL" "strict"; then
+if [[ "$scenario" == "dev" ]] && http_is_healthy "$RESULTS_HEALTH_URL" "strict" "$WA_RESULTS_BACKEND_CA_CERT"; then
   printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL"
   printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL" >"$RESULTS_LOG"
 else
   printf 'Starting results server on %s (mode=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario"
-  "$BIN_PATH" results serve --port "$results_port" >"$RESULTS_LOG" 2>&1 &
+  results_serve_args=(results serve --port "$results_port")
+
+  if [[ "$scenario" == "test" ]]; then
+    results_serve_args+=(--ldap_server "${WA_RESULTS_LDAP_SERVER:-wa-test-ldap.invalid}")
+    results_serve_args+=(--ldap_dn "${WA_RESULTS_LDAP_DN:-uid=%s,ou=people,dc=example,dc=org}")
+  else
+    if [[ -n "${WA_RESULTS_LDAP_SERVER:-}" ]]; then
+      results_serve_args+=(--ldap_server "$WA_RESULTS_LDAP_SERVER")
+    fi
+
+    if [[ -n "${WA_RESULTS_LDAP_DN:-}" ]]; then
+      results_serve_args+=(--ldap_dn "$WA_RESULTS_LDAP_DN")
+    fi
+  fi
+
+  "$BIN_PATH" "${results_serve_args[@]}" >"$RESULTS_LOG" 2>&1 &
   PIDS+=("$!")
   RESULTS_STARTED=1
 
-  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict" 120 "$!" "$RESULTS_LOG"
+  wait_for_http "results server" "$RESULTS_HEALTH_URL" "strict" 120 "$!" "$RESULTS_LOG" "$WA_RESULTS_BACKEND_CA_CERT"
 fi
 
 seed_fixtures=0
@@ -696,11 +886,11 @@ printf '\n[dev]\n' >>"$FRONTEND_LOG"
 if [[ -n "$MLWH_CACHE_PATH" ]]; then
   export WA_MLWH_CACHE_PATH="$MLWH_CACHE_PATH"
 fi
-if [[ "$scenario" == "dev" ]] && http_is_healthy "$FRONTEND_HEALTH_URL" "strict"; then
-  printf 'Reusing existing frontend dev server on http://127.0.0.1:%s\n' "$frontend_port"
-  printf 'Reusing existing frontend dev server on http://127.0.0.1:%s\n' "$frontend_port" >>"$FRONTEND_LOG"
+if [[ "$scenario" == "dev" ]] && http_is_healthy "$FRONTEND_HEALTH_URL" "strict" "$DEV_TLS_CERT"; then
+  printf 'Reusing existing frontend dev server on https://127.0.0.1:%s\n' "$frontend_port"
+  printf 'Reusing existing frontend dev server on https://127.0.0.1:%s\n' "$frontend_port" >>"$FRONTEND_LOG"
 else
-  printf 'Starting frontend dev server on http://127.0.0.1:%s\n' "$frontend_port"
+  printf 'Starting frontend dev server on https://127.0.0.1:%s\n' "$frontend_port"
   WA_RUN_DEV_FRONTEND_DEV_CMD="$FRONTEND_DEV_CMD" \
     bash -lc 'cd "$1" && eval "exec $WA_RUN_DEV_FRONTEND_DEV_CMD"' -- "$FRONTEND_DIR" \
     >>"$FRONTEND_LOG" 2>&1 &
@@ -708,7 +898,7 @@ else
   FRONTEND_PID="$!"
   FRONTEND_STARTED=1
 
-  wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS" "$FRONTEND_PID" "$FRONTEND_LOG"
+  wait_for_http "frontend health" "$FRONTEND_HEALTH_URL" "strict" "$FRONTEND_HEALTH_MAX_ATTEMPTS" "$FRONTEND_PID" "$FRONTEND_LOG" "$DEV_TLS_CERT"
 fi
 
 printf 'Development environment is ready.\n'
@@ -716,7 +906,7 @@ printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
 if [[ -n "${WA_SEQMETA_BACKEND_URL:-}" ]]; then
   printf 'Seqmeta: %s\n' "$WA_SEQMETA_BACKEND_URL"
 fi
-printf 'Frontend: http://127.0.0.1:%s\n' "$frontend_port"
+printf 'Frontend: https://127.0.0.1:%s\n' "$frontend_port"
 printf 'Logs: %s\n' "$LOG_DIR"
 
 if (( ${#PIDS[@]} > 0 )); then

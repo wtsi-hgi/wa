@@ -9,11 +9,15 @@ const onePixelPng = Buffer.from(
 );
 
 vi.mock("@/lib/backend-client", () => ({
+    resultsAuthCookieName: "wa_results_jwt",
     resultsRaw: resultsRawMock,
 }));
 
-function makeRequest(query: string): NextRequest {
-    return new NextRequest(`http://localhost/api/file?${query}`);
+function makeRequest(query: string, cookie?: string): NextRequest {
+    return new NextRequest(
+        `http://localhost/api/file?${query}`,
+        cookie ? { headers: { cookie } } : undefined,
+    );
 }
 
 describe("P1 file content streaming API route", () => {
@@ -37,12 +41,78 @@ describe("P1 file content streaming API route", () => {
 
         expect(dynamic).toBe("force-dynamic");
         expect(resultsRawMock).toHaveBeenCalledWith(
-            "/results/abc/file?path=%2Fout%2Fimg.png",
+            "/rest/v1/results/abc/file?path=%2Fout%2Fimg.png",
         );
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toBe("image/png");
         expect(response.headers.get("content-security-policy")).toBe("sandbox");
         expect(new Uint8Array(await response.arrayBuffer())).toEqual(body);
+    });
+
+    it("proxies through the authenticated file endpoint when the JWT cookie exists", async () => {
+        resultsRawMock.mockResolvedValue(
+            new Response("alpha\n", {
+                status: 200,
+                headers: { "content-type": "text/plain" },
+            }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest("id=abc&path=%2Fout%2Fa.txt", "wa_results_jwt=jwt-1"),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            "/rest/v1/auth/results/abc/file?path=%2Fout%2Fa.txt",
+            { jwt: "jwt-1" },
+        );
+        expect(response.status).toBe(200);
+        await expect(response.text()).resolves.toBe("alpha\n");
+    });
+
+    it("falls back to the public file endpoint when the JWT cookie is stale", async () => {
+        resultsRawMock
+            .mockResolvedValueOnce(
+                Response.json(
+                    { error: "authentication required" },
+                    { status: 401 },
+                ),
+            )
+            .mockResolvedValueOnce(
+                Response.json(
+                    {
+                        error: "locked",
+                        locked: true,
+                        result_id: "abc",
+                        message: "You do not have access to this result set",
+                    },
+                    { status: 403 },
+                ),
+            );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest("id=abc&path=%2Fout%2Fa.txt", "wa_results_jwt=stale"),
+        );
+
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            1,
+            "/rest/v1/auth/results/abc/file?path=%2Fout%2Fa.txt",
+            { jwt: "stale" },
+        );
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            2,
+            "/rest/v1/results/abc/file?path=%2Fout%2Fa.txt",
+        );
+        expect(response.status).toBe(403);
+        await expect(response.json()).resolves.toEqual({
+            error: "locked",
+            locked: true,
+            result_id: "abc",
+            message: "You do not have access to this result set",
+        });
     });
 
     it("preserves content disposition when download=true is requested", async () => {
@@ -63,7 +133,7 @@ describe("P1 file content streaming API route", () => {
         );
 
         expect(resultsRawMock).toHaveBeenCalledWith(
-            "/results/abc/file?path=%2Fout%2Fdata.csv.gz&download=true",
+            "/rest/v1/results/abc/file?path=%2Fout%2Fdata.csv.gz&download=true",
         );
         expect(response.status).toBe(200);
         expect(response.headers.get("content-disposition")).toBe(
@@ -87,7 +157,7 @@ describe("P1 file content streaming API route", () => {
         );
 
         expect(resultsRawMock).toHaveBeenCalledWith(
-            "/results/abc/file?path=%2Fout%2Fimg.png",
+            "/rest/v1/results/abc/file?path=%2Fout%2Fimg.png",
         );
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toBe("image/png");
@@ -166,6 +236,30 @@ describe("P1 file content streaming API route", () => {
         await expect(response.json()).resolves.toEqual({ error: "forbidden" });
     });
 
+    it("preserves locked JSON when the Go backend returns a locked response", async () => {
+        const lockedBody = {
+            error: "locked",
+            locked: true,
+            result_id: "abc",
+            message: "You do not have access to this result set",
+        };
+        resultsRawMock.mockResolvedValue(
+            Response.json(lockedBody, { status: 403 }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                "id=abc&path=%2Fout%2Fsecret.txt",
+                "wa_results_jwt=jwt-1",
+            ),
+        );
+
+        expect(response.status).toBe(403);
+        await expect(response.json()).resolves.toEqual(lockedBody);
+    });
+
     it("forwards gone responses from the Go backend", async () => {
         resultsRawMock.mockResolvedValue(
             Response.json({ error: "file not found on disk" }, { status: 410 }),
@@ -225,7 +319,7 @@ describe("P1 file content streaming API route", () => {
         );
 
         expect(resultsRawMock).toHaveBeenCalledWith(
-            "/results/abc/file?path=%2Fout%2Freport.tsv&line_limit=2",
+            "/rest/v1/results/abc/file?path=%2Fout%2Freport.tsv&line_limit=2",
         );
         expect(response.status).toBe(200);
         expect(response.headers.get("x-preview-truncated")).toBe("true");

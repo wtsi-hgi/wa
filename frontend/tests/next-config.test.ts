@@ -65,4 +65,27 @@ describe("resolveAllowedDevOrigins", () => {
         expect(origins).not.toContain("");
         expect(origins).toContain("host.example.com");
     });
+
+    it("keeps run-dev HTTPS origins host-only for Next.js allowedDevOrigins", () => {
+        const origins = resolveAllowedDevOrigins(
+            buildEnv({
+                WA_DEV_ALLOWED_ORIGINS: "remote-dev.example.org",
+            }),
+        );
+
+        expect(origins).toEqual(
+            expect.arrayContaining([
+                "localhost",
+                "127.0.0.1",
+                "remote-dev.example.org",
+            ]),
+        );
+        expect(
+            origins.some(
+                (origin) =>
+                    origin.startsWith("http://") ||
+                    origin.startsWith("https://"),
+            ),
+        ).toBe(false);
+    });
 });

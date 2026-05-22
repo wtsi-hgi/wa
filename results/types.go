@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -54,6 +55,27 @@ var (
 
 	ErrSeqmetaRejected = errors.New("results: seqmeta validation failed")
 )
+
+var (
+	detectPipelineGitHubAPIBaseURL = "https://api.github.com"
+	detectPipelineHTTPClient       = &http.Client{Timeout: 10 * time.Second}
+)
+
+type githubPipelineReference struct {
+	owner        string
+	repo         string
+	ref          string
+	workflowPath string
+}
+
+type githubRepositoryResponse struct {
+	DefaultBranch string `json:"default_branch"`
+	FullName      string `json:"full_name"`
+}
+
+type githubCommitResponse struct {
+	SHA string `json:"sha"`
+}
 
 const (
 	// SeqmetaIDRunKey stores an MLWH id_run value.
@@ -125,7 +147,9 @@ type ResultSet struct {
 	PipelineName       string            `json:"pipeline_name"`
 	PipelineVersion    string            `json:"pipeline_version"`
 	OutputDirectory    string            `json:"output_directory"`
+	OutputDirectoryGID *int64            `json:"output_directory_gid"`
 	Metadata           map[string]string `json:"metadata"`
+	Access             AccessState       `json:"access"`
 	CreatedAt          time.Time         `json:"created_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
@@ -148,6 +172,7 @@ type Registration struct {
 	PipelineName       string            `json:"pipeline_name"`
 	PipelineVersion    string            `json:"pipeline_version"`
 	OutputDirectory    string            `json:"output_directory"`
+	OutputDirectoryGID *int64            `json:"-"`
 	Files              []FileEntry       `json:"files"`
 	Metadata           map[string]string `json:"metadata"`
 }
@@ -242,6 +267,14 @@ func appendLengthPrefixedKeyPart(key []byte, value string) []byte {
 
 // DetectPipeline returns pipeline identity derived from git metadata or file content.
 func DetectPipeline(workflowPath string) (string, string, string, error) {
+	if ref, ok := remotePipelineReference(workflowPath); ok {
+		return detectGitHubPipeline(ref)
+	}
+
+	return detectLocalPipeline(workflowPath)
+}
+
+func detectLocalPipeline(workflowPath string) (string, string, string, error) {
 	absPath, err := filepath.Abs(workflowPath)
 	if err != nil {
 		return "", "", "", fmt.Errorf("resolve workflow path: %w", err)
@@ -283,6 +316,188 @@ func DetectPipeline(workflowPath string) (string, string, string, error) {
 	}
 
 	return absPath, filepath.Base(workflowDir), contentVersion, nil
+}
+
+// RemotePipelineReference reports whether workflowPath names an online
+// Nextflow workflow rather than a local workflow file.
+func RemotePipelineReference(workflowPath string) bool {
+	_, ok := remotePipelineReference(workflowPath)
+
+	return ok
+}
+
+func remotePipelineReference(workflowPath string) (githubPipelineReference, bool) {
+	trimmed := strings.TrimSpace(workflowPath)
+	if trimmed == "" {
+		return githubPipelineReference{}, false
+	}
+
+	if parsed, err := url.Parse(trimmed); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+		return githubReferenceFromURL(parsed)
+	}
+
+	if !looksLikeGitHubShorthand(trimmed) {
+		return githubPipelineReference{}, false
+	}
+
+	if _, err := os.Stat(trimmed); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return githubPipelineReference{}, false
+	}
+
+	parts := strings.Split(trimmed, "/")
+
+	return githubPipelineReference{
+		owner:        parts[0],
+		repo:         strings.TrimSuffix(parts[1], ".git"),
+		workflowPath: "main.nf",
+	}, true
+}
+
+func githubReferenceFromURL(parsed *url.URL) (githubPipelineReference, bool) {
+	if !strings.EqualFold(parsed.Hostname(), "github.com") {
+		return githubPipelineReference{}, false
+	}
+
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 2 {
+		return githubPipelineReference{}, false
+	}
+
+	ref := githubPipelineReference{
+		owner:        parts[0],
+		repo:         strings.TrimSuffix(parts[1], ".git"),
+		workflowPath: "main.nf",
+	}
+
+	if len(parts) >= 5 && parts[2] == "blob" {
+		ref.ref = parts[3]
+		ref.workflowPath = strings.Join(parts[4:], "/")
+	} else if len(parts) >= 4 && parts[2] == "tree" {
+		ref.ref = parts[3]
+	}
+
+	return ref, ref.owner != "" && ref.repo != ""
+}
+
+func looksLikeGitHubShorthand(value string) bool {
+	if strings.Contains(value, "://") || strings.Contains(value, ":") || filepath.IsAbs(value) {
+		return false
+	}
+
+	parts := strings.Split(value, "/")
+
+	return len(parts) == 2 && validGitHubPathPart(parts[0]) && validGitHubPathPart(parts[1])
+}
+
+func validGitHubPathPart(value string) bool {
+	return value != "" && value != "." && value != ".." && !strings.ContainsAny(value, `\`)
+}
+
+func detectGitHubPipeline(ref githubPipelineReference) (string, string, string, error) {
+	repository, err := readGitHubRepository(ref)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	if ref.ref == "" {
+		ref.ref = repository.DefaultBranch
+	}
+
+	if ref.ref == "" {
+		return "", "", "", fmt.Errorf("detect GitHub pipeline: repository %s/%s has no default branch", ref.owner, ref.repo)
+	}
+
+	if err := verifyGitHubWorkflow(ref); err != nil {
+		return "", "", "", err
+	}
+
+	commit, err := readGitHubCommit(ref)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	fullName := repository.FullName
+	if fullName == "" {
+		fullName = ref.owner + "/" + ref.repo
+	}
+
+	identifier := "https://github.com/" + fullName + "::" + ref.workflowPath
+
+	return identifier, fullName, commit.SHA, nil
+}
+
+func readGitHubRepository(ref githubPipelineReference) (githubRepositoryResponse, error) {
+	var repository githubRepositoryResponse
+	err := readGitHubJSON("/repos/"+url.PathEscape(ref.owner)+"/"+url.PathEscape(ref.repo), &repository)
+	if err != nil {
+		return githubRepositoryResponse{}, fmt.Errorf("detect GitHub pipeline: %w", err)
+	}
+
+	return repository, nil
+}
+
+func readGitHubCommit(ref githubPipelineReference) (githubCommitResponse, error) {
+	var commit githubCommitResponse
+	err := readGitHubJSON("/repos/"+url.PathEscape(ref.owner)+"/"+url.PathEscape(ref.repo)+"/commits/"+url.PathEscape(ref.ref), &commit)
+	if err != nil {
+		return githubCommitResponse{}, fmt.Errorf("detect GitHub pipeline commit: %w", err)
+	}
+
+	if commit.SHA == "" {
+		return githubCommitResponse{}, errors.New("detect GitHub pipeline commit: empty commit sha")
+	}
+
+	return commit, nil
+}
+
+func verifyGitHubWorkflow(ref githubPipelineReference) error {
+	endpoint := "/repos/" + url.PathEscape(ref.owner) + "/" + url.PathEscape(ref.repo) + "/contents/" + pathEscapeGitHubContentPath(ref.workflowPath)
+	query := url.Values{"ref": []string{ref.ref}}
+
+	if err := readGitHubJSON(endpoint+"?"+query.Encode(), nil); err != nil {
+		return fmt.Errorf("detect GitHub pipeline workflow: %w", err)
+	}
+
+	return nil
+}
+
+func pathEscapeGitHubContentPath(workflowPath string) string {
+	parts := strings.Split(strings.Trim(workflowPath, "/"), "/")
+	for index, part := range parts {
+		parts[index] = url.PathEscape(part)
+	}
+
+	return strings.Join(parts, "/")
+}
+
+func readGitHubJSON(path string, target any) error {
+	endpoint := strings.TrimRight(detectPipelineGitHubAPIBaseURL, "/") + path
+	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Accept", "application/vnd.github+json")
+
+	response, err := detectPipelineHTTPClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	if response.StatusCode == http.StatusNotFound {
+		return errors.New("not found")
+	}
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("unexpected status %d", response.StatusCode)
+	}
+
+	if target == nil {
+		return nil
+	}
+
+	return json.NewDecoder(response.Body).Decode(target)
 }
 
 func gitOutput(dir string, args ...string) (string, error) {

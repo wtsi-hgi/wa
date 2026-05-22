@@ -29,8 +29,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -47,9 +49,13 @@ CREATE TABLE IF NOT EXISTS result_sets (
 	pipeline_name       VARCHAR(255) NOT NULL,
 	pipeline_version    VARCHAR(255) NOT NULL,
 	output_directory    TEXT         NOT NULL,
+	output_directory_gid BIGINT      NULL,
 	created_at          VARCHAR(30)  NOT NULL,
 	updated_at          VARCHAR(30)  NOT NULL
 );`
+
+const addResultSetsOutputDirectoryGIDColumnSQL = `
+ALTER TABLE result_sets ADD COLUMN output_directory_gid BIGINT NULL;`
 
 const createResultFilesTableSQL = `
 CREATE TABLE IF NOT EXISTS result_files (
@@ -80,6 +86,23 @@ const createResultMetadataMetaKeyValueIndexMySQLSQL = `
 CREATE INDEX idx_result_metadata_meta_key_value
 	ON result_metadata(meta_key, value(255));`
 
+// OutputDirectoryGID returns the Unix group ID for an output directory.
+func OutputDirectoryGID(path string) (*int64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("determine output directory gid: %w", err)
+	}
+
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("determine output directory gid: stat data unavailable")
+	}
+
+	gid := int64(stat.Gid)
+
+	return &gid, nil
+}
+
 // NewStore enables foreign keys and creates the SQL schema on demand.
 func NewStore(db *sql.DB) (*Store, error) {
 	if db == nil {
@@ -102,6 +125,10 @@ func NewStore(db *sql.DB) (*Store, error) {
 	}
 
 	if err := ensureResultMetadataMetaKeyValueIndex(db); err != nil {
+		return nil, fmt.Errorf("initialise results store: %w", err)
+	}
+
+	if err := ensureResultSetsOutputDirectoryGIDColumn(db); err != nil {
 		return nil, fmt.Errorf("initialise results store: %w", err)
 	}
 
@@ -162,6 +189,24 @@ func isIgnorablePragmaError(err error) bool {
 	return strings.Contains(message, "pragma") && (strings.Contains(message, "syntax") || strings.Contains(message, "1064"))
 }
 
+func ensureResultSetsOutputDirectoryGIDColumn(db *sql.DB) error {
+	if _, err := db.Exec(addResultSetsOutputDirectoryGIDColumnSQL); err != nil && !isDuplicateColumnError(err) {
+		return fmt.Errorf("add result_sets output_directory_gid column: %w", err)
+	}
+
+	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+
+	return strings.Contains(message, "duplicate column") || strings.Contains(message, "already exists")
+}
+
 func upsertResultSetRow(ctx context.Context, tx *sql.Tx, id string, reg *Registration) (time.Time, time.Time, error) {
 	now := time.Now().UTC()
 	createdAt := now
@@ -196,8 +241,9 @@ func upsertResultSetRow(ctx context.Context, tx *sql.Tx, id string, reg *Registr
 		ctx,
 		`INSERT INTO result_sets (
 			id, pipeline_identifier, run_key, requester, operator, command,
-			pipeline_name, pipeline_version, output_directory, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			pipeline_name, pipeline_version, output_directory, output_directory_gid,
+			created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id,
 		reg.PipelineIdentifier,
 		reg.RunKey,
@@ -207,6 +253,7 @@ func upsertResultSetRow(ctx context.Context, tx *sql.Tx, id string, reg *Registr
 		reg.PipelineName,
 		reg.PipelineVersion,
 		reg.OutputDirectory,
+		nullableInt64Value(reg.OutputDirectoryGID),
 		createdAt.Format(time.RFC3339Nano),
 		now.Format(time.RFC3339Nano),
 	)
@@ -233,6 +280,14 @@ func upsertResultSetRow(ctx context.Context, tx *sql.Tx, id string, reg *Registr
 	return createdAt, now, nil
 }
 
+func nullableInt64Value(value *int64) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
 func existingCreatedAt(ctx context.Context, tx *sql.Tx, id string) (time.Time, error) {
 	var storedCreatedAt string
 
@@ -254,7 +309,7 @@ func updateResultSetRow(ctx context.Context, tx *sql.Tx, id string, reg *Registr
 		ctx,
 		`UPDATE result_sets
 		SET requester = ?, operator = ?, command = ?, pipeline_name = ?,
-		    pipeline_version = ?, output_directory = ?, updated_at = ?
+		    pipeline_version = ?, output_directory = ?, output_directory_gid = ?, updated_at = ?
 		WHERE id = ?`,
 		reg.Requester,
 		reg.Operator,
@@ -262,6 +317,7 @@ func updateResultSetRow(ctx context.Context, tx *sql.Tx, id string, reg *Registr
 		reg.PipelineName,
 		reg.PipelineVersion,
 		reg.OutputDirectory,
+		nullableInt64Value(reg.OutputDirectoryGID),
 		now.Format(time.RFC3339Nano),
 		id,
 	)
@@ -293,6 +349,26 @@ func ensureUpdatedAtAfterCreatedAt(createdAt, now time.Time) time.Time {
 	}
 
 	return createdAt.Add(time.Nanosecond)
+}
+
+func nullableInt64Pointer(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+
+	intValue := value.Int64
+
+	return &intValue
+}
+
+func copyInt64Pointer(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+
+	copied := *value
+
+	return &copied
 }
 
 func replaceResultFiles(ctx context.Context, tx *sql.Tx, resultID string, files []FileEntry) error {
@@ -422,7 +498,8 @@ func loadRecentStatsResults(ctx context.Context, conn *sql.Conn, recent int) ([]
 	rows, err := conn.QueryContext(
 		ctx,
 		`SELECT id, pipeline_identifier, run_key, requester, operator, command,
-		        pipeline_name, pipeline_version, output_directory, created_at, updated_at
+		        pipeline_name, pipeline_version, output_directory, output_directory_gid,
+		        created_at, updated_at
 		 FROM result_sets
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT ?`,
@@ -466,7 +543,7 @@ func loadRecentStatsResults(ctx context.Context, conn *sql.Conn, recent int) ([]
 
 func querySearchResults(ctx context.Context, conn *sql.Conn, filters []string, args []any) ([]ResultSet, error) {
 	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString(`SELECT id, pipeline_identifier, run_key, requester, operator, command, pipeline_name, pipeline_version, output_directory, created_at, updated_at FROM result_sets`)
+	queryBuilder.WriteString(`SELECT id, pipeline_identifier, run_key, requester, operator, command, pipeline_name, pipeline_version, output_directory, output_directory_gid, created_at, updated_at FROM result_sets`)
 
 	if len(filters) > 0 {
 		queryBuilder.WriteString(" WHERE ")
@@ -521,6 +598,7 @@ func scanResultSet(rowScanner interface {
 }) (ResultSet, error) {
 	var result ResultSet
 	var createdAt string
+	var outputDirectoryGID sql.NullInt64
 	var updatedAt string
 
 	err := rowScanner.Scan(
@@ -533,6 +611,7 @@ func scanResultSet(rowScanner interface {
 		&result.PipelineName,
 		&result.PipelineVersion,
 		&result.OutputDirectory,
+		&outputDirectoryGID,
 		&createdAt,
 		&updatedAt,
 	)
@@ -550,6 +629,7 @@ func scanResultSet(rowScanner interface {
 		return ResultSet{}, fmt.Errorf("parse updated_at: %w", err)
 	}
 
+	result.OutputDirectoryGID = nullableInt64Pointer(outputDirectoryGID)
 	result.Metadata = map[string]string{}
 
 	return result, nil
@@ -966,6 +1046,7 @@ func (s *Store) Upsert(ctx context.Context, reg *Registration) (*ResultSet, erro
 		PipelineName:       reg.PipelineName,
 		PipelineVersion:    reg.PipelineVersion,
 		OutputDirectory:    reg.OutputDirectory,
+		OutputDirectoryGID: copyInt64Pointer(reg.OutputDirectoryGID),
 		Metadata:           cloneMetadata(reg.Metadata),
 		CreatedAt:          createdAt,
 		UpdatedAt:          updatedAt,
@@ -1137,13 +1218,14 @@ func (s *Store) Get(ctx context.Context, id string) (*ResultSet, error) {
 
 	var result ResultSet
 	var createdAt string
+	var outputDirectoryGID sql.NullInt64
 	var updatedAt string
 
 	err := s.db.QueryRowContext(
 		ctx,
 		`SELECT id, pipeline_identifier, run_key, requester, operator, command,
-		        pipeline_name, pipeline_version, output_directory, created_at,
-		        updated_at
+		        pipeline_name, pipeline_version, output_directory, output_directory_gid,
+		        created_at, updated_at
 		 FROM result_sets WHERE id = ?`,
 		id,
 	).Scan(
@@ -1156,6 +1238,7 @@ func (s *Store) Get(ctx context.Context, id string) (*ResultSet, error) {
 		&result.PipelineName,
 		&result.PipelineVersion,
 		&result.OutputDirectory,
+		&outputDirectoryGID,
 		&createdAt,
 		&updatedAt,
 	)
@@ -1177,6 +1260,7 @@ func (s *Store) Get(ctx context.Context, id string) (*ResultSet, error) {
 		return nil, fmt.Errorf("parse updated_at: %w", err)
 	}
 
+	result.OutputDirectoryGID = nullableInt64Pointer(outputDirectoryGID)
 	result.Metadata, err = loadResultMetadata(ctx, s.db, id)
 	if err != nil {
 		return nil, err

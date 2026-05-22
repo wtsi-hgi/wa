@@ -3,9 +3,12 @@ import path from "node:path";
 
 import { expect, test, type Locator } from "@playwright/test";
 
-type ResultSet = {
-    id: string;
-};
+import {
+    deleteResult,
+    installResultsAuthCookie,
+    registerResult,
+    type ResultSet,
+} from "./results-auth-helpers";
 
 type MetadataStripMetrics = {
     clientHeight: number;
@@ -31,16 +34,6 @@ const postFixDomEvidencePath = path.join(
     "metadata-layout-postfix-dom.json",
 );
 
-function resultsBackendUrl(): string {
-    const port = process.env.WA_TEST_RESULTS_PORT;
-
-    if (!port) {
-        throw new Error("WA_TEST_RESULTS_PORT is required for this test");
-    }
-
-    return `http://127.0.0.1:${port}`;
-}
-
 async function registerMetadataLayoutResult(): Promise<ResultSet> {
     const outputDirectory = path.resolve(
         process.cwd(),
@@ -49,60 +42,38 @@ async function registerMetadataLayoutResult(): Promise<ResultSet> {
         "agent",
         "e2e-metadata-layout-output",
     );
-    const response = await fetch(`${resultsBackendUrl()}/results`, {
-        method: "POST",
-        headers: {
-            "content-type": "application/json",
-        },
-        body: JSON.stringify({
-            pipeline_identifier:
-                "https://github.com/wtsi-hgi/wa/e2e-metadata-layout-repro",
-            run_key:
-                "runid=48522&study=7607&sample=7607STDY14643771&library=71046409",
-            requester: "agent",
-            operator: "agent",
-            command: "nextflow run seqmeta-rendering-repro",
-            pipeline_name: "seqmeta/rendering-repro",
-            pipeline_version: "2026.05",
-            output_directory: outputDirectory,
-            files: [
-                {
-                    path: path.join(outputDirectory, "sample", "report.txt"),
-                    mtime: "2026-05-20T08:00:00Z",
-                    size: 120,
-                    kind: "output",
-                },
-            ],
-            metadata: {
-                seqmeta_libraryid: "71046409",
-                seqmeta_librarytype: "Custom",
-                seqmeta_runid: "48522",
-                seqmeta_sampleid: "7607STDY14643771",
-                seqmeta_studyid: "7607",
+    const reportPath = path.join(outputDirectory, "sample", "report.txt");
+
+    mkdirSync(path.dirname(reportPath), { recursive: true });
+    writeFileSync(reportPath, "metadata layout evidence\n");
+
+    return registerResult({
+        pipeline_identifier:
+            "https://github.com/wtsi-hgi/wa/e2e-metadata-layout-repro",
+        run_key:
+            "runid=48522&study=7607&sample=7607STDY14643771&library=71046409",
+        requester: "agent",
+        operator: "agent",
+        command: "nextflow run seqmeta-rendering-repro",
+        pipeline_name: "seqmeta/rendering-repro",
+        pipeline_version: "2026.05",
+        output_directory: outputDirectory,
+        files: [
+            {
+                path: reportPath,
+                mtime: "2026-05-20T08:00:00Z",
+                size: 120,
+                kind: "output",
             },
-        }),
+        ],
+        metadata: {
+            seqmeta_libraryid: "71046409",
+            seqmeta_librarytype: "Custom",
+            seqmeta_runid: "48522",
+            seqmeta_sampleid: "7607STDY14643771",
+            seqmeta_studyid: "7607",
+        },
     });
-
-    if (!response.ok) {
-        throw new Error(
-            `registration failed ${response.status}: ${await response.text()}`,
-        );
-    }
-
-    return (await response.json()) as ResultSet;
-}
-
-async function deleteResult(resultId: string): Promise<void> {
-    const response = await fetch(
-        `${resultsBackendUrl()}/results/${encodeURIComponent(resultId)}`,
-        { method: "DELETE" },
-    );
-
-    if (!response.ok && response.status !== 404) {
-        throw new Error(
-            `delete failed ${response.status}: ${await response.text()}`,
-        );
-    }
 }
 
 async function measureMetadataStrip(
@@ -138,12 +109,14 @@ async function measureMetadataStrip(
 }
 
 test("keeps five result metadata items on two stable lines without vertical overflow", async ({
+    context,
     page,
 }) => {
     const result = await registerMetadataLayoutResult();
     let cleanupNeeded = true;
 
     try {
+        await installResultsAuthCookie(context);
         await page.setViewportSize({ width: 1180, height: 900 });
         await page.goto(`/results/${encodeURIComponent(result.id)}`, {
             waitUntil: "domcontentloaded",
@@ -193,11 +166,11 @@ test("keeps five result metadata items on two stable lines without vertical over
             before.rows.map((row) => row.key),
         );
 
-        await deleteResult(result.id);
+        deleteResult(result.id);
         cleanupNeeded = false;
     } finally {
         if (cleanupNeeded) {
-            await deleteResult(result.id);
+            deleteResult(result.id);
         }
     }
 });

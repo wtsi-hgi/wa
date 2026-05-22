@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -40,7 +41,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/mlwh"
 	"github.com/wtsi-hgi/wa/results"
 )
@@ -165,36 +168,33 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(dsn, convey.ShouldEqual, "user:secret@tcp(localhost:3306)/results")
 	})
 
-	convey.Convey("H1.1: Given results serve --port 0 --db :memory:, when started, then POST /results with valid JSON returns 201", t, func() {
-		addrCh := make(chan string, 1)
-		listenFunc = resultsServeListenFuncForTest(addrCh)
+	convey.Convey("H1.1: Given results serve with faked auth, when started, then POST /rest/v1/auth/results with valid JSON returns 201", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
 
-		cmd := NewRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"results", "serve", "--port", "0", "--db", ":memory:"})
+		var statusCode int
+		fakeAuth.onStart = func(server *fakeResultsServeAuthServer) error {
+			body, err := json.Marshal(registrationForResultsServeTest(t))
+			convey.So(err, convey.ShouldBeNil)
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+			request := httptest.NewRequest(http.MethodPost, gas.EndPointAuth+"/results", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.router.ServeHTTP(response, request)
+			statusCode = response.Code
 
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- cmd.ExecuteContext(ctx)
-		}()
+			return nil
+		}
 
-		addr := <-addrCh
-		response, err := postResultsRegistrationForTest("http://"+addr+"/results", registerCommandRegistrationForTest())
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0"))
+
 		convey.So(err, convey.ShouldBeNil)
-		defer func() { _ = response.Body.Close() }()
-		convey.So(response.StatusCode, convey.ShouldEqual, http.StatusCreated)
-
-		cancel()
-		convey.So(<-errCh, convey.ShouldBeNil)
+		convey.So(statusCode, convey.ShouldEqual, http.StatusCreated)
 	})
 
 	convey.Convey("H1.2: Given results serve with --seqmeta-url, posting seqmeta metadata triggers validation", t, func() {
-		addrCh := make(chan string, 1)
-		listenFunc = resultsServeListenFuncForTest(addrCh)
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
 
 		validationCh := make(chan string, 1)
 		seqmetaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,31 +204,27 @@ func TestResultsServeCommand(t *testing.T) {
 		}))
 		defer seqmetaServer.Close()
 
-		cmd := NewRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"results", "serve", "--port", "0", "--db", ":memory:", "--seqmeta-url", seqmetaServer.URL})
+		var statusCode int
+		fakeAuth.onStart = func(server *fakeResultsServeAuthServer) error {
+			registration := registrationForResultsServeTest(t)
+			registration.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+			body, err := json.Marshal(registration)
+			convey.So(err, convey.ShouldBeNil)
 
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- cmd.ExecuteContext(ctx)
-		}()
+			request := httptest.NewRequest(http.MethodPost, gas.EndPointAuth+"/results", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.router.ServeHTTP(response, request)
+			statusCode = response.Code
 
-		addr := <-addrCh
-		registration := registerCommandRegistrationForTest()
-		registration.Metadata = map[string]string{"seqmeta_runid": "48522"}
+			return nil
+		}
 
-		response, err := postResultsRegistrationForTest("http://"+addr+"/results", registration)
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0", "--seqmeta-url", seqmetaServer.URL))
 		convey.So(err, convey.ShouldBeNil)
-		defer func() { _ = response.Body.Close() }()
-		convey.So(response.StatusCode, convey.ShouldEqual, http.StatusCreated)
+		convey.So(statusCode, convey.ShouldEqual, http.StatusCreated)
 		convey.So(<-validationCh, convey.ShouldEqual, "/validate/48522")
-
-		cancel()
-		convey.So(<-errCh, convey.ShouldBeNil)
 	})
 
 	convey.Convey("H1.3: Given results serve --port abc, then exit code is non-zero", t, func() {
@@ -240,7 +236,7 @@ func TestResultsServeCommand(t *testing.T) {
 	convey.Convey("results serve reports a clear error when the SQLite database directory does not exist", t, func() {
 		dbPath := filepath.Join(t.TempDir(), "missing", "results.db")
 
-		output, err := executeRootCommandForTest(t, []string{"results", "serve", "--port", "8725", "--db", dbPath})
+		output, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "8725", "--db", dbPath))
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "results database directory does not exist")
@@ -253,9 +249,21 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(resultsDBDriverName("user:pass@tcp(localhost:3306)/results"), convey.ShouldEqual, "mysql")
 	})
 
+	convey.Convey("SQLite file paths use WAL and a busy timeout for concurrent e2e reads and writes", t, func() {
+		dbPath := filepath.Join(t.TempDir(), "results.db")
+
+		convey.So(
+			resultsSQLiteDSN(dbPath),
+			convey.ShouldEqual,
+			"file:"+filepath.ToSlash(dbPath)+"?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)",
+		)
+		convey.So(resultsSQLiteDSN(":memory:"), convey.ShouldEqual, ":memory:")
+		convey.So(resultsSQLiteDSN("file:/tmp/results.db?mode=ro"), convey.ShouldEqual, "file:/tmp/results.db?mode=ro")
+	})
+
 	convey.Convey("E5.2: Given MLWH env vars and no flag overrides, when results serve boots, then the resolved DSN includes the env password and the cache path comes from the environment", t, func() {
-		addrCh := make(chan string, 1)
-		listenFunc = resultsServeListenFuncForTest(addrCh)
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
 
 		secret := "topsecret"
 		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(mlwh-db-ro:3435)/mlwarehouse")
@@ -274,21 +282,12 @@ func TestResultsServeCommand(t *testing.T) {
 		cmd := NewRootCommand()
 		cmd.SetOut(stdout)
 		cmd.SetErr(stderr)
-		cmd.SetArgs([]string{"results", "serve", "--port", "0", "--db", ":memory:"})
+		cmd.SetArgs(secureResultsServeArgs("--port", "0"))
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- cmd.ExecuteContext(ctx)
-		}()
-
-		<-addrCh
+		err := cmd.ExecuteContext(context.Background())
 		seenConfig := <-seenConfigCh
-		cancel()
 
-		convey.So(<-errCh, convey.ShouldBeNil)
+		convey.So(err, convey.ShouldBeNil)
 		convey.So(seenConfig.DSN, convey.ShouldEqual, "mlwh_user:"+secret+"@tcp(mlwh-db-ro:3435)/mlwarehouse?interpolateParams=false&multiStatements=false")
 		convey.So(seenConfig.CachePath, convey.ShouldEqual, os.Getenv("WA_MLWH_CACHE_PATH"))
 		convey.So(stdout.String(), convey.ShouldNotContainSubstring, secret)
@@ -297,17 +296,20 @@ func TestResultsServeCommand(t *testing.T) {
 	})
 
 	convey.Convey("results serve opens the read-only MLWH resolver from cache when a source DSN is present", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+
 		resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
 		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(127.0.0.1:1)/mlwarehouse")
 		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh.sqlite"))
 
-		err := executeServeCommandUntilListeningForTest(t, []string{"results", "serve", "--port", "0", "--db", ":memory:"})
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0"))
 
 		convey.So(err, convey.ShouldBeNil)
 	})
 
 	convey.Convey("E5.3: Given --mlwh-cache with an embedded password, when results serve parses flags, then the error wraps ErrPasswordInDSN and names --mlwh-cache", t, func() {
-		_, err := executeRootCommandForTest(t, []string{"results", "serve", "--db", ":memory:", "--mlwh-cache", "cache_user:secret@tcp(localhost:3306)/wa_cache"})
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--mlwh-cache", "cache_user:secret@tcp(localhost:3306)/wa_cache"))
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, mlwh.ErrPasswordInDSN.Error())
@@ -322,8 +324,8 @@ func TestResultsServeCommand(t *testing.T) {
 	})
 
 	convey.Convey("E5.5: Given the default sync interval, when results serve runs, then no MLWH sync loop is started", t, func() {
-		addrCh := make(chan string, 1)
-		listenFunc = resultsServeListenFuncForTest(addrCh)
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
 
 		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(mlwh-db-ro:3435)/mlwarehouse")
 		t.Setenv("WA_MLWH_PASSWORD", "secret")
@@ -344,59 +346,269 @@ func TestResultsServeCommand(t *testing.T) {
 		cmd := NewRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"results", "serve", "--port", "0", "--db", ":memory:"})
+		cmd.SetArgs(secureResultsServeArgs("--port", "0"))
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		err := cmd.ExecuteContext(context.Background())
 
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- cmd.ExecuteContext(ctx)
-		}()
-
-		<-addrCh
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-
-		convey.So(<-errCh, convey.ShouldBeNil)
+		convey.So(err, convey.ShouldBeNil)
 		convey.So(tickerCreated, convey.ShouldEqual, 0)
 		convey.So(fakeClient.SyncCalls(), convey.ShouldEqual, 0)
 	})
 
 	convey.Convey("Bug 260519-2: Given results serve with a sample-only MLWH cache, seqmeta_supplier_name search uses the runtime sample-only expansion", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+
 		resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
-		addrCh := make(chan string, 1)
-		listenFunc = resultsServeListenFuncForTest(addrCh)
 		dbPath := filepath.Join(t.TempDir(), "results.sqlite")
 		mlwhCachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
 		seedResultsServeDirectSampleSearchFixture(t, dbPath, mlwhCachePath)
 
-		cmd := NewRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"results", "serve", "--port", "0", "--db", dbPath, "--mlwh-cache", mlwhCachePath})
+		var response *httptest.ResponseRecorder
+		fakeAuth.onStart = func(server *fakeResultsServeAuthServer) error {
+			request := httptest.NewRequest(http.MethodGet, gas.EndPointREST+"/results?seqmeta_supplier_name=Hek_R1", nil)
+			response = httptest.NewRecorder()
+			server.router.ServeHTTP(response, request)
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+			return nil
+		}
 
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- cmd.ExecuteContext(ctx)
-		}()
-
-		addr := <-addrCh
-		response, err := http.Get("http://" + addr + "/results?seqmeta_supplier_name=Hek_R1")
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0", "--db", dbPath, "--mlwh-cache", mlwhCachePath))
 		convey.So(err, convey.ShouldBeNil)
-		defer func() { _ = response.Body.Close() }()
-		convey.So(response.StatusCode, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 
 		var payload []results.ResultSet
 		convey.So(json.NewDecoder(response.Body).Decode(&payload), convey.ShouldBeNil)
 		convey.So(payload, convey.ShouldHaveLength, 1)
 		convey.So(payload[0].RunKey, convey.ShouldEqual, "direct-supplier")
+	})
+}
 
-		cancel()
-		convey.So(<-errCh, convey.ShouldBeNil)
+func newFakeResultsServeAuthServer() *fakeResultsServeAuthServer {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	return &fakeResultsServeAuthServer{
+		router: router,
+	}
+}
+
+func installFakeResultsServeAuthServer(t *testing.T, fake *fakeResultsServeAuthServer) {
+	t.Helper()
+
+	originalNewAuthServer := resultsServeNewAuthServer
+	resultsServeNewAuthServer = func(io.Writer) resultsServeAuthServer {
+		return fake
+	}
+
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Cleanup(func() {
+		resultsServeNewAuthServer = originalNewAuthServer
+	})
+}
+
+func registrationForResultsServeTest(t *testing.T) *results.Registration {
+	t.Helper()
+
+	registration := registerCommandRegistrationForTest()
+	registration.OutputDirectory = t.TempDir()
+	registration.Files[0].Path = filepath.Join(registration.OutputDirectory, "out.txt")
+
+	return registration
+}
+
+func secureResultsServeArgs(extra ...string) []string {
+	args := []string{
+		"results", "serve",
+		"--db", ":memory:",
+		"--cert", "cert.pem",
+		"--key", "key.pem",
+		"--ldap_server", "ldap.example.org",
+		"--ldap_dn", "uid=%s,ou=people,dc=example,dc=org",
+	}
+
+	return append(args, extra...)
+}
+
+type fakeResultsServeAuthEnableCall struct {
+	certFile      string
+	keyFile       string
+	tokenBasename string
+}
+
+type fakeResultsServeAuthStartCall struct {
+	kind     string
+	addr     string
+	certFile string
+	keyFile  string
+	acmeURL  string
+	cacheDir string
+}
+
+type fakeResultsServeAuthServer struct {
+	router      *gin.Engine
+	auth        *gin.RouterGroup
+	enableCalls []fakeResultsServeAuthEnableCall
+	startCalls  []fakeResultsServeAuthStartCall
+	onStart     func(*fakeResultsServeAuthServer) error
+}
+
+func (f *fakeResultsServeAuthServer) Router() *gin.Engine {
+	return f.router
+}
+
+func (f *fakeResultsServeAuthServer) AuthRouter() *gin.RouterGroup {
+	return f.auth
+}
+
+func (f *fakeResultsServeAuthServer) EnableAuthWithServerToken(certFile, keyFile, tokenBasename string, _ gas.AuthCallback) error {
+	f.enableCalls = append(f.enableCalls, fakeResultsServeAuthEnableCall{
+		certFile:      certFile,
+		keyFile:       keyFile,
+		tokenBasename: tokenBasename,
+	})
+	f.auth = f.router.Group(gas.EndPointAuth)
+
+	return nil
+}
+
+func (f *fakeResultsServeAuthServer) Start(addr, certFile, keyFile string) error {
+	f.startCalls = append(f.startCalls, fakeResultsServeAuthStartCall{
+		kind:     "start",
+		addr:     addr,
+		certFile: certFile,
+		keyFile:  keyFile,
+	})
+
+	if f.onStart != nil {
+		return f.onStart(f)
+	}
+
+	return nil
+}
+
+func (f *fakeResultsServeAuthServer) StartACME(addr string, acmeURL, cacheDir string) error {
+	f.startCalls = append(f.startCalls, fakeResultsServeAuthStartCall{
+		kind:     "acme",
+		addr:     addr,
+		acmeURL:  acmeURL,
+		cacheDir: cacheDir,
+	})
+
+	if f.onStart != nil {
+		return f.onStart(f)
+	}
+
+	return nil
+}
+
+func (f *fakeResultsServeAuthServer) StartACMETLSOnly(addr string, acmeURL, cacheDir string) error {
+	f.startCalls = append(f.startCalls, fakeResultsServeAuthStartCall{
+		kind:     "acme-tls-only",
+		addr:     addr,
+		acmeURL:  acmeURL,
+		cacheDir: cacheDir,
+	})
+
+	if f.onStart != nil {
+		return f.onStart(f)
+	}
+
+	return nil
+}
+
+func (f *fakeResultsServeAuthServer) Stop() {}
+
+func TestResultsServeCommandA2(t *testing.T) {
+	convey.Convey("A2.1: Given results serve --url without certs, when validation runs, then TLS material is required", t, func() {
+		_, err := executeRootCommandForTest(t, []string{"results", "serve", "--db", ":memory:", "--url", "127.0.0.1:8443"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldEqual, "you must supply --cert and --key, or --acme and --cache")
+	})
+
+	convey.Convey("A2.2: Given cert/key but no LDAP flags, when validation runs in non-test mode, then LDAP is required", t, func() {
+		t.Setenv("WA_RESULTS_LDAP_SERVER", "")
+		t.Setenv("WA_RESULTS_LDAP_DN", "")
+
+		_, err := executeRootCommandForTest(t, []string{"results", "serve", "--db", ":memory:", "--cert", "cert.pem", "--key", "key.pem"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldEqual, "--ldap_server and --ldap_dn are required")
+	})
+
+	convey.Convey("A2.3: Given cert/key and LDAP flags, when wired with fakes, then authserver receives TLS paths and server-token basename", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.enableCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.enableCalls[0].certFile, convey.ShouldEqual, "cert.pem")
+		convey.So(fakeAuth.enableCalls[0].keyFile, convey.ShouldEqual, "key.pem")
+		convey.So(fakeAuth.enableCalls[0].tokenBasename, convey.ShouldEqual, resultsServerTokenBasename)
+	})
+
+	convey.Convey("Given an existing server token with loose permissions, owner-session setup rotates it and keeps authserver token reuse aligned", t, func() {
+		tokenPath := filepath.Join(t.TempDir(), "server.token")
+		leakedToken, err := gas.GenerateToken()
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(os.WriteFile(tokenPath, leakedToken, 0o644), convey.ShouldBeNil)
+
+		ownerConfig, err := resultsServeOwnerSessionConfig(tokenPath, results.NewOwnerSessionStore())
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(bytes.Equal(ownerConfig.ServerToken, leakedToken), convey.ShouldBeFalse)
+
+		info, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o600)
+
+		authServerToken, err := gas.GenerateAndStoreTokenForSelfClient(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(authServerToken, convey.ShouldResemble, ownerConfig.ServerToken)
+	})
+
+	convey.Convey("A2.3b: Given both cert/key and ACME flags, when validation runs, then TLS mode selection is rejected as ambiguous", t, func() {
+		cacheDir := filepath.Join(t.TempDir(), "certs")
+		convey.So(os.Mkdir(cacheDir, 0o700), convey.ShouldBeNil)
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs(
+			"--acme", "https://acme.example/dir",
+			"--cache", cacheDir,
+		))
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldEqual, "you must supply either --cert and --key, or --acme and --cache, not both")
+	})
+
+	convey.Convey("A2.4: Given ACME cache dir with loose permissions, when startup runs, then it fails before serving", t, func() {
+		cacheDir := filepath.Join(t.TempDir(), "certs")
+		convey.So(os.Mkdir(cacheDir, 0o755), convey.ShouldBeNil)
+
+		_, err := executeRootCommandForTest(t, []string{
+			"results", "serve",
+			"--db", ":memory:",
+			"--acme", "https://acme.example/dir",
+			"--cache", cacheDir,
+			"--ldap_server", "ldap.example.org",
+			"--ldap_dn", "uid=%s,ou=people,dc=example,dc=org",
+		})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldEqual, "cert cache directory must only be readable by the server user")
+	})
+
+	convey.Convey("A2.5: Given legacy --port with cert/key/LDAP flags, when validation runs, then HTTPS bind addr uses localhost port", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "9443"))
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "start")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "127.0.0.1:9443")
 	})
 }
 
@@ -409,25 +621,6 @@ func resultsServeListenFuncForTest(addrCh chan<- string) func(string, string) (n
 
 		return listener, err
 	}
-}
-
-func postResultsRegistrationForTest(endpoint string, registration *results.Registration) (*http.Response, error) {
-	body, err := json.Marshal(registration)
-	if err != nil {
-		return nil, err
-	}
-
-	var response *http.Response
-	for range 20 {
-		response, err = http.Post(endpoint, "application/json", bytes.NewReader(body))
-		if err == nil {
-			return response, nil
-		}
-
-		time.Sleep(25 * time.Millisecond)
-	}
-
-	return nil, err
 }
 
 func seedResultsServeDirectSampleSearchFixture(t *testing.T, dbPath, mlwhCachePath string) {

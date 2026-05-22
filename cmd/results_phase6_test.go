@@ -34,15 +34,20 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/results"
 
 	_ "modernc.org/sqlite"
 )
 
 func TestResultsRescanCommand(t *testing.T) {
+	installPassthroughResultsAuthClientForTest(t)
+
 	convey.Convey("G5.1: Given a registered result set and a t.TempDir() with 3 files (1 new since registration), when rescan <id> <dir> is run, then the server's file list for that ID has 3 output files", t, func() {
 		store := newResultsRescanStoreForTest(t)
 		dir := t.TempDir()
@@ -70,7 +75,7 @@ func TestResultsRescanCommand(t *testing.T) {
 
 		createResultsRescanFileForTest(t, dir, "nested/c.txt", "gamma")
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, dir})
@@ -97,12 +102,55 @@ func TestResultsRescanCommand(t *testing.T) {
 		createResultsRescanFileForTest(t, dir, "a.txt", "alpha")
 
 		store := newResultsRescanStoreForTest(t)
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		_, err := executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, "missing-id", dir})
 
 		convey.So(err, convey.ShouldNotBeNil)
+	})
+
+	convey.Convey("rescan uses owner authentication while loading the registered output directory", t, func() {
+		dir := t.TempDir()
+		resultID := "result-owner-rescan"
+		authClient := &rescanOwnerAuthClientForTest{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != gas.EndPointAuth+"/results/"+resultID {
+				http.NotFound(w, r)
+
+				return
+			}
+
+			if r.Header.Get("Authorization") != "Bearer owner-jwt" {
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "locked"})
+
+				return
+			}
+
+			_ = json.NewEncoder(w).Encode(results.ResultSet{
+				ID:              resultID,
+				OutputDirectory: dir,
+			})
+		}))
+		defer server.Close()
+
+		authClient.serverURL = server.URL
+		previousNewAuthClient := resultsNewAuthClient
+		resultsNewAuthClient = func(serverURL, _ string, _ ...string) (resultsAuthClient, error) {
+			authClient.serverURL = serverURL
+
+			return authClient, nil
+		}
+		defer func() {
+			resultsNewAuthClient = previousNewAuthClient
+		}()
+
+		err := validateResultsRescanDirectory(context.Background(), server.URL, "", resultID, dir)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(authClient.ownerRequestCalls, convey.ShouldEqual, 1)
+		convey.So(authClient.authenticatedRequestCalls, convey.ShouldEqual, 0)
 	})
 
 	convey.Convey("rescan rejects a directory that does not match the registered output directory", t, func() {
@@ -126,7 +174,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, wrongDir})
@@ -161,7 +209,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		stdout := &bytes.Buffer{}
@@ -185,8 +233,10 @@ func TestResultsRescanCommand(t *testing.T) {
 		convey.So(os.Symlink(externalDir, filepath.Join(dir, "escape")), convey.ShouldBeNil)
 
 		requestCount := 0
+		requestPathCh := make(chan string, 1)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
+			requestPathCh <- r.URL.Path
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(results.ResultSet{
 				ID:              "ignored-id",
@@ -200,6 +250,13 @@ func TestResultsRescanCommand(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "resolves outside")
 		convey.So(requestCount, convey.ShouldEqual, 1)
+
+		requestPath := ""
+		select {
+		case requestPath = <-requestPathCh:
+		default:
+		}
+		convey.So(requestPath, convey.ShouldEqual, gas.EndPointAuth+"/results/ignored-id")
 	})
 
 	convey.Convey("rescan rejects alias directories that are not the registered output directory", t, func() {
@@ -222,7 +279,7 @@ func TestResultsRescanCommand(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 
-		server := httptest.NewServer(results.NewServer(store, nil, nil).Handler())
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
 		_, err = executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, stored.ID, aliasRoot})
@@ -256,6 +313,36 @@ func newResultsRescanStoreForTest(t *testing.T) *results.Store {
 	return store
 }
 
+type rescanOwnerAuthClientForTest struct {
+	serverURL                 string
+	authenticatedRequestCalls int
+	ownerRequestCalls         int
+}
+
+func (c *rescanOwnerAuthClientForTest) AuthenticatedRequest() (*resty.Request, error) {
+	c.authenticatedRequestCalls++
+
+	client := resty.New()
+	client.SetBaseURL(c.serverURL)
+	client.SetAuthToken("stale-jwt")
+
+	return client.R(), nil
+}
+
+func (c *rescanOwnerAuthClientForTest) OwnerAuthenticatedRequest() (*resty.Request, error) {
+	c.ownerRequestCalls++
+
+	client := resty.New()
+	client.SetBaseURL(c.serverURL)
+	client.SetAuthToken("owner-jwt")
+
+	return client.R(), nil
+}
+
+func (c *rescanOwnerAuthClientForTest) CanReadServerToken() bool {
+	return true
+}
+
 func createResultsRescanFileForTest(t *testing.T, rootDir, relativePath, content string) results.FileEntry {
 	t.Helper()
 
@@ -279,4 +366,64 @@ func createResultsRescanFileForTest(t *testing.T, rootDir, relativePath, content
 		Size:  info.Size(),
 		Kind:  "output",
 	}
+}
+
+func newResultsRescanServerForTest(t *testing.T, store *results.Store) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-jwt" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "authentication failed"})
+
+			return
+		}
+
+		const filesSuffix = "/files"
+
+		resultPathPrefix := gas.EndPointAuth + "/results/"
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, resultPathPrefix) && !strings.HasSuffix(r.URL.Path, filesSuffix):
+			resultID := strings.TrimPrefix(r.URL.Path, resultPathPrefix)
+			result, err := store.Get(r.Context(), resultID)
+			if err != nil {
+				writeResultsRescanErrorForTest(w, http.StatusNotFound, err)
+
+				return
+			}
+
+			_ = json.NewEncoder(w).Encode(result)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, resultPathPrefix) && strings.HasSuffix(r.URL.Path, filesSuffix):
+			resultID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, resultPathPrefix), filesSuffix)
+
+			var files []results.FileEntry
+			if err := json.NewDecoder(r.Body).Decode(&files); err != nil {
+				writeResultsRescanErrorForTest(w, http.StatusBadRequest, err)
+
+				return
+			}
+
+			if err := store.ReplaceOutputFiles(r.Context(), resultID, files); err != nil {
+				writeResultsRescanErrorForTest(w, http.StatusNotFound, err)
+
+				return
+			}
+
+			storedFiles, err := store.GetFiles(r.Context(), resultID)
+			if err != nil {
+				writeResultsRescanErrorForTest(w, http.StatusInternalServerError, err)
+
+				return
+			}
+
+			_ = json.NewEncoder(w).Encode(storedFiles)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func writeResultsRescanErrorForTest(w http.ResponseWriter, status int, err error) {
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }

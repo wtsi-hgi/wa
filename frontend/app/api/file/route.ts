@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 
-import { resultsRaw } from "@/lib/backend-client";
+import { resultsAuthCookieName, resultsRaw } from "@/lib/backend-client";
 
 export const dynamic = "force-dynamic";
 
@@ -88,7 +88,9 @@ async function buildThumbnailResponse(
     }
 }
 
-async function readErrorBody(response: Response): Promise<{ error: string }> {
+async function readErrorBody(
+    response: Response,
+): Promise<Record<string, unknown> | { error: string }> {
     const contentType = response.headers.get("content-type") ?? "";
 
     if (contentType.includes("application/json")) {
@@ -101,7 +103,7 @@ async function readErrorBody(response: Response): Promise<{ error: string }> {
             typeof body.error === "string" &&
             body.error.trim().length > 0
         ) {
-            return { error: body.error };
+            return body as Record<string, unknown>;
         }
     }
 
@@ -144,11 +146,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         query.set("mode", mode);
     }
 
+    const jwt = request.cookies.get(resultsAuthCookieName)?.value ?? null;
+    const resultsPath = jwt ? "/rest/v1/auth/results" : "/rest/v1/results";
+
     let response: Response;
     try {
-        response = await resultsRaw(
-            `/results/${encodeURIComponent(id)}/file?${query.toString()}`,
-        );
+        const publicBackendPath = `/rest/v1/results/${encodeURIComponent(id)}/file?${query.toString()}`;
+        const backendPath = `${resultsPath}/${encodeURIComponent(id)}/file?${query.toString()}`;
+        response = jwt
+            ? await resultsRaw(backendPath, { jwt })
+            : await resultsRaw(backendPath);
+
+        if (jwt && response.status === 401) {
+            response = await resultsRaw(publicBackendPath);
+        }
     } catch {
         return NextResponse.json(
             { error: "results backend request failed" },

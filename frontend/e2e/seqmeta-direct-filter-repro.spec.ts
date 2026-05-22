@@ -3,9 +3,12 @@ import path from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
-type ResultSet = {
-    id: string;
-};
+import {
+    deleteResult,
+    installResultsAuthCookie,
+    registerResult,
+    type ResultSet,
+} from "./results-auth-helpers";
 
 type FilterEvidence = {
     finalUrl: string;
@@ -22,16 +25,6 @@ type FilterEvidence = {
     }>;
 };
 
-function resultsBackendUrl(): string {
-    const port = process.env.WA_TEST_RESULTS_PORT;
-
-    if (!port) {
-        throw new Error("WA_TEST_RESULTS_PORT is required for this test");
-    }
-
-    return `http://127.0.0.1:${port}`;
-}
-
 async function registerDirectMetadataReproResult(): Promise<ResultSet> {
     const outputDirectory = path.resolve(
         process.cwd(),
@@ -40,55 +33,31 @@ async function registerDirectMetadataReproResult(): Promise<ResultSet> {
         "agent",
         "e2e-seqmeta-direct-filter-output",
     );
-    const response = await fetch(`${resultsBackendUrl()}/results`, {
-        method: "POST",
-        headers: {
-            "content-type": "application/json",
+
+    await fs.mkdir(outputDirectory, { recursive: true });
+
+    return registerResult({
+        pipeline_identifier:
+            "https://github.com/wtsi-hgi/wa/e2e-direct-filter-repro",
+        run_key:
+            "runid=48522&study=7607&sample=7607STDY14643771&library=71046409",
+        requester: "agent",
+        operator: "agent",
+        command: "nextflow run seqmeta-direct-filter-repro",
+        pipeline_name: "seqmeta/direct-filter-repro",
+        pipeline_version: "2026.05",
+        output_directory: outputDirectory,
+        files: [],
+        metadata: {
+            seqmeta_librarytype: "Custom",
+            seqmeta_libraryid: "71046409",
+            seqmeta_runid: "48522",
+            seqmeta_id_sample_lims: "SMP7607-0000",
+            seqmeta_sampleid: "7607STDY14643771",
+            seqmeta_supplier_name: "Supplier Sample 7607",
+            seqmeta_studyid: "7607",
         },
-        body: JSON.stringify({
-            pipeline_identifier:
-                "https://github.com/wtsi-hgi/wa/e2e-direct-filter-repro",
-            run_key:
-                "runid=48522&study=7607&sample=7607STDY14643771&library=71046409",
-            requester: "agent",
-            operator: "agent",
-            command: "nextflow run seqmeta-direct-filter-repro",
-            pipeline_name: "seqmeta/direct-filter-repro",
-            pipeline_version: "2026.05",
-            output_directory: outputDirectory,
-            files: [],
-            metadata: {
-                seqmeta_librarytype: "Custom",
-                seqmeta_libraryid: "71046409",
-                seqmeta_runid: "48522",
-                seqmeta_id_sample_lims: "SMP7607-0000",
-                seqmeta_sampleid: "7607STDY14643771",
-                seqmeta_supplier_name: "Supplier Sample 7607",
-                seqmeta_studyid: "7607",
-            },
-        }),
     });
-
-    if (!response.ok) {
-        throw new Error(
-            `registration failed ${response.status}: ${await response.text()}`,
-        );
-    }
-
-    return (await response.json()) as ResultSet;
-}
-
-async function deleteResult(resultId: string): Promise<void> {
-    const response = await fetch(
-        `${resultsBackendUrl()}/results/${encodeURIComponent(resultId)}`,
-        { method: "DELETE" },
-    );
-
-    if (!response.ok && response.status !== 404) {
-        throw new Error(
-            `delete failed ${response.status}: ${await response.text()}`,
-        );
-    }
 }
 
 async function openSampleDetails(page: Page, resultId: string): Promise<void> {
@@ -191,6 +160,7 @@ test("direct seqmeta sample metadata filter links return the originating result 
     let cleanupNeeded = true;
 
     const context = await browser.newContext();
+    await installResultsAuthCookie(context);
     await context.tracing.start({ screenshots: true, snapshots: true });
     const page = await context.newPage();
 
@@ -232,7 +202,7 @@ test("direct seqmeta sample metadata filter links return the originating result 
         };
         await fs.writeFile(evidencePath, JSON.stringify(evidence, null, 2));
 
-        await deleteResult(result.id);
+        deleteResult(result.id);
         cleanupNeeded = false;
 
         expect(titleEvidence.millisUntilSearchResults).not.toBeNull();
@@ -266,7 +236,7 @@ test("direct seqmeta sample metadata filter links return the originating result 
         );
     } finally {
         if (cleanupNeeded) {
-            await deleteResult(result.id);
+            deleteResult(result.id);
         }
 
         await context.close();

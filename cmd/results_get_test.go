@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/results"
 )
 
@@ -43,12 +44,14 @@ type resultSetWithFilesForTest struct {
 }
 
 func TestResultsGetCommand(t *testing.T) {
+	installPassthroughResultsAuthClientForTest(t)
+
 	convey.Convey("defaultResultsServerURL derives the results server URL from the active dev port", t, func() {
 		t.Setenv("WA_ENV", "development")
 		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
 		t.Setenv("WA_RESULTS_BACKEND_URL", "")
 
-		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "http://127.0.0.1:3672")
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://127.0.0.1:3672")
 	})
 
 	convey.Convey("defaultResultsServerURL derives the results server URL from the active prod port", t, func() {
@@ -56,7 +59,7 @@ func TestResultsGetCommand(t *testing.T) {
 		t.Setenv("WA_PROD_RESULTS_PORT", "8090")
 		t.Setenv("WA_RESULTS_BACKEND_URL", "")
 
-		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "http://127.0.0.1:8090")
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://127.0.0.1:8090")
 	})
 
 	convey.Convey("defaultResultsServerURL ignores unrelated server env vars and falls back to localhost when no active results port is set", t, func() {
@@ -67,13 +70,14 @@ func TestResultsGetCommand(t *testing.T) {
 		t.Setenv("WA_DEV_RESULTS_PORT", "")
 		t.Setenv("WA_PROD_RESULTS_PORT", "")
 
-		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "http://localhost:8080")
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://localhost:8080")
 	})
 
 	convey.Convey("results get falls back to the active scenario results port when --server is unset", t, func() {
 		result := testResultSetForCommand()
-		server := newResultsGetServerForTest(result, nil)
+		server := newResultsGetTLSServerForTest(result, nil)
 		defer server.Close()
+		installResultsHTTPClientForTest(t, server.Client())
 
 		serverURL, err := url.Parse(server.URL)
 		convey.So(err, convey.ShouldBeNil)
@@ -157,14 +161,18 @@ func testResultSetForCommand() results.ResultSet {
 	}
 }
 
-func newResultsGetServerForTest(result results.ResultSet, files []results.FileEntry) *httptest.Server {
+func newResultsGetTLSServerForTest(result results.ResultSet, files []results.FileEntry) *httptest.Server {
+	return httptest.NewTLSServer(newResultsGetHandlerForTest(result, files))
+}
+
+func newResultsGetHandlerForTest(result results.ResultSet, files []results.FileEntry) http.Handler {
 	handler := http.NewServeMux()
-	handler.HandleFunc("/results/", func(w http.ResponseWriter, r *http.Request) {
+	handler.HandleFunc(gas.EndPointAuth+"/results/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/results/" + result.ID:
+		case gas.EndPointAuth + "/results/" + result.ID:
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(result)
-		case "/results/" + result.ID + "/files":
+		case gas.EndPointAuth + "/results/" + result.ID + "/files":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(files)
 		default:
@@ -174,5 +182,94 @@ func newResultsGetServerForTest(result results.ResultSet, files []results.FileEn
 		}
 	})
 
-	return httptest.NewServer(handler)
+	return handler
+}
+
+func newResultsGetServerForTest(result results.ResultSet, files []results.FileEntry) *httptest.Server {
+	return httptest.NewServer(newResultsGetHandlerForTest(result, files))
+}
+
+func TestResultsGetEndpointPermissions(t *testing.T) {
+	convey.Convey("D2.2: Given no token and no terminal, get fails with authentication failed", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+		installGasResultsClientCLIForTest(t, &resultsAuthPasswordHandler{terminal: false})
+
+		result := testResultSetForCommand()
+		server := newResultsGetTLSServerForTest(result, nil)
+		defer server.Close()
+		installResultsHTTPClientForTest(t, server.Client())
+
+		_, err := executeRootCommandForTest(t, []string{"results", "get", "--server", server.URL, result.ID})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldEqual, "authentication failed")
+	})
+
+	convey.Convey("D2.3: Given an authenticated user lacking access, get preserves locked 403 messaging", t, func() {
+		restore := installPassthroughResultsAuthClientForTest(t)
+		defer restore()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != gas.EndPointAuth+"/results/result-locked" {
+				http.NotFound(w, r)
+
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"locked","locked":true,"result_id":"result-locked","message":"You do not have access to this result set"}`))
+		}))
+		defer server.Close()
+
+		_, err := executeRootCommandForTest(t, []string{"results", "get", "--server", server.URL, "result-locked"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldEqual, "results server returned 403: locked")
+	})
+
+	convey.Convey("D2.4: Given access, get --files fetches authenticated detail and files endpoints", t, func() {
+		restore := installPassthroughResultsAuthClientForTest(t)
+		defer restore()
+
+		result := testResultSetForCommand()
+		files := []results.FileEntry{{
+			Path:  "/tmp/results/run/out.txt",
+			Mtime: time.Date(2026, time.April, 16, 12, 0, 0, 0, time.UTC),
+			Size:  123,
+			Kind:  "output",
+		}}
+		pathsCh := make(chan string, 2)
+		authHeaderCh := make(chan string, 2)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			pathsCh <- r.URL.Path
+			authHeaderCh <- r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+
+			switch r.URL.Path {
+			case gas.EndPointAuth + "/results/" + result.ID:
+				_ = json.NewEncoder(w).Encode(result)
+			case gas.EndPointAuth + "/results/" + result.ID + "/files":
+				_ = json.NewEncoder(w).Encode(files)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		output, err := executeRootCommandForTest(t, []string{"results", "get", "--server", server.URL, "--files", result.ID})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		var got resultSetWithFilesForTest
+		err = json.Unmarshal([]byte(output), &got)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(got.ResultSet, convey.ShouldResemble, result)
+		convey.So(got.Files, convey.ShouldResemble, files)
+		convey.So(<-pathsCh, convey.ShouldEqual, gas.EndPointAuth+"/results/"+result.ID)
+		convey.So(<-pathsCh, convey.ShouldEqual, gas.EndPointAuth+"/results/"+result.ID+"/files")
+		convey.So(<-authHeaderCh, convey.ShouldEqual, "Bearer test-jwt")
+		convey.So(<-authHeaderCh, convey.ShouldEqual, "Bearer test-jwt")
+	})
 }

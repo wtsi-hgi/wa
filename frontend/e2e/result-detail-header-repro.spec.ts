@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { expect, test } from "@playwright/test";
 
+import { installResultsAuthCookie } from "./results-auth-helpers";
+
 const evidenceDir = path.resolve(process.cwd(), "..", ".tmp", "agent");
 const screenshotPath = path.join(
     evidenceDir,
@@ -21,6 +23,10 @@ const postFixDomEvidencePath = path.join(
     evidenceDir,
     "result-detail-header-all-buttons-postfix-dom.json",
 );
+
+test.beforeEach(async ({ context }) => {
+    await installResultsAuthCookie(context);
+});
 
 test("reproduces reopened result detail header layout issues", async ({
     page,

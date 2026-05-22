@@ -340,6 +340,9 @@ describe("O1 result detail hydration", () => {
 
         expect(detailSummary).not.toBeNull();
         expect(
+            detailSummary?.querySelector('a[data-return-link="true"]'),
+        ).toBeNull();
+        expect(
             detailSummary?.querySelector(
                 '[data-registration-layout="integrated"]',
             ),

@@ -26,7 +26,9 @@ describe("I1 health check API route", () => {
 
         expect(dynamic).toBe("force-dynamic");
         expect(resultsJsonMock).toHaveBeenCalledTimes(1);
-        expect(resultsJsonMock.mock.calls[0]?.[0]).toBe("/results/stats");
+        expect(resultsJsonMock.mock.calls[0]?.[0]).toBe(
+            "/rest/v1/results/stats",
+        );
         expect(resultsJsonMock.mock.calls[0]?.[1]).toMatchObject({
             safeParse: expect.any(Function),
         });
@@ -42,7 +44,9 @@ describe("I1 health check API route", () => {
         const response = await GET();
 
         expect(resultsJsonMock).toHaveBeenCalledTimes(1);
-        expect(resultsJsonMock.mock.calls[0]?.[0]).toBe("/results/stats");
+        expect(resultsJsonMock.mock.calls[0]?.[0]).toBe(
+            "/rest/v1/results/stats",
+        );
         expect(resultsJsonMock.mock.calls[0]?.[1]).toMatchObject({
             safeParse: expect.any(Function),
         });

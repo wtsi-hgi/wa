@@ -8,6 +8,13 @@ export const fileEntrySchema = z.object({
 });
 export type FileEntry = z.infer<typeof fileEntrySchema>;
 
+export const accessStateSchema = z.object({
+    can_view: z.boolean(),
+    locked: z.boolean(),
+    reason: z.string().optional(),
+});
+export type AccessState = z.infer<typeof accessStateSchema>;
+
 export const resultSetSchema = z.object({
     id: z.string(),
     pipeline_identifier: z.string(),
@@ -18,17 +25,22 @@ export const resultSetSchema = z.object({
     pipeline_name: z.string(),
     pipeline_version: z.string(),
     output_directory: z.string(),
+    output_directory_gid: z.number().int().nullable().default(null),
+    access: accessStateSchema.default({
+        can_view: true,
+        locked: false,
+    }),
     metadata: z.record(z.string(), z.string()),
     created_at: z.string(),
     updated_at: z.string(),
 });
-export type ResultSet = z.infer<typeof resultSetSchema>;
+export type ResultSet = z.input<typeof resultSetSchema>;
 
 export const searchResultSchema = z.object({
     result_set: resultSetSchema,
     matched_samples: z.array(z.string()).optional(),
 });
-export type SearchResult = z.infer<typeof searchResultSchema>;
+export type SearchResult = z.input<typeof searchResultSchema>;
 
 export const dailyCountSchema = z.object({
     date: z.string(),
@@ -48,7 +60,7 @@ export const statsResultSchema = z.object({
     daily: z.array(dailyCountSchema),
     pipelines: z.array(pipelineCountSchema),
 });
-export type StatsResult = z.infer<typeof statsResultSchema>;
+export type StatsResult = z.input<typeof statsResultSchema>;
 
 export const metaKeysSchema = z.array(z.string());
 export type MetaKeys = z.infer<typeof metaKeysSchema>;
@@ -403,6 +415,14 @@ export const errorSchema = z.object({
     error: z.string(),
 });
 export type ErrorResponse = z.infer<typeof errorSchema>;
+
+export const lockedResponseSchema = z.object({
+    error: z.literal("locked"),
+    locked: z.literal(true),
+    result_id: z.string().optional(),
+    message: z.string(),
+});
+export type LockedResponse = z.infer<typeof lockedResponseSchema>;
 
 export const healthSchema = z.object({
     status: z.string(),

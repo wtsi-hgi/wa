@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { installResultsAuthCookie } from "./results-auth-helpers";
+
+test.beforeEach(async ({ context }) => {
+    await installResultsAuthCookie(context);
+});
+
 /**
  * File preview truncation regression tests.
  *

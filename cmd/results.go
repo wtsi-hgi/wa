@@ -28,25 +28,38 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	osuser "os/user"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/go-resty/resty/v2"
 	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/wa/internal/authldap"
 	"github.com/wtsi-hgi/wa/mlwh"
 	"github.com/wtsi-hgi/wa/results"
 
 	_ "modernc.org/sqlite"
+)
+
+const (
+	resultsServerTokenBasename = ".wa-results-server.token"
+	resultsJWTBasename         = ".wa-results.jwt"
 )
 
 var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -54,6 +67,23 @@ var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
 var resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
 
 var resultsRegisterResolverOpener = openResultsRegisterResolver
+
+var resultsServeNewAuthServer = func(logWriter io.Writer) resultsServeAuthServer {
+	return gas.New(logWriter)
+}
+
+var resultsNewClientCLI = func(
+	jwtBasename string,
+	serverTokenBasename string,
+	addr string,
+	cert string,
+	oktaMode bool,
+	username ...string,
+) (resultsAuthClient, error) {
+	return gas.NewClientCLI(jwtBasename, serverTokenBasename, addr, cert, oktaMode, username...)
+}
+
+var resultsNewAuthClient = newResultsAuthClient
 
 //nolint:unused // Overridden by results serve tests to avoid wall-clock waits.
 var resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
@@ -65,6 +95,38 @@ var resultsRegisterSeqmetaFlagMetaKeys = map[string]string{
 	"study":   results.SeqmetaIDStudyLimsKey,
 	"sample":  results.SeqmetaSampleNameKey,
 	"library": results.SeqmetaPipelineIDLimsKey,
+}
+
+type resultsServeMode int
+
+const (
+	resultsServeModeTLS resultsServeMode = iota + 1
+	resultsServeModeACME
+)
+
+func resolveResultsServeMode(cert, key, acme, cache string) (resultsServeMode, error) {
+	hasCert := strings.TrimSpace(cert) != ""
+	hasKey := strings.TrimSpace(key) != ""
+	hasACME := strings.TrimSpace(acme) != ""
+	hasCache := strings.TrimSpace(cache) != ""
+
+	if hasCert != hasKey || hasACME != hasCache {
+		return 0, errors.New("you must supply --cert and --key, or --acme and --cache")
+	}
+
+	if hasCert && hasACME {
+		return 0, errors.New("you must supply either --cert and --key, or --acme and --cache, not both")
+	}
+
+	if hasACME && hasCache {
+		return resultsServeModeACME, nil
+	}
+
+	if hasCert && hasKey {
+		return resultsServeModeTLS, nil
+	}
+
+	return 0, errors.New("you must supply --cert and --key, or --acme and --cache")
 }
 
 type resultsServeMLWHConfig struct {
@@ -99,6 +161,296 @@ func resolveResultsServeMLWHConfig(flagValue string, flagChanged bool) (resultsS
 		DSN:       resolvedDSN,
 		CachePath: cachePath,
 	}, true, nil
+}
+
+func resolveResultsServeSecurityConfig(
+	rawURL string,
+	port int,
+	cert string,
+	key string,
+	acme string,
+	cache string,
+	ldapServer string,
+	ldapDN string,
+	serverToken string,
+) (resultsServeSecurityConfig, error) {
+	addr, err := resolveResultsServeBindAddr(rawURL, port)
+	if err != nil {
+		return resultsServeSecurityConfig{}, err
+	}
+
+	mode, err := resolveResultsServeMode(cert, key, acme, cache)
+	if err != nil {
+		return resultsServeSecurityConfig{}, err
+	}
+
+	config := resultsServeSecurityConfig{
+		addr:        addr,
+		cert:        strings.TrimSpace(cert),
+		key:         strings.TrimSpace(key),
+		acme:        strings.TrimSpace(acme),
+		cache:       strings.TrimSpace(cache),
+		ldapServer:  strings.TrimSpace(ldapServer),
+		ldapDN:      strings.TrimSpace(ldapDN),
+		serverToken: strings.TrimSpace(serverToken),
+		mode:        mode,
+	}
+
+	if err := validateResultsServeLDAP(config.ldapServer, config.ldapDN); err != nil {
+		return resultsServeSecurityConfig{}, err
+	}
+
+	if err := validateResultsServeServerToken(config.serverToken); err != nil {
+		return resultsServeSecurityConfig{}, err
+	}
+
+	if mode == resultsServeModeACME {
+		if err := validateResultsServeACMECache(config.cache); err != nil {
+			return resultsServeSecurityConfig{}, err
+		}
+	}
+
+	return config, nil
+}
+
+func resolveResultsServeBindAddr(rawURL string, port int) (string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		if port < 0 || port > 65535 {
+			return "", fmt.Errorf("invalid --port %d", port)
+		}
+
+		return fmt.Sprintf("127.0.0.1:%d", port), nil
+	}
+
+	if strings.Contains(trimmed, "://") {
+		parsed, err := url.Parse(trimmed)
+		if err != nil {
+			return "", fmt.Errorf("invalid --url: %w", err)
+		}
+		if parsed.Scheme != "https" {
+			return "", errors.New("results serve URL must use https")
+		}
+		if parsed.User != nil || parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", errors.New("results serve URL must be a host[:port] with no path")
+		}
+
+		trimmed = parsed.Host
+	}
+
+	if strings.ContainsAny(trimmed, "/?#") {
+		return "", errors.New("results serve bind address must be host:port")
+	}
+
+	if _, portValue, err := net.SplitHostPort(trimmed); err != nil {
+		return "", fmt.Errorf("results serve bind address must be host:port: %w", err)
+	} else if portValue == "" {
+		return "", errors.New("results serve bind address must include a port")
+	}
+
+	return trimmed, nil
+}
+
+func validateResultsServeLDAP(ldapServer, ldapDN string) error {
+	if ldapServer == "" || ldapDN == "" {
+		return errors.New("--ldap_server and --ldap_dn are required")
+	}
+
+	if !strings.Contains(ldapDN, "%s") {
+		return errors.New("--ldap_dn must contain %s")
+	}
+
+	return nil
+}
+
+func validateResultsServeServerToken(serverToken string) error {
+	if serverToken == "" {
+		return errors.New("--server-token is required")
+	}
+
+	if !filepath.IsAbs(serverToken) && filepath.Base(serverToken) != serverToken {
+		return errors.New("--server-token must be a basename or absolute path")
+	}
+
+	return nil
+}
+
+func validateResultsServeACMECache(cacheDir string) error {
+	stat, err := os.Stat(cacheDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("cert cache directory does not exist")
+		}
+
+		return fmt.Errorf("stat cert cache directory: %w", err)
+	}
+
+	if !stat.IsDir() {
+		return errors.New("cert cache path must be a directory")
+	}
+
+	if stat.Mode().Perm() != 0o700 {
+		return errors.New("cert cache directory must only be readable by the server user")
+	}
+
+	return nil
+}
+
+func resultsServeOwnerSessionConfig(tokenBasename string, store results.OwnerSessionStore) (results.OwnerSessionConfig, error) {
+	currentUser, err := osuser.Current()
+	if err != nil {
+		return results.OwnerSessionConfig{}, err
+	}
+
+	tokenPath, err := resultsServeServerTokenPath(tokenBasename)
+	if err != nil {
+		return results.OwnerSessionConfig{}, err
+	}
+
+	serverToken, err := resultsServeServerToken(tokenPath)
+	if err != nil {
+		return results.OwnerSessionConfig{}, err
+	}
+
+	return results.OwnerSessionConfig{
+		ServerUsername: currentUser.Username,
+		ServerToken:    serverToken,
+		Store:          store,
+	}, nil
+}
+
+func resultsServeServerToken(tokenPath string) ([]byte, error) {
+	if token, err := gas.GetStoredToken(tokenPath); err == nil && token != nil {
+		return token, nil
+	}
+
+	token, err := gas.GenerateToken()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := writeResultsServeServerToken(tokenPath, token); err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
+
+func writeResultsServeServerToken(tokenPath string, token []byte) error {
+	file, err := os.OpenFile(tokenPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		_ = file.Close()
+	}()
+
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+
+	if n, err := file.Write(token); err != nil {
+		return err
+	} else if n != len(token) {
+		return io.ErrShortWrite
+	}
+
+	return nil
+}
+
+func resultsServeServerTokenPath(tokenBasename string) (string, error) {
+	if filepath.IsAbs(tokenBasename) {
+		return tokenBasename, nil
+	}
+
+	tokenDir, err := gas.TokenDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(tokenDir, tokenBasename), nil
+}
+
+func startResultsServeAuthServer(ctx context.Context, authServer resultsServeAuthServer, config resultsServeSecurityConfig) error {
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+	defer authServer.Stop()
+
+	go func() {
+		<-serveCtx.Done()
+		authServer.Stop()
+	}()
+
+	switch config.mode {
+	case resultsServeModeTLS:
+		return authServer.Start(config.addr, config.cert, config.key)
+	case resultsServeModeACME:
+		if resultsServeUseACMETLSOnly(config.addr) {
+			return authServer.StartACMETLSOnly(config.addr, config.acme, config.cache)
+		}
+
+		return authServer.StartACME(config.addr, config.acme, config.cache)
+	default:
+		return errors.New("results serve mode is not configured")
+	}
+}
+
+func resultsServeUseACMETLSOnly(addr string) bool {
+	_, port, err := net.SplitHostPort(addr)
+
+	return err == nil && (port == "443" || port == "https")
+}
+
+type resultsServeAuthServer interface {
+	Router() *gin.Engine
+	AuthRouter() *gin.RouterGroup
+	EnableAuthWithServerToken(certFile, keyFile, tokenBasename string, acb gas.AuthCallback) error
+	Start(addr, certFile, keyFile string) error
+	StartACME(addr string, acmeURL, cacheDir string) error
+	StartACMETLSOnly(addr string, acmeURL, cacheDir string) error
+	Stop()
+}
+
+type resultsServeSecurityConfig struct {
+	addr        string
+	cert        string
+	key         string
+	acme        string
+	cache       string
+	ldapServer  string
+	ldapDN      string
+	serverToken string
+	mode        resultsServeMode
+}
+
+func (c resultsServeSecurityConfig) authCertFile() string {
+	return c.cert
+}
+
+func (c resultsServeSecurityConfig) authKeyFile() string {
+	if c.key != "" {
+		return c.key
+	}
+
+	if c.mode == resultsServeModeACME {
+		return filepath.Join(c.cache, "wa-results-jwt.key")
+	}
+
+	return ""
+}
+
+func (c resultsServeSecurityConfig) authCallback() gas.AuthCallback {
+	return func(username, password string) (bool, string) {
+		return authldap.CheckPassword(
+			authldap.Dial,
+			gas.UserNameToUID,
+			c.ldapServer,
+			c.ldapDN,
+			username,
+			password,
+		)
+	}
 }
 
 type resultsRegisterResolver interface {
@@ -225,6 +577,50 @@ func (r *resultsServeMLWHRuntime) Close() error {
 	}
 
 	return errors.Join(closeErrs...)
+}
+
+func resultsPublicHTTPClient(certPath string) (*http.Client, error) {
+	trimmedCertPath := strings.TrimSpace(certPath)
+	if trimmedCertPath == "" {
+		if resultsHTTPClient != nil {
+			return resultsHTTPClient, nil
+		}
+
+		return &http.Client{Timeout: 30 * time.Second}, nil
+	}
+
+	certPEM, err := os.ReadFile(trimmedCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("read results server cert: %w", err)
+	}
+
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil || rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if !rootCAs.AppendCertsFromPEM(certPEM) {
+		return nil, errors.New("results server cert did not contain a PEM certificate")
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	timeout := 30 * time.Second
+	if resultsHTTPClient != nil {
+		if resultsHTTPClient.Timeout != 0 {
+			timeout = resultsHTTPClient.Timeout
+		}
+		if baseTransport, ok := resultsHTTPClient.Transport.(*http.Transport); ok && baseTransport != nil {
+			transport = baseTransport.Clone()
+		}
+	}
+
+	tlsConfig := &tls.Config{RootCAs: rootCAs}
+	if transport.TLSClientConfig != nil {
+		tlsConfig = transport.TLSClientConfig.Clone()
+		tlsConfig.RootCAs = rootCAs
+	}
+	transport.TLSClientConfig = tlsConfig
+
+	return &http.Client{Timeout: timeout, Transport: transport}, nil
 }
 
 type resultsRegisterLookupValues struct {
@@ -422,6 +818,34 @@ func matchLibraryType(match mlwh.Match) string {
 	return ""
 }
 
+func resultsAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
+	return resultsAuthenticatedRequestWithOwnerLogin(serverURL, certPath, false)
+}
+
+func resultsOwnerAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
+	return resultsAuthenticatedRequestWithOwnerLogin(serverURL, certPath, true)
+}
+
+func resultsAuthenticatedRequestWithOwnerLogin(serverURL, certPath string, ownerLogin bool) (*resty.Request, error) {
+	authClient, err := resultsNewAuthClient(serverURL, certPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if ownerLogin {
+		if ownerClient, ok := authClient.(resultsOwnerAuthClient); ok {
+			return ownerClient.OwnerAuthenticatedRequest()
+		}
+	}
+
+	request, err := authClient.AuthenticatedRequest()
+	if err != nil {
+		return nil, err
+	}
+
+	return request, nil
+}
+
 func resultsRegisterUniqueValue(unique, legacyRunID string) (string, error) {
 	trimmedUnique := strings.TrimSpace(unique)
 	trimmedLegacyRunID := strings.TrimSpace(legacyRunID)
@@ -461,13 +885,8 @@ type resultSetWithFiles struct {
 	Files []results.FileEntry `json:"files"`
 }
 
-type resultsCommandOptions struct {
-	serverURL string
-}
-
-func getResult(ctx context.Context, serverURL, resultID string, includeFiles bool) ([]byte, error) {
-	resultPath := "/results/" + url.PathEscape(resultID)
-	resultBody, err := getResultsResource(ctx, serverURL, resultPath, http.StatusOK, "get result")
+func getResultFromPath(ctx context.Context, serverURL, certPath, resultPath string, includeFiles bool) ([]byte, error) {
+	resultBody, err := getAuthenticatedResultsResource(ctx, serverURL, certPath, resultPath, http.StatusOK, "get result")
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +900,7 @@ func getResult(ctx context.Context, serverURL, resultID string, includeFiles boo
 		return nil, fmt.Errorf("decode result response: %w", err)
 	}
 
-	filesBody, err := getResultsResource(ctx, serverURL, resultPath+"/files", http.StatusOK, "get result files")
+	filesBody, err := getAuthenticatedResultsResource(ctx, serverURL, certPath, resultPath+"/files", http.StatusOK, "get result files")
 	if err != nil {
 		return nil, err
 	}
@@ -494,30 +913,34 @@ func getResult(ctx context.Context, serverURL, resultID string, includeFiles boo
 	return marshalCommandJSON(resultSetWithFiles{ResultSet: result, Files: files})
 }
 
-func getResultsResource(ctx context.Context, serverURL, resourcePath string, successStatus int, operation string) ([]byte, error) {
-	endpoint, err := resultsEndpointURL(serverURL, resourcePath)
+type resultsRequestFactory func(serverURL, certPath string) (*resty.Request, error)
+
+func getAuthenticatedResultsResource(ctx context.Context, serverURL, certPath, resourcePath string, successStatus int, operation string) ([]byte, error) {
+	return getResultsResourceWithAuth(ctx, serverURL, certPath, resourcePath, successStatus, operation, resultsAuthenticatedRequest)
+}
+
+func getResultsResourceWithAuth(
+	ctx context.Context,
+	serverURL,
+	certPath,
+	resourcePath string,
+	successStatus int,
+	operation string,
+	requestFactory resultsRequestFactory,
+) ([]byte, error) {
+	request, err := requestFactory(serverURL, certPath)
 	if err != nil {
-		return nil, fmt.Errorf("parse --server URL: %w", err)
+		return nil, err
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("create %s request: %w", operation, err)
-	}
-
-	response, err := resultsHTTPClient.Do(request)
+	response, err := request.SetContext(ctx).Get(resourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("request %s: %w", operation, err)
 	}
-	defer func() { _ = response.Body.Close() }()
 
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read %s response: %w", operation, err)
-	}
-
-	if response.StatusCode != successStatus {
-		return nil, decodeResultsCommandError(response.StatusCode, body)
+	body := response.Body()
+	if response.StatusCode() != successStatus {
+		return nil, decodeResultsCommandError(response.StatusCode(), body)
 	}
 
 	if !json.Valid(body) {
@@ -525,6 +948,107 @@ func getResultsResource(ctx context.Context, serverURL, resourcePath string, suc
 	}
 
 	return body, nil
+}
+
+type resultsAuthClient interface {
+	AuthenticatedRequest() (*resty.Request, error)
+	CanReadServerToken() bool
+}
+
+type resultsAuthLoginClient interface {
+	Login(usernameAndPassword ...string) error
+}
+
+type resultsOwnerAuthClient interface {
+	OwnerAuthenticatedRequest() (*resty.Request, error)
+}
+
+func newResultsAuthClient(serverURL string, certPath string, username ...string) (resultsAuthClient, error) {
+	addr, err := resultsAuthAddr(serverURL)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := resultsNewClientCLI(
+		resultsJWTBasename,
+		resultsServerTokenBasename,
+		addr,
+		strings.TrimSpace(certPath),
+		false,
+		username...,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &permissionCheckingResultsAuthClient{
+		client:              client,
+		jwtBasename:         resultsJWTBasename,
+		serverTokenBasename: resultsServerTokenBasename,
+	}, nil
+}
+
+type permissionCheckingResultsAuthClient struct {
+	client              resultsAuthClient
+	jwtBasename         string
+	serverTokenBasename string
+}
+
+func (c *permissionCheckingResultsAuthClient) AuthenticatedRequest() (*resty.Request, error) {
+	return c.authenticatedRequest(false)
+}
+
+func (c *permissionCheckingResultsAuthClient) OwnerAuthenticatedRequest() (*resty.Request, error) {
+	return c.authenticatedRequest(true)
+}
+
+func (c *permissionCheckingResultsAuthClient) authenticatedRequest(ownerLogin bool) (*resty.Request, error) {
+	if err := resultsTokenPermissionError(c.jwtBasename); err != nil {
+		return nil, err
+	}
+
+	if err := resultsTokenPermissionError(c.serverTokenBasename); err != nil {
+		return nil, err
+	}
+
+	if ownerLogin && c.client.CanReadServerToken() {
+		if loginClient, ok := c.client.(resultsAuthLoginClient); ok {
+			if err := loginClient.Login(); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return c.client.AuthenticatedRequest()
+}
+
+func resultsTokenPermissionError(tokenBasename string) error {
+	tokenPath, err := resultsTokenPath(tokenBasename)
+	if err != nil {
+		return err
+	}
+
+	if _, err := gas.GetStoredToken(tokenPath); err != nil {
+		var permissionsErr gas.JWTPermissionsError
+		if errors.As(err, &permissionsErr) {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *permissionCheckingResultsAuthClient) CanReadServerToken() bool {
+	return c.client.CanReadServerToken()
+}
+
+type resultsCommandOptions struct {
+	serverURL string
+	certPath  string
+}
+
+func getResult(ctx context.Context, serverURL, certPath, resultID string, includeFiles bool) ([]byte, error) {
+	return getResultFromPath(ctx, serverURL, certPath, gas.EndPointAuth+"/results/"+url.PathEscape(resultID), includeFiles)
 }
 
 func decodeResultsCommandError(statusCode int, body []byte) error {
@@ -556,6 +1080,7 @@ func newResultsCommand() *cobra.Command {
 	}
 
 	command.PersistentFlags().StringVar(&options.serverURL, "server", defaultResultsServerURL(), "Results server base URL (defaults to the active WA_*_RESULTS_PORT)")
+	command.PersistentFlags().StringVar(&options.certPath, "cert", firstEnv("WA_RESULTS_SERVER_CERT"), "CA/cert path to trust for the results server")
 
 	command.AddCommand(newResultsRegisterCommand(options))
 	command.AddCommand(newResultsSearchCommand(options))
@@ -684,8 +1209,9 @@ Registrations are keyed by the detected pipeline identity and the unique key.
 The server replaces an existing result set instead of adding a new one when a
 registration has the same pipeline identity and unique key.
 The pipeline identity comes from --nextflow-workflow: files inside git use
-repository/commit metadata, while files outside git use the workflow path and
-content hash.
+repository/commit metadata, GitHub URLs and owner/repo shorthands use GitHub
+repository metadata, and files outside git use the workflow path and content
+hash.
 The unique key is built from --unique. Use the same value
 when rerunning the same logical result and you want the stored registration,
 files and metadata to be refreshed.
@@ -721,7 +1247,7 @@ create a new result set.`,
 				return err
 			}
 
-			responseBody, err := registerResults(ctx, options.serverURL, registration)
+			responseBody, err := registerResults(ctx, options.serverURL, options.certPath, registration)
 			if err != nil {
 				return err
 			}
@@ -733,7 +1259,7 @@ create a new result set.`,
 	command.Flags().StringVar(&requester, "user", "", "Requester name")
 	command.Flags().StringVar(&operator, "operator", "", "Operator name")
 	command.Flags().StringVar(&commandLine, "command", "", "Pipeline command line")
-	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path to the Nextflow workflow used for the run")
+	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path, GitHub URL, or owner/repo shorthand for the Nextflow workflow used for the run")
 	command.Flags().StringVar(&unique, "unique", "", "Stable unique label for this result set")
 	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
@@ -843,7 +1369,7 @@ func buildResultsRegistrationForCommand(
 		return nil, err
 	}
 
-	pipelineFile, err := resultsRegisterPipelineFile(workflowPath)
+	pipelineFiles, err := resultsRegisterPipelineFiles(workflowPath)
 	if err != nil {
 		return nil, err
 	}
@@ -857,7 +1383,7 @@ func buildResultsRegistrationForCommand(
 		PipelineName:       pipelineName,
 		PipelineVersion:    pipelineVersion,
 		OutputDirectory:    outputDir,
-		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, pipelineFile),
+		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, pipelineFiles...),
 		Metadata:           metadata,
 	}, nil
 }
@@ -929,37 +1455,30 @@ func resultsRegisterSeqmetaFlagName(metaKey string) string {
 	return metaKey
 }
 
-func registerResults(ctx context.Context, serverURL string, registration *results.Registration) ([]byte, error) {
+func registerResults(ctx context.Context, serverURL string, certPath string, registration *results.Registration) ([]byte, error) {
 	body, err := marshalCommandJSON(registration)
 	if err != nil {
 		return nil, fmt.Errorf("marshal registration request: %w", err)
 	}
 
-	endpoint, err := resultsEndpointURL(serverURL, "/results")
+	request, err := resultsOwnerAuthenticatedRequest(serverURL, certPath)
 	if err != nil {
-		return nil, fmt.Errorf("parse --server URL: %w", err)
+		return nil, err
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create register request: %w", err)
-	}
-
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := resultsHTTPClient.Do(request)
+	response, err := request.
+		SetContext(ctx).
+		SetHeader("Content-Type", "application/json").
+		SetBody(body).
+		Post(gas.EndPointAuth + "/results")
 	if err != nil {
 		return nil, fmt.Errorf("request register result: %w", err)
 	}
-	defer func() { _ = response.Body.Close() }()
 
-	responseBody, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read register response: %w", err)
-	}
+	responseBody := response.Body()
 
-	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
-		return nil, decodeResultsCommandError(response.StatusCode, responseBody)
+	if response.StatusCode() != http.StatusCreated && response.StatusCode() != http.StatusOK {
+		return nil, decodeResultsCommandError(response.StatusCode(), responseBody)
 	}
 
 	if !json.Valid(responseBody) {
@@ -999,7 +1518,7 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 				ctx = context.Background()
 			}
 
-			responseBody, err := searchResults(ctx, options.serverURL, query)
+			responseBody, err := searchResults(ctx, options.serverURL, options.certPath, query)
 			if err != nil {
 				return err
 			}
@@ -1098,8 +1617,8 @@ func parseResultsMetadataFilters(metaValues []string) (map[string]string, error)
 	return metadata, nil
 }
 
-func searchResults(ctx context.Context, serverURL string, query url.Values) ([]byte, error) {
-	endpoint, err := resultsEndpointURL(serverURL, "/results")
+func searchResults(ctx context.Context, serverURL string, certPath string, query url.Values) ([]byte, error) {
+	endpoint, err := resultsEndpointURL(serverURL, gas.EndPointREST+"/results")
 	if err != nil {
 		return nil, fmt.Errorf("parse --server URL: %w", err)
 	}
@@ -1110,7 +1629,12 @@ func searchResults(ctx context.Context, serverURL string, query url.Values) ([]b
 		return nil, fmt.Errorf("create search request: %w", err)
 	}
 
-	response, err := resultsHTTPClient.Do(request)
+	client, err := resultsPublicHTTPClient(certPath)
+	if err != nil {
+		return nil, err
+	}
+
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("request search results: %w", err)
 	}
@@ -1148,7 +1672,7 @@ func newResultsGetCommand(options *resultsCommandOptions) *cobra.Command {
 				ctx = context.Background()
 			}
 
-			responseBody, err := getResult(ctx, options.serverURL, args[0], includeFiles)
+			responseBody, err := getResult(ctx, options.serverURL, options.certPath, args[0], includeFiles)
 			if err != nil {
 				return err
 			}
@@ -1177,37 +1701,28 @@ func newResultsDeleteCommand(options *resultsCommandOptions) *cobra.Command {
 				ctx = context.Background()
 			}
 
-			return deleteResult(ctx, options.serverURL, args[0])
+			return deleteResult(ctx, options.serverURL, options.certPath, args[0])
 		},
 	}
 
 	return command
 }
 
-func deleteResult(ctx context.Context, serverURL, resultID string) error {
-	endpoint, err := resultsEndpointURL(serverURL, "/results/"+url.PathEscape(resultID))
+func deleteResult(ctx context.Context, serverURL, certPath, resultID string) error {
+	request, err := resultsOwnerAuthenticatedRequest(serverURL, certPath)
 	if err != nil {
-		return fmt.Errorf("parse --server URL: %w", err)
+		return err
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint.String(), nil)
-	if err != nil {
-		return fmt.Errorf("create delete request: %w", err)
-	}
-
-	response, err := resultsHTTPClient.Do(request)
+	response, err := request.
+		SetContext(ctx).
+		Delete(gas.EndPointAuth + "/results/" + url.PathEscape(resultID))
 	if err != nil {
 		return fmt.Errorf("request delete: %w", err)
 	}
-	defer func() { _ = response.Body.Close() }()
 
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return fmt.Errorf("read delete response: %w", err)
-	}
-
-	if response.StatusCode != http.StatusNoContent {
-		return decodeResultsCommandError(response.StatusCode, body)
+	if response.StatusCode() != http.StatusNoContent {
+		return decodeResultsCommandError(response.StatusCode(), response.Body())
 	}
 
 	return nil
@@ -1229,7 +1744,7 @@ func newResultsRescanCommand(options *resultsCommandOptions) *cobra.Command {
 				ctx = context.Background()
 			}
 
-			if err := validateResultsRescanDirectory(ctx, options.serverURL, args[0], args[1]); err != nil {
+			if err := validateResultsRescanDirectory(ctx, options.serverURL, options.certPath, args[0], args[1]); err != nil {
 				return err
 			}
 
@@ -1244,7 +1759,7 @@ func newResultsRescanCommand(options *resultsCommandOptions) *cobra.Command {
 
 			writeResultsScanWarnings(cmd.ErrOrStderr(), scanWarnings)
 
-			responseBody, err := rescanResults(ctx, options.serverURL, args[0], files)
+			responseBody, err := rescanResults(ctx, options.serverURL, options.certPath, args[0], files)
 			if err != nil {
 				return err
 			}
@@ -1262,37 +1777,29 @@ func newResultsRescanCommand(options *resultsCommandOptions) *cobra.Command {
 	return command
 }
 
-func rescanResults(ctx context.Context, serverURL, resultID string, files []results.FileEntry) ([]byte, error) {
+func rescanResults(ctx context.Context, serverURL, certPath, resultID string, files []results.FileEntry) ([]byte, error) {
 	body, err := marshalCommandJSON(files)
 	if err != nil {
 		return nil, fmt.Errorf("marshal rescan request: %w", err)
 	}
 
-	endpoint, err := resultsEndpointURL(serverURL, "/results/"+url.PathEscape(resultID)+"/files")
+	request, err := resultsOwnerAuthenticatedRequest(serverURL, certPath)
 	if err != nil {
-		return nil, fmt.Errorf("parse --server URL: %w", err)
+		return nil, err
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint.String(), bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create rescan request: %w", err)
-	}
-
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := resultsHTTPClient.Do(request)
+	response, err := request.
+		SetContext(ctx).
+		SetHeader("Content-Type", "application/json").
+		SetBody(body).
+		Put(gas.EndPointAuth + "/results/" + url.PathEscape(resultID) + "/files")
 	if err != nil {
 		return nil, fmt.Errorf("request rescan: %w", err)
 	}
-	defer func() { _ = response.Body.Close() }()
 
-	responseBody, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read rescan response: %w", err)
-	}
-
-	if response.StatusCode != http.StatusOK {
-		return nil, decodeResultsCommandError(response.StatusCode, responseBody)
+	responseBody := response.Body()
+	if response.StatusCode() != http.StatusOK {
+		return nil, decodeResultsCommandError(response.StatusCode(), responseBody)
 	}
 
 	return responseBody, nil
@@ -1300,10 +1807,10 @@ func rescanResults(ctx context.Context, serverURL, resultID string, files []resu
 
 func defaultResultsServerURL() string {
 	if port := activeResultsPort(); port != "" {
-		return "http://127.0.0.1:" + port
+		return "https://127.0.0.1:" + port
 	}
 
-	return "http://localhost:8080"
+	return "https://localhost:8080"
 }
 
 func resultsEndpointURL(serverURL, resourcePath string) (*url.URL, error) {
@@ -1319,6 +1826,14 @@ func resultsEndpointURL(serverURL, resourcePath string) (*url.URL, error) {
 
 func newResultsServeCommand() *cobra.Command {
 	var port int
+	var bindURL string
+	var cert string
+	var key string
+	var acme string
+	var cache string
+	var ldapServer string
+	var ldapDN string
+	var serverToken string
 	var dbPath string
 	var mlwhCache string
 	var seqmetaURL string
@@ -1329,6 +1844,21 @@ func newResultsServeCommand() *cobra.Command {
 		Short: "Serve the results HTTP API",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := commandContext(cmd)
+
+			securityConfig, err := resolveResultsServeSecurityConfig(
+				bindURL,
+				port,
+				cert,
+				key,
+				acme,
+				cache,
+				ldapServer,
+				ldapDN,
+				serverToken,
+			)
+			if err != nil {
+				return err
+			}
 
 			dsn, err := resolveResultsServeDBDSN(dbPath, cmd.Flags().Changed("db"))
 			if err != nil {
@@ -1371,31 +1901,44 @@ func newResultsServeCommand() *cobra.Command {
 				resolver = results.NewMLWHSearchResolver(mlwhClient)
 			}
 
-			listener, err := listenFunc("tcp", fmt.Sprintf(":%d", port))
+			authServer := resultsServeNewAuthServer(cmd.ErrOrStderr())
+			ownerStore := results.NewOwnerSessionStore()
+
+			ownerConfig, err := resultsServeOwnerSessionConfig(securityConfig.serverToken, ownerStore)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = listener.Close() }()
 
-			httpServer := &http.Server{Handler: results.NewServer(store, validator, resolver).Handler()}
-			serveCtx, cancelServe := context.WithCancel(ctx)
-
-			go func() {
-				<-serveCtx.Done()
-				_ = httpServer.Shutdown(context.Background())
-			}()
-
-			err = httpServer.Serve(listener)
-			cancelServe()
-			if errors.Is(err, http.ErrServerClosed) {
-				return nil
+			authServer.Router().Use(results.OwnerSessionMiddleware(ownerConfig))
+			if err := authServer.EnableAuthWithServerToken(
+				securityConfig.authCertFile(),
+				securityConfig.authKeyFile(),
+				securityConfig.serverToken,
+				securityConfig.authCallback(),
+			); err != nil {
+				return err
 			}
 
-			return err
+			results.NewServer(
+				store,
+				validator,
+				resolver,
+				results.WithOwnerSessionStore(ownerStore),
+			).RegisterRoutes(authServer.Router(), authServer.AuthRouter())
+
+			return startResultsServeAuthServer(ctx, authServer, securityConfig)
 		},
 	}
 
-	command.Flags().IntVar(&port, "port", 8080, "Port to bind")
+	command.Flags().StringVar(&bindURL, "url", firstEnv("WA_RESULTS_SERVER_URL"), "HTTPS bind address (defaults to WA_RESULTS_SERVER_URL or 127.0.0.1:<port>)")
+	command.Flags().IntVar(&port, "port", 8080, "Deprecated HTTPS port alias used only when --url is unset")
+	command.Flags().StringVar(&cert, "cert", firstEnv("WA_RESULTS_SERVER_CERT"), "TLS certificate path")
+	command.Flags().StringVarP(&key, "key", "k", firstEnv("WA_RESULTS_SERVER_KEY"), "TLS private key path")
+	command.Flags().StringVarP(&acme, "acme", "a", firstEnv("WA_RESULTS_SERVER_ACME"), "ACME directory URL")
+	command.Flags().StringVarP(&cache, "cache", "c", firstEnv("WA_RESULTS_SERVER_CACHE"), "ACME certificate cache directory")
+	command.Flags().StringVarP(&ldapServer, "ldap_server", "s", firstEnv("WA_RESULTS_LDAP_SERVER"), "LDAP server FQDN")
+	command.Flags().StringVarP(&ldapDN, "ldap_dn", "l", firstEnv("WA_RESULTS_LDAP_DN"), "LDAP bind DN template containing %s")
+	command.Flags().StringVar(&serverToken, "server-token", resultsServerTokenBasename, "Server token basename or absolute path")
 	command.Flags().StringVar(&dbPath, "db", "results.db", "SQLite database path or MySQL DSN without a password; defaults to WA_RESULTS_DB_PATH when unset")
 	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
 	command.Flags().StringVar(&seqmetaURL, "seqmeta-url", firstEnv("WA_SEQMETA_BACKEND_URL"), "Base URL for seqmeta validation (defaults to WA_SEQMETA_BACKEND_URL)")
@@ -1410,6 +1953,8 @@ func openResultsDB(dsn string) (*sql.DB, error) {
 		if err := validateResultsSQLiteDBPath(dsn); err != nil {
 			return nil, err
 		}
+
+		dsn = resultsSQLiteDSN(dsn)
 	}
 
 	db, err := sql.Open(driverName, dsn)
@@ -1423,6 +1968,15 @@ func openResultsDB(dsn string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+func resultsSQLiteDSN(dsn string) string {
+	trimmed := strings.TrimSpace(dsn)
+	if trimmed == ":memory:" || strings.HasPrefix(trimmed, "file:") {
+		return trimmed
+	}
+
+	return fmt.Sprintf("file:%s?mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", filepath.ToSlash(trimmed))
 }
 
 func resultsDBDriverName(dsn string) string {
@@ -1471,8 +2025,8 @@ func writeResultsScanWarnings(output io.Writer, warnings int) {
 	_, _ = fmt.Fprintf(output, "warning: skipped %d path(s) while scanning output files\n", warnings)
 }
 
-func deduplicateResultsTrackedFiles(outputFiles, inputFiles []results.FileEntry, pipelineFile results.FileEntry) []results.FileEntry {
-	files := append(append(append(make([]results.FileEntry, 0, len(outputFiles)+len(inputFiles)+1), outputFiles...), inputFiles...), pipelineFile)
+func deduplicateResultsTrackedFiles(outputFiles, inputFiles []results.FileEntry, pipelineFiles ...results.FileEntry) []results.FileEntry {
+	files := append(append(append(make([]results.FileEntry, 0, len(outputFiles)+len(inputFiles)+len(pipelineFiles)), outputFiles...), inputFiles...), pipelineFiles...)
 	keepIndexByPath := make(map[string]int, len(files))
 	for index, file := range files {
 		keepIndexByPath[file.Path] = index
@@ -1506,8 +2060,16 @@ func validateResultsScanRoot(rootDir string, includeHidden bool) error {
 	return validateResultsScanTree(absRoot, absRoot, resolvedRoot, includeHidden, visitedDirs)
 }
 
-func validateResultsRescanDirectory(ctx context.Context, serverURL, resultID, dir string) error {
-	resultBody, err := getResult(ctx, serverURL, resultID, false)
+func validateResultsRescanDirectory(ctx context.Context, serverURL, certPath, resultID, dir string) error {
+	resultBody, err := getResultsResourceWithAuth(
+		ctx,
+		serverURL,
+		certPath,
+		gas.EndPointAuth+"/results/"+url.PathEscape(resultID),
+		http.StatusOK,
+		"get result",
+		resultsOwnerAuthenticatedRequest,
+	)
 	if err != nil {
 		return err
 	}
@@ -1598,27 +2160,65 @@ func resultsPathWithinDirectory(rootPath, candidatePath string) bool {
 	return relPath == "." || (relPath != ".." && !strings.HasPrefix(relPath, ".."+string(os.PathSeparator)))
 }
 
-func resultsRegisterPipelineFile(workflowPath string) (results.FileEntry, error) {
+func resultsRegisterPipelineFiles(workflowPath string) ([]results.FileEntry, error) {
+	if results.RemotePipelineReference(workflowPath) {
+		return nil, nil
+	}
+
 	absPath, err := filepath.Abs(workflowPath)
 	if err != nil {
-		return results.FileEntry{}, fmt.Errorf("resolve workflow file %q: %w", workflowPath, err)
+		return nil, fmt.Errorf("resolve workflow file %q: %w", workflowPath, err)
 	}
 
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return results.FileEntry{}, fmt.Errorf("stat workflow file %q: %w", workflowPath, err)
+		return nil, fmt.Errorf("stat workflow file %q: %w", workflowPath, err)
 	}
 
 	if info.IsDir() {
-		return results.FileEntry{}, fmt.Errorf("workflow file %q: is a directory", workflowPath)
+		return nil, fmt.Errorf("workflow file %q: is a directory", workflowPath)
 	}
 
-	return results.FileEntry{
+	return []results.FileEntry{{
 		Path:  absPath,
 		Mtime: info.ModTime(),
 		Size:  info.Size(),
 		Kind:  "pipeline",
-	}, nil
+	}}, nil
+}
+
+func resultsAuthAddr(serverURL string) (string, error) {
+	endpoint, err := url.Parse(strings.TrimSpace(serverURL))
+	if err != nil {
+		return "", err
+	}
+
+	if endpoint.Scheme != "https" {
+		return "", errors.New("results server URL must use https")
+	}
+
+	if endpoint.Host == "" {
+		return "", errors.New("results server URL must include a host")
+	}
+
+	if endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
+		return "", errors.New("go-authserver CLI auth endpoints require an origin URL with no path")
+	}
+
+	return endpoint.Host, nil
+}
+
+func resultsTokenPath(tokenBasename string) (string, error) {
+	if filepath.IsAbs(tokenBasename) {
+		return tokenBasename, nil
+	}
+
+	tokenDir, err := gas.TokenDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(tokenDir, tokenBasename), nil
 }
 
 func resolveResultsServeMLWHCachePath(flagValue string, flagChanged bool) (string, bool, error) {
