@@ -1203,6 +1203,12 @@
                 "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,
                 "kind": "output"
+            },
+            {
+                "path": "overview/gold-summary.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
             }
         ],
         "metadata": {

@@ -273,6 +273,42 @@ func TestRunDevSeedMetadataUsesRealSeqmetaIdentifiers(t *testing.T) {
 	})
 }
 
+func TestRunDevSeedCombinedGalleriesSampleARegistersOverviewFiles(t *testing.T) {
+	convey.Convey("combined galleries sample-a registers both overview preview files", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		seedPath := filepath.Join(repoRoot, ".docs", "results-web", "fixtures", "seed.json")
+
+		raw, err := os.ReadFile(seedPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		var fixtures []map[string]any
+
+		convey.So(json.Unmarshal(raw, &fixtures), convey.ShouldBeNil)
+
+		filePaths := []string{}
+
+		for _, fixture := range fixtures {
+			runKey, _ := fixture["run_key"].(string)
+
+			if runKey != "runid=88205&unique=galleries_sample_a" {
+				continue
+			}
+
+			files, _ := fixture["files"].([]any)
+
+			for _, file := range files {
+				fileMap, _ := file.(map[string]any)
+				filePath, _ := fileMap["path"].(string)
+
+				filePaths = append(filePaths, filePath)
+			}
+		}
+
+		convey.So(filePaths, convey.ShouldContain, "overview/navy-summary.svg")
+		convey.So(filePaths, convey.ShouldContain, "overview/gold-summary.svg")
+	})
+}
+
 func TestRunDevSeedOutputDirectoriesDoNotOverlapWithinPipeline(t *testing.T) {
 	convey.Convey("seed.json does not register parent and child output directories for the same pipeline", t, func() {
 		repoRoot := runDevRepoRootForTest(t)

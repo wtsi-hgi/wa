@@ -1724,7 +1724,7 @@ export function FileBrowser({
             node,
             subdirPreviewKinds,
         );
-        const available = eligibleSubdirs.length > 1;
+        const available = eligibleSubdirs.length > 0;
         const pageCount = Math.max(
             1,
             Math.ceil(qualifyingSubdirs.length / SUBDIR_PREVIEW_PAGE_SIZE),

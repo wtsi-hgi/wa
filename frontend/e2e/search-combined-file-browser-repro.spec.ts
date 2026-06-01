@@ -173,6 +173,57 @@ async function writeEvidence(
     );
 }
 
+async function collectSubfolderPreviewEvidence(page: Page) {
+    return page.evaluate(() => {
+        const fileBrowser = document.querySelector(
+            '[data-file-browser="true"]',
+        );
+        const directoryRows = [
+            ...document.querySelectorAll<HTMLElement>("[data-directory-row]"),
+        ].map((row) => ({
+            path: row.dataset.directoryRow ?? null,
+            text: row.innerText.slice(0, 1200),
+        }));
+        const controls = [
+            ...document.querySelectorAll<HTMLElement>(
+                "[data-file-browser-folder-controls]",
+            ),
+        ].map((control) => ({
+            path: control.dataset.fileBrowserFolderControls ?? null,
+            subdirPreviewControls:
+                control.dataset.subdirPreviewControls ?? null,
+            text: control.innerText,
+        }));
+        const strips = [
+            ...document.querySelectorAll<HTMLElement>(
+                "[data-subdir-preview-strip]",
+            ),
+        ].map((strip) => ({
+            cardPaths: [
+                ...strip.querySelectorAll<HTMLElement>(
+                    "[data-subdir-preview-card]",
+                ),
+            ].map((card) => card.dataset.subdirPreviewCard ?? null),
+            path: strip.dataset.subdirPreviewStrip ?? null,
+            text: strip.innerText,
+        }));
+
+        return {
+            controls,
+            directoryRows,
+            fileBrowserText: fileBrowser?.textContent ?? null,
+            previewModeTriggerCount: document.querySelectorAll(
+                '[data-file-browser-control-trigger="preview-modes"]',
+            ).length,
+            subfolderPreviewInputCount: document.querySelectorAll(
+                'input[aria-label="Subfolder previews"]',
+            ).length,
+            subfolderPreviewStripCount: strips.length,
+            strips,
+        };
+    });
+}
+
 test.describe("search combined file browser repro", () => {
     test("shows a locked combined file browser state for logged-out matching results", async ({
         context,
@@ -383,5 +434,105 @@ test.describe("search combined file browser repro", () => {
         await expect(
             page.locator('[data-file-browser="true"]'),
         ).not.toContainText("orange-heatmap.svg");
+    });
+
+    test("reproduces missing subfolder preview affordance for seeded galleries sample-a", async ({
+        page,
+    }) => {
+        test.setTimeout(120_000);
+
+        const seededPipelineName = "wtsi/combined-galleries-demo";
+        const sampleAlphaSearchUrl = `/?pipeline_name=${encodeURIComponent(seededPipelineName)}&sample=${encodeURIComponent("gallery-alpha")}`;
+
+        await page.goto(sampleAlphaSearchUrl);
+
+        await expect(page.getByText("Showing search results")).toBeVisible();
+        await expect(
+            page.locator("tbody tr[data-result-row='true']"),
+        ).toHaveCount(1);
+        await expect(page.locator('[data-file-browser="true"]')).toContainText(
+            "overview",
+        );
+
+        const combinedSearchEvidence =
+            await collectSubfolderPreviewEvidence(page);
+        await writeEvidence(
+            page,
+            "search-combined-file-browser-sample-alpha-subfolder-preview-missing.png",
+            {
+                searchUrl: page.url(),
+                subfolderPreview: combinedSearchEvidence,
+            },
+        );
+        await expect
+            .soft(
+                combinedSearchEvidence.subfolderPreviewInputCount,
+                "filtered combined search should offer subfolder previews for the overview folder",
+            )
+            .toBeGreaterThan(0);
+
+        const detailHref = await page
+            .locator("tbody tr[data-result-row='true']")
+            .filter({ hasText: "galleries_sample_a" })
+            .locator("a")
+            .first()
+            .getAttribute("href");
+
+        expect(detailHref).toBeTruthy();
+
+        await page.goto(detailHref ?? "/");
+        await expect(page.getByText("galleries_sample_a")).toBeVisible();
+        await expect(page.locator('[data-file-browser="true"]')).toContainText(
+            "overview",
+        );
+
+        const detailEvidence = await collectSubfolderPreviewEvidence(page);
+        await writeEvidence(
+            page,
+            "result-detail-galleries-sample-a-subfolder-preview-missing.png",
+            {
+                detailUrl: page.url(),
+                subfolderPreview: detailEvidence,
+            },
+        );
+        await expect
+            .soft(
+                detailEvidence.subfolderPreviewInputCount,
+                "direct result page should offer subfolder previews for the overview folder",
+            )
+            .toBeGreaterThan(0);
+
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent("wtsi/galleries-demo")}`,
+        );
+        await expect(page.getByText("Showing search results")).toBeVisible();
+        await expect(page.locator('[data-file-browser="true"]')).toContainText(
+            "sample-a",
+        );
+
+        await page
+            .locator('[data-file-browser="true"]')
+            .locator('[data-file-browser-control-trigger="preview-modes"]')
+            .first()
+            .click();
+        await page.getByLabel("Subfolder previews").check();
+
+        const parentSearchEvidence =
+            await collectSubfolderPreviewEvidence(page);
+        await writeEvidence(
+            page,
+            "search-galleries-demo-subfolder-preview-overview.png",
+            {
+                searchUrl: page.url(),
+                subfolderPreview: parentSearchEvidence,
+            },
+        );
+
+        await expect
+            .soft(
+                page.locator('[data-subdir-preview-card*="sample-a/overview"]'),
+                "parent galleries-demo subfolder previews should include sample-a overview files",
+            )
+            .toHaveCount(2);
     });
 });
