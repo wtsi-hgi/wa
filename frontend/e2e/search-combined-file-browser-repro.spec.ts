@@ -355,8 +355,8 @@ test.describe("search combined file browser repro", () => {
         await context.clearCookies();
         await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
 
-        await expect(matchingRows(page)).toHaveCount(2);
-        await expect(lockedMatchingRows(page)).toHaveCount(2);
+        await expect(matchingRows(page)).toHaveCount(0);
+        await expect(lockedMatchingRows(page)).toHaveCount(0);
 
         await writeEvidence(
             page,
@@ -379,14 +379,15 @@ test.describe("search combined file browser repro", () => {
             combinedBrowser.locator("button[data-directory-path]"),
         ).toHaveCount(0);
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(0);
+
+        await page.getByRole("button", { name: "Result rows" }).click();
+        await expect(lockedMatchingRows(page)).toHaveCount(2);
     });
 
     test("shows one default file browser for all files across matching result sets", async ({
         page,
     }) => {
         await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
-
-        await expect(matchingRows(page)).toHaveCount(2);
 
         await writeEvidence(
             page,
@@ -449,12 +450,11 @@ test.describe("search combined file browser repro", () => {
             const browser = document.querySelector(
                 '[data-file-browser="true"]',
             );
-            const table = document.querySelector("table");
+            const resultRows = document.querySelectorAll(
+                'tbody tr[data-result-row="true"]',
+            );
 
-            if (
-                !(browser instanceof HTMLElement) ||
-                !(table instanceof HTMLElement)
-            ) {
+            if (!(browser instanceof HTMLElement)) {
                 return null;
             }
 
@@ -463,7 +463,7 @@ test.describe("search combined file browser repro", () => {
                 builderBottom: Math.round(
                     builder.getBoundingClientRect().bottom,
                 ),
-                tableTop: Math.round(table.getBoundingClientRect().top),
+                resultRowCount: resultRows.length,
             };
         });
 
@@ -471,15 +471,13 @@ test.describe("search combined file browser repro", () => {
         expect(layout?.browserTop).toBeGreaterThanOrEqual(
             layout?.builderBottom ?? 0,
         );
-        expect(layout?.browserTop).toBeLessThan(layout?.tableTop ?? 0);
+        expect(layout?.resultRowCount).toBe(0);
     });
 
     test("hides the search results summary box under the default combined files view", async ({
         page,
     }) => {
         await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
-
-        await expect(matchingRows(page)).toHaveCount(2);
 
         const summaryBox = page.locator('[data-results-table-summary="true"]');
         const combinedBrowserShell = page.locator(
@@ -543,15 +541,87 @@ test.describe("search combined file browser repro", () => {
         expect(summaryEvidence?.searchFileMode).toBe("combined");
         expect(summaryEvidence?.summaryCount).toBe(0);
         expect(summaryEvidence?.matchingHeadingCount).toBe(0);
-        await expect(matchingRows(page)).toHaveCount(2);
+        await expect(matchingRows(page)).toHaveCount(0);
+    });
+
+    test("reproduces result rows still rendering under the default combined files view", async ({
+        page,
+    }) => {
+        await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
+
+        const combinedBrowserShell = page.locator(
+            '[data-search-combined-file-browser="true"]',
+        );
+        await expect(combinedBrowserShell).toHaveAttribute(
+            "data-search-file-mode",
+            "combined",
+        );
+        await expect(page.locator('[data-file-browser="true"]')).toHaveCount(1);
+
+        const combinedModeEvidence = await page.evaluate(() => {
+            const combinedShell = document.querySelector(
+                '[data-search-combined-file-browser="true"]',
+            );
+            const fileBrowser = document.querySelector(
+                '[data-file-browser="true"]',
+            );
+            const table = document.querySelector("table");
+            const rows = [
+                ...document.querySelectorAll<HTMLElement>(
+                    'tbody tr[data-result-row="true"]',
+                ),
+            ];
+
+            if (
+                !(combinedShell instanceof HTMLElement) ||
+                !(fileBrowser instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const combinedShellRect = combinedShell.getBoundingClientRect();
+            const fileBrowserRect = fileBrowser.getBoundingClientRect();
+            const tableRect =
+                table instanceof HTMLElement
+                    ? table.getBoundingClientRect()
+                    : null;
+            const firstRowRect = rows[0]?.getBoundingClientRect() ?? null;
+
+            return {
+                combinedShellBottom: Math.round(combinedShellRect.bottom),
+                combinedShellTop: Math.round(combinedShellRect.top),
+                fileBrowserBottom: Math.round(fileBrowserRect.bottom),
+                fileBrowserTop: Math.round(fileBrowserRect.top),
+                firstResultRowTop: firstRowRect
+                    ? Math.round(firstRowRect.top)
+                    : null,
+                resultRowCount: rows.length,
+                resultRowText: rows.map((row) => row.innerText),
+                searchFileMode: combinedShell.dataset.searchFileMode ?? null,
+                tableTop: tableRect ? Math.round(tableRect.top) : null,
+            };
+        });
+
+        await writeEvidence(
+            page,
+            "search-combined-file-browser-result-rows-under-combined-repro.png",
+            {
+                combinedModeEvidence,
+                searchUrl: page.url(),
+            },
+        );
+
+        expect(combinedModeEvidence).not.toBeNull();
+        expect(
+            combinedModeEvidence?.resultRowCount,
+            "Combined files view should not render result rows under the file browser",
+        ).toBe(0);
     });
 
     test("does not show the matching result sets box under the result rows view", async ({
         page,
     }) => {
         await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
-
-        await expect(matchingRows(page)).toHaveCount(2);
 
         await page.getByRole("button", { name: "Result rows" }).click();
 
@@ -580,11 +650,6 @@ test.describe("search combined file browser repro", () => {
     }) => {
         await page.goto(
             `/?pipeline_name=${encodeURIComponent(pipelineName)}&sample=${encodeURIComponent(sampleAlpha)}`,
-        );
-
-        await expect(matchingRows(page)).toHaveCount(1);
-        await expect(matchingRows(page).first()).toContainText(
-            path.join("samples", "alpha", "final"),
         );
 
         await writeEvidence(
@@ -626,15 +691,9 @@ test.describe("search combined file browser repro", () => {
         ).toBeVisible();
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(1);
         const combinedBrowser = page.locator('[data-file-browser="true"]');
-        const resultRows = page.locator("tbody tr[data-result-row='true']");
-        await expect(resultRows).toHaveCount(2);
-        const resultRowText = (await resultRows.allTextContents()).join("\n");
-        expect(resultRowText).toContain("sibling-gallery-runs/sample-a");
-        expect(resultRowText).toContain("sibling-gallery-runs/sample-b");
-        expect(resultRowText).not.toContain("combined-galleries-demo/sample-a");
-        expect(resultRowText).not.toContain("combined-galleries-demo/sample-b");
-        expect(resultRowText).not.toContain("galleries-demo/sample-a");
-        expect(resultRowText).not.toContain("galleries-demo/sample-b");
+        await expect(
+            page.locator("tbody tr[data-result-row='true']"),
+        ).toHaveCount(0);
         const browserEvidence =
             await collectCombinedGalleriesRootEvidence(page);
         const rootFileGroup = browserEvidence.directoryFileGroups.find(
@@ -686,19 +745,31 @@ test.describe("search combined file browser repro", () => {
 
         expect(duplicateKeyMessages).toEqual([]);
 
+        await page.getByRole("button", { name: "Result rows" }).click();
+        const resultRows = page.locator("tbody tr[data-result-row='true']");
+        await expect(resultRows).toHaveCount(2);
+        const resultRowText = (await resultRows.allTextContents()).join("\n");
+        expect(resultRowText).toContain("sibling-gallery-runs/sample-a");
+        expect(resultRowText).toContain("sibling-gallery-runs/sample-b");
+        expect(resultRowText).not.toContain("combined-galleries-demo/sample-a");
+        expect(resultRowText).not.toContain("combined-galleries-demo/sample-b");
+        expect(resultRowText).not.toContain("galleries-demo/sample-a");
+        expect(resultRowText).not.toContain("galleries-demo/sample-b");
+
         await page.goto(
             `/?pipeline_name=${encodeURIComponent(seededPipelineName)}&sample=${encodeURIComponent("gallery-alpha")}`,
         );
 
-        await expect(
-            page.locator("tbody tr[data-result-row='true']"),
-        ).toHaveCount(1);
         await expect(page.locator('[data-file-browser="true"]')).toContainText(
             "blue-plot.svg",
         );
         await expect(
             page.locator('[data-file-browser="true"]'),
         ).not.toContainText("orange-heatmap.svg");
+        await page.getByRole("button", { name: "Result rows" }).click();
+        await expect(
+            page.locator("tbody tr[data-result-row='true']"),
+        ).toHaveCount(1);
     });
 
     test("characterizes combined galleries files appearing in the common parent directory", async ({
@@ -710,13 +781,7 @@ test.describe("search combined file browser repro", () => {
             `/?pipeline_name=${encodeURIComponent(seededPipelineName)}`,
         );
 
-        const resultRows = page.locator("tbody tr[data-result-row='true']");
-        await expect(resultRows).toHaveCount(2);
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(1);
-
-        const resultRowText = (await resultRows.allTextContents()).join("\n");
-        expect(resultRowText).toContain("sibling-gallery-runs/sample-a");
-        expect(resultRowText).toContain("sibling-gallery-runs/sample-b");
 
         const browserEvidence =
             await collectCombinedGalleriesRootEvidence(page);
@@ -743,6 +808,14 @@ test.describe("search combined file browser repro", () => {
         );
 
         expect(rootSampleFiles).toEqual([]);
+
+        await page.getByRole("button", { name: "Result rows" }).click();
+        const resultRows = page.locator("tbody tr[data-result-row='true']");
+        await expect(resultRows).toHaveCount(2);
+
+        const resultRowText = (await resultRows.allTextContents()).join("\n");
+        expect(resultRowText).toContain("sibling-gallery-runs/sample-a");
+        expect(resultRowText).toContain("sibling-gallery-runs/sample-b");
     });
 
     test("reproduces missing subfolder preview affordance for seeded galleries sample-a", async ({
@@ -755,9 +828,6 @@ test.describe("search combined file browser repro", () => {
 
         await page.goto(sampleAlphaSearchUrl);
 
-        await expect(
-            page.locator("tbody tr[data-result-row='true']"),
-        ).toHaveCount(1);
         await expect(page.locator('[data-file-browser="true"]')).toContainText(
             "overview",
         );
@@ -779,6 +849,10 @@ test.describe("search combined file browser repro", () => {
             )
             .toBeGreaterThan(0);
 
+        await page.getByRole("button", { name: "Result rows" }).click();
+        await expect(
+            page.locator("tbody tr[data-result-row='true']"),
+        ).toHaveCount(1);
         const detailHref = await page
             .locator("tbody tr[data-result-row='true']")
             .filter({ hasText: "galleries_sample_a" })
@@ -862,6 +936,11 @@ test.describe("search combined file browser repro", () => {
         const overviewPath = path.join(sampleAPath, "overview");
 
         await page.goto(parentSearchUrl);
+
+        await expect(page.locator('[data-file-browser="true"]')).toContainText(
+            "sample-a",
+        );
+        await page.getByRole("button", { name: "Result rows" }).click();
 
         const resultRows = page.locator("tbody tr[data-result-row='true']");
         await expect(resultRows).toHaveCount(1);

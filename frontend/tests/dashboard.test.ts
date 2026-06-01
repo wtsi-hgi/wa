@@ -667,7 +667,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         );
         expect(markup).toContain(`data-combined-result-info="${alpha.id}"`);
         expect(markup).toContain(`data-combined-result-info="${beta.id}"`);
-        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(0);
     });
 
     it("deduplicates overlapping combined search files by visible path", async () => {
@@ -717,7 +717,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         ).toBe(1);
         expect(markup).toContain(`data-combined-result-info="${sample.id}"`);
         expect(markup).toContain(`/api/file?id=${sample.id}&amp;`);
-        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(0);
     });
 
     it("renders a locked combined search file browser state for locked matching result rows", async () => {
@@ -747,7 +747,7 @@ describe("J1 dashboard with search builder and recent results", () => {
             countOccurrences(markup, 'data-locked-output-directory="true"'),
         ).toBe(2);
         expect(countOccurrences(markup, 'data-file-browser="true"')).toBe(0);
-        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(0);
     });
 
     it("shows matched samples for study-driven searches", async () => {

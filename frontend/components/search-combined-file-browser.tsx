@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Files, Info, LockKeyhole, Rows3 } from "lucide-react";
 
 import {
@@ -29,10 +29,12 @@ export type CombinedSearchFile = RegisteredFileEntry & {
 type SearchCombinedFileBrowserProps = {
     files: CombinedSearchFile[];
     lockedRegistrations?: CombinedSearchRegistration[];
+    mode: SearchFileMode;
+    onModeChange: (mode: SearchFileMode) => void;
     registrations: CombinedSearchRegistration[];
 };
 
-type SearchFileMode = "combined" | "rows";
+export type SearchFileMode = "combined" | "rows";
 
 function directoryName(path: string): string {
     return path.split("/").filter(Boolean).at(-1) ?? path;
@@ -240,9 +242,10 @@ function LockedCombinedFilesState({
 export function SearchCombinedFileBrowser({
     files,
     lockedRegistrations = [],
+    mode,
+    onModeChange,
     registrations,
 }: SearchCombinedFileBrowserProps) {
-    const [mode, setMode] = useState<SearchFileMode>("combined");
     const registrationsByOutputDirectory = useMemo(
         () =>
             new Map(
@@ -286,7 +289,7 @@ export function SearchCombinedFileBrowser({
                             ? "bg-primary text-primary-foreground shadow-sm"
                             : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                     )}
-                    onClick={() => setMode("combined")}
+                    onClick={() => onModeChange("combined")}
                     type="button"
                 >
                     <Files className="size-4" aria-hidden="true" />
@@ -300,7 +303,7 @@ export function SearchCombinedFileBrowser({
                             ? "bg-primary text-primary-foreground shadow-sm"
                             : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                     )}
-                    onClick={() => setMode("rows")}
+                    onClick={() => onModeChange("rows")}
                     type="button"
                 >
                     <Rows3 className="size-4" aria-hidden="true" />

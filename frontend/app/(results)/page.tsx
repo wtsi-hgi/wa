@@ -1,11 +1,11 @@
 import { DashboardToast } from "@/components/dashboard-toast";
 import { FilterBuilder } from "@/components/filter-builder";
 import { ResultsTable } from "@/components/results-table";
-import {
-    SearchCombinedFileBrowser,
-    type CombinedSearchFile,
-    type CombinedSearchRegistration,
+import type {
+    CombinedSearchFile,
+    CombinedSearchRegistration,
 } from "@/components/search-combined-file-browser";
+import { SearchResultsView } from "@/components/search-results-view";
 import type { FilterSuggestionMap } from "@/components/filter-builder";
 import {
     fetchMetaKeys,
@@ -379,22 +379,30 @@ export default async function ResultsLandingPage({
                 studies={studies}
             />
 
-            {hasSearch ? (
-                <SearchCombinedFileBrowser
-                    files={combinedSearchFiles}
+            {hasSearch && showCombinedSearchFileBrowser ? (
+                <SearchResultsView
+                    combinedFiles={combinedSearchFiles}
                     lockedRegistrations={combinedSearchLockedRegistrations}
                     registrations={combinedSearchRegistrations}
+                    resultsTable={{
+                        data: tableData,
+                        emptyMessage: tableEmptyMessage,
+                        hideSummary: showCombinedSearchFileBrowser,
+                        mode: tableMode,
+                        returnHref,
+                        studyActive,
+                    }}
                 />
-            ) : null}
-
-            <ResultsTable
-                data={tableData}
-                emptyMessage={tableEmptyMessage}
-                hideSummary={showCombinedSearchFileBrowser}
-                mode={tableMode}
-                returnHref={returnHref}
-                studyActive={studyActive}
-            />
+            ) : (
+                <ResultsTable
+                    data={tableData}
+                    emptyMessage={tableEmptyMessage}
+                    hideSummary={showCombinedSearchFileBrowser}
+                    mode={tableMode}
+                    returnHref={returnHref}
+                    studyActive={studyActive}
+                />
+            )}
         </main>
     );
 }

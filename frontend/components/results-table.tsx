@@ -28,7 +28,7 @@ import {
 import type { ResultSet, SearchResult } from "@/lib/contracts";
 import { cn } from "@/lib/utils";
 
-type ResultsTableProps = {
+export type ResultsTableProps = {
     data: ResultSet[] | SearchResult[];
     emptyMessage?: string;
     hideSummary?: boolean;
