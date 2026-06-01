@@ -224,6 +224,86 @@ async function collectSubfolderPreviewEvidence(page: Page) {
     });
 }
 
+async function selectDirectory(page: Page, directoryPath: string) {
+    await expect
+        .poll(async () => page.locator("[data-directory-path]").count())
+        .toBeGreaterThan(0);
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+        const directoryButton = page
+            .locator(`[data-directory-path="${directoryPath}"]`)
+            .first();
+
+        if ((await directoryButton.count()) > 0) {
+            await directoryButton.scrollIntoViewIfNeeded();
+            await expect(directoryButton).toBeVisible();
+            await directoryButton.click();
+
+            return;
+        }
+
+        const visiblePaths = await page
+            .locator("[data-directory-path]")
+            .evaluateAll((elements) =>
+                elements
+                    .map((element) =>
+                        element.getAttribute("data-directory-path"),
+                    )
+                    .filter((value): value is string => Boolean(value)),
+            );
+        const nextPath = visiblePaths
+            .filter(
+                (candidate) =>
+                    directoryPath.startsWith(`${candidate}${path.sep}`) ||
+                    directoryPath === candidate,
+            )
+            .sort((left, right) => right.length - left.length)[0];
+
+        if (!nextPath || nextPath === directoryPath) {
+            break;
+        }
+
+        const nextDirectoryButton = page
+            .locator(`[data-directory-path="${nextPath}"]`)
+            .first();
+
+        await nextDirectoryButton.scrollIntoViewIfNeeded();
+        await expect(nextDirectoryButton).toBeVisible();
+        await nextDirectoryButton.click();
+        await expect(nextDirectoryButton).toHaveAttribute(
+            "data-directory-expanded",
+            "true",
+        );
+    }
+
+    const directoryButton = page
+        .locator(`[data-directory-path="${directoryPath}"]`)
+        .first();
+
+    await directoryButton.scrollIntoViewIfNeeded();
+    await expect(directoryButton).toBeVisible();
+    await directoryButton.click();
+}
+
+async function openPreviewModes(controls: Locator) {
+    const summary = controls
+        .locator('summary[aria-label="Preview modes"]')
+        .first();
+
+    await expect(summary).toBeVisible();
+    await summary.evaluate((element) => {
+        const details = element.closest("details");
+
+        if (!(details instanceof HTMLDetailsElement)) {
+            throw new Error("Missing preview modes disclosure");
+        }
+
+        if (!details.open) {
+            (element as HTMLElement).click();
+        }
+    });
+}
+
 test.describe("search combined file browser repro", () => {
     test("shows a locked combined file browser state for logged-out matching results", async ({
         context,
@@ -605,5 +685,101 @@ test.describe("search combined file browser repro", () => {
                 "parent galleries-demo subfolder previews should include sample-a overview files",
             )
             .toHaveCount(2);
+    });
+
+    test("reproduces overview subfolder previews on the single seeded galleries-demo detail page", async ({
+        page,
+    }) => {
+        test.setTimeout(120_000);
+
+        const parentPipelineName = "wtsi/galleries-demo";
+        const parentSearchUrl = `/?pipeline_name=${encodeURIComponent(parentPipelineName)}`;
+        const parentOutputDirectory = path.join(
+            repoRoot,
+            ".docs",
+            "results-web",
+            "fixtures",
+            "files",
+            "galleries-demo",
+        );
+        const sampleAPath = path.join(parentOutputDirectory, "sample-a");
+        const overviewPath = path.join(sampleAPath, "overview");
+
+        await page.goto(parentSearchUrl);
+
+        const resultRows = page.locator("tbody tr[data-result-row='true']");
+        await expect(resultRows).toHaveCount(1);
+        await expect(resultRows.first()).toContainText(parentPipelineName);
+        const resultRowText = (await resultRows.first().textContent()) ?? "";
+        expect(resultRowText).toContain(
+            ".docs/results-web/fixtures/files/galleries-demo",
+        );
+        expect(resultRowText).not.toContain("combined-galleries-demo");
+
+        const detailHref = await resultRows
+            .first()
+            .locator("a")
+            .first()
+            .getAttribute("href");
+
+        expect(detailHref).toBeTruthy();
+
+        await page.goto(detailHref ?? "/");
+        await expect(
+            page.getByRole("heading", { level: 1, name: parentPipelineName }),
+        ).toBeVisible({ timeout: 30000 });
+        await expect(page.locator('[data-file-browser="true"]')).toContainText(
+            "sample-a",
+        );
+
+        await selectDirectory(page, sampleAPath);
+
+        const sampleAControls = page.locator(
+            `[data-file-browser-folder-controls="${sampleAPath}"]`,
+        );
+        await expect(sampleAControls).toBeVisible();
+        await openPreviewModes(sampleAControls);
+        await sampleAControls
+            .locator('input[aria-label="Subfolder previews"]')
+            .check();
+
+        const detailEvidence = await collectSubfolderPreviewEvidence(page);
+        await writeEvidence(
+            page,
+            "result-detail-galleries-demo-overview-subfolder-preview.png",
+            {
+                detailHref,
+                detailUrl: page.url(),
+                expectedOverviewCards: [
+                    path.join(overviewPath, "navy-summary.svg"),
+                    path.join(overviewPath, "gold-summary.svg"),
+                ],
+                parentOutputDirectory,
+                parentSearchUrl,
+                resultRowText,
+                sampleAPath,
+                subfolderPreview: detailEvidence,
+            },
+        );
+
+        await expect(
+            page.locator(`[data-subdir-preview-strip="${overviewPath}"]`),
+        ).toBeVisible();
+        await expect(
+            page.locator(
+                `[data-subdir-preview-card="${path.join(
+                    overviewPath,
+                    "navy-summary.svg",
+                )}"]`,
+            ),
+        ).toBeVisible();
+        await expect(
+            page.locator(
+                `[data-subdir-preview-card="${path.join(
+                    overviewPath,
+                    "gold-summary.svg",
+                )}"]`,
+            ),
+        ).toBeVisible();
     });
 });
