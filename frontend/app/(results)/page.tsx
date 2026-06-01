@@ -262,15 +262,13 @@ export default async function ResultsLandingPage({
         <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
             <DashboardToast message={statsError} />
 
-            <section className="rounded-[2rem] border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_10%,var(--card)_90%))] p-4 shadow-[0_32px_110px_-76px_rgba(41,58,85,0.82)] sm:p-6">
-                <FilterBuilder
-                    currentFilters={resolvedSearchParams}
-                    metaKeys={metaKeys}
-                    seqmetaAvailable={seqmetaAvailable}
-                    suggestionValues={suggestionValues}
-                    studies={studies}
-                />
-            </section>
+            <FilterBuilder
+                currentFilters={resolvedSearchParams}
+                metaKeys={metaKeys}
+                seqmetaAvailable={seqmetaAvailable}
+                suggestionValues={suggestionValues}
+                studies={studies}
+            />
 
             <ResultsTable
                 data={tableData}

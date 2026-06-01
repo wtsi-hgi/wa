@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -300,6 +301,7 @@ test.describe("Q1 critical results flows", () => {
         "gallery",
         "plot-101.png",
     );
+    const evidenceDir = path.resolve(process.cwd(), "..", ".tmp", "agent");
 
     test("shows the search builder above recent registrations on the dashboard", async ({
         page,
@@ -317,6 +319,145 @@ test.describe("Q1 critical results flows", () => {
 
         const rows = recentRows(page);
         await expect(rows).toHaveCount(4);
+    });
+
+    test("does not wrap the search builder in a visible outer panel", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "search-builder-nesting-postfix.png",
+        );
+        const evidencePath = path.join(
+            evidenceDir,
+            "search-builder-nesting-postfix.json",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 720 });
+        await page.goto("/");
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+
+        await expect(searchBuilder).toBeVisible();
+        await expect(
+            page.getByRole("heading", { level: 2, name: "Latest result sets" }),
+        ).toBeVisible();
+
+        const metrics = await searchBuilder.evaluate((element) => {
+            const searchBuilderElement = element as HTMLElement;
+            const main = searchBuilderElement.closest("main");
+
+            if (!(main instanceof HTMLElement)) {
+                throw new Error("Search builder is not inside the page main");
+            }
+
+            const toRoundedRect = (target: HTMLElement) => {
+                const rect = target.getBoundingClientRect();
+
+                return {
+                    bottom: Math.round(rect.bottom),
+                    height: Math.round(rect.height),
+                    left: Math.round(rect.left),
+                    right: Math.round(rect.right),
+                    top: Math.round(rect.top),
+                    width: Math.round(rect.width),
+                };
+            };
+            const hasVisibleBorder = (computed: CSSStyleDeclaration) =>
+                (
+                    [
+                        ["borderTopStyle", "borderTopWidth"],
+                        ["borderRightStyle", "borderRightWidth"],
+                        ["borderBottomStyle", "borderBottomWidth"],
+                        ["borderLeftStyle", "borderLeftWidth"],
+                    ] as const
+                ).some(
+                    ([styleProperty, widthProperty]) =>
+                        computed[styleProperty] !== "none" &&
+                        Number.parseFloat(computed[widthProperty]) > 0,
+                );
+            const hasRoundedCorner = (computed: CSSStyleDeclaration) =>
+                (
+                    [
+                        computed.borderTopLeftRadius,
+                        computed.borderTopRightRadius,
+                        computed.borderBottomRightRadius,
+                        computed.borderBottomLeftRadius,
+                    ] as const
+                ).some((radius) => Number.parseFloat(radius) > 0);
+            const hasBackgroundFill = (computed: CSSStyleDeclaration) =>
+                computed.backgroundImage !== "none" ||
+                !["rgba(0, 0, 0, 0)", "transparent"].includes(
+                    computed.backgroundColor,
+                );
+            const mainRect = main.getBoundingClientRect();
+            const mainStyles = window.getComputedStyle(main);
+            const searchBuilderRect =
+                searchBuilderElement.getBoundingClientRect();
+            const mainContentLeft =
+                mainRect.left + Number.parseFloat(mainStyles.paddingLeft);
+            const mainContentRight =
+                mainRect.right - Number.parseFloat(mainStyles.paddingRight);
+            const visualPanelAncestors = [];
+            let ancestor = searchBuilderElement.parentElement;
+
+            while (ancestor && ancestor !== main) {
+                const computed = window.getComputedStyle(ancestor);
+                const isVisiblePanel =
+                    hasVisibleBorder(computed) ||
+                    hasRoundedCorner(computed) ||
+                    hasBackgroundFill(computed) ||
+                    computed.boxShadow !== "none";
+
+                if (isVisiblePanel) {
+                    const rect = ancestor.getBoundingClientRect();
+
+                    visualPanelAncestors.push({
+                        backgroundColor: computed.backgroundColor,
+                        backgroundImage: computed.backgroundImage,
+                        borderRadius: computed.borderTopLeftRadius,
+                        borderTopWidth: computed.borderTopWidth,
+                        boxShadow: computed.boxShadow,
+                        gapBottom: Math.round(
+                            rect.bottom - searchBuilderRect.bottom,
+                        ),
+                        gapLeft: Math.round(searchBuilderRect.left - rect.left),
+                        gapRight: Math.round(
+                            rect.right - searchBuilderRect.right,
+                        ),
+                        gapTop: Math.round(searchBuilderRect.top - rect.top),
+                        paddingLeft: computed.paddingLeft,
+                        paddingTop: computed.paddingTop,
+                        tagName: ancestor.tagName.toLowerCase(),
+                    });
+                }
+
+                ancestor = ancestor.parentElement;
+            }
+
+            return {
+                main: toRoundedRect(main),
+                mainContentGapLeft: Math.round(
+                    searchBuilderRect.left - mainContentLeft,
+                ),
+                mainContentGapRight: Math.round(
+                    mainContentRight - searchBuilderRect.right,
+                ),
+                searchBuilder: toRoundedRect(searchBuilderElement),
+                visualPanelAncestors,
+            };
+        });
+
+        await page.screenshot({ fullPage: true, path: screenshotPath });
+        writeFileSync(
+            evidencePath,
+            `${JSON.stringify({ ...metrics, screenshotPath }, null, 2)}\n`,
+        );
+
+        expect(metrics.mainContentGapLeft).toBeLessThanOrEqual(1);
+        expect(metrics.mainContentGapRight).toBeLessThanOrEqual(1);
+        expect(metrics.visualPanelAncestors).toEqual([]);
     });
 
     test("keeps recent registration sort icons at a stable size on narrow screens", async ({

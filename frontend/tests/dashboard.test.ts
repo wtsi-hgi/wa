@@ -203,6 +203,22 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(markup).not.toContain("Last 30 days of result activity");
     });
 
+    it("renders the search builder without an extra dashboard panel wrapper", async () => {
+        fetchStatsMock.mockResolvedValue(buildStats());
+        searchResultsMock.mockResolvedValue([]);
+
+        const markup = await renderDashboard();
+
+        document.body.innerHTML = markup;
+
+        const searchBuilder = document.querySelector(
+            '[data-search-builder="true"]',
+        );
+
+        expect(searchBuilder).toBeTruthy();
+        expect(searchBuilder?.parentElement?.tagName).toBe("MAIN");
+    });
+
     it("hydrates the landing page without recoverable mismatches and keeps Add filter interactive", async () => {
         fetchStatsMock.mockResolvedValue(
             buildStats({
