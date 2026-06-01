@@ -1178,7 +1178,7 @@
         "command": "nextflow run nf-combined-galleries-demo --sample gallery-alpha",
         "pipeline_name": "wtsi/combined-galleries-demo",
         "pipeline_version": "0.4.2",
-        "output_directory": ".docs/results-web/fixtures/files/combined-galleries-demo/sample-a",
+        "output_directory": ".docs/results-web/fixtures/files/sibling-gallery-runs/sample-a",
         "files": [
             {
                 "path": "blue-plot.svg",
@@ -1225,7 +1225,7 @@
         "command": "nextflow run nf-combined-galleries-demo --sample gallery-beta",
         "pipeline_name": "wtsi/combined-galleries-demo",
         "pipeline_version": "0.4.2",
-        "output_directory": ".docs/results-web/fixtures/files/combined-galleries-demo/sample-b",
+        "output_directory": ".docs/results-web/fixtures/files/sibling-gallery-runs/sample-b",
         "files": [
             {
                 "path": "orange-heatmap.svg",

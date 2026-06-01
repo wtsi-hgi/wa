@@ -326,6 +326,7 @@ func TestRunDevSeedOutputDirectoriesDoNotOverlapWithinPipeline(t *testing.T) {
 		combinedGalleriesOutputDirectories := []string{}
 		combinedGalleriesRunKeys := []string{}
 		sampleCOutputDirectories := []string{}
+		retiredSampleOutputDirectories := []string{}
 
 		for _, fixture := range fixtures {
 			pipelineName, _ := fixture["pipeline_name"].(string)
@@ -350,6 +351,17 @@ func TestRunDevSeedOutputDirectoriesDoNotOverlapWithinPipeline(t *testing.T) {
 			if strings.HasSuffix(filepath.ToSlash(filepath.Clean(outputDirectory)), "/galleries-demo/sample-c") {
 				sampleCOutputDirectories = append(sampleCOutputDirectories, outputDirectory)
 			}
+
+			cleanOutputDirectory := filepath.ToSlash(filepath.Clean(outputDirectory))
+			if strings.Contains(cleanOutputDirectory, "galleries-demo/sample-a") ||
+				strings.Contains(cleanOutputDirectory, "galleries-demo/sample-b") ||
+				strings.Contains(cleanOutputDirectory, "combined-galleries-demo/sample-a") ||
+				strings.Contains(cleanOutputDirectory, "combined-galleries-demo/sample-b") {
+				retiredSampleOutputDirectories = append(
+					retiredSampleOutputDirectories,
+					outputDirectory,
+				)
+			}
 		}
 
 		convey.So(galleriesOutputDirectories, convey.ShouldContain, ".docs/results-web/fixtures/files/galleries-demo")
@@ -357,21 +369,22 @@ func TestRunDevSeedOutputDirectoriesDoNotOverlapWithinPipeline(t *testing.T) {
 		convey.So(
 			combinedGalleriesOutputDirectories,
 			convey.ShouldContain,
-			".docs/results-web/fixtures/files/combined-galleries-demo/sample-a",
+			".docs/results-web/fixtures/files/sibling-gallery-runs/sample-a",
 		)
 		convey.So(
 			combinedGalleriesOutputDirectories,
 			convey.ShouldContain,
-			".docs/results-web/fixtures/files/combined-galleries-demo/sample-b",
+			".docs/results-web/fixtures/files/sibling-gallery-runs/sample-b",
 		)
 		convey.So(
 			combinedGalleriesOutputDirectories,
 			convey.ShouldNotContain,
-			".docs/results-web/fixtures/files/combined-galleries-demo",
+			".docs/results-web/fixtures/files/sibling-gallery-runs",
 		)
 		convey.So(combinedGalleriesRunKeys, convey.ShouldContain, "runid=88205&unique=galleries_sample_a")
 		convey.So(combinedGalleriesRunKeys, convey.ShouldContain, "runid=88206&unique=galleries_sample_b")
 		convey.So(sampleCOutputDirectories, convey.ShouldBeEmpty)
+		convey.So(retiredSampleOutputDirectories, convey.ShouldBeEmpty)
 
 		overlaps := []string{}
 

@@ -461,9 +461,15 @@ test.describe("search combined file browser repro", () => {
             page.locator('[data-search-combined-file-browser="true"]'),
         ).toBeVisible();
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(1);
-        await expect(
-            page.locator("tbody tr[data-result-row='true']"),
-        ).toHaveCount(2);
+        const resultRows = page.locator("tbody tr[data-result-row='true']");
+        await expect(resultRows).toHaveCount(2);
+        const resultRowText = (await resultRows.allTextContents()).join("\n");
+        expect(resultRowText).toContain("sibling-gallery-runs/sample-a");
+        expect(resultRowText).toContain("sibling-gallery-runs/sample-b");
+        expect(resultRowText).not.toContain("combined-galleries-demo/sample-a");
+        expect(resultRowText).not.toContain("combined-galleries-demo/sample-b");
+        expect(resultRowText).not.toContain("galleries-demo/sample-a");
+        expect(resultRowText).not.toContain("galleries-demo/sample-b");
         await expect(page.locator('[data-file-browser="true"]')).toContainText(
             "blue-plot.svg",
         );
