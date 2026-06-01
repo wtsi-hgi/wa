@@ -1953,7 +1953,6 @@ export function FileBrowser({
                             parentPath,
                         });
                     }}
-                    style={{ paddingLeft: `${depth * 1.2 + 0.75}rem` }}
                 >
                     <span className={activeDesign.directoryChevronClass}>
                         {hasChildren || hasFiles ? (

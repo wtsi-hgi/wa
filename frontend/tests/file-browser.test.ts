@@ -287,10 +287,8 @@ describe("N1 file browser", () => {
         expect(Number(alphaChildButton?.dataset.depth)).toBe(
             Number(alphaButton?.dataset.depth) + 1,
         );
-        expect(
-            Number.parseFloat(alphaChildButton?.style.paddingLeft ?? "0"),
-        ).toBeGreaterThan(
-            Number.parseFloat(alphaButton?.style.paddingLeft ?? "0"),
+        expect(alphaChildButton?.style.paddingLeft).toBe(
+            alphaButton?.style.paddingLeft,
         );
     });
 

@@ -49,6 +49,25 @@ type ExpandedDirectoryBoxMetrics = {
     rowRect: RectMetrics | null;
 };
 
+type DirectoryDepthIndentMetrics = {
+    additionalButtonPaddingPx: number;
+    childButtonPaddingLeftPx: number;
+    childDepth: string | null;
+    childGroupRect: RectMetrics | null;
+    childNameInsetWithinOwnRowPx: number | null;
+    childNameRect: RectMetrics | null;
+    childPath: string;
+    childRowRect: RectMetrics | null;
+    naturalNestedBoxOffsetPx: number | null;
+    parentButtonPaddingLeftPx: number;
+    parentDepth: string | null;
+    parentNameInsetWithinOwnRowPx: number | null;
+    parentNameRect: RectMetrics | null;
+    parentPath: string;
+    parentRowRect: RectMetrics | null;
+    totalChildNameOffsetFromParentNamePx: number | null;
+};
+
 type PreviewCornerGripMetrics = {
     backgroundAlpha: number;
     backgroundImage: string;
@@ -634,6 +653,111 @@ async function measureExpandedDirectoryBox(
     );
 }
 
+async function measureDirectoryDepthIndent(
+    page: Page,
+    parentPath: string,
+    childPath: string,
+): Promise<DirectoryDepthIndentMetrics> {
+    return page.evaluate(
+        ({ childPath, parentPath }) => {
+            function byData(attributeName: string, value: string) {
+                return document.querySelector(
+                    `[${attributeName}="${CSS.escape(value)}"]`,
+                );
+            }
+
+            function rectMetrics(element: Element | null) {
+                if (!(element instanceof HTMLElement)) {
+                    return null;
+                }
+
+                const rect = element.getBoundingClientRect();
+
+                return {
+                    height: rect.height,
+                    width: rect.width,
+                    x: rect.x,
+                    y: rect.y,
+                };
+            }
+
+            function directoryNameElement(button: Element | null) {
+                if (!(button instanceof HTMLElement)) {
+                    return null;
+                }
+
+                const textColumn = button.children.item(1);
+
+                return textColumn?.firstElementChild ?? null;
+            }
+
+            function paddingLeft(element: Element | null) {
+                if (!(element instanceof HTMLElement)) {
+                    return 0;
+                }
+
+                return Number.parseFloat(
+                    window.getComputedStyle(element).paddingLeft,
+                );
+            }
+
+            const parentButton = byData("data-directory-path", parentPath);
+            const childButton = byData("data-directory-path", childPath);
+            const parentRow = byData("data-directory-row", parentPath);
+            const childRow = byData("data-directory-row", childPath);
+            const childGroup = byData("data-directory-group", childPath);
+            const parentNameRect = rectMetrics(
+                directoryNameElement(parentButton),
+            );
+            const childNameRect = rectMetrics(
+                directoryNameElement(childButton),
+            );
+            const parentRowRect = rectMetrics(parentRow);
+            const childRowRect = rectMetrics(childRow);
+            const parentPaddingLeft = paddingLeft(parentButton);
+            const childPaddingLeft = paddingLeft(childButton);
+
+            return {
+                additionalButtonPaddingPx: childPaddingLeft - parentPaddingLeft,
+                childButtonPaddingLeftPx: childPaddingLeft,
+                childDepth:
+                    childButton instanceof HTMLElement
+                        ? (childButton.dataset.depth ?? null)
+                        : null,
+                childGroupRect: rectMetrics(childGroup),
+                childNameInsetWithinOwnRowPx:
+                    childNameRect && childRowRect
+                        ? childNameRect.x - childRowRect.x
+                        : null,
+                childNameRect,
+                childPath,
+                childRowRect,
+                naturalNestedBoxOffsetPx:
+                    childRowRect && parentRowRect
+                        ? childRowRect.x - parentRowRect.x
+                        : null,
+                parentButtonPaddingLeftPx: parentPaddingLeft,
+                parentDepth:
+                    parentButton instanceof HTMLElement
+                        ? (parentButton.dataset.depth ?? null)
+                        : null,
+                parentNameInsetWithinOwnRowPx:
+                    parentNameRect && parentRowRect
+                        ? parentNameRect.x - parentRowRect.x
+                        : null,
+                parentNameRect,
+                parentPath,
+                parentRowRect,
+                totalChildNameOffsetFromParentNamePx:
+                    childNameRect && parentNameRect
+                        ? childNameRect.x - parentNameRect.x
+                        : null,
+            };
+        },
+        { childPath, parentPath },
+    );
+}
+
 test.describe("File Browser single preview layout", () => {
     const fixturesRoot = path.resolve(
         process.cwd(),
@@ -693,6 +817,14 @@ test.describe("File Browser single preview layout", () => {
     const toolsPanelMetricsPath = path.join(
         screenshotEvidenceDir,
         "file-browser-tools-panel-postfix.json",
+    );
+    const subdirIndentScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "bug3-file-browser-subdir-indent-postfix.png",
+    );
+    const subdirIndentMetricsPath = path.join(
+        screenshotEvidenceDir,
+        "bug3-file-browser-subdir-indent-postfix.json",
     );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
@@ -1273,7 +1405,82 @@ test.describe("File Browser single preview layout", () => {
         );
 
         expect(metrics.childIndentMarkerRect.x).toBeGreaterThan(
-            metrics.parentIndentMarkerRect.x + 12,
+            metrics.parentIndentMarkerRect.x,
+        );
+        expect(metrics.childIndentMarkerRect.x).toBeLessThanOrEqual(
+            metrics.childGroupRect.x + 24,
+        );
+    });
+
+    test("does not add depth-based indentation to nested directory names", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const parentButton = page.locator(
+            `[data-directory-path="${rnaseqImagesPath}"]`,
+        );
+        const childButton = page.locator(
+            `[data-directory-path="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(parentButton).toBeVisible();
+        await expect(childButton).toBeVisible();
+
+        const metrics = await measureDirectoryDepthIndent(
+            page,
+            rnaseqImagesPath,
+            rnaseqGalleryPath,
+        );
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: subdirIndentScreenshotPath,
+        });
+        writeFileSync(
+            subdirIndentMetricsPath,
+            `${JSON.stringify(
+                {
+                    ...metrics,
+                    screenshotPath: subdirIndentScreenshotPath,
+                },
+                null,
+                2,
+            )}\n`,
+        );
+
+        if (
+            !metrics.parentRowRect ||
+            !metrics.childRowRect ||
+            metrics.parentNameInsetWithinOwnRowPx === null ||
+            metrics.childNameInsetWithinOwnRowPx === null ||
+            metrics.naturalNestedBoxOffsetPx === null ||
+            metrics.totalChildNameOffsetFromParentNamePx === null
+        ) {
+            throw new Error(
+                "Missing nested directory indentation metrics for browser assertion",
+            );
+        }
+
+        expect(Number(metrics.childDepth)).toBe(
+            Number(metrics.parentDepth) + 1,
+        );
+        expect(metrics.naturalNestedBoxOffsetPx).toBeGreaterThanOrEqual(8);
+        expect(metrics.naturalNestedBoxOffsetPx).toBeLessThanOrEqual(24);
+        expect(metrics.additionalButtonPaddingPx).toBeCloseTo(0, 1);
+        expect(metrics.childButtonPaddingLeftPx).toBeCloseTo(
+            metrics.parentButtonPaddingLeftPx,
+            1,
+        );
+        expect(metrics.childNameInsetWithinOwnRowPx).toBeCloseTo(
+            metrics.parentNameInsetWithinOwnRowPx,
+            1,
+        );
+        expect(metrics.totalChildNameOffsetFromParentNamePx).toBeCloseTo(
+            metrics.naturalNestedBoxOffsetPx,
+            1,
         );
     });
 
