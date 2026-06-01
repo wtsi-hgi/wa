@@ -250,6 +250,35 @@ test.describe("search combined file browser repro", () => {
         expect(layout?.browserTop).toBeLessThan(layout?.tableTop ?? 0);
     });
 
+    test("does not show the matching result sets box under the result rows view", async ({
+        page,
+    }) => {
+        await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
+
+        await expect(matchingRows(page)).toHaveCount(2);
+
+        await page.getByRole("button", { name: "Result rows" }).click();
+
+        const combinedBrowserShell = page.locator(
+            '[data-search-combined-file-browser="true"]',
+        );
+        await expect(combinedBrowserShell).toHaveAttribute(
+            "data-search-file-mode",
+            "rows",
+        );
+
+        await writeEvidence(
+            page,
+            "search-combined-file-browser-result-rows-matching-box.png",
+        );
+
+        await expect(
+            page.getByRole("heading", { name: "Matching result sets" }),
+        ).toHaveCount(0);
+        await expect(matchingRows(page)).toHaveCount(2);
+        await expect(page.locator('[data-file-browser="true"]')).toHaveCount(0);
+    });
+
     test("narrows the combined file browser when the search filters to one sample", async ({
         page,
     }) => {

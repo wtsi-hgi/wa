@@ -110,7 +110,10 @@ export function ResultsTable({
 
     return (
         <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-            <div className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5">
+            <div
+                className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5"
+                data-results-table-summary="true"
+            >
                 <div>
                     <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
                         {mode === "search"
