@@ -112,6 +112,14 @@ function matchingRows(page: Page): Locator {
         .filter({ hasText: pipelineName });
 }
 
+function lockedMatchingRows(page: Page): Locator {
+    return page
+        .locator(
+            'tbody tr[data-result-row="true"][data-result-row-locked="true"]',
+        )
+        .filter({ hasText: pipelineName });
+}
+
 async function writeEvidence(
     page: Page,
     screenshotName: string,
@@ -127,12 +135,20 @@ async function writeEvidence(
         const fileBrowsers = document.querySelectorAll(
             '[data-file-browser="true"]',
         );
+        const combinedSearchFileBrowsers = document.querySelectorAll(
+            '[data-search-combined-file-browser="true"]',
+        );
         const resultRows = document.querySelectorAll(
             'tbody tr[data-result-row="true"]',
         );
+        const lockedResultRows = document.querySelectorAll(
+            'tbody tr[data-result-row-locked="true"]',
+        );
 
         return {
+            combinedSearchFileBrowserCount: combinedSearchFileBrowsers.length,
             fileBrowserCount: fileBrowsers.length,
+            lockedResultRowCount: lockedResultRows.length,
             resultRowCount: resultRows.length,
             searchBuilderText: searchBuilder?.textContent ?? null,
             visibleText: document.body.innerText.slice(0, 4000),
@@ -147,6 +163,40 @@ async function writeEvidence(
 }
 
 test.describe("search combined file browser repro", () => {
+    test("shows a locked combined file browser state for logged-out matching results", async ({
+        context,
+        page,
+    }) => {
+        await context.clearCookies();
+        await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
+
+        await expect(page.getByText("Showing search results")).toBeVisible();
+        await expect(matchingRows(page)).toHaveCount(2);
+        await expect(lockedMatchingRows(page)).toHaveCount(2);
+
+        await writeEvidence(
+            page,
+            "search-combined-file-browser-logged-out-locked.png",
+        );
+
+        const combinedBrowser = page.locator(
+            '[data-search-combined-file-browser="true"]',
+        );
+
+        await expect(combinedBrowser).toHaveCount(1);
+        await expect(combinedBrowser).toContainText("Combined files");
+        await expect(combinedBrowser).toContainText("File access locked");
+        await expect(combinedBrowser).toContainText("2 matching result sets");
+        await expect(combinedBrowser).toContainText(workRoot);
+        await expect(
+            combinedBrowser.locator('[data-locked-output-directory="true"]'),
+        ).toHaveCount(2);
+        await expect(
+            combinedBrowser.locator("button[data-directory-path]"),
+        ).toHaveCount(0);
+        await expect(page.locator('[data-file-browser="true"]')).toHaveCount(0);
+    });
+
     test("shows one default file browser for all files across matching result sets", async ({
         page,
     }) => {

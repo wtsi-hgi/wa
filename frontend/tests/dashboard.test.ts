@@ -656,6 +656,35 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
     });
 
+    it("renders a locked combined search file browser state for locked matching result rows", async () => {
+        fetchStatsMock.mockResolvedValue(buildStats());
+        const alpha = buildResultSet(21);
+        const beta = buildResultSet(22);
+        alpha.pipeline_name = "wa/combined-browser-repro";
+        beta.pipeline_name = "wa/combined-browser-repro";
+        alpha.output_directory = "/tmp/results/shared/sample-alpha/final";
+        beta.output_directory = "/tmp/results/shared/sample-beta/final";
+        alpha.access = { can_view: false, locked: true };
+        beta.access = { can_view: false, locked: true };
+        searchResultsMock.mockResolvedValue([alpha, beta]);
+
+        const markup = await renderDashboard({
+            pipeline_name: "wa/combined-browser-repro",
+        });
+
+        expect(fetchFilesMock).not.toHaveBeenCalled();
+        expect(markup).toContain('data-search-combined-file-browser="true"');
+        expect(markup).toContain('data-combined-file-browser-locked="true"');
+        expect(markup).toContain("File access locked");
+        expect(markup).toContain("2 matching result sets");
+        expect(markup).toContain("/tmp/results/shared");
+        expect(
+            countOccurrences(markup, 'data-locked-output-directory="true"'),
+        ).toBe(2);
+        expect(countOccurrences(markup, 'data-file-browser="true"')).toBe(0);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
+    });
+
     it("shows matched samples for study-driven searches", async () => {
         fetchStatsMock.mockResolvedValue(buildStats());
         searchResultsMock.mockResolvedValue([

@@ -205,15 +205,18 @@ async function collectCombinedSearchFiles(
     entries: ResultSet[] | SearchResult[],
 ): Promise<{
     files: CombinedSearchFile[];
+    lockedRegistrations: CombinedSearchRegistration[];
     registrations: CombinedSearchRegistration[];
 }> {
     const files: CombinedSearchFile[] = [];
+    const lockedRegistrations: CombinedSearchRegistration[] = [];
     const registrations: CombinedSearchRegistration[] = [];
 
     for (const entry of entries) {
         const result = toResultSet(entry);
 
         if (!isResultViewable(result)) {
+            lockedRegistrations.push({ fileCount: 0, result });
             continue;
         }
 
@@ -223,6 +226,7 @@ async function collectCombinedSearchFiles(
             resultFiles = await fetchFiles(result.id);
         } catch (error) {
             if (error instanceof BackendRequestError && error.status === 403) {
+                lockedRegistrations.push({ fileCount: 0, result });
                 continue;
             }
 
@@ -242,7 +246,7 @@ async function collectCombinedSearchFiles(
         );
     }
 
-    return { files, registrations };
+    return { files, lockedRegistrations, registrations };
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -298,6 +302,7 @@ export default async function ResultsLandingPage({
     let tableMode: "recent" | "search" = "recent";
     let tableEmptyMessage = "No recent results yet.";
     let combinedSearchFiles: CombinedSearchFile[] = [];
+    let combinedSearchLockedRegistrations: CombinedSearchRegistration[] = [];
     let combinedSearchRegistrations: CombinedSearchRegistration[] = [];
 
     if (hasSearch) {
@@ -316,6 +321,7 @@ export default async function ResultsLandingPage({
         try {
             const combined = await collectCombinedSearchFiles(tableData);
             combinedSearchFiles = combined.files;
+            combinedSearchLockedRegistrations = combined.lockedRegistrations;
             combinedSearchRegistrations = combined.registrations;
         } catch (error) {
             statsError =
@@ -341,6 +347,7 @@ export default async function ResultsLandingPage({
             {hasSearch ? (
                 <SearchCombinedFileBrowser
                     files={combinedSearchFiles}
+                    lockedRegistrations={combinedSearchLockedRegistrations}
                     registrations={combinedSearchRegistrations}
                 />
             ) : null}
