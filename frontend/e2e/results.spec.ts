@@ -37,6 +37,28 @@ type SortIconMetric = {
     width: number;
 };
 
+type TitleTreatmentMetric = {
+    icon: {
+        color: string;
+        height: number;
+        present: boolean;
+        width: number;
+    };
+    row: {
+        alignItems: string;
+        columnGap: string;
+        display: string;
+    };
+    title: {
+        color: string;
+        fontSize: string;
+        fontWeight: string;
+        letterSpacing: string;
+        text: string;
+        textTransform: string;
+    };
+};
+
 async function collectRecentSortIconMetrics(
     page: Page,
 ): Promise<SortIconMetric[]> {
@@ -68,6 +90,90 @@ async function collectRecentSortIconMetrics(
     );
 }
 
+async function collectTitleTreatmentMetrics(page: Page): Promise<{
+    fileBrowser: TitleTreatmentMetric;
+    permanentLabels: string[];
+    search: TitleTreatmentMetric;
+}> {
+    return page.evaluate(() => {
+        function collectMetric(
+            rootSelector: string,
+            titleText: string,
+        ): TitleTreatmentMetric {
+            const root = document.querySelector(rootSelector);
+
+            if (!(root instanceof HTMLElement)) {
+                throw new Error(`Missing title root ${rootSelector}`);
+            }
+
+            const title = Array.from(root.querySelectorAll("p")).find(
+                (candidate): candidate is HTMLParagraphElement =>
+                    candidate instanceof HTMLParagraphElement &&
+                    candidate.textContent?.trim() === titleText,
+            );
+
+            if (!title) {
+                throw new Error(`Missing title ${titleText}`);
+            }
+
+            const row = title.parentElement;
+
+            if (!(row instanceof HTMLElement)) {
+                throw new Error(`Missing title row for ${titleText}`);
+            }
+
+            const icon = row.querySelector("svg");
+            const rowStyles = window.getComputedStyle(row);
+            const titleStyles = window.getComputedStyle(title);
+            const iconStyles =
+                icon instanceof SVGElement
+                    ? window.getComputedStyle(icon)
+                    : null;
+            const iconRect =
+                icon instanceof SVGElement
+                    ? icon.getBoundingClientRect()
+                    : null;
+
+            return {
+                icon: {
+                    color: iconStyles?.color ?? "",
+                    height: iconRect?.height ?? 0,
+                    present: icon instanceof SVGElement,
+                    width: iconRect?.width ?? 0,
+                },
+                row: {
+                    alignItems: rowStyles.alignItems,
+                    columnGap: rowStyles.columnGap,
+                    display: rowStyles.display,
+                },
+                title: {
+                    color: titleStyles.color,
+                    fontSize: titleStyles.fontSize,
+                    fontWeight: titleStyles.fontWeight,
+                    letterSpacing: titleStyles.letterSpacing,
+                    text: title.textContent?.trim() ?? "",
+                    textTransform: titleStyles.textTransform,
+                },
+            };
+        }
+
+        const permanentLabels = Array.from(
+            document.querySelectorAll(
+                '[data-search-builder-permanent-fields="true"] label',
+            ),
+        ).map((label) => label.textContent?.trim() ?? "");
+
+        return {
+            fileBrowser: collectMetric(
+                '[data-file-browser="true"]',
+                "File Browser",
+            ),
+            permanentLabels,
+            search: collectMetric('[data-search-builder="true"]', "Search"),
+        };
+    });
+}
+
 async function addRequesterFilter(
     page: Page,
     requester: string,
@@ -75,7 +181,7 @@ async function addRequesterFilter(
     const searchBuilder = page.locator('[data-search-builder="true"]');
 
     await expect(searchBuilder).toBeVisible();
-    await searchBuilder.getByLabel(/requester value/i).fill(requester);
+    await searchBuilder.getByLabel(/^requester$/i).fill(requester);
     await searchBuilder
         .getByRole("button", { name: /add requester filter/i })
         .click();
@@ -467,6 +573,64 @@ test.describe("Q1 critical results flows", () => {
         expect(metrics.mainContentGapLeft).toBeLessThanOrEqual(1);
         expect(metrics.mainContentGapRight).toBeLessThanOrEqual(1);
         expect(metrics.visualPanelAncestors).toEqual([]);
+    });
+
+    test("renders the search title with the same browser treatment as file browser", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "search-title-treatment-postfix.png",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent("nf-core/rnaseq")}`,
+        );
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+
+        await expect(searchBuilder).toBeVisible();
+        await expect(fileBrowser).toBeVisible();
+
+        const metrics = await collectTitleTreatmentMetrics(page);
+
+        await page
+            .locator("main")
+            .screenshot({ animations: "disabled", path: screenshotPath });
+
+        expect(metrics.search.title.text).toBe("Search");
+        expect(metrics.search.icon.present).toBe(true);
+        expect(metrics.search.row.display).toBe("flex");
+        expect(metrics.search.row.alignItems).toBe("center");
+        expect(metrics.search.row.columnGap).toBe(
+            metrics.fileBrowser.row.columnGap,
+        );
+        expect(metrics.search.title).toEqual({
+            ...metrics.fileBrowser.title,
+            text: "Search",
+        });
+        expect(metrics.search.icon.color).toBe(metrics.fileBrowser.icon.color);
+        expect(metrics.search.icon.width).toBeCloseTo(
+            metrics.fileBrowser.icon.width,
+            1,
+        );
+        expect(metrics.search.icon.height).toBeCloseTo(
+            metrics.fileBrowser.icon.height,
+            1,
+        );
+        expect(metrics.permanentLabels).toEqual([
+            "Pipeline name",
+            "Unique",
+            "Study",
+            "Sample",
+            "Requester",
+        ]);
+        expect(
+            metrics.permanentLabels.filter((label) => /\bvalue\b/i.test(label)),
+        ).toEqual([]);
     });
 
     test("keeps recent registration sort icons at a stable size on narrow screens", async ({

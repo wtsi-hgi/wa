@@ -48,6 +48,67 @@ describe("K1 filter builder component", () => {
         pushMock.mockReset();
     });
 
+    it("matches the file browser title treatment and keeps permanent field labels clean", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        const { container } = render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: [],
+                seqmetaAvailable: true,
+                studies: [],
+            }),
+        );
+
+        const title = screen.getByText("Search");
+        const titleRow = title.parentElement;
+        const titleIcon = titleRow?.querySelector("svg");
+
+        expect(titleRow?.className).toContain("flex");
+        expect(titleRow?.className).toContain("items-center");
+        expect(titleRow?.className).toContain("gap-3");
+        expect(titleIcon).toBeTruthy();
+        expect(titleIcon?.getAttribute("aria-hidden")).toBe("true");
+        expect(titleIcon?.className.baseVal).toContain("size-4");
+        expect(titleIcon?.className.baseVal).toContain("text-primary");
+        expect(title.className).toContain("text-sm");
+        expect(title.className).toContain("font-semibold");
+        expect(title.className).toContain("uppercase");
+        expect(title.className).toContain("tracking-[0.18em]");
+        expect(title.className).toContain("text-muted-foreground");
+
+        for (const label of [
+            "Pipeline name",
+            "Unique",
+            "Study",
+            "Sample",
+            "Requester",
+        ]) {
+            expect(
+                screen.getByLabelText(new RegExp(`^${label}$`, "i")),
+            ).toBeTruthy();
+        }
+
+        const permanentLabels = Array.from(
+            container.querySelectorAll(
+                '[data-search-builder-permanent-fields="true"] label',
+            ),
+        ).map((label) => label.textContent?.trim());
+
+        expect(permanentLabels).toEqual([
+            "Pipeline name",
+            "Unique",
+            "Study",
+            "Sample",
+            "Requester",
+        ]);
+        expect(screen.queryByLabelText(/pipeline name value/i)).toBeNull();
+        expect(screen.queryByLabelText(/unique value/i)).toBeNull();
+        expect(screen.queryByLabelText(/study value/i)).toBeNull();
+        expect(screen.queryByLabelText(/sample value/i)).toBeNull();
+        expect(screen.queryByLabelText(/requester value/i)).toBeNull();
+    });
+
     it("renders permanent search fields with suggestions and excludes them from add filter search", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
@@ -68,7 +129,7 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        expect(screen.getByText("search")).toBeTruthy();
+        expect(screen.getByText("Search")).toBeTruthy();
         expect(screen.queryByText("Search builder")).toBeNull();
 
         const permanentInputs = [
@@ -80,9 +141,7 @@ describe("K1 filter builder component", () => {
         ] as const;
 
         for (const [label, key, suggestion] of permanentInputs) {
-            const input = screen.getByLabelText(
-                new RegExp(`${label} value`, "i"),
-            );
+            const input = screen.getByLabelText(new RegExp(`^${label}$`, "i"));
 
             expect(input.getAttribute("list")).toBe(
                 `filter-suggestions-${key}`,
@@ -138,7 +197,7 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/pipeline name value/i), {
+        fireEvent.change(screen.getByLabelText(/^pipeline name$/i), {
             target: { value: "nf" },
         });
         fireEvent.click(
@@ -186,7 +245,7 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/requester value/i), {
+        fireEvent.change(screen.getByLabelText(/^requester$/i), {
             target: { value: "bob" },
         });
         fireEvent.click(
@@ -211,7 +270,7 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        const studyInput = await screen.findByLabelText(/study value/i);
+        const studyInput = await screen.findByLabelText(/^study$/i);
 
         fireEvent.change(studyInput, {
             target: { value: "656" },
@@ -255,7 +314,7 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/sample value/i), {
+        fireEvent.change(screen.getByLabelText(/^sample$/i), {
             target: { value: "SMP1001" },
         });
         fireEvent.click(
@@ -305,7 +364,7 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/unique value/i), {
+        fireEvent.change(screen.getByLabelText(/^unique$/i), {
             target: { value: "48522 / random_exon" },
         });
         fireEvent.click(
@@ -394,7 +453,7 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/pipeline name value/i), {
+        fireEvent.change(screen.getByLabelText(/^pipeline name$/i), {
             target: { value: "rna" },
         });
 
@@ -404,7 +463,7 @@ describe("K1 filter builder component", () => {
         const fieldList = container.querySelector(
             "[data-search-builder-field-list='true']",
         );
-        const valueInput = screen.getByLabelText(/pipeline name value/i);
+        const valueInput = screen.getByLabelText(/^pipeline name$/i);
 
         expect(popover).toBeNull();
         expect(fieldList).toBeNull();

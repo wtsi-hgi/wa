@@ -189,7 +189,7 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         const markup = await renderDashboard();
 
-        expect(markup).toContain(">search<");
+        expect(markup).toContain(">Search<");
         expect(markup).not.toContain("Search builder");
         expect(markup).toContain("Recent registrations");
         expect(markup).toContain("Latest result sets");
@@ -315,7 +315,7 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         const markup = renderToStaticMarkup(await pagePromise);
 
-        expect(markup).toContain(">search<");
+        expect(markup).toContain(">Search<");
         expect(markup).not.toContain("Search builder");
         expect(markup).toContain("Recent registrations");
 
@@ -363,7 +363,7 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        const valueInput = screen.getByLabelText(/pipeline name value/i);
+        const valueInput = screen.getByLabelText(/^pipeline name$/i);
 
         fireEvent.change(valueInput, {
             target: { value: "rna" },
@@ -422,7 +422,7 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        const valueInput = screen.getByLabelText(/requester value/i);
+        const valueInput = screen.getByLabelText(/^requester$/i);
 
         fireEvent.change(valueInput, {
             target: { value: "car" },
@@ -478,7 +478,7 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        const valueInput = screen.getByLabelText(/study value/i);
+        const valueInput = screen.getByLabelText(/^study$/i);
 
         fireEvent.change(valueInput, {
             target: { value: "656" },
