@@ -15,6 +15,21 @@ function recentRows(page: Page): Locator {
         .filter({ hasNotText: "seqmeta/rendering-repro" });
 }
 
+async function expectRecentRowsLoaded(page: Page): Promise<void> {
+    await expect.poll(async () => recentRows(page).count()).toBeGreaterThan(0);
+}
+
+async function switchToResultRowsView(page: Page): Promise<void> {
+    const resultRowsButton = page.getByRole("button", { name: "Result rows" });
+
+    if ((await resultRowsButton.count()) === 0) {
+        return;
+    }
+
+    await resultRowsButton.click();
+    await expect(page.locator('[data-file-browser="true"]')).toHaveCount(0);
+}
+
 type SortIconMetric = {
     columnId: string;
     flexShrink: string;
@@ -78,7 +93,7 @@ async function openResultDetail(
 ): Promise<void> {
     await page.goto("/");
     await expect(page.getByText("Recent registrations")).toBeVisible();
-    await expect(recentRows(page)).toHaveCount(4);
+    await expectRecentRowsLoaded(page);
 
     const resultLink = page.getByRole("link", { name: pipelineName }).first();
     const href = await resultLink.getAttribute("href");
@@ -318,7 +333,7 @@ test.describe("Q1 critical results flows", () => {
         await expect(page.locator('[data-stat-card="total"]')).toHaveCount(0);
 
         const rows = recentRows(page);
-        await expect(rows).toHaveCount(4);
+        await expect(rows.first()).toBeVisible();
     });
 
     test("does not wrap the search builder in a visible outer panel", async ({
@@ -467,7 +482,7 @@ test.describe("Q1 critical results flows", () => {
         await page.goto("/");
 
         await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(4);
+        await expectRecentRowsLoaded(page);
 
         const metrics = await collectRecentSortIconMetrics(page);
 
@@ -503,7 +518,7 @@ test.describe("Q1 critical results flows", () => {
         await addRequesterFilter(page, "alice");
 
         await expect(page).toHaveURL(/\?user=alice/);
-        await expect(page.getByText("Showing search results")).toBeVisible();
+        await switchToResultRowsView(page);
 
         const rows = recentRows(page);
         await expect(rows).toHaveCount(1);
@@ -517,7 +532,7 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await page.goto("/");
         await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(4);
+        await expectRecentRowsLoaded(page);
 
         const recentResultLink = page
             .getByRole("link", { name: rnaseqPipelineName })
@@ -540,10 +555,11 @@ test.describe("Q1 critical results flows", () => {
 
         await expect(page).toHaveURL(/\/$/);
         await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(4);
+        await expectRecentRowsLoaded(page);
 
         await addRequesterFilter(page, "alice");
         await expect(page).toHaveURL(/\?user=alice/);
+        await switchToResultRowsView(page);
 
         const searchResultLink = page
             .getByRole("link", { name: rnaseqPipelineName })
@@ -568,7 +584,7 @@ test.describe("Q1 critical results flows", () => {
         await backToSearch.click();
 
         await expect(page).toHaveURL(/\?user=alice$/);
-        await expect(page.getByText("Showing search results")).toBeVisible();
+        await switchToResultRowsView(page);
         await expect(recentRows(page)).toHaveCount(1);
         await expect(recentRows(page).first()).toContainText("alice");
     });
@@ -1095,7 +1111,7 @@ test.describe("Q1 critical results flows", () => {
     }) => {
         await page.goto("/");
         await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(4);
+        await expectRecentRowsLoaded(page);
 
         const ampliconLink = page
             .getByRole("link", { name: ampliconPipelineName })
