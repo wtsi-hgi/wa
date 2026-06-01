@@ -20,7 +20,7 @@ async function expectRecentRowsLoaded(page: Page): Promise<void> {
 }
 
 async function switchToResultRowsView(page: Page): Promise<void> {
-    const resultRowsButton = page.getByRole("button", { name: "Result rows" });
+    const resultRowsButton = page.getByRole("button", { name: "Result sets" });
 
     if ((await resultRowsButton.count()) === 0) {
         return;

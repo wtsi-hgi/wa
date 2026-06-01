@@ -648,7 +648,8 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         expect(countOccurrences(markup, 'data-file-browser="true"')).toBe(1);
         expect(markup).toContain("Combined files");
-        expect(markup).toContain("Result rows");
+        expect(markup).toContain("Result sets");
+        expect(markup).not.toContain("Result rows");
         expect(markup).not.toContain('data-results-table-summary="true"');
         expect(markup).not.toContain("Showing search results");
         expect(markup).not.toContain("Matching result sets");

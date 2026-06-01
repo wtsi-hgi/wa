@@ -369,6 +369,8 @@ test.describe("search combined file browser repro", () => {
 
         await expect(combinedBrowser).toHaveCount(1);
         await expect(combinedBrowser).toContainText("Combined files");
+        await expect(combinedBrowser).toContainText("Result sets");
+        await expect(combinedBrowser).not.toContainText("Result rows");
         await expect(combinedBrowser).toContainText("File access locked");
         await expect(combinedBrowser).toContainText("2 matching result sets");
         await expect(combinedBrowser).toContainText(workRoot);
@@ -380,7 +382,7 @@ test.describe("search combined file browser repro", () => {
         ).toHaveCount(0);
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(0);
 
-        await page.getByRole("button", { name: "Result rows" }).click();
+        await page.getByRole("button", { name: "Result sets" }).click();
         await expect(lockedMatchingRows(page)).toHaveCount(2);
     });
 
@@ -623,7 +625,7 @@ test.describe("search combined file browser repro", () => {
     }) => {
         await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
 
-        await page.getByRole("button", { name: "Result rows" }).click();
+        await page.getByRole("button", { name: "Result sets" }).click();
 
         const combinedBrowserShell = page.locator(
             '[data-search-combined-file-browser="true"]',
@@ -745,7 +747,7 @@ test.describe("search combined file browser repro", () => {
 
         expect(duplicateKeyMessages).toEqual([]);
 
-        await page.getByRole("button", { name: "Result rows" }).click();
+        await page.getByRole("button", { name: "Result sets" }).click();
         const resultRows = page.locator("tbody tr[data-result-row='true']");
         await expect(resultRows).toHaveCount(2);
         const resultRowText = (await resultRows.allTextContents()).join("\n");
@@ -766,7 +768,7 @@ test.describe("search combined file browser repro", () => {
         await expect(
             page.locator('[data-file-browser="true"]'),
         ).not.toContainText("orange-heatmap.svg");
-        await page.getByRole("button", { name: "Result rows" }).click();
+        await page.getByRole("button", { name: "Result sets" }).click();
         await expect(
             page.locator("tbody tr[data-result-row='true']"),
         ).toHaveCount(1);
@@ -809,7 +811,7 @@ test.describe("search combined file browser repro", () => {
 
         expect(rootSampleFiles).toEqual([]);
 
-        await page.getByRole("button", { name: "Result rows" }).click();
+        await page.getByRole("button", { name: "Result sets" }).click();
         const resultRows = page.locator("tbody tr[data-result-row='true']");
         await expect(resultRows).toHaveCount(2);
 
@@ -849,7 +851,7 @@ test.describe("search combined file browser repro", () => {
             )
             .toBeGreaterThan(0);
 
-        await page.getByRole("button", { name: "Result rows" }).click();
+        await page.getByRole("button", { name: "Result sets" }).click();
         await expect(
             page.locator("tbody tr[data-result-row='true']"),
         ).toHaveCount(1);
@@ -940,7 +942,7 @@ test.describe("search combined file browser repro", () => {
         await expect(page.locator('[data-file-browser="true"]')).toContainText(
             "sample-a",
         );
-        await page.getByRole("button", { name: "Result rows" }).click();
+        await page.getByRole("button", { name: "Result sets" }).click();
 
         const resultRows = page.locator("tbody tr[data-result-row='true']");
         await expect(resultRows).toHaveCount(1);

@@ -307,7 +307,7 @@ export function SearchCombinedFileBrowser({
                     type="button"
                 >
                     <Rows3 className="size-4" aria-hidden="true" />
-                    <span>Result rows</span>
+                    <span>Result sets</span>
                 </button>
             </div>
 
