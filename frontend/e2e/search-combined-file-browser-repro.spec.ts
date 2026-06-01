@@ -224,6 +224,49 @@ async function collectSubfolderPreviewEvidence(page: Page) {
     });
 }
 
+async function collectCombinedGalleriesRootEvidence(page: Page) {
+    return page.evaluate(() => {
+        const fileBrowser = document.querySelector<HTMLElement>(
+            '[data-file-browser="true"]',
+        );
+        const directoryRows = [
+            ...document.querySelectorAll<HTMLElement>("[data-directory-row]"),
+        ].map((row) => ({
+            path: row.dataset.directoryRow ?? "",
+            text: row.innerText.slice(0, 1000),
+        }));
+        const directoryFileGroups = [
+            ...document.querySelectorAll<HTMLElement>(
+                "[data-file-browser-directory-files]",
+            ),
+        ].map((group) => ({
+            directory:
+                group.dataset.fileBrowserDirectoryFiles ??
+                group.getAttribute("data-file-browser-directory-files") ??
+                "",
+            files: [
+                ...group.querySelectorAll<HTMLElement>("[data-file-path]"),
+            ].map((file) => ({
+                path: file.dataset.filePath ?? "",
+                text: file.innerText,
+            })),
+        }));
+        const resultRows = [
+            ...document.querySelectorAll<HTMLElement>(
+                'tbody tr[data-result-row="true"]',
+            ),
+        ].map((row) => row.innerText);
+
+        return {
+            directoryFileGroups,
+            directoryRows,
+            fileBrowserText: fileBrowser?.innerText ?? null,
+            resultRows,
+            rootDirectory: directoryRows[0]?.path ?? null,
+        };
+    });
+}
+
 async function selectDirectory(page: Page, directoryPath: string) {
     await expect
         .poll(async () => page.locator("[data-directory-path]").count())
@@ -352,13 +395,54 @@ test.describe("search combined file browser repro", () => {
 
         const searchBuilder = page.locator('[data-search-builder="true"]');
         const combinedBrowser = page.locator('[data-file-browser="true"]');
+        const alphaOutputDirectory = path.join(
+            workRoot,
+            "results",
+            "samples",
+            "alpha",
+            "final",
+        );
+        const betaOutputDirectory = path.join(
+            workRoot,
+            "results",
+            "samples",
+            "beta",
+            "final",
+        );
 
         await expect(combinedBrowser).toHaveCount(1);
+        await expect(
+            combinedBrowser.locator(
+                `[data-directory-path="${alphaOutputDirectory}"]`,
+            ),
+        ).toBeVisible();
+        await expect(
+            combinedBrowser.locator(
+                `[data-directory-path="${betaOutputDirectory}"]`,
+            ),
+        ).toBeVisible();
+
+        const browserEvidence =
+            await collectCombinedGalleriesRootEvidence(page);
+        const rootFileGroup = browserEvidence.directoryFileGroups.find(
+            (group) => group.directory === browserEvidence.rootDirectory,
+        );
+        expect(rootFileGroup?.files ?? []).toEqual([]);
+
+        await selectDirectory(page, alphaOutputDirectory);
         await expect(combinedBrowser).toContainText(
             "alpha-expression-counts.tsv",
         );
+        await expect(combinedBrowser).not.toContainText(
+            "beta-expression-counts.tsv",
+        );
+
+        await selectDirectory(page, betaOutputDirectory);
         await expect(combinedBrowser).toContainText(
             "beta-expression-counts.tsv",
+        );
+        await expect(combinedBrowser).not.toContainText(
+            "alpha-expression-counts.tsv",
         );
 
         const layout = await searchBuilder.evaluate((builder) => {
@@ -541,6 +625,7 @@ test.describe("search combined file browser repro", () => {
             page.locator('[data-search-combined-file-browser="true"]'),
         ).toBeVisible();
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(1);
+        const combinedBrowser = page.locator('[data-file-browser="true"]');
         const resultRows = page.locator("tbody tr[data-result-row='true']");
         await expect(resultRows).toHaveCount(2);
         const resultRowText = (await resultRows.allTextContents()).join("\n");
@@ -550,12 +635,39 @@ test.describe("search combined file browser repro", () => {
         expect(resultRowText).not.toContain("combined-galleries-demo/sample-b");
         expect(resultRowText).not.toContain("galleries-demo/sample-a");
         expect(resultRowText).not.toContain("galleries-demo/sample-b");
-        await expect(page.locator('[data-file-browser="true"]')).toContainText(
-            "blue-plot.svg",
+        const browserEvidence =
+            await collectCombinedGalleriesRootEvidence(page);
+        const rootFileGroup = browserEvidence.directoryFileGroups.find(
+            (group) => group.directory === browserEvidence.rootDirectory,
         );
-        await expect(page.locator('[data-file-browser="true"]')).toContainText(
-            "orange-heatmap.svg",
+        expect(rootFileGroup?.files ?? []).toEqual([]);
+
+        const sampleAOutputDirectory = path.join(
+            repoRoot,
+            ".docs",
+            "results-web",
+            "fixtures",
+            "files",
+            "sibling-gallery-runs",
+            "sample-a",
         );
+        const sampleBOutputDirectory = path.join(
+            repoRoot,
+            ".docs",
+            "results-web",
+            "fixtures",
+            "files",
+            "sibling-gallery-runs",
+            "sample-b",
+        );
+
+        await selectDirectory(page, sampleAOutputDirectory);
+        await expect(combinedBrowser).toContainText("blue-plot.svg");
+        await expect(combinedBrowser).not.toContainText("orange-heatmap.svg");
+
+        await selectDirectory(page, sampleBOutputDirectory);
+        await expect(combinedBrowser).toContainText("orange-heatmap.svg");
+        await expect(combinedBrowser).not.toContainText("blue-plot.svg");
         await page.waitForTimeout(1000);
 
         const duplicateKeyMessages = consoleMessages.filter((message) =>
@@ -587,6 +699,50 @@ test.describe("search combined file browser repro", () => {
         await expect(
             page.locator('[data-file-browser="true"]'),
         ).not.toContainText("orange-heatmap.svg");
+    });
+
+    test("characterizes combined galleries files appearing in the common parent directory", async ({
+        page,
+    }) => {
+        const seededPipelineName = "wtsi/combined-galleries-demo";
+
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent(seededPipelineName)}`,
+        );
+
+        const resultRows = page.locator("tbody tr[data-result-row='true']");
+        await expect(resultRows).toHaveCount(2);
+        await expect(page.locator('[data-file-browser="true"]')).toHaveCount(1);
+
+        const resultRowText = (await resultRows.allTextContents()).join("\n");
+        expect(resultRowText).toContain("sibling-gallery-runs/sample-a");
+        expect(resultRowText).toContain("sibling-gallery-runs/sample-b");
+
+        const browserEvidence =
+            await collectCombinedGalleriesRootEvidence(page);
+        await writeEvidence(
+            page,
+            "search-combined-file-browser-galleries-parent-files-repro.png",
+            {
+                browserEvidence,
+                searchUrl: page.url(),
+            },
+        );
+
+        expect(browserEvidence.rootDirectory).toContain("sibling-gallery-runs");
+        expect(browserEvidence.rootDirectory).not.toContain("/sample-a");
+        expect(browserEvidence.rootDirectory).not.toContain("/sample-b");
+
+        const rootFiles =
+            browserEvidence.directoryFileGroups[0]?.files.map(
+                (file) => file.path,
+            ) ?? [];
+        const rootSampleFiles = rootFiles.filter(
+            (file) =>
+                file.includes("/sample-a/") || file.includes("/sample-b/"),
+        );
+
+        expect(rootSampleFiles).toEqual([]);
     });
 
     test("reproduces missing subfolder preview affordance for seeded galleries sample-a", async ({

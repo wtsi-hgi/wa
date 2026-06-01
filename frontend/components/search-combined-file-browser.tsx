@@ -257,16 +257,6 @@ export function SearchCombinedFileBrowser({
         () => commonDirectory(files.map((file) => file.path)),
         [files],
     );
-    const directoryFileOverrides = useMemo(
-        () =>
-            initialDirectory
-                ? {
-                      [initialDirectory]: files,
-                  }
-                : undefined,
-        [files, initialDirectory],
-    );
-
     if (files.length === 0 && lockedRegistrations.length === 0) {
         return null;
     }
@@ -322,7 +312,6 @@ export function SearchCombinedFileBrowser({
                 <div className="space-y-3">
                     {files.length > 0 ? (
                         <ResultDetailFiles
-                            directoryFileOverrides={directoryFileOverrides}
                             files={files}
                             initialSelectedDirectory={initialDirectory}
                             renderDirectoryAction={renderDirectoryAction}

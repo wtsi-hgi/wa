@@ -652,8 +652,19 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(markup).not.toContain('data-results-table-summary="true"');
         expect(markup).not.toContain("Showing search results");
         expect(markup).not.toContain("Matching result sets");
-        expect(markup).toContain("alpha-expression-counts.tsv");
-        expect(markup).toContain("beta-expression-counts.tsv");
+        expect(markup).toContain('data-directory-path="/tmp/results/shared"');
+        expect(markup).toContain(
+            'data-directory-path="/tmp/results/shared/sample-alpha/final"',
+        );
+        expect(markup).toContain(
+            'data-directory-path="/tmp/results/shared/sample-beta/final"',
+        );
+        expect(markup).not.toContain(
+            'data-file-path="/tmp/results/shared/sample-alpha/final/alpha-expression-counts.tsv"',
+        );
+        expect(markup).not.toContain(
+            'data-file-path="/tmp/results/shared/sample-beta/final/beta-expression-counts.tsv"',
+        );
         expect(markup).toContain(`data-combined-result-info="${alpha.id}"`);
         expect(markup).toContain(`data-combined-result-info="${beta.id}"`);
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
