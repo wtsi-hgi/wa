@@ -450,7 +450,7 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 		convey.So(resultsURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
 		convey.So(seqmetaURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		seededResultsMu.Lock()
-		convey.So(seededResults, convey.ShouldEqual, 4)
+		convey.So(seededResults, convey.ShouldEqual, 6)
 		seededResultsMu.Unlock()
 		convey.So(runDevPathExistsWithinForTest(frontendSentinelPath, 2*time.Second), convey.ShouldBeFalse)
 		convey.So(runDevPathExistsWithinForTest(seqmetaSentinelPath, 2*time.Second), convey.ShouldBeFalse)
@@ -495,7 +495,7 @@ func TestRunDevScript(t *testing.T) {
 		fixtureSummary := summarizeRunDevFixturesForTest(t, repoRoot, resultsPort, resultsList)
 
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
-		convey.So(resultsList, convey.ShouldHaveLength, 4)
+		convey.So(resultsList, convey.ShouldHaveLength, 6)
 		convey.So(fixtureSummary.nestedDirectoryCount, convey.ShouldBeGreaterThanOrEqualTo, 3)
 		convey.So(fixtureSummary.hasSiblingDirectories, convey.ShouldBeTrue)
 		convey.So(fixtureSummary.hasRepeatedFileTypes, convey.ShouldBeTrue)
@@ -1752,7 +1752,7 @@ func waitForSeededResultsForTest(t *testing.T, resultsPort int) []results.Result
 				}
 			}()
 
-			if len(stored) == 4 {
+			if len(stored) == 6 {
 				resultsCopy := make([]results.ResultSet, len(stored))
 				copy(resultsCopy, stored)
 

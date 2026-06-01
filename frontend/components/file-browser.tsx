@@ -322,6 +322,7 @@ function clampPreviewHeight(value: number): number {
 }
 
 type FileBrowserProps = {
+    activeFiles?: FileEntry[];
     files: FileEntry[];
     onPreviewHeightChange?: (value: number) => void;
     onPreviewModeChange?: (mode: PreviewMode) => void;
@@ -336,6 +337,7 @@ type FileBrowserProps = {
     previewPage?: number;
     previewPageCount?: number;
     previewSummary?: string;
+    renderDirectoryAction?: (node: DirectoryTreeNode) => ReactNode;
     renderGridPreview?: (file: FileEntry) => ReactNode;
     renderSinglePreview?: (file: FileEntry | null) => ReactNode;
     selectedDirectory?: string;
@@ -1008,6 +1010,7 @@ export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
 }
 
 export function FileBrowser({
+    activeFiles: activeFilesOverride,
     files,
     onPreviewHeightChange,
     onPreviewModeChange,
@@ -1019,6 +1022,7 @@ export function FileBrowser({
     previewPage = 1,
     previewPageCount = 1,
     previewSummary,
+    renderDirectoryAction,
     renderGridPreview,
     renderSinglePreview,
     selectedDirectory,
@@ -1064,7 +1068,7 @@ export function FileBrowser({
     const activeDirectory = directoryGroups.find(
         (group) => group.path === preferredDirectory,
     );
-    const activeFiles = activeDirectory?.files ?? [];
+    const activeFiles = activeFilesOverride ?? activeDirectory?.files ?? [];
     const effectiveSelectedDirectory = preferredDirectory;
     const [uncontrolledPreviewHeight, setUncontrolledPreviewHeight] =
         useState(previewHeight);
@@ -1899,6 +1903,17 @@ export function FileBrowser({
             const controlPlacement = inlineControlPlacement;
             const folderControlsInNameArea =
                 controlPlacement === "name-area" && Boolean(folderControls);
+            const directoryAction = renderDirectoryAction?.(node) ?? null;
+            const headingSideContent =
+                folderControlsInNameArea || directoryAction ? (
+                    <div
+                        className="flex max-w-full min-w-0 flex-wrap items-center justify-end gap-2"
+                        data-file-browser-name-area-actions={node.path}
+                    >
+                        {directoryAction}
+                        {folderControlsInNameArea ? folderControls : null}
+                    </div>
+                ) : null;
             const renderDirectoryButton = () => (
                 <button
                     type="button"
@@ -2012,7 +2027,7 @@ export function FileBrowser({
                             showInlineSubdirPreview ? node.path : undefined
                         }
                     >
-                        {folderControlsInNameArea ? (
+                        {headingSideContent ? (
                             <div
                                 className={cn(
                                     "grid w-full grid-cols-1 items-start gap-2",
@@ -2027,7 +2042,7 @@ export function FileBrowser({
                                         node.path
                                     }
                                 >
-                                    {folderControls}
+                                    {headingSideContent}
                                 </div>
                             </div>
                         ) : (

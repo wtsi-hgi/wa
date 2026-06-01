@@ -28,7 +28,7 @@ const searchResultsMock = vi.fn();
 const fetchMetaKeysMock = vi.fn().mockResolvedValue([]);
 const fetchStudiesMock = vi.fn();
 const fetchResultMock = vi.fn();
-const fetchFilesMock = vi.fn();
+const fetchFilesMock = vi.fn().mockResolvedValue([]);
 const fetchFileContentMock = vi.fn();
 const validateIdentifierMock = vi.fn();
 const pushMock = vi.fn();
@@ -145,6 +145,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         document.body.innerHTML = "";
         delete process.env.WA_SEQMETA_BACKEND_URL;
         vi.clearAllMocks();
+        fetchFilesMock.mockResolvedValue([]);
         vi.resetModules();
         pushMock.mockReset();
     });
@@ -606,6 +607,53 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(searchResultsMock).toHaveBeenCalledWith({ user: ["alice"] });
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
         expect(markup).toContain("Showing search results");
+    });
+
+    it("renders the combined search file browser by default for viewable matching result files", async () => {
+        fetchStatsMock.mockResolvedValue(buildStats());
+        const alpha = buildResultSet(21);
+        const beta = buildResultSet(22);
+        alpha.pipeline_name = "wa/combined-browser-repro";
+        beta.pipeline_name = "wa/combined-browser-repro";
+        alpha.output_directory = "/tmp/results/shared/sample-alpha/final";
+        beta.output_directory = "/tmp/results/shared/sample-beta/final";
+        alpha.metadata = { sample: "COMBINED_SAMPLE_ALPHA" };
+        beta.metadata = { sample: "COMBINED_SAMPLE_BETA" };
+        searchResultsMock.mockResolvedValue([alpha, beta]);
+        fetchFilesMock.mockImplementation((id: string) =>
+            Promise.resolve(
+                id === alpha.id
+                    ? [
+                          {
+                              kind: "output",
+                              mtime: "2026-06-01T10:00:00Z",
+                              path: `${alpha.output_directory}/alpha-expression-counts.tsv`,
+                              size: 12,
+                          },
+                      ]
+                    : [
+                          {
+                              kind: "output",
+                              mtime: "2026-06-01T10:00:00Z",
+                              path: `${beta.output_directory}/beta-expression-counts.tsv`,
+                              size: 12,
+                          },
+                      ],
+            ),
+        );
+
+        const markup = await renderDashboard({
+            pipeline_name: "wa/combined-browser-repro",
+        });
+
+        expect(countOccurrences(markup, 'data-file-browser="true"')).toBe(1);
+        expect(markup).toContain("Combined files");
+        expect(markup).toContain("Result rows");
+        expect(markup).toContain("alpha-expression-counts.tsv");
+        expect(markup).toContain("beta-expression-counts.tsv");
+        expect(markup).toContain(`data-combined-result-info="${alpha.id}"`);
+        expect(markup).toContain(`data-combined-result-info="${beta.id}"`);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
     });
 
     it("shows matched samples for study-driven searches", async () => {

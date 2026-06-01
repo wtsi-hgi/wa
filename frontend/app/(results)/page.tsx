@@ -1,13 +1,21 @@
 import { DashboardToast } from "@/components/dashboard-toast";
 import { FilterBuilder } from "@/components/filter-builder";
 import { ResultsTable } from "@/components/results-table";
+import {
+    SearchCombinedFileBrowser,
+    type CombinedSearchFile,
+    type CombinedSearchRegistration,
+} from "@/components/search-combined-file-browser";
 import type { FilterSuggestionMap } from "@/components/filter-builder";
 import {
     fetchMetaKeys,
+    fetchFiles,
     fetchStats,
     searchResults,
 } from "@/app/(results)/actions";
+import { BackendRequestError } from "@/lib/backend-client";
 import type {
+    FileEntry,
     ResultSet,
     SearchResult,
     StatsResult,
@@ -189,6 +197,54 @@ function buildReturnHref(searchParams: SearchParams): string {
     return query ? `/?${query}` : "/";
 }
 
+function isResultViewable(result: ResultSet): boolean {
+    return result.access?.locked !== true && result.access?.can_view !== false;
+}
+
+async function collectCombinedSearchFiles(
+    entries: ResultSet[] | SearchResult[],
+): Promise<{
+    files: CombinedSearchFile[];
+    registrations: CombinedSearchRegistration[];
+}> {
+    const files: CombinedSearchFile[] = [];
+    const registrations: CombinedSearchRegistration[] = [];
+
+    for (const entry of entries) {
+        const result = toResultSet(entry);
+
+        if (!isResultViewable(result)) {
+            continue;
+        }
+
+        let resultFiles: FileEntry[];
+
+        try {
+            resultFiles = await fetchFiles(result.id);
+        } catch (error) {
+            if (error instanceof BackendRequestError && error.status === 403) {
+                continue;
+            }
+
+            throw error;
+        }
+
+        if (resultFiles.length === 0) {
+            continue;
+        }
+
+        registrations.push({ fileCount: resultFiles.length, result });
+        files.push(
+            ...resultFiles.map((file) => ({
+                ...file,
+                resultId: result.id,
+            })),
+        );
+    }
+
+    return { files, registrations };
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
     if (error instanceof Error && error.message.trim()) {
         return error.message;
@@ -241,6 +297,8 @@ export default async function ResultsLandingPage({
     let tableData: ResultSet[] | SearchResult[] = stats.recent;
     let tableMode: "recent" | "search" = "recent";
     let tableEmptyMessage = "No recent results yet.";
+    let combinedSearchFiles: CombinedSearchFile[] = [];
+    let combinedSearchRegistrations: CombinedSearchRegistration[] = [];
 
     if (hasSearch) {
         tableMode = "search";
@@ -253,6 +311,16 @@ export default async function ResultsLandingPage({
             statsError =
                 statsError ??
                 getErrorMessage(error, "Unable to search results");
+        }
+
+        try {
+            const combined = await collectCombinedSearchFiles(tableData);
+            combinedSearchFiles = combined.files;
+            combinedSearchRegistrations = combined.registrations;
+        } catch (error) {
+            statsError =
+                statsError ??
+                getErrorMessage(error, "Unable to load search result files");
         }
     }
 
@@ -269,6 +337,13 @@ export default async function ResultsLandingPage({
                 suggestionValues={suggestionValues}
                 studies={studies}
             />
+
+            {hasSearch ? (
+                <SearchCombinedFileBrowser
+                    files={combinedSearchFiles}
+                    registrations={combinedSearchRegistrations}
+                />
+            ) : null}
 
             <ResultsTable
                 data={tableData}

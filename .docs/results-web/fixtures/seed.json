@@ -1169,5 +1169,81 @@
             "seqmeta_studyid": "6568",
             "panel": "subdir-preview-demo"
         }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/nf-galleries-demo",
+        "run_key": "runid=88205&unique=galleries_sample_a",
+        "requester": "grace",
+        "operator": "heidi",
+        "command": "nextflow run nf-galleries-demo --sample gallery-alpha",
+        "pipeline_name": "wtsi/galleries-demo",
+        "pipeline_version": "0.4.2",
+        "output_directory": ".docs/results-web/fixtures/files/galleries-demo/sample-a",
+        "files": [
+            {
+                "path": "blue-plot.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "red-plot.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "summary.csv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "overview/navy-summary.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "seqmeta_studyid": "6568",
+            "panel": "subdir-preview-demo",
+            "sample": "gallery-alpha"
+        }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/nf-galleries-demo",
+        "run_key": "runid=88206&unique=galleries_sample_b",
+        "requester": "grace",
+        "operator": "heidi",
+        "command": "nextflow run nf-galleries-demo --sample gallery-beta",
+        "pipeline_name": "wtsi/galleries-demo",
+        "pipeline_version": "0.4.2",
+        "output_directory": ".docs/results-web/fixtures/files/galleries-demo/sample-b",
+        "files": [
+            {
+                "path": "orange-heatmap.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "purple-heatmap.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
+                "path": "teal-heatmap.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "seqmeta_studyid": "6568",
+            "panel": "subdir-preview-demo",
+            "sample": "gallery-beta"
+        }
     }
 ]
