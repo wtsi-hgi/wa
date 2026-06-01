@@ -201,6 +201,22 @@ function isResultViewable(result: ResultSet): boolean {
     return result.access?.locked !== true && result.access?.can_view !== false;
 }
 
+function outputDirectorySpecificity(
+    result: ResultSet,
+    file: FileEntry,
+): number {
+    const outputDirectory = result.output_directory.replace(/\/+$/, "");
+
+    if (
+        file.path !== outputDirectory &&
+        !file.path.startsWith(`${outputDirectory}/`)
+    ) {
+        return 0;
+    }
+
+    return outputDirectory.split("/").filter(Boolean).length;
+}
+
 async function collectCombinedSearchFiles(
     entries: ResultSet[] | SearchResult[],
 ): Promise<{
@@ -208,7 +224,10 @@ async function collectCombinedSearchFiles(
     lockedRegistrations: CombinedSearchRegistration[];
     registrations: CombinedSearchRegistration[];
 }> {
-    const files: CombinedSearchFile[] = [];
+    const filesByPath = new Map<
+        string,
+        { file: CombinedSearchFile; specificity: number }
+    >();
     const lockedRegistrations: CombinedSearchRegistration[] = [];
     const registrations: CombinedSearchRegistration[] = [];
 
@@ -238,15 +257,28 @@ async function collectCombinedSearchFiles(
         }
 
         registrations.push({ fileCount: resultFiles.length, result });
-        files.push(
-            ...resultFiles.map((file) => ({
+        for (const file of resultFiles) {
+            const combinedFile = {
                 ...file,
                 resultId: result.id,
-            })),
-        );
+            };
+            const specificity = outputDirectorySpecificity(result, file);
+            const existing = filesByPath.get(file.path);
+
+            if (!existing || specificity > existing.specificity) {
+                filesByPath.set(file.path, {
+                    file: combinedFile,
+                    specificity,
+                });
+            }
+        }
     }
 
-    return { files, lockedRegistrations, registrations };
+    return {
+        files: [...filesByPath.values()].map(({ file }) => file),
+        lockedRegistrations,
+        registrations,
+    };
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {

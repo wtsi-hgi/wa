@@ -30,6 +30,16 @@ const sampleBeta = "COMBINED_SAMPLE_BETA";
 
 let registeredResults: ResultSet[] = [];
 
+type CapturedConsoleMessage = {
+    location: {
+        columnNumber: number;
+        lineNumber: number;
+        url: string;
+    };
+    text: string;
+    type: string;
+};
+
 test.beforeAll(() => {
     registeredResults = [
         registerCombinedBrowserResult({
@@ -123,6 +133,7 @@ function lockedMatchingRows(page: Page): Locator {
 async function writeEvidence(
     page: Page,
     screenshotName: string,
+    extraEvidence: Record<string, unknown> = {},
 ): Promise<void> {
     mkdirSync(evidenceDir, { recursive: true });
 
@@ -158,7 +169,7 @@ async function writeEvidence(
     await page.screenshot({ fullPage: true, path: screenshotPath });
     writeFileSync(
         evidencePath,
-        `${JSON.stringify({ ...evidence, screenshotPath }, null, 2)}\n`,
+        `${JSON.stringify({ ...evidence, ...extraEvidence, screenshotPath }, null, 2)}\n`,
     );
 }
 
@@ -306,5 +317,49 @@ test.describe("search combined file browser repro", () => {
         await expect(combinedBrowser).not.toContainText(
             "beta-expression-counts.tsv",
         );
+    });
+
+    test("does not emit duplicate key warnings for the wtsi galleries combined file browser", async ({
+        page,
+    }) => {
+        const consoleMessages: CapturedConsoleMessage[] = [];
+
+        page.on("console", (message) => {
+            consoleMessages.push({
+                location: message.location(),
+                text: message.text(),
+                type: message.type(),
+            });
+        });
+
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent("wtsi/galleries-demo")}`,
+        );
+
+        await expect(page.getByText("Showing search results")).toBeVisible();
+        await expect(
+            page.locator('[data-search-combined-file-browser="true"]'),
+        ).toBeVisible();
+        await expect(page.locator('[data-file-browser="true"]')).toHaveCount(1);
+        await expect(
+            page.locator("tbody tr[data-result-row='true']"),
+        ).toHaveCount(3);
+        await page.waitForTimeout(1000);
+
+        const duplicateKeyMessages = consoleMessages.filter((message) =>
+            message.text.includes("Encountered two children with the same key"),
+        );
+
+        await writeEvidence(
+            page,
+            "search-combined-file-browser-galleries-duplicate-key.png",
+            {
+                consoleMessages,
+                duplicateKeyMessages,
+                searchUrl: page.url(),
+            },
+        );
+
+        expect(duplicateKeyMessages).toEqual([]);
     });
 });

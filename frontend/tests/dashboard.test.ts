@@ -656,6 +656,56 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
     });
 
+    it("deduplicates overlapping combined search files by visible path", async () => {
+        fetchStatsMock.mockResolvedValue(buildStats());
+        const parent = buildResultSet(23);
+        const sample = buildResultSet(24);
+        const duplicatePath = "/tmp/results/galleries/sample-a/blue-plot.svg";
+        parent.pipeline_name = "wtsi/galleries-demo";
+        sample.pipeline_name = "wtsi/galleries-demo";
+        parent.output_directory = "/tmp/results/galleries";
+        sample.output_directory = "/tmp/results/galleries/sample-a";
+        searchResultsMock.mockResolvedValue([parent, sample]);
+        fetchFilesMock.mockImplementation((id: string) =>
+            Promise.resolve(
+                id === parent.id
+                    ? [
+                          {
+                              kind: "output",
+                              mtime: "2026-06-01T10:00:00Z",
+                              path: duplicatePath,
+                              size: 12,
+                          },
+                          {
+                              kind: "output",
+                              mtime: "2026-06-01T10:00:00Z",
+                              path: "/tmp/results/galleries/sample-a/red-plot.svg",
+                              size: 12,
+                          },
+                      ]
+                    : [
+                          {
+                              kind: "output",
+                              mtime: "2026-06-01T10:00:00Z",
+                              path: duplicatePath,
+                              size: 12,
+                          },
+                      ],
+            ),
+        );
+
+        const markup = await renderDashboard({
+            pipeline_name: "wtsi/galleries-demo",
+        });
+
+        expect(
+            countOccurrences(markup, `data-file-path="${duplicatePath}"`),
+        ).toBe(1);
+        expect(markup).toContain(`data-combined-result-info="${sample.id}"`);
+        expect(markup).toContain(`/api/file?id=${sample.id}&amp;`);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
+    });
+
     it("renders a locked combined search file browser state for locked matching result rows", async () => {
         fetchStatsMock.mockResolvedValue(buildStats());
         const alpha = buildResultSet(21);
