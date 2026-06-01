@@ -1171,14 +1171,14 @@
         }
     },
     {
-        "pipeline_identifier": "https://github.com/wtsi-hgi/nf-galleries-demo",
+        "pipeline_identifier": "https://github.com/wtsi-hgi/nf-combined-galleries-demo",
         "run_key": "runid=88205&unique=galleries_sample_a",
         "requester": "grace",
         "operator": "heidi",
-        "command": "nextflow run nf-galleries-demo --sample gallery-alpha",
-        "pipeline_name": "wtsi/galleries-demo",
+        "command": "nextflow run nf-combined-galleries-demo --sample gallery-alpha",
+        "pipeline_name": "wtsi/combined-galleries-demo",
         "pipeline_version": "0.4.2",
-        "output_directory": ".docs/results-web/fixtures/files/galleries-demo/sample-a",
+        "output_directory": ".docs/results-web/fixtures/files/combined-galleries-demo/sample-a",
         "files": [
             {
                 "path": "blue-plot.svg",
@@ -1212,14 +1212,14 @@
         }
     },
     {
-        "pipeline_identifier": "https://github.com/wtsi-hgi/nf-galleries-demo",
+        "pipeline_identifier": "https://github.com/wtsi-hgi/nf-combined-galleries-demo",
         "run_key": "runid=88206&unique=galleries_sample_b",
         "requester": "grace",
         "operator": "heidi",
-        "command": "nextflow run nf-galleries-demo --sample gallery-beta",
-        "pipeline_name": "wtsi/galleries-demo",
+        "command": "nextflow run nf-combined-galleries-demo --sample gallery-beta",
+        "pipeline_name": "wtsi/combined-galleries-demo",
         "pipeline_version": "0.4.2",
-        "output_directory": ".docs/results-web/fixtures/files/galleries-demo/sample-b",
+        "output_directory": ".docs/results-web/fixtures/files/combined-galleries-demo/sample-b",
         "files": [
             {
                 "path": "orange-heatmap.svg",

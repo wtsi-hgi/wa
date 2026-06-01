@@ -661,8 +661,8 @@ describe("J1 dashboard with search builder and recent results", () => {
         const parent = buildResultSet(23);
         const sample = buildResultSet(24);
         const duplicatePath = "/tmp/results/galleries/sample-a/blue-plot.svg";
-        parent.pipeline_name = "wtsi/galleries-demo";
-        sample.pipeline_name = "wtsi/galleries-demo";
+        parent.pipeline_name = "wa/overlapping-output-dir-regression";
+        sample.pipeline_name = "wa/overlapping-output-dir-regression";
         parent.output_directory = "/tmp/results/galleries";
         sample.output_directory = "/tmp/results/galleries/sample-a";
         searchResultsMock.mockResolvedValue([parent, sample]);
@@ -695,7 +695,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         );
 
         const markup = await renderDashboard({
-            pipeline_name: "wtsi/galleries-demo",
+            pipeline_name: "wa/overlapping-output-dir-regression",
         });
 
         expect(

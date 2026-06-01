@@ -319,10 +319,11 @@ test.describe("search combined file browser repro", () => {
         );
     });
 
-    test("does not emit duplicate key warnings for the wtsi galleries combined file browser", async ({
+    test("shows the seeded combined galleries fixture and does not emit duplicate key warnings", async ({
         page,
     }) => {
         const consoleMessages: CapturedConsoleMessage[] = [];
+        const seededPipelineName = "wtsi/combined-galleries-demo";
 
         page.on("console", (message) => {
             consoleMessages.push({
@@ -333,7 +334,7 @@ test.describe("search combined file browser repro", () => {
         });
 
         await page.goto(
-            `/?pipeline_name=${encodeURIComponent("wtsi/galleries-demo")}`,
+            `/?pipeline_name=${encodeURIComponent(seededPipelineName)}`,
         );
 
         await expect(page.getByText("Showing search results")).toBeVisible();
@@ -343,7 +344,13 @@ test.describe("search combined file browser repro", () => {
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(1);
         await expect(
             page.locator("tbody tr[data-result-row='true']"),
-        ).toHaveCount(3);
+        ).toHaveCount(2);
+        await expect(page.locator('[data-file-browser="true"]')).toContainText(
+            "blue-plot.svg",
+        );
+        await expect(page.locator('[data-file-browser="true"]')).toContainText(
+            "orange-heatmap.svg",
+        );
         await page.waitForTimeout(1000);
 
         const duplicateKeyMessages = consoleMessages.filter((message) =>
@@ -361,5 +368,20 @@ test.describe("search combined file browser repro", () => {
         );
 
         expect(duplicateKeyMessages).toEqual([]);
+
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent(seededPipelineName)}&sample=${encodeURIComponent("gallery-alpha")}`,
+        );
+
+        await expect(page.getByText("Showing search results")).toBeVisible();
+        await expect(
+            page.locator("tbody tr[data-result-row='true']"),
+        ).toHaveCount(1);
+        await expect(page.locator('[data-file-browser="true"]')).toContainText(
+            "blue-plot.svg",
+        );
+        await expect(
+            page.locator('[data-file-browser="true"]'),
+        ).not.toContainText("orange-heatmap.svg");
     });
 });
