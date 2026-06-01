@@ -120,7 +120,7 @@ describe("E3 auth menu", () => {
         expect(markup).not.toContain("fixed top-4 right-4");
     });
 
-    it("shows the username and a Log out menu item for signed-in sessions", async () => {
+    it("shows the username only inside the signed-in account menu", async () => {
         vi.stubGlobal(
             "fetch",
             vi.fn().mockResolvedValue(
@@ -133,10 +133,11 @@ describe("E3 auth menu", () => {
 
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
-        expect(screen.getByText("alice")).toBeTruthy();
+        expect(screen.queryByText("alice")).toBeNull();
 
         fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
 
+        expect(screen.getByText("alice")).toBeTruthy();
         expect(screen.getByRole("menuitem", { name: "Log out" })).toBeTruthy();
     });
 
@@ -210,6 +211,10 @@ describe("E3 auth menu", () => {
         fireEvent.submit(screen.getByRole("form", { name: "Log in" }));
 
         await screen.findByRole("button", { name: /alice account/i });
+
+        expect(screen.queryByText("alice")).toBeNull();
+
+        fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
 
         expect(screen.getByText("alice")).toBeTruthy();
     });

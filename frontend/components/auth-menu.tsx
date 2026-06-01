@@ -222,10 +222,9 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
             <DropdownMenu>
                 <DropdownMenuTrigger
                     aria-label={`${accountName} account`}
-                    className="inline-flex h-11 items-center gap-2 rounded-md border border-border bg-background/92 px-1.5 pr-2.5 text-sm font-medium text-foreground shadow-sm transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-background/92 p-1.5 text-sm font-medium text-foreground shadow-sm transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
                 >
                     <AccountAvatar username={session.username} />
-                    <Badge className="h-7">{accountName}</Badge>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="w-64 rounded-md">
                     <div className="flex items-center gap-3 px-3 py-2">
