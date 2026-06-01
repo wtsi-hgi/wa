@@ -362,6 +362,9 @@ export default async function ResultsLandingPage({
         }
     }
 
+    const showCombinedSearchFileBrowser =
+        combinedSearchFiles.length > 0 ||
+        combinedSearchLockedRegistrations.length > 0;
     const suggestionValues = buildSuggestionValues(stats, tableData, studies);
 
     return (
@@ -387,6 +390,7 @@ export default async function ResultsLandingPage({
             <ResultsTable
                 data={tableData}
                 emptyMessage={tableEmptyMessage}
+                hideSummary={showCombinedSearchFileBrowser}
                 mode={tableMode}
                 returnHref={returnHref}
                 studyActive={studyActive}

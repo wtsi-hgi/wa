@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 type ResultsTableProps = {
     data: ResultSet[] | SearchResult[];
     emptyMessage?: string;
+    hideSummary?: boolean;
     mode?: "recent" | "search";
     returnHref?: string;
     studyActive?: boolean;
@@ -67,6 +68,7 @@ function columnVisibilityLabel(columnId: string): string {
 export function ResultsTable({
     data,
     emptyMessage = "No results found.",
+    hideSummary = false,
     mode = "recent",
     returnHref = "/",
     studyActive = false,
@@ -110,55 +112,57 @@ export function ResultsTable({
 
     return (
         <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-            <div
-                className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5"
-                data-results-table-summary="true"
-            >
-                <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                        {mode === "search"
-                            ? "Showing search results"
-                            : "Recent registrations"}
-                    </p>
-                    <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                        {mode === "search"
-                            ? "Matching result sets"
-                            : "Latest result sets"}
-                    </h2>
-                </div>
-                <div className="flex items-center gap-3">
-                    <DropdownMenu>
-                        <DropdownMenuTrigger
-                            aria-label="Toggle column visibility"
-                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 py-2 text-sm text-muted-foreground transition hover:text-foreground"
-                        >
-                            <span>Columns</span>
-                            <ChevronDown
-                                className="h-4 w-4"
-                                aria-hidden="true"
-                            />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                            {visibleColumns.map((column) => (
-                                <DropdownMenuCheckboxItem
-                                    key={column.id}
-                                    checked={column.getIsVisible()}
-                                    data-column-id={column.id}
-                                    onCheckedChange={(checked) =>
-                                        column.toggleVisibility(checked)
-                                    }
-                                >
-                                    {columnVisibilityLabel(column.id)}
-                                </DropdownMenuCheckboxItem>
-                            ))}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+            {hideSummary ? null : (
+                <div
+                    className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5"
+                    data-results-table-summary="true"
+                >
+                    <div>
+                        <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                            {mode === "search"
+                                ? "Showing search results"
+                                : "Recent registrations"}
+                        </p>
+                        <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+                            {mode === "search"
+                                ? "Matching result sets"
+                                : "Latest result sets"}
+                        </h2>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <DropdownMenu>
+                            <DropdownMenuTrigger
+                                aria-label="Toggle column visibility"
+                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+                            >
+                                <span>Columns</span>
+                                <ChevronDown
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                                {visibleColumns.map((column) => (
+                                    <DropdownMenuCheckboxItem
+                                        key={column.id}
+                                        checked={column.getIsVisible()}
+                                        data-column-id={column.id}
+                                        onCheckedChange={(checked) =>
+                                            column.toggleVisibility(checked)
+                                        }
+                                    >
+                                        {columnVisibilityLabel(column.id)}
+                                    </DropdownMenuCheckboxItem>
+                                ))}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
 
-                    <p className="rounded-full border border-border/70 bg-background/90 px-3 py-1 text-sm text-muted-foreground">
-                        {rows.length} rows
-                    </p>
+                        <p className="rounded-full border border-border/70 bg-background/90 px-3 py-1 text-sm text-muted-foreground">
+                            {rows.length} rows
+                        </p>
+                    </div>
                 </div>
-            </div>
+            )}
 
             {rows.length === 0 ? (
                 <div className="px-6 py-10 text-sm leading-7 text-muted-foreground">

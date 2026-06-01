@@ -189,6 +189,24 @@ describe("L1 results table", () => {
         expect(container.textContent).toContain("No results found.");
     });
 
+    it("omits the summary header when requested by a parent layout", async () => {
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, {
+                    data: [buildResultSet(1)],
+                    hideSummary: true,
+                    mode: "search",
+                }),
+            );
+        });
+
+        expect(
+            container.querySelector('[data-results-table-summary="true"]'),
+        ).toBeNull();
+        expect(container.textContent).not.toContain("Showing search results");
+        expect(getBodyRows(container)).toHaveLength(1);
+    });
+
     it("keeps command, pipeline version, pipeline identifier, stored key, operator, and id hidden by default", async () => {
         await act(async () => {
             root.render(

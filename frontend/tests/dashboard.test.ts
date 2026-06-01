@@ -649,6 +649,9 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(countOccurrences(markup, 'data-file-browser="true"')).toBe(1);
         expect(markup).toContain("Combined files");
         expect(markup).toContain("Result rows");
+        expect(markup).not.toContain('data-results-table-summary="true"');
+        expect(markup).not.toContain("Showing search results");
+        expect(markup).not.toContain("Matching result sets");
         expect(markup).toContain("alpha-expression-counts.tsv");
         expect(markup).toContain("beta-expression-counts.tsv");
         expect(markup).toContain(`data-combined-result-info="${alpha.id}"`);
@@ -725,6 +728,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(fetchFilesMock).not.toHaveBeenCalled();
         expect(markup).toContain('data-search-combined-file-browser="true"');
         expect(markup).toContain('data-combined-file-browser-locked="true"');
+        expect(markup).not.toContain('data-results-table-summary="true"');
         expect(markup).toContain("File access locked");
         expect(markup).toContain("2 matching result sets");
         expect(markup).toContain("/tmp/results/shared");

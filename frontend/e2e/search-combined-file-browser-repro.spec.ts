@@ -232,7 +232,6 @@ test.describe("search combined file browser repro", () => {
         await context.clearCookies();
         await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
 
-        await expect(page.getByText("Showing search results")).toBeVisible();
         await expect(matchingRows(page)).toHaveCount(2);
         await expect(lockedMatchingRows(page)).toHaveCount(2);
 
@@ -264,7 +263,6 @@ test.describe("search combined file browser repro", () => {
     }) => {
         await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
 
-        await expect(page.getByText("Showing search results")).toBeVisible();
         await expect(matchingRows(page)).toHaveCount(2);
 
         await writeEvidence(
@@ -312,6 +310,78 @@ test.describe("search combined file browser repro", () => {
         expect(layout?.browserTop).toBeLessThan(layout?.tableTop ?? 0);
     });
 
+    test("hides the search results summary box under the default combined files view", async ({
+        page,
+    }) => {
+        await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
+
+        await expect(matchingRows(page)).toHaveCount(2);
+
+        const summaryBox = page.locator('[data-results-table-summary="true"]');
+        const combinedBrowserShell = page.locator(
+            '[data-search-combined-file-browser="true"]',
+        );
+
+        await expect(combinedBrowserShell).toHaveAttribute(
+            "data-search-file-mode",
+            "combined",
+        );
+        await expect(summaryBox).toHaveCount(0);
+
+        const summaryEvidence = await page.evaluate(() => {
+            const summary = document.querySelector(
+                '[data-results-table-summary="true"]',
+            );
+            const combinedShell = document.querySelector(
+                '[data-search-combined-file-browser="true"]',
+            );
+            const browser = document.querySelector(
+                '[data-file-browser="true"]',
+            );
+
+            if (
+                !(combinedShell instanceof HTMLElement) ||
+                !(browser instanceof HTMLElement)
+            ) {
+                return null;
+            }
+
+            const combinedShellRect = combinedShell.getBoundingClientRect();
+            const browserRect = browser.getBoundingClientRect();
+
+            return {
+                browserBottom: Math.round(browserRect.bottom),
+                browserTop: Math.round(browserRect.top),
+                combinedShellBottom: Math.round(combinedShellRect.bottom),
+                combinedShellTop: Math.round(combinedShellRect.top),
+                matchingHeadingCount: document.querySelectorAll(
+                    '[data-results-table-summary="true"] h2',
+                ).length,
+                searchFileMode: combinedShell.dataset.searchFileMode ?? null,
+                summaryCount: document.querySelectorAll(
+                    '[data-results-table-summary="true"]',
+                ).length,
+                summaryText:
+                    summary instanceof HTMLElement ? summary.innerText : null,
+            };
+        });
+
+        await writeEvidence(
+            page,
+            "search-combined-file-browser-summary-under-combined-view.png",
+            {
+                searchUrl: page.url(),
+                summaryEvidence,
+            },
+        );
+
+        expect(summaryEvidence).not.toBeNull();
+        expect(summaryEvidence?.searchFileMode).toBe("combined");
+        expect(summaryEvidence?.summaryCount).toBe(0);
+        expect(summaryEvidence?.matchingHeadingCount).toBe(0);
+        await expect(matchingRows(page)).toHaveCount(2);
+    });
+
     test("does not show the matching result sets box under the result rows view", async ({
         page,
     }) => {
@@ -348,7 +418,6 @@ test.describe("search combined file browser repro", () => {
             `/?pipeline_name=${encodeURIComponent(pipelineName)}&sample=${encodeURIComponent(sampleAlpha)}`,
         );
 
-        await expect(page.getByText("Showing search results")).toBeVisible();
         await expect(matchingRows(page)).toHaveCount(1);
         await expect(matchingRows(page).first()).toContainText(
             path.join("samples", "alpha", "final"),
@@ -388,7 +457,6 @@ test.describe("search combined file browser repro", () => {
             `/?pipeline_name=${encodeURIComponent(seededPipelineName)}`,
         );
 
-        await expect(page.getByText("Showing search results")).toBeVisible();
         await expect(
             page.locator('[data-search-combined-file-browser="true"]'),
         ).toBeVisible();
@@ -424,7 +492,6 @@ test.describe("search combined file browser repro", () => {
             `/?pipeline_name=${encodeURIComponent(seededPipelineName)}&sample=${encodeURIComponent("gallery-alpha")}`,
         );
 
-        await expect(page.getByText("Showing search results")).toBeVisible();
         await expect(
             page.locator("tbody tr[data-result-row='true']"),
         ).toHaveCount(1);
@@ -446,7 +513,6 @@ test.describe("search combined file browser repro", () => {
 
         await page.goto(sampleAlphaSearchUrl);
 
-        await expect(page.getByText("Showing search results")).toBeVisible();
         await expect(
             page.locator("tbody tr[data-result-row='true']"),
         ).toHaveCount(1);
@@ -505,7 +571,6 @@ test.describe("search combined file browser repro", () => {
         await page.goto(
             `/?pipeline_name=${encodeURIComponent("wtsi/galleries-demo")}`,
         );
-        await expect(page.getByText("Showing search results")).toBeVisible();
         await expect(page.locator('[data-file-browser="true"]')).toContainText(
             "sample-a",
         );
