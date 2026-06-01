@@ -54,7 +54,7 @@ export function ResultRegistrationSummary({
                 data-registration-summary="integrated"
             >
                 <div
-                    className="flex items-center gap-2"
+                    className="flex min-h-7 items-center gap-2"
                     data-registration-layout="integrated"
                     data-registration-header="true"
                 >

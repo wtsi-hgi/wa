@@ -380,7 +380,7 @@ export function ResultMetadata({
                 className="min-w-0 space-y-2"
                 data-result-metadata-layout="integrated"
             >
-                <div className="flex items-center gap-2">
+                <div className="flex min-h-7 items-center gap-2">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Metadata
                     </p>
