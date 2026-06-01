@@ -207,6 +207,42 @@ describe("L1 results table", () => {
         expect(getBodyRows(container)).toHaveLength(1);
     });
 
+    it("uses a single latest result sets title with icon treatment for recent results", async () => {
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, { data: [buildResultSet(1)] }),
+            );
+        });
+
+        const summary = container.querySelector(
+            '[data-results-table-summary="true"]',
+        );
+        const title = summary?.querySelector("p");
+
+        expect(summary).not.toBeNull();
+        expect(summary?.textContent).toContain("Latest result sets");
+        expect(summary?.textContent).not.toContain("Recent registrations");
+        expect(title?.textContent).toBe("Latest result sets");
+        expect(title?.className).toContain("uppercase");
+        expect(title?.className).toContain("tracking-[0.18em]");
+        expect(summary?.querySelector("svg")).not.toBeNull();
+        expect(summary?.querySelector("h2")).toBeNull();
+    });
+
+    it("keeps the distinct search results summary title", async () => {
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, {
+                    data: [buildSearchResult(1)],
+                    mode: "search",
+                }),
+            );
+        });
+
+        expect(container.textContent).toContain("Showing search results");
+        expect(container.textContent).toContain("Matching result sets");
+    });
+
     it("keeps command, pipeline version, pipeline identifier, stored key, operator, and id hidden by default", async () => {
         await act(async () => {
             root.render(

@@ -11,7 +11,7 @@ test.describe("result detail title identity", () => {
         page,
     }) => {
         await page.goto("/");
-        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
         const resultLink = page
             .getByRole("link", { name: "nf-core/rnaseq" })
             .first();

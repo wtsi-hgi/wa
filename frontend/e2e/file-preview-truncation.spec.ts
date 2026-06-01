@@ -18,7 +18,7 @@ test.beforeEach(async ({ context }) => {
 async function openResultFileBrowser(page: Page) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
-    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.getByText("Latest result sets")).toBeVisible();
     const resultLink = page
         .getByRole("link", { name: "nf-core/rnaseq" })
         .first();

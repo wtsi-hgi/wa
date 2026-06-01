@@ -191,8 +191,8 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         expect(markup).toContain(">Search<");
         expect(markup).not.toContain("Search builder");
-        expect(markup).toContain("Recent registrations");
         expect(markup).toContain("Latest result sets");
+        expect(markup).not.toContain("Recent registrations");
         expect(markup).not.toContain(
             "Stack repeated values as OR filters, combine fields as AND filters, and keep the search encoded in the URL.",
         );
@@ -317,7 +317,8 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         expect(markup).toContain(">Search<");
         expect(markup).not.toContain("Search builder");
-        expect(markup).toContain("Recent registrations");
+        expect(markup).toContain("Latest result sets");
+        expect(markup).not.toContain("Recent registrations");
 
         delete process.env.WA_SEQMETA_BACKEND_URL;
     });

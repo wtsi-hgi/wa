@@ -11,7 +11,7 @@ import {
     type SortingState,
     useReactTable,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, History } from "lucide-react";
 
 import {
     getResultsColumns,
@@ -117,17 +117,27 @@ export function ResultsTable({
                     className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5"
                     data-results-table-summary="true"
                 >
-                    <div>
-                        <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                            {mode === "search"
-                                ? "Showing search results"
-                                : "Recent registrations"}
-                        </p>
-                        <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                            {mode === "search"
-                                ? "Matching result sets"
-                                : "Latest result sets"}
-                        </h2>
+                    <div className="min-w-0">
+                        {mode === "search" ? (
+                            <>
+                                <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                                    Showing search results
+                                </p>
+                                <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+                                    Matching result sets
+                                </h2>
+                            </>
+                        ) : (
+                            <div className="flex flex-wrap items-center gap-3">
+                                <History
+                                    className="size-4 text-primary"
+                                    aria-hidden="true"
+                                />
+                                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                    Latest result sets
+                                </p>
+                            </div>
+                        )}
                     </div>
                     <div className="flex items-center gap-3">
                         <DropdownMenu>

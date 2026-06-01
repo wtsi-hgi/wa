@@ -90,16 +90,13 @@ async function collectRecentSortIconMetrics(
     );
 }
 
-async function collectTitleTreatmentMetrics(page: Page): Promise<{
-    fileBrowser: TitleTreatmentMetric;
-    permanentLabels: string[];
-    search: TitleTreatmentMetric;
-}> {
-    return page.evaluate(() => {
-        function collectMetric(
-            rootSelector: string,
-            titleText: string,
-        ): TitleTreatmentMetric {
+async function collectTitleTreatmentMetric(
+    page: Page,
+    rootSelector: string,
+    titleText: string,
+): Promise<TitleTreatmentMetric> {
+    return page.evaluate(
+        ({ rootSelector, titleText }) => {
             const root = document.querySelector(rootSelector);
 
             if (!(root instanceof HTMLElement)) {
@@ -155,23 +152,19 @@ async function collectTitleTreatmentMetrics(page: Page): Promise<{
                     textTransform: titleStyles.textTransform,
                 },
             };
-        }
+        },
+        { rootSelector, titleText },
+    );
+}
 
-        const permanentLabels = Array.from(
+async function collectPermanentSearchLabels(page: Page): Promise<string[]> {
+    return page.evaluate(() =>
+        Array.from(
             document.querySelectorAll(
                 '[data-search-builder-permanent-fields="true"] label',
             ),
-        ).map((label) => label.textContent?.trim() ?? "");
-
-        return {
-            fileBrowser: collectMetric(
-                '[data-file-browser="true"]',
-                "File Browser",
-            ),
-            permanentLabels,
-            search: collectMetric('[data-search-builder="true"]', "Search"),
-        };
-    });
+        ).map((label) => label.textContent?.trim() ?? ""),
+    );
 }
 
 async function addRequesterFilter(
@@ -192,7 +185,7 @@ async function openResultDetail(
     pipelineName: string,
 ): Promise<void> {
     await page.goto("/");
-    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.getByText("Latest result sets")).toBeVisible();
     await expectRecentRowsLoaded(page);
 
     const resultLink = page.getByRole("link", { name: pipelineName }).first();
@@ -426,10 +419,8 @@ test.describe("Q1 critical results flows", () => {
         await expect(
             page.locator('[data-search-builder="true"]'),
         ).toBeVisible();
-        await expect(
-            page.getByRole("heading", { level: 2, name: "Latest result sets" }),
-        ).toBeVisible();
-        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+        await expect(page.getByText("Recent registrations")).toHaveCount(0);
         await expect(page.locator('[data-stat-card="total"]')).toHaveCount(0);
 
         const rows = recentRows(page);
@@ -455,9 +446,7 @@ test.describe("Q1 critical results flows", () => {
         const searchBuilder = page.locator('[data-search-builder="true"]');
 
         await expect(searchBuilder).toBeVisible();
-        await expect(
-            page.getByRole("heading", { level: 2, name: "Latest result sets" }),
-        ).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
 
         const metrics = await searchBuilder.evaluate((element) => {
             const searchBuilderElement = element as HTMLElement;
@@ -575,12 +564,16 @@ test.describe("Q1 critical results flows", () => {
         expect(metrics.visualPanelAncestors).toEqual([]);
     });
 
-    test("renders the search title with the same browser treatment as file browser", async ({
+    test("renders search and latest titles with the same browser treatment as file browser", async ({
         page,
     }) => {
-        const screenshotPath = path.join(
+        const searchScreenshotPath = path.join(
             evidenceDir,
             "search-title-treatment-postfix.png",
+        );
+        const latestScreenshotPath = path.join(
+            evidenceDir,
+            "latest-result-sets-title-treatment-postfix.png",
         );
 
         mkdirSync(evidenceDir, { recursive: true });
@@ -595,33 +588,43 @@ test.describe("Q1 critical results flows", () => {
         await expect(searchBuilder).toBeVisible();
         await expect(fileBrowser).toBeVisible();
 
-        const metrics = await collectTitleTreatmentMetrics(page);
+        const searchMetric = await collectTitleTreatmentMetric(
+            page,
+            '[data-search-builder="true"]',
+            "Search",
+        );
+        const fileBrowserMetric = await collectTitleTreatmentMetric(
+            page,
+            '[data-file-browser="true"]',
+            "File Browser",
+        );
+        const permanentLabels = await collectPermanentSearchLabels(page);
 
         await page
             .locator("main")
-            .screenshot({ animations: "disabled", path: screenshotPath });
+            .screenshot({ animations: "disabled", path: searchScreenshotPath });
 
-        expect(metrics.search.title.text).toBe("Search");
-        expect(metrics.search.icon.present).toBe(true);
-        expect(metrics.search.row.display).toBe("flex");
-        expect(metrics.search.row.alignItems).toBe("center");
-        expect(metrics.search.row.columnGap).toBe(
-            metrics.fileBrowser.row.columnGap,
+        expect(searchMetric.title.text).toBe("Search");
+        expect(searchMetric.icon.present).toBe(true);
+        expect(searchMetric.row.display).toBe("flex");
+        expect(searchMetric.row.alignItems).toBe("center");
+        expect(searchMetric.row.columnGap).toBe(
+            fileBrowserMetric.row.columnGap,
         );
-        expect(metrics.search.title).toEqual({
-            ...metrics.fileBrowser.title,
+        expect(searchMetric.title).toEqual({
+            ...fileBrowserMetric.title,
             text: "Search",
         });
-        expect(metrics.search.icon.color).toBe(metrics.fileBrowser.icon.color);
-        expect(metrics.search.icon.width).toBeCloseTo(
-            metrics.fileBrowser.icon.width,
+        expect(searchMetric.icon.color).toBe(fileBrowserMetric.icon.color);
+        expect(searchMetric.icon.width).toBeCloseTo(
+            fileBrowserMetric.icon.width,
             1,
         );
-        expect(metrics.search.icon.height).toBeCloseTo(
-            metrics.fileBrowser.icon.height,
+        expect(searchMetric.icon.height).toBeCloseTo(
+            fileBrowserMetric.icon.height,
             1,
         );
-        expect(metrics.permanentLabels).toEqual([
+        expect(permanentLabels).toEqual([
             "Pipeline name",
             "Unique",
             "Study",
@@ -629,8 +632,45 @@ test.describe("Q1 critical results flows", () => {
             "Requester",
         ]);
         expect(
-            metrics.permanentLabels.filter((label) => /\bvalue\b/i.test(label)),
+            permanentLabels.filter((label) => /\bvalue\b/i.test(label)),
         ).toEqual([]);
+
+        await page.goto("/");
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+        await expect(page.getByText("Recent registrations")).toHaveCount(0);
+
+        const latestMetric = await collectTitleTreatmentMetric(
+            page,
+            '[data-results-table-summary="true"]',
+            "Latest result sets",
+        );
+
+        await page
+            .locator('[data-results-table-summary="true"]')
+            .screenshot({ animations: "disabled", path: latestScreenshotPath });
+
+        expect(latestMetric.title.text).toBe("Latest result sets");
+        expect(latestMetric.icon.present).toBe(true);
+        expect(latestMetric.row.display).toBe("flex");
+        expect(latestMetric.row.alignItems).toBe("center");
+        expect(latestMetric.row.columnGap).toBe(
+            fileBrowserMetric.row.columnGap,
+        );
+        expect(latestMetric.title).toEqual({
+            ...fileBrowserMetric.title,
+            text: "Latest result sets",
+        });
+        expect(latestMetric.icon.color).toBe(fileBrowserMetric.icon.color);
+        expect(latestMetric.icon.width).toBeCloseTo(
+            fileBrowserMetric.icon.width,
+            1,
+        );
+        expect(latestMetric.icon.height).toBeCloseTo(
+            fileBrowserMetric.icon.height,
+            1,
+        );
     });
 
     test("keeps recent registration sort icons at a stable size on narrow screens", async ({
@@ -639,7 +679,7 @@ test.describe("Q1 critical results flows", () => {
         await page.setViewportSize({ width: 390, height: 900 });
         await page.goto("/");
 
-        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
         await expectRecentRowsLoaded(page);
 
         const metrics = await collectRecentSortIconMetrics(page);
@@ -689,7 +729,7 @@ test.describe("Q1 critical results flows", () => {
         page,
     }) => {
         await page.goto("/");
-        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
         await expectRecentRowsLoaded(page);
 
         const recentResultLink = page
@@ -712,7 +752,7 @@ test.describe("Q1 critical results flows", () => {
         await backToDashboard.click();
 
         await expect(page).toHaveURL(/\/$/);
-        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
         await expectRecentRowsLoaded(page);
 
         await addRequesterFilter(page, "alice");
@@ -1268,7 +1308,7 @@ test.describe("Q1 critical results flows", () => {
         page,
     }) => {
         await page.goto("/");
-        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
         await expectRecentRowsLoaded(page);
 
         const ampliconLink = page

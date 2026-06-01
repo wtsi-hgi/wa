@@ -107,7 +107,7 @@ type PreviewCornerGripMetrics = {
 async function openResultFileBrowser(page: Page) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
-    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.getByText("Latest result sets")).toBeVisible();
     await expect
         .poll(async () => seededRecentRows(page).count())
         .toBeGreaterThanOrEqual(4);
@@ -130,7 +130,7 @@ async function openResultFileBrowser(page: Page) {
 async function openNamedResultFileBrowser(page: Page, pipelineName: string) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
-    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.getByText("Latest result sets")).toBeVisible();
     await expect
         .poll(async () => seededRecentRows(page).count())
         .toBeGreaterThanOrEqual(4);
