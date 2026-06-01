@@ -64,22 +64,31 @@ const combinedLibraryMetaKeys = new Set([
     "seqmeta_pipeline_id_lims",
 ]);
 
-const coreFieldOptions: FieldOption[] = [
-    { key: "user", label: "Requester", placeholder: "alice" },
-    { key: "operator", label: "Operator", placeholder: "operator-1" },
+const permanentFieldOptions: FieldOption[] = [
+    {
+        key: "pipeline_name",
+        label: "Pipeline name",
+        placeholder: "nf-core/rnaseq",
+    },
+    { key: "run_key", label: "Unique", placeholder: "48522 or 48522 / exon" },
     { key: "study", label: "Study", placeholder: "6568 or ERP012345" },
+    { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
+    { key: "user", label: "Requester", placeholder: "alice" },
+];
+
+const permanentFieldKeys = new Set(
+    permanentFieldOptions.map((option) => option.key),
+);
+
+const coreFieldOptions: FieldOption[] = [
+    ...permanentFieldOptions,
+    { key: "operator", label: "Operator", placeholder: "operator-1" },
     { key: "library", label: "Library", placeholder: "RNA or WGS" },
     { key: "seqmeta_library_id", label: "Library ID", placeholder: "71046409" },
     {
         key: "seqmeta_id_library_lims",
         label: "Library LIMS ID",
         placeholder: "SQPP-47463-G:B1",
-    },
-    { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
-    {
-        key: "pipeline_name",
-        label: "Pipeline name",
-        placeholder: "nf-core/rnaseq",
     },
     {
         key: "pipeline_version",
@@ -91,7 +100,6 @@ const coreFieldOptions: FieldOption[] = [
         label: "Pipeline identifier",
         placeholder: "gh://repo/workflow.nf",
     },
-    { key: "run_key", label: "Unique", placeholder: "48522 or 48522 / exon" },
     {
         key: "output_dir_prefix",
         label: "Output directory prefix",
@@ -148,6 +156,10 @@ function getFieldLabel(fieldOptions: FieldOption[], key: string): string {
         fieldOptions.find((option) => option.key === key)?.label ??
         toTitleCase(key.replace(/^meta_/, ""))
     );
+}
+
+function getAdditionalFieldOptions(fieldOptions: FieldOption[]): FieldOption[] {
+    return fieldOptions.filter((option) => !permanentFieldKeys.has(option.key));
 }
 
 function createNextFilters(
@@ -225,15 +237,21 @@ export function FilterBuilder({
     const pathname = usePathname();
     const router = useRouter();
     const fieldOptions = getFieldOptions(metaKeys, seqmetaAvailable);
+    const additionalFieldOptions = getAdditionalFieldOptions(fieldOptions);
 
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
     const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(
         null,
     );
     const [draftValue, setDraftValue] = useState("");
+    const [permanentDraftValues, setPermanentDraftValues] = useState<
+        Record<string, string>
+    >({});
 
     const selectedField =
-        fieldOptions.find((option) => option.key === selectedFieldKey) ?? null;
+        additionalFieldOptions.find(
+            (option) => option.key === selectedFieldKey,
+        ) ?? null;
     const visibleSuggestions = getVisibleSuggestions(
         currentFilters,
         suggestionValues,
@@ -262,6 +280,20 @@ export function FilterBuilder({
         setIsPopoverOpen(false);
     }
 
+    function applyPermanentFilterValue(fieldKey: string, value: string) {
+        const nextFilters = createNextFilters(currentFilters, fieldKey, value);
+        if (nextFilters === currentFilters) {
+            return;
+        }
+
+        pushFilters(nextFilters);
+        setPermanentDraftValues((currentValues) => {
+            const { [fieldKey]: _removed, ...remainingValues } = currentValues;
+
+            return remainingValues;
+        });
+    }
+
     function handleFieldSelect(fieldKey: string) {
         setSelectedFieldKey(fieldKey);
         setDraftValue("");
@@ -280,6 +312,17 @@ export function FilterBuilder({
         applyFilterValue(selectedField.key, draftValue);
     }
 
+    function handlePermanentFilterSubmit(
+        event: FormEvent<HTMLFormElement>,
+        fieldKey: string,
+    ) {
+        event.preventDefault();
+        applyPermanentFilterValue(
+            fieldKey,
+            permanentDraftValues[fieldKey] ?? "",
+        );
+    }
+
     return (
         <section
             data-search-builder="true"
@@ -288,8 +331,8 @@ export function FilterBuilder({
             <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="space-y-1">
-                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            Search builder
+                        <p className="text-sm font-semibold text-muted-foreground">
+                            search
                         </p>
                     </div>
 
@@ -325,42 +368,46 @@ export function FilterBuilder({
                                                 No matching fields.
                                             </CommandEmpty>
                                             <CommandGroup>
-                                                {fieldOptions.map((field) => {
-                                                    const isSelected =
-                                                        field.key ===
-                                                        selectedFieldKey;
+                                                {additionalFieldOptions.map(
+                                                    (field) => {
+                                                        const isSelected =
+                                                            field.key ===
+                                                            selectedFieldKey;
 
-                                                    return (
-                                                        <CommandItem
-                                                            key={field.key}
-                                                            aria-label={
-                                                                field.label
-                                                            }
-                                                            className="flex w-full items-center justify-between gap-3 text-left"
-                                                            data-filter-field-option={
-                                                                field.key
-                                                            }
-                                                            value={`${field.label} ${field.key}`}
-                                                            onSelect={() =>
-                                                                handleFieldSelect(
-                                                                    field.key,
-                                                                )
-                                                            }
-                                                        >
-                                                            <span className="font-medium text-foreground">
-                                                                {field.label}
-                                                            </span>
-                                                            <Check
-                                                                className={cn(
-                                                                    "ml-auto size-4 text-primary",
-                                                                    isSelected
-                                                                        ? "opacity-100"
-                                                                        : "opacity-0",
-                                                                )}
-                                                            />
-                                                        </CommandItem>
-                                                    );
-                                                })}
+                                                        return (
+                                                            <CommandItem
+                                                                key={field.key}
+                                                                aria-label={
+                                                                    field.label
+                                                                }
+                                                                className="flex w-full items-center justify-between gap-3 text-left"
+                                                                data-filter-field-option={
+                                                                    field.key
+                                                                }
+                                                                value={`${field.label} ${field.key}`}
+                                                                onSelect={() =>
+                                                                    handleFieldSelect(
+                                                                        field.key,
+                                                                    )
+                                                                }
+                                                            >
+                                                                <span className="font-medium text-foreground">
+                                                                    {
+                                                                        field.label
+                                                                    }
+                                                                </span>
+                                                                <Check
+                                                                    className={cn(
+                                                                        "ml-auto size-4 text-primary",
+                                                                        isSelected
+                                                                            ? "opacity-100"
+                                                                            : "opacity-0",
+                                                                    )}
+                                                                />
+                                                            </CommandItem>
+                                                        );
+                                                    },
+                                                )}
                                             </CommandGroup>
                                         </CommandList>
                                         <div
@@ -464,10 +511,85 @@ export function FilterBuilder({
                     </div>
                 </div>
 
+                <div
+                    data-search-builder-permanent-fields="true"
+                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
+                >
+                    {permanentFieldOptions.map((field) => {
+                        const fieldInputId = `permanent-filter-${field.key}`;
+                        const fieldDraftValue =
+                            permanentDraftValues[field.key] ?? "";
+                        const fieldSuggestions = getVisibleSuggestions(
+                            currentFilters,
+                            suggestionValues,
+                            field.key,
+                            fieldDraftValue,
+                        );
+                        const fieldSuggestionListId = `filter-suggestions-${field.key}`;
+
+                        return (
+                            <form
+                                key={field.key}
+                                className="min-w-0 space-y-1.5"
+                                onSubmit={(event) =>
+                                    handlePermanentFilterSubmit(
+                                        event,
+                                        field.key,
+                                    )
+                                }
+                            >
+                                <label
+                                    htmlFor={fieldInputId}
+                                    className="block truncate text-xs font-semibold text-muted-foreground"
+                                >
+                                    {field.label} value
+                                </label>
+                                <div className="flex h-11 min-w-0 overflow-hidden rounded-xl border border-border bg-background transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
+                                    <input
+                                        data-permanent-filter-input={field.key}
+                                        id={fieldInputId}
+                                        list={fieldSuggestionListId}
+                                        value={fieldDraftValue}
+                                        onChange={(event) =>
+                                            setPermanentDraftValues(
+                                                (currentValues) => ({
+                                                    ...currentValues,
+                                                    [field.key]:
+                                                        event.target.value,
+                                                }),
+                                            )
+                                        }
+                                        placeholder={field.placeholder}
+                                        className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
+                                    />
+                                    <button
+                                        type="submit"
+                                        aria-label={`Add ${field.label} filter`}
+                                        title={`Add ${field.label} filter`}
+                                        className="grid size-11 shrink-0 place-items-center border-l border-border bg-card text-foreground transition hover:bg-accent/35"
+                                    >
+                                        <Plus className="size-4" />
+                                    </button>
+                                </div>
+                                {fieldSuggestions.length > 0 ? (
+                                    <datalist id={fieldSuggestionListId}>
+                                        {fieldSuggestions.map((suggestion) => (
+                                            <option
+                                                key={suggestion}
+                                                value={suggestion}
+                                            />
+                                        ))}
+                                    </datalist>
+                                ) : null}
+                            </form>
+                        );
+                    })}
+                </div>
+
                 {Object.keys(currentFilters).length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-border/80 bg-muted/35 px-4 py-5 text-sm text-muted-foreground">
-                        No filters applied. Start with Requester, Pipeline name,
-                        or any metadata key exposed by the results service.
+                        No filters applied. Use the permanent fields above, or
+                        add another filter.
                     </div>
                 ) : (
                     <div className="flex flex-wrap gap-3">

@@ -75,16 +75,10 @@ async function addRequesterFilter(
     const searchBuilder = page.locator('[data-search-builder="true"]');
 
     await expect(searchBuilder).toBeVisible();
-    await searchBuilder.getByRole("button", { name: "Add filter" }).click();
-
-    const filterPopover = page.locator('[data-search-builder-popover="true"]');
-
-    await expect(filterPopover).toBeVisible();
-    await filterPopover.locator('[data-filter-field-option="user"]').click();
-    await filterPopover
-        .locator('[data-filter-value-input="user"]')
-        .fill(requester);
-    await filterPopover.getByRole("button", { name: "Add" }).click();
+    await searchBuilder.getByLabel(/requester value/i).fill(requester);
+    await searchBuilder
+        .getByRole("button", { name: /add requester filter/i })
+        .click();
 }
 
 async function openResultDetail(

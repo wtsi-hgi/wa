@@ -189,7 +189,8 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         const markup = await renderDashboard();
 
-        expect(markup).toContain("Search builder");
+        expect(markup).toContain(">search<");
+        expect(markup).not.toContain("Search builder");
         expect(markup).toContain("Recent registrations");
         expect(markup).toContain("Latest result sets");
         expect(markup).not.toContain(
@@ -314,7 +315,8 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         const markup = renderToStaticMarkup(await pagePromise);
 
-        expect(markup).toContain("Search builder");
+        expect(markup).toContain(">search<");
+        expect(markup).not.toContain("Search builder");
         expect(markup).toContain("Recent registrations");
 
         delete process.env.WA_SEQMETA_BACKEND_URL;
@@ -361,8 +363,6 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
-        fireEvent.click(screen.getByRole("option", { name: /pipeline name/i }));
         const valueInput = screen.getByLabelText(/pipeline name value/i);
 
         fireEvent.change(valueInput, {
@@ -422,8 +422,6 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
-        fireEvent.click(screen.getByRole("option", { name: /^requester$/i }));
         const valueInput = screen.getByLabelText(/requester value/i);
 
         fireEvent.change(valueInput, {
@@ -441,7 +439,9 @@ describe("J1 dashboard with search builder and recent results", () => {
         fireEvent.change(valueInput, {
             target: { value: "carol" },
         });
-        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+        fireEvent.click(
+            screen.getByRole("button", { name: /add requester filter/i }),
+        );
 
         expect(pushMock).toHaveBeenCalledWith("/?user=carol");
 
@@ -478,8 +478,6 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
-        fireEvent.click(screen.getByRole("option", { name: /study/i }));
         const valueInput = screen.getByLabelText(/study value/i);
 
         fireEvent.change(valueInput, {
@@ -499,7 +497,9 @@ describe("J1 dashboard with search builder and recent results", () => {
         fireEvent.change(valueInput, {
             target: { value: "6568" },
         });
-        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+        fireEvent.click(
+            screen.getByRole("button", { name: /add study filter/i }),
+        );
 
         expect(pushMock).toHaveBeenCalledWith("/?study=6568");
 
