@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+
 import { Info } from "lucide-react";
 
 import { SeqmetaBadge } from "@/components/seqmeta-badge";
@@ -16,6 +20,25 @@ type ResultMetadataProps = {
     metadata: Record<string, string>;
     variant?: "section" | "integrated";
 };
+
+type IntegratedMetadataLayout = {
+    limit: number;
+    overflowing: boolean;
+    signature: string;
+};
+
+const DEFAULT_INTEGRATED_METADATA_LIMIT = 3;
+const OVERFLOW_TOLERANCE_PX = 1;
+
+function initialIntegratedMetadataLayout(
+    signature: string,
+): IntegratedMetadataLayout {
+    return {
+        limit: DEFAULT_INTEGRATED_METADATA_LIMIT,
+        overflowing: false,
+        signature,
+    };
+}
 
 function seqmetaLookupKey(value: string): string {
     return value.trim();
@@ -63,14 +86,94 @@ function displayMetadataStripKey(key: string): string {
     return displayMetadataKey(key);
 }
 
-function visibleIntegratedEntries(entries: [string, string][]) {
-    const seqmetaEntries = entries.filter(([key]) => isSeqmetaKey(key));
+function integratedSeqmetaPriority(key: string): number {
+    const displayKey = canonicalSeqmetaKey(key);
 
-    if (seqmetaEntries.length > 0) {
-        return seqmetaEntries;
+    if (
+        displayKey === "seqmeta_id_study_lims" ||
+        displayKey === "seqmeta_study_accession"
+    ) {
+        return 0;
     }
 
-    return entries.slice(0, 3);
+    if (displayKey === "seqmeta_sample_name") {
+        return 1;
+    }
+
+    if (displayKey === "seqmeta_sanger_sample_id") {
+        return 2;
+    }
+
+    if (displayKey === "seqmeta_id_sample_lims") {
+        return 3;
+    }
+
+    if (displayKey === "seqmeta_supplier_name") {
+        return 4;
+    }
+
+    if (displayKey === "seqmeta_id_run") {
+        return 5;
+    }
+
+    if (displayKey === "seqmeta_lane" || displayKey === "seqmeta_tag_index") {
+        return 6;
+    }
+
+    if (displayKey === "seqmeta_library_id") {
+        return 7;
+    }
+
+    if (displayKey === "seqmeta_id_library_lims") {
+        return 8;
+    }
+
+    if (displayKey === "seqmeta_pipeline_id_lims") {
+        return 9;
+    }
+
+    return 10;
+}
+
+function prioritizedIntegratedEntries(entries: [string, string][]) {
+    const seqmetaEntries = entries
+        .map((entry, index) => ({ entry, index }))
+        .filter(({ entry: [key] }) => isSeqmetaKey(key))
+        .sort(
+            (
+                { entry: [leftKey], index: leftIndex },
+                { entry: [rightKey], index: rightIndex },
+            ) =>
+                integratedSeqmetaPriority(leftKey) -
+                    integratedSeqmetaPriority(rightKey) ||
+                leftIndex - rightIndex,
+        )
+        .map(({ entry }) => entry);
+
+    if (seqmetaEntries.length === 0) {
+        return entries;
+    }
+
+    const nonSeqmetaEntries = entries.filter(([key]) => !isSeqmetaKey(key));
+
+    return [...seqmetaEntries, ...nonSeqmetaEntries];
+}
+
+function truncatedIntegratedEntries(
+    entries: [string, string][],
+    limit: number,
+) {
+    const boundedLimit = Math.max(1, Math.min(limit, entries.length - 1));
+
+    return prioritizedIntegratedEntries(entries).slice(0, boundedLimit);
+}
+
+function metadataEntriesSignature(entries: [string, string][]): string {
+    return entries.map(([key, value]) => `${key}\u0000${value}`).join("\u0001");
+}
+
+function hasVerticalOverflow(element: HTMLElement): boolean {
+    return element.scrollHeight - element.clientHeight > OVERFLOW_TOLERANCE_PX;
 }
 
 function MetadataValue({
@@ -124,12 +227,156 @@ export function ResultMetadata({
     variant = "section",
 }: ResultMetadataProps) {
     const entries = Object.entries(metadata);
-    const visibleEntries = visibleIntegratedEntries(entries);
-    const hasHiddenEntries = entries.length > visibleEntries.length;
+    const metadataSignature = metadataEntriesSignature(entries);
+    const integratedLayoutRef = useRef<HTMLDivElement>(null);
+    const metadataStripRef = useRef<HTMLDListElement>(null);
+    const [measureVersion, setMeasureVersion] = useState(0);
+    const [integratedLayout, setIntegratedLayout] = useState(() =>
+        initialIntegratedMetadataLayout(metadataSignature),
+    );
+    const activeIntegratedLayout =
+        integratedLayout.signature === metadataSignature
+            ? integratedLayout
+            : initialIntegratedMetadataLayout(metadataSignature);
+    const visibleEntries =
+        activeIntegratedLayout.overflowing && entries.length > 1
+            ? truncatedIntegratedEntries(entries, activeIntegratedLayout.limit)
+            : entries;
+    const hasHiddenEntries =
+        variant === "integrated" &&
+        activeIntegratedLayout.overflowing &&
+        entries.length > visibleEntries.length;
+
+    useLayoutEffect(() => {
+        if (variant !== "integrated" || entries.length === 0) {
+            return;
+        }
+
+        const strip = metadataStripRef.current;
+
+        if (!strip) {
+            return;
+        }
+
+        const animationFrame = window.requestAnimationFrame(() => {
+            const currentStrip = metadataStripRef.current;
+
+            if (!currentStrip) {
+                return;
+            }
+
+            const overflowing = hasVerticalOverflow(currentStrip);
+
+            if (!activeIntegratedLayout.overflowing) {
+                if (overflowing) {
+                    setIntegratedLayout({
+                        overflowing: true,
+                        signature: metadataSignature,
+                        limit: Math.max(
+                            1,
+                            Math.min(
+                                DEFAULT_INTEGRATED_METADATA_LIMIT,
+                                entries.length - 1,
+                            ),
+                        ),
+                    });
+                }
+
+                return;
+            }
+
+            if (overflowing && activeIntegratedLayout.limit > 1) {
+                setIntegratedLayout((current) => {
+                    if (
+                        current.signature !== metadataSignature ||
+                        !current.overflowing ||
+                        current.limit !== activeIntegratedLayout.limit
+                    ) {
+                        return current;
+                    }
+
+                    return {
+                        ...current,
+                        limit: current.limit - 1,
+                    };
+                });
+            }
+        });
+
+        return () => {
+            window.cancelAnimationFrame(animationFrame);
+        };
+    }, [
+        activeIntegratedLayout.limit,
+        activeIntegratedLayout.overflowing,
+        entries.length,
+        measureVersion,
+        metadataSignature,
+        variant,
+    ]);
+
+    useEffect(() => {
+        if (variant !== "integrated" || typeof window === "undefined") {
+            return;
+        }
+
+        const layout = integratedLayoutRef.current;
+
+        if (!layout) {
+            return;
+        }
+
+        let lastWidth = layout.getBoundingClientRect().width;
+        let animationFrame = 0;
+        const resetForMeasurement = (nextWidth: number) => {
+            if (Math.abs(nextWidth - lastWidth) < 1) {
+                return;
+            }
+
+            lastWidth = nextWidth;
+
+            if (animationFrame) {
+                window.cancelAnimationFrame(animationFrame);
+            }
+
+            animationFrame = window.requestAnimationFrame(() => {
+                setIntegratedLayout(
+                    initialIntegratedMetadataLayout(metadataSignature),
+                );
+                setMeasureVersion((version) => version + 1);
+            });
+        };
+        const handleWindowResize = () => {
+            resetForMeasurement(layout.getBoundingClientRect().width);
+        };
+        const resizeObserver =
+            "ResizeObserver" in window
+                ? new window.ResizeObserver((observedEntries) => {
+                      const observedWidth =
+                          observedEntries[0]?.contentRect.width ??
+                          layout.getBoundingClientRect().width;
+
+                      resetForMeasurement(observedWidth);
+                  })
+                : null;
+
+        resizeObserver?.observe(layout);
+        window.addEventListener("resize", handleWindowResize);
+
+        return () => {
+            if (animationFrame) {
+                window.cancelAnimationFrame(animationFrame);
+            }
+
+            resizeObserver?.disconnect();
+            window.removeEventListener("resize", handleWindowResize);
+        };
+    }, [metadataSignature, variant]);
 
     if (variant === "integrated") {
         return (
             <div
+                ref={integratedLayoutRef}
                 className="min-w-0 space-y-2"
                 data-result-metadata-layout="integrated"
             >
@@ -200,6 +447,7 @@ export function ResultMetadata({
                     </p>
                 ) : (
                     <dl
+                        ref={metadataStripRef}
                         className="flex max-h-20 flex-wrap gap-1.5 overflow-auto pr-1"
                         data-result-metadata-strip="true"
                     >

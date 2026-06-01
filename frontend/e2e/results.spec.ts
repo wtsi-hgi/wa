@@ -611,14 +611,13 @@ test.describe("Q1 critical results flows", () => {
         ).toContainText("6568");
         await expect(
             detailSummary.locator('[data-metadata-row="library"]'),
-        ).toHaveCount(0);
-
-        await detailSummary
-            .getByRole("button", { name: "All metadata" })
-            .click();
-        await expect(
-            page.locator('[data-metadata-detail-row="library"]'),
         ).toContainText("exon");
+        await expect(
+            detailSummary.locator('[data-metadata-row="study"]'),
+        ).toContainText("study-alpha");
+        await expect(
+            detailSummary.getByRole("button", { name: "All metadata" }),
+        ).toHaveCount(0);
     });
 
     test("keeps the result detail header compact above the file browser", async ({

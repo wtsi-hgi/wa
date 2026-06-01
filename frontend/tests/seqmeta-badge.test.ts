@@ -861,7 +861,9 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(markup).not.toMatch(/>Key details</);
         expect(markup).not.toContain("Registration summary");
         expect(countOccurrences(markup, "nf-core/rnaseq")).toBe(1);
-        expect(countOccurrences(markup, "data-metadata-row=")).toBe(1);
+        expect(countOccurrences(markup, "data-metadata-row=")).toBe(2);
+        expect(markup).toContain("library");
+        expect(markup).toContain("rna");
         expect(markup).not.toContain("1 input");
         expect(markup).not.toContain("1 output");
         expect(markup).not.toContain(
