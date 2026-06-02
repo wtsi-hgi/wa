@@ -5,6 +5,8 @@ import { Check, Plus, Search, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
 import {
+    boxPanelInsetClass,
+    boxPanelRadiusClass,
     boxTitleIconClass,
     boxTitleRowClass,
     boxTitleTextClass,
@@ -331,7 +333,11 @@ export function FilterBuilder({
     return (
         <section
             data-search-builder="true"
-            className="rounded-[1.5rem] border border-border/70 bg-background/80 p-4 shadow-[0_24px_80px_-64px_rgba(29,44,69,0.78)] sm:p-5"
+            className={cn(
+                boxPanelRadiusClass,
+                boxPanelInsetClass,
+                "border border-border/70 bg-background/80 shadow-[0_24px_80px_-64px_rgba(29,44,69,0.78)]",
+            )}
         >
             <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

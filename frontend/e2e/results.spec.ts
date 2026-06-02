@@ -86,13 +86,16 @@ type RowCountPlacementMetric = {
 
 type TitleSectionGeometryMetric = {
     box: {
+        borderRadiusTopLeft: number;
         paddingBottom: number;
         paddingTop: number;
     };
     contentGapFromTitleContent: number | null;
     effectiveBorderBottomWidth: number;
+    iconLeftInsetWithinBox: number;
     sectionTopInsetWithinBox: number;
     title: string;
+    titleRowTopInsetWithinBox: number;
     titleSectionHeight: number;
 };
 
@@ -366,11 +369,25 @@ async function collectTitleSectionGeometryMetric(
                 throw new Error(`Missing title text for ${title}`);
             }
 
+            const titleRow = titleElement.parentElement;
+
+            if (!(titleRow instanceof HTMLElement)) {
+                throw new Error(`Missing title row for ${title}`);
+            }
+
+            const icon = titleRow.querySelector("svg");
+
+            if (!(icon instanceof SVGElement)) {
+                throw new Error(`Missing title icon for ${title}`);
+            }
+
             const contentElement = contentSelector
                 ? document.querySelector(contentSelector)
                 : null;
             const boxRect = box.getBoundingClientRect();
             const sectionRect = titleSection.getBoundingClientRect();
+            const rowRect = titleRow.getBoundingClientRect();
+            const iconRect = icon.getBoundingClientRect();
             const titleRect = titleElement.getBoundingClientRect();
             const boxStyles = window.getComputedStyle(box);
             const sectionStyles = window.getComputedStyle(titleSection);
@@ -385,6 +402,9 @@ async function collectTitleSectionGeometryMetric(
 
             return {
                 box: {
+                    borderRadiusTopLeft: Number.parseFloat(
+                        boxStyles.borderTopLeftRadius,
+                    ),
                     paddingBottom: Number.parseFloat(boxStyles.paddingBottom),
                     paddingTop: Number.parseFloat(boxStyles.paddingTop),
                 },
@@ -395,8 +415,10 @@ async function collectTitleSectionGeometryMetric(
                         : null,
                 effectiveBorderBottomWidth:
                     borderBottomWidth * borderBottomAlpha,
+                iconLeftInsetWithinBox: iconRect.left - boxRect.left,
                 sectionTopInsetWithinBox: sectionRect.top - boxRect.top,
                 title: titleElement.textContent?.trim() ?? "",
+                titleRowTopInsetWithinBox: rowRect.top - boxRect.top,
                 titleSectionHeight: sectionRect.height,
             };
         },
@@ -972,7 +994,7 @@ test.describe("Q1 critical results flows", () => {
         ).toBeVisible();
 
         const searchResults = await collectTitleSectionGeometryMetric(page, {
-            boxSelector: '[data-results-table-summary="true"]',
+            boxSelector: 'div:has(> [data-results-table-summary="true"])',
             contentSelector: "tbody",
             title: "Search results",
             titleSectionSelector: '[data-results-table-summary="true"]',
@@ -998,6 +1020,20 @@ test.describe("Q1 critical results flows", () => {
             search.titleSectionHeight,
             searchResults.titleSectionHeight,
         ];
+        const matchedSearchBoxMetrics = [
+            fileBrowserMetric,
+            search,
+            searchResults,
+        ];
+        const iconLeftInsets = matchedSearchBoxMetrics.map(
+            (metric) => metric.iconLeftInsetWithinBox,
+        );
+        const titleRowTopInsets = matchedSearchBoxMetrics.map(
+            (metric) => metric.titleRowTopInsetWithinBox,
+        );
+        const borderRadii = matchedSearchBoxMetrics.map(
+            (metric) => metric.box.borderRadiusTopLeft,
+        );
 
         expect(fileBrowserMetric.effectiveBorderBottomWidth).toBe(0);
         expect(fileBrowserMetric.contentGapFromTitleContent).not.toBeNull();
@@ -1008,6 +1044,15 @@ test.describe("Q1 critical results flows", () => {
         expect(
             Math.max(...titleSectionHeights) - Math.min(...titleSectionHeights),
         ).toBeLessThanOrEqual(12);
+        expect(
+            Math.max(...iconLeftInsets) - Math.min(...iconLeftInsets),
+        ).toBeLessThanOrEqual(2);
+        expect(
+            Math.max(...titleRowTopInsets) - Math.min(...titleRowTopInsets),
+        ).toBeLessThanOrEqual(2);
+        expect(
+            Math.max(...borderRadii) - Math.min(...borderRadii),
+        ).toBeLessThanOrEqual(1);
     });
 
     test("places the latest row count beside the rows-per-page footer control", async ({

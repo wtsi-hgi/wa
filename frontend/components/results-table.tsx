@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 
 import {
+    boxPanelRadiusClass,
     boxTitleIconClass,
     boxTitleRowClass,
     boxTitleTextClass,
@@ -126,10 +127,16 @@ export function ResultsTable({
             : { Icon: History, label: "Latest result sets" };
 
     return (
-        <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
+        <div
+            className={cn(
+                "overflow-hidden border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]",
+                boxPanelRadiusClass,
+                hideSummary ? "" : "pt-3",
+            )}
+        >
             {hideSummary ? null : (
                 <div
-                    className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-1"
+                    className="flex items-center justify-between gap-4 border-b border-border/70 px-4 py-1"
                     data-results-table-summary="true"
                 >
                     <div className="min-w-0">

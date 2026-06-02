@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 
 import {
+    boxPanelInsetClass,
+    boxPanelRadiusClass,
     boxTitleIconClass,
     boxTitleTextClass,
 } from "@/components/box-title-section";
@@ -464,8 +466,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1 text-muted-foreground",
     paginationClass:
         "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
-    sectionClass:
-        "rounded-xl border border-border/75 bg-card p-4 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]",
+    sectionClass: `${boxPanelRadiusClass} border border-border/75 bg-card ${boxPanelInsetClass} shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]`,
     singlePreviewClass:
         "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
     subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
