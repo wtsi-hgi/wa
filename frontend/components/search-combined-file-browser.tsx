@@ -272,7 +272,7 @@ export function SearchCombinedFileBrowser({
 
     return (
         <section
-            className="space-y-3"
+            className="space-y-6"
             data-search-combined-file-browser="true"
             data-search-file-mode={mode}
         >

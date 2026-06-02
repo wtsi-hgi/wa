@@ -73,6 +73,16 @@ type PillMetric = {
     paddingRight: number;
 };
 
+type SearchToggleSpacingMetric = {
+    aboveButtonsGap: number;
+    belowButtonsGap: number;
+    boxTop: number;
+    mode: string;
+    searchBuilderBottom: number;
+    toggleBottom: number;
+    toggleTop: number;
+};
+
 test.beforeAll(() => {
     registeredResults = [
         registerCombinedBrowserResult({
@@ -297,6 +307,49 @@ async function collectPillMetric(locator: Locator): Promise<PillMetric> {
             },
             paddingLeft: Number.parseFloat(computed.paddingLeft),
             paddingRight: Number.parseFloat(computed.paddingRight),
+        };
+    });
+}
+
+async function collectSearchToggleSpacingMetric(
+    page: Page,
+): Promise<SearchToggleSpacingMetric> {
+    return page.evaluate(() => {
+        const searchBuilder = document.querySelector<HTMLElement>(
+            '[data-search-builder="true"]',
+        );
+        const combinedShell = document.querySelector<HTMLElement>(
+            '[data-search-combined-file-browser="true"]',
+        );
+        const toggle = document.querySelector<HTMLElement>(
+            '[aria-label="Search result display"]',
+        );
+        const mode = combinedShell?.dataset.searchFileMode ?? "";
+        const contentBox =
+            mode === "rows"
+                ? document.querySelector<HTMLElement>(
+                      '[data-results-table-summary="true"]',
+                  )?.parentElement
+                : document.querySelector<HTMLElement>(
+                      '[data-file-browser="true"]',
+                  );
+
+        if (!searchBuilder || !combinedShell || !toggle || !contentBox) {
+            throw new Error("Missing search toggle spacing measurement target");
+        }
+
+        const searchBuilderRect = searchBuilder.getBoundingClientRect();
+        const toggleRect = toggle.getBoundingClientRect();
+        const contentBoxRect = contentBox.getBoundingClientRect();
+
+        return {
+            aboveButtonsGap: toggleRect.top - searchBuilderRect.bottom,
+            belowButtonsGap: contentBoxRect.top - toggleRect.bottom,
+            boxTop: contentBoxRect.top,
+            mode,
+            searchBuilderBottom: searchBuilderRect.bottom,
+            toggleBottom: toggleRect.bottom,
+            toggleTop: toggleRect.top,
         };
     });
 }
@@ -854,6 +907,57 @@ test.describe("search combined file browser repro", () => {
         );
         expect(headerTextsBefore).toContain("Requester");
         expect(headerTextsAfter).not.toContain("Requester");
+    });
+
+    test("keeps search result view spacing consistent around the display toggle", async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
+
+        const combinedShell = page.locator(
+            '[data-search-combined-file-browser="true"]',
+        );
+
+        await expect(combinedShell).toHaveAttribute(
+            "data-search-file-mode",
+            "combined",
+        );
+        await expect(page.locator('[data-file-browser="true"]')).toBeVisible();
+
+        const combinedSpacing = await collectSearchToggleSpacingMetric(page);
+
+        await page.getByRole("button", { name: "Result sets" }).click();
+
+        await expect(combinedShell).toHaveAttribute(
+            "data-search-file-mode",
+            "rows",
+        );
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+
+        const resultSetsSpacing = await collectSearchToggleSpacingMetric(page);
+        const tolerance = 1;
+
+        await writeEvidence(page, "search-toggle-spacing-postfix.png", {
+            combinedSpacing,
+            resultSetsSpacing,
+            searchUrl: page.url(),
+        });
+
+        expect(
+            combinedSpacing.belowButtonsGap,
+            "Combined files content should sit the same distance below the toggle as the Result sets box",
+        ).toBeCloseTo(resultSetsSpacing.belowButtonsGap, tolerance);
+        expect(
+            combinedSpacing.belowButtonsGap,
+            "Combined files content should match the vertical rhythm above the toggle",
+        ).toBeCloseTo(combinedSpacing.aboveButtonsGap, tolerance);
+        expect(
+            resultSetsSpacing.belowButtonsGap,
+            "Result sets content should match the vertical rhythm above the toggle",
+        ).toBeCloseTo(resultSetsSpacing.aboveButtonsGap, tolerance);
     });
 
     test("narrows the combined file browser when the search filters to one sample", async ({
