@@ -59,6 +59,18 @@ type TitleTreatmentMetric = {
     };
 };
 
+type PillMetric = {
+    borderRadius: number;
+    height: number;
+    icon: {
+        height: number;
+        width: number;
+    };
+    paddingLeft: number;
+    paddingRight: number;
+    width: number;
+};
+
 async function collectRecentSortIconMetrics(
     page: Page,
 ): Promise<SortIconMetric[]> {
@@ -165,6 +177,35 @@ async function collectPermanentSearchLabels(page: Page): Promise<string[]> {
             ),
         ).map((label) => label.textContent?.trim() ?? ""),
     );
+}
+
+async function collectPillMetric(locator: Locator): Promise<PillMetric> {
+    return locator.evaluate((element) => {
+        const button = element as HTMLElement;
+        const svg = button.querySelector("svg");
+
+        if (!(svg instanceof SVGElement)) {
+            throw new Error(
+                `Missing pill icon for ${button.textContent?.trim() ?? "button"}`,
+            );
+        }
+
+        const buttonRect = button.getBoundingClientRect();
+        const iconRect = svg.getBoundingClientRect();
+        const computed = window.getComputedStyle(button);
+
+        return {
+            borderRadius: Number.parseFloat(computed.borderTopLeftRadius),
+            height: buttonRect.height,
+            icon: {
+                height: iconRect.height,
+                width: iconRect.width,
+            },
+            paddingLeft: Number.parseFloat(computed.paddingLeft),
+            paddingRight: Number.parseFloat(computed.paddingRight),
+            width: buttonRect.width,
+        };
+    });
 }
 
 async function addRequesterFilter(
@@ -671,6 +712,65 @@ test.describe("Q1 critical results flows", () => {
             fileBrowserMetric.icon.height,
             1,
         );
+    });
+
+    test("renders the add filter pill with the same compact density as columns", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "add-filter-columns-pill-density-postfix.png",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto("/");
+
+        const addFilterButton = page.getByRole("button", {
+            name: "Add filter",
+        });
+        const columnsButton = page.getByRole("button", {
+            name: "Toggle column visibility",
+        });
+
+        await expect(addFilterButton).toBeVisible();
+        await expect(columnsButton).toBeVisible();
+
+        const addFilterMetric = await collectPillMetric(addFilterButton);
+        const columnsMetric = await collectPillMetric(columnsButton);
+
+        await page
+            .locator("main")
+            .screenshot({ animations: "disabled", path: screenshotPath });
+
+        expect(addFilterMetric.height).toBeCloseTo(columnsMetric.height, 1);
+        expect(addFilterMetric.paddingLeft).toBeCloseTo(
+            columnsMetric.paddingLeft,
+            1,
+        );
+        expect(addFilterMetric.paddingRight).toBeCloseTo(
+            columnsMetric.paddingRight,
+            1,
+        );
+        expect(addFilterMetric.borderRadius).toBeGreaterThanOrEqual(
+            addFilterMetric.height / 2 - 1,
+        );
+        expect(addFilterMetric.icon.width).toBeCloseTo(
+            columnsMetric.icon.width,
+            1,
+        );
+        expect(addFilterMetric.icon.height).toBeCloseTo(
+            columnsMetric.icon.height,
+            1,
+        );
+        expect(
+            Math.abs(addFilterMetric.width - columnsMetric.width),
+        ).toBeLessThanOrEqual(12);
+
+        await addFilterButton.click();
+        await expect(
+            page.getByRole("dialog", { name: "Search builder filter panel" }),
+        ).toBeVisible();
     });
 
     test("keeps recent registration sort icons at a stable size on narrow screens", async ({

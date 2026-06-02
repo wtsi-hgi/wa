@@ -348,7 +348,7 @@ export function FilterBuilder({
                             onClick={() =>
                                 setIsPopoverOpen((current) => !current)
                             }
-                            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border/80 bg-card px-4 text-sm font-medium text-foreground transition hover:border-primary/40 hover:bg-accent/35"
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 py-2 text-sm font-medium text-muted-foreground transition hover:border-primary/40 hover:bg-accent/35 hover:text-foreground"
                         >
                             <Plus className="size-4" />
                             Add filter
