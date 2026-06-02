@@ -2045,7 +2045,7 @@ export function FileBrowser({
                             >
                                 {renderDirectoryButton()}
                                 <div
-                                    className="min-w-0 self-center px-2 pb-2 lg:px-0 lg:pb-0 lg:pr-2"
+                                    className="min-w-0 self-center p-2 lg:pl-0"
                                     data-file-browser-name-area-controls={
                                         node.path
                                     }
