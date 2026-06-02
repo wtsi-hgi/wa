@@ -71,6 +71,19 @@ type PillMetric = {
     width: number;
 };
 
+type RowCountPlacementMetric = {
+    rowCount: {
+        centerY: number;
+        text: string;
+    };
+    rowsPerPage: {
+        centerY: number;
+    };
+    title: {
+        centerY: number;
+    };
+};
+
 async function collectRecentSortIconMetrics(
     page: Page,
 ): Promise<SortIconMetric[]> {
@@ -204,6 +217,64 @@ async function collectPillMetric(locator: Locator): Promise<PillMetric> {
             paddingLeft: Number.parseFloat(computed.paddingLeft),
             paddingRight: Number.parseFloat(computed.paddingRight),
             width: buttonRect.width,
+        };
+    });
+}
+
+async function collectLatestRowCountPlacementMetric(
+    page: Page,
+): Promise<RowCountPlacementMetric> {
+    return page.evaluate(() => {
+        const summary = document.querySelector(
+            '[data-results-table-summary="true"]',
+        );
+        const title = Array.from(document.querySelectorAll("p")).find(
+            (candidate): candidate is HTMLParagraphElement =>
+                candidate instanceof HTMLParagraphElement &&
+                candidate.textContent?.trim() === "Latest result sets",
+        );
+        const rowsPerPage = document.querySelector(
+            'select[aria-label="Rows per page"]',
+        );
+        const rowCount = Array.from(document.querySelectorAll("p")).find(
+            (candidate): candidate is HTMLParagraphElement =>
+                candidate instanceof HTMLParagraphElement &&
+                /^\d+ rows$/.test(candidate.textContent?.trim() ?? ""),
+        );
+
+        if (!(summary instanceof HTMLElement)) {
+            throw new Error("Missing latest results table summary");
+        }
+
+        if (!title || !summary.contains(title)) {
+            throw new Error("Missing latest result sets title in summary");
+        }
+
+        if (!(rowsPerPage instanceof HTMLSelectElement)) {
+            throw new Error("Missing rows per page selector");
+        }
+
+        if (!rowCount) {
+            throw new Error("Missing row count indicator");
+        }
+
+        const toCenterY = (element: Element) => {
+            const rect = element.getBoundingClientRect();
+
+            return rect.top + rect.height / 2;
+        };
+
+        return {
+            rowCount: {
+                centerY: toCenterY(rowCount),
+                text: rowCount.textContent?.trim() ?? "",
+            },
+            rowsPerPage: {
+                centerY: toCenterY(rowsPerPage),
+            },
+            title: {
+                centerY: toCenterY(title),
+            },
         };
     });
 }
@@ -711,6 +782,44 @@ test.describe("Q1 critical results flows", () => {
         expect(latestMetric.icon.height).toBeCloseTo(
             fileBrowserMetric.icon.height,
             1,
+        );
+    });
+
+    test("places the latest row count beside the rows-per-page footer control", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "latest-row-count-footer-placement-postfix.png",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto("/");
+
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+        await expectRecentRowsLoaded(page);
+        await expect(page.getByText(/^\d+ rows$/)).toBeVisible();
+        await expect(page.getByLabel("Rows per page")).toBeVisible();
+
+        const placement = await collectLatestRowCountPlacementMetric(page);
+
+        await page
+            .locator('[data-results-table-summary="true"]')
+            .locator("..")
+            .screenshot({ animations: "disabled", path: screenshotPath });
+
+        expect(placement.rowCount.text).toMatch(/^\d+ rows$/);
+        expect(
+            Math.abs(
+                placement.rowCount.centerY - placement.rowsPerPage.centerY,
+            ),
+        ).toBeLessThanOrEqual(8);
+        expect(
+            Math.abs(placement.rowCount.centerY - placement.title.centerY),
+        ).toBeGreaterThan(48);
+        expect(placement.rowCount.centerY).toBeGreaterThan(
+            placement.title.centerY,
         );
     });
 

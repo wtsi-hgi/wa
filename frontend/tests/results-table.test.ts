@@ -229,6 +229,28 @@ describe("L1 results table", () => {
         expect(summary?.querySelector("h2")).toBeNull();
     });
 
+    it("places the latest row count with the rows-per-page footer controls", async () => {
+        const data = Array.from({ length: 25 }, (_, index) =>
+            buildResultSet(index + 1),
+        );
+
+        await act(async () => {
+            root.render(createElement(ResultsTable, { data }));
+        });
+
+        const summary = container.querySelector(
+            '[data-results-table-summary="true"]',
+        );
+        const pageSizeSelect = container.querySelector(
+            'select[aria-label="Rows per page"]',
+        );
+        const pageSizeControls = pageSizeSelect?.closest("div");
+
+        expect(summary?.textContent).not.toContain("25 rows");
+        expect(pageSizeControls?.textContent).toContain("Rows per page");
+        expect(pageSizeControls?.textContent).toContain("25 rows");
+    });
+
     it("keeps the distinct search results summary title", async () => {
         await act(async () => {
             root.render(

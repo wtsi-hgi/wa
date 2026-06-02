@@ -166,10 +166,6 @@ export function ResultsTable({
                                 ))}
                             </DropdownMenuContent>
                         </DropdownMenu>
-
-                        <p className="rounded-full border border-border/70 bg-background/90 px-3 py-1 text-sm text-muted-foreground">
-                            {rows.length} rows
-                        </p>
                     </div>
                 </div>
             )}
@@ -259,6 +255,9 @@ export function ResultsTable({
                             <option value="25">25</option>
                             <option value="50">50</option>
                         </select>
+                        <p className="rounded-full border border-border/70 bg-background/90 px-3 py-1 text-sm text-muted-foreground">
+                            {rows.length} rows
+                        </p>
                     </div>
 
                     <div className="flex items-center justify-between gap-4 sm:justify-end">
