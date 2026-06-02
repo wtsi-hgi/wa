@@ -7,11 +7,10 @@ import {
     useRef,
     useState,
 } from "react";
-import { LogIn, LogOut, LockKeyhole, User } from "lucide-react";
+import { LogIn, LogOut, LockKeyhole } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,23 +28,6 @@ import { loginAction, type CurrentSession } from "@/app/(results)/auth/actions";
 type AuthMenuProps = {
     initialSession: CurrentSession;
 };
-
-function AccountAvatar({ username }: { username: string | null }): ReactNode {
-    const trimmedUsername = username?.trim() ?? "";
-    const initial = trimmedUsername.charAt(0).toUpperCase();
-
-    return (
-        <Avatar className="border border-border bg-primary text-primary-foreground shadow-sm">
-            <AvatarFallback className="bg-primary text-sm font-semibold text-primary-foreground">
-                {initial ? (
-                    <span aria-hidden="true">{initial}</span>
-                ) : (
-                    <User aria-hidden="true" className="h-4 w-4" />
-                )}
-            </AvatarFallback>
-        </Avatar>
-    );
-}
 
 function anonymousSession(): CurrentSession {
     return {
@@ -222,21 +204,18 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
             <DropdownMenu>
                 <DropdownMenuTrigger
                     aria-label={`${accountName} account`}
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-background/92 p-1.5 text-sm font-medium text-foreground shadow-sm transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
+                    className="inline-flex h-11 max-w-[min(16rem,calc(100vw-2rem))] items-center justify-center rounded-md border border-border bg-background/92 px-3 text-sm font-medium text-foreground shadow-sm transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
                 >
-                    <AccountAvatar username={session.username} />
+                    <span className="truncate">{accountName}</span>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="w-64 rounded-md">
-                    <div className="flex items-center gap-3 px-3 py-2">
-                        <AccountAvatar username={session.username} />
-                        <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-foreground">
-                                {accountName}
-                            </div>
-                            <Badge className="mt-1 h-6 bg-muted text-muted-foreground">
-                                Signed in
-                            </Badge>
+                    <div className="px-3 py-2">
+                        <div className="truncate text-sm font-semibold text-foreground">
+                            {accountName}
                         </div>
+                        <Badge className="mt-1 h-6 bg-muted text-muted-foreground">
+                            Signed in
+                        </Badge>
                     </div>
                     <div className="my-1 h-px bg-border" />
                     <button

@@ -11,6 +11,7 @@ import {
     render,
     screen,
     waitFor,
+    within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -120,7 +121,7 @@ describe("E3 auth menu", () => {
         expect(markup).not.toContain("fixed top-4 right-4");
     });
 
-    it("shows the username only inside the signed-in account menu", async () => {
+    it("shows only the username in the signed-in account trigger and menu", async () => {
         vi.stubGlobal(
             "fetch",
             vi.fn().mockResolvedValue(
@@ -133,12 +134,28 @@ describe("E3 auth menu", () => {
 
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
-        expect(screen.queryByText("alice")).toBeNull();
+        const accountButton = screen.getByRole("button", {
+            name: /alice account/i,
+        });
 
-        fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
+        expect(within(accountButton).getByText("alice")).toBeTruthy();
+        expect(document.querySelector('[data-slot="avatar"]')).toBeNull();
+        expect(
+            document.querySelector('[data-slot="avatar-fallback"]'),
+        ).toBeNull();
 
-        expect(screen.getByText("alice")).toBeTruthy();
-        expect(screen.getByRole("menuitem", { name: "Log out" })).toBeTruthy();
+        fireEvent.click(accountButton);
+
+        const accountMenu = screen.getByRole("menu");
+
+        expect(within(accountMenu).getByText("alice")).toBeTruthy();
+        expect(
+            within(accountMenu).getByRole("menuitem", { name: "Log out" }),
+        ).toBeTruthy();
+        expect(document.querySelector('[data-slot="avatar"]')).toBeNull();
+        expect(
+            document.querySelector('[data-slot="avatar-fallback"]'),
+        ).toBeNull();
     });
 
     it("refreshes an authenticated session through the browser on access", async () => {
@@ -210,13 +227,25 @@ describe("E3 auth menu", () => {
         });
         fireEvent.submit(screen.getByRole("form", { name: "Log in" }));
 
-        await screen.findByRole("button", { name: /alice account/i });
+        const accountButton = await screen.findByRole("button", {
+            name: /alice account/i,
+        });
 
-        expect(screen.queryByText("alice")).toBeNull();
+        expect(within(accountButton).getByText("alice")).toBeTruthy();
+        expect(document.querySelector('[data-slot="avatar"]')).toBeNull();
+        expect(
+            document.querySelector('[data-slot="avatar-fallback"]'),
+        ).toBeNull();
 
-        fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
+        fireEvent.click(accountButton);
 
-        expect(screen.getByText("alice")).toBeTruthy();
+        expect(
+            within(screen.getByRole("menu")).getByText("alice"),
+        ).toBeTruthy();
+        expect(document.querySelector('[data-slot="avatar"]')).toBeNull();
+        expect(
+            document.querySelector('[data-slot="avatar-fallback"]'),
+        ).toBeNull();
     });
 
     it("removes the username and shows Log in after successful logout", async () => {

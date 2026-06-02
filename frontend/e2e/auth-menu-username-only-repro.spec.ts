@@ -8,14 +8,14 @@ import { installResultsAuthCookie } from "./results-auth-helpers";
 const evidenceDir = path.resolve(process.cwd(), "..", ".tmp", "agent");
 const screenshotPath = path.join(
     evidenceDir,
-    "auth-menu-avatar-only-post-fix.png",
+    "auth-menu-username-only-post-fix.png",
 );
 const evidencePath = path.join(
     evidenceDir,
-    "auth-menu-avatar-only-post-fix.json",
+    "auth-menu-username-only-post-fix.json",
 );
 
-test("shows only the avatar in the signed-in account trigger", async ({
+test("shows only the username in the signed-in account trigger and menu", async ({
     context,
     page,
 }) => {
@@ -48,15 +48,15 @@ test("shows only the avatar in the signed-in account trigger", async ({
                 .trim() ?? "";
         const triggerText = trigger.textContent?.replace(/\s+/g, " ").trim();
         const badge = trigger.querySelector('[data-slot="badge"]');
+        const avatar = trigger.querySelector('[data-slot="avatar"]');
         const avatarFallback = trigger.querySelector(
             '[data-slot="avatar-fallback"]',
         );
         const rect = trigger.getBoundingClientRect();
 
         return {
-            avatarText: avatarFallback?.textContent
-                ?.replace(/\s+/g, " ")
-                .trim(),
+            avatarPresent: avatar !== null,
+            avatarFallbackPresent: avatarFallback !== null,
             badgeText: badge?.textContent?.replace(/\s+/g, " ").trim() ?? null,
             triggerRect: {
                 bottom: Math.round(rect.bottom),
@@ -87,11 +87,17 @@ test("shows only the avatar in the signed-in account trigger", async ({
     const popupText = await menu.evaluate((element) =>
         element.textContent?.replace(/\s+/g, " ").trim(),
     );
+    const popupAvatarEvidence = await menu.evaluate((element) => ({
+        avatarFallbackPresent:
+            element.querySelector('[data-slot="avatar-fallback"]') !== null,
+        avatarPresent: element.querySelector('[data-slot="avatar"]') !== null,
+    }));
 
     writeFileSync(
         evidencePath,
         `${JSON.stringify(
             {
+                popupAvatar: popupAvatarEvidence,
                 popupText,
                 screenshot: screenshotPath,
                 trigger: triggerEvidence,
@@ -102,10 +108,12 @@ test("shows only the avatar in the signed-in account trigger", async ({
     );
 
     expect(triggerEvidence).not.toBeNull();
-    expect(triggerEvidence?.avatarText).toBe(
-        triggerEvidence?.username.charAt(0).toUpperCase(),
-    );
+    expect(triggerEvidence?.avatarPresent).toBe(false);
+    expect(triggerEvidence?.avatarFallbackPresent).toBe(false);
+    expect(triggerEvidence?.triggerText).toBe(triggerEvidence?.username);
     expect(popupText).toContain(triggerEvidence?.username);
+    expect(popupAvatarEvidence.avatarPresent).toBe(false);
+    expect(popupAvatarEvidence.avatarFallbackPresent).toBe(false);
     expect(triggerEvidence?.badgeText).toBeNull();
-    expect(triggerEvidence?.usernameVisibleInTrigger).toBe(false);
+    expect(triggerEvidence?.usernameVisibleInTrigger).toBe(true);
 });
