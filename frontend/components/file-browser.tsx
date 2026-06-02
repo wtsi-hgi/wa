@@ -458,7 +458,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass: "-mx-0.5 flex flex-wrap items-start gap-3 pb-4",
+    headerClass: "-mx-0.5 flex min-h-9 flex-wrap items-start gap-3 pb-4",
     headerIconClass: boxTitleIconClass,
     headerTitleClass: boxTitleTextClass,
     id: "inline",

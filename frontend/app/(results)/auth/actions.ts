@@ -147,35 +147,25 @@ export async function loginAction(input: LoginInput): Promise<CurrentSession> {
 
 export async function logoutAction(): Promise<CurrentSession> {
     const jwt = await readCookieJwt();
-    let logoutError: Error | null = null;
-
-    if (jwt) {
-        try {
-            const response = await authFetch("/rest/v1/auth/logout", {
-                headers: bearerHeaders(jwt),
-                method: "POST",
-            });
-
-            if (
-                !response.ok &&
-                response.status !== 404 &&
-                response.status !== 501
-            ) {
-                logoutError = new Error("logout failed");
-            }
-        } catch (error) {
-            logoutError =
-                error instanceof Error ? error : new Error("logout failed");
-        }
-    }
 
     await expireAuthCookie();
 
-    if (logoutError) {
-        throw logoutError;
+    if (jwt) {
+        void notifyBackendLogout(jwt);
     }
 
     return anonymousSession();
+}
+
+async function notifyBackendLogout(jwt: string): Promise<void> {
+    try {
+        await authFetch("/rest/v1/auth/logout", {
+            headers: bearerHeaders(jwt),
+            method: "POST",
+        });
+    } catch {
+        // Browser logout is complete once the auth cookie is expired.
+    }
 }
 
 export async function refreshAction(): Promise<CurrentSession> {

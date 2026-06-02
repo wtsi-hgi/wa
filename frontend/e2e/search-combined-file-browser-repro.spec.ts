@@ -83,6 +83,81 @@ type SearchToggleSpacingMetric = {
     toggleTop: number;
 };
 
+type RectMetric = {
+    bottom: number;
+    centerY: number;
+    height: number;
+    left: number;
+    right: number;
+    top: number;
+    width: number;
+};
+
+type BoxTitleSpacingTargetMetric = {
+    box: RectMetric;
+    content: RectMetric | null;
+    distances: {
+        contentGapFromTitleTextBottom: number | null;
+        iconCenterDeltaFromTitleText: number;
+        iconLeftInsetWithinBox: number;
+        rightButtonBottomInsetWithinTitleSection: number | null;
+        rightButtonCenterDeltaFromIcon: number | null;
+        rightButtonCenterDeltaFromTitleRow: number | null;
+        rightButtonCenterDeltaFromTitleText: number | null;
+        rightButtonExtraHeightOverTitleRow: number | null;
+        rightButtonTopInsetWithinTitleSection: number | null;
+        sectionExtraHeightOverRightButton: number | null;
+        sectionExtraHeightOverTitleRow: number;
+        titleRowBottomInsetWithinTitleSection: number;
+        titleRowTopInsetWithinTitleSection: number;
+        titleSectionTopInsetWithinBox: number;
+        titleTextBottomInsetWithinTitleSection: number;
+        titleTextTopInsetWithinTitleSection: number;
+        toggleBottomToBoxTop: number | null;
+        toggleBottomToTitleRowTop: number | null;
+        toggleBottomToTitleTextTop: number | null;
+    };
+    icon: RectMetric;
+    key: string;
+    rightButton: RectMetric | null;
+    styles: {
+        boxPaddingBottom: number;
+        boxPaddingTop: number;
+        titleRowAlignItems: string;
+        titleRowColumnGap: string;
+        titleSectionAlignItems: string;
+        titleSectionBorderBottomWidth: number;
+        titleSectionDisplay: string;
+        titleSectionJustifyContent: string;
+        titleSectionPaddingBottom: number;
+        titleSectionPaddingTop: number;
+        titleSectionRowGap: string;
+    };
+    title: string;
+    titleRow: RectMetric;
+    titleSection: RectMetric;
+    titleText: RectMetric;
+};
+
+type BoxTitleSpacingSnapshot = {
+    boxes: Record<string, BoxTitleSpacingTargetMetric>;
+    mode: string;
+    toggle: RectMetric;
+    viewport: {
+        height: number;
+        width: number;
+    };
+};
+
+type BoxTitleSpacingComparison = {
+    fileBrowserToResultSetsSectionHeightDelta: number;
+    fileBrowserToResultSetsTitleRowTopFromToggleDelta: number | null;
+    resultSetsRightButtonCenterDeltaFromTitleRow: number | null;
+    resultSetsSectionExtraHeightOverTitleRow: number;
+    searchRightButtonCenterDeltaFromTitleRow: number | null;
+    searchSectionExtraHeightOverTitleRow: number;
+};
+
 test.beforeAll(() => {
     registeredResults = [
         registerCombinedBrowserResult({
@@ -352,6 +427,278 @@ async function collectSearchToggleSpacingMetric(
             toggleTop: toggleRect.top,
         };
     });
+}
+
+async function collectBoxTitleSpacingSnapshot(
+    page: Page,
+): Promise<BoxTitleSpacingSnapshot> {
+    return page.evaluate(() => {
+        type Target = {
+            boxSelector?: string;
+            contentSelector?: string;
+            key: string;
+            rightButtonText?: string;
+            title: string;
+            titleSectionSelector: string;
+        };
+
+        const toRect = (element: Element): RectMetric => {
+            const rect = element.getBoundingClientRect();
+
+            return {
+                bottom: rect.bottom,
+                centerY: rect.top + rect.height / 2,
+                height: rect.height,
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                width: rect.width,
+            };
+        };
+
+        const numberStyle = (styles: CSSStyleDeclaration, property: string) =>
+            Number.parseFloat(styles.getPropertyValue(property)) || 0;
+
+        const toggle = document.querySelector(
+            '[aria-label="Search result display"]',
+        );
+        const combinedShell = document.querySelector<HTMLElement>(
+            '[data-search-combined-file-browser="true"]',
+        );
+
+        if (!(toggle instanceof HTMLElement) || !combinedShell) {
+            throw new Error("Missing combined file browser toggle");
+        }
+
+        const toggleRect = toRect(toggle);
+        const targets: Target[] = [
+            {
+                boxSelector: '[data-search-builder="true"]',
+                contentSelector:
+                    '[data-search-builder-permanent-fields="true"]',
+                key: "search",
+                rightButtonText: "Add filter",
+                title: "Search",
+                titleSectionSelector:
+                    '[data-search-builder="true"] > div > div:first-child',
+            },
+            {
+                boxSelector: '[data-file-browser="true"]',
+                contentSelector:
+                    '[data-file-browser="true"] [data-preview-mode]',
+                key: "fileBrowser",
+                title: "File Browser",
+                titleSectionSelector: '[data-file-browser-header="true"]',
+            },
+            {
+                contentSelector: "thead",
+                key: "searchResults",
+                rightButtonText: "Columns",
+                title: "Search results",
+                titleSectionSelector: '[data-results-table-summary="true"]',
+            },
+        ];
+
+        const boxes: Record<string, BoxTitleSpacingTargetMetric> = {};
+
+        for (const target of targets) {
+            const titleSection = document.querySelector(
+                target.titleSectionSelector,
+            );
+
+            if (!(titleSection instanceof HTMLElement)) {
+                continue;
+            }
+
+            const box = target.boxSelector
+                ? document.querySelector(target.boxSelector)
+                : titleSection.parentElement;
+
+            if (!(box instanceof HTMLElement)) {
+                continue;
+            }
+
+            const titleText = Array.from(
+                titleSection.querySelectorAll("p"),
+            ).find(
+                (candidate): candidate is HTMLParagraphElement =>
+                    candidate instanceof HTMLParagraphElement &&
+                    candidate.textContent?.trim() === target.title,
+            );
+
+            if (!titleText) {
+                throw new Error(`Missing title text for ${target.title}`);
+            }
+
+            const titleRow = titleText.parentElement;
+
+            if (!(titleRow instanceof HTMLElement)) {
+                throw new Error(`Missing title row for ${target.title}`);
+            }
+
+            const icon = titleRow.querySelector("svg");
+
+            if (!(icon instanceof SVGElement)) {
+                throw new Error(`Missing title icon for ${target.title}`);
+            }
+
+            const rightButton = target.rightButtonText
+                ? (Array.from(titleSection.querySelectorAll("button")).find(
+                      (button) =>
+                          button.textContent
+                              ?.trim()
+                              .includes(target.rightButtonText ?? "") ||
+                          button
+                              .getAttribute("aria-label")
+                              ?.includes(target.rightButtonText ?? ""),
+                  ) ?? null)
+                : null;
+            const content = target.contentSelector
+                ? document.querySelector(target.contentSelector)
+                : null;
+            const boxRect = toRect(box);
+            const titleSectionRect = toRect(titleSection);
+            const titleRowRect = toRect(titleRow);
+            const titleTextRect = toRect(titleText);
+            const iconRect = toRect(icon);
+            const rightButtonRect =
+                rightButton instanceof HTMLElement ? toRect(rightButton) : null;
+            const contentRect =
+                content instanceof HTMLElement ? toRect(content) : null;
+            const boxStyles = window.getComputedStyle(box);
+            const titleSectionStyles = window.getComputedStyle(titleSection);
+            const titleRowStyles = window.getComputedStyle(titleRow);
+
+            boxes[target.key] = {
+                box: boxRect,
+                content: contentRect,
+                distances: {
+                    contentGapFromTitleTextBottom: contentRect
+                        ? contentRect.top - titleTextRect.bottom
+                        : null,
+                    iconCenterDeltaFromTitleText:
+                        iconRect.centerY - titleTextRect.centerY,
+                    iconLeftInsetWithinBox: iconRect.left - boxRect.left,
+                    rightButtonBottomInsetWithinTitleSection: rightButtonRect
+                        ? titleSectionRect.bottom - rightButtonRect.bottom
+                        : null,
+                    rightButtonCenterDeltaFromIcon: rightButtonRect
+                        ? rightButtonRect.centerY - iconRect.centerY
+                        : null,
+                    rightButtonCenterDeltaFromTitleRow: rightButtonRect
+                        ? rightButtonRect.centerY - titleRowRect.centerY
+                        : null,
+                    rightButtonCenterDeltaFromTitleText: rightButtonRect
+                        ? rightButtonRect.centerY - titleTextRect.centerY
+                        : null,
+                    rightButtonExtraHeightOverTitleRow: rightButtonRect
+                        ? rightButtonRect.height - titleRowRect.height
+                        : null,
+                    rightButtonTopInsetWithinTitleSection: rightButtonRect
+                        ? rightButtonRect.top - titleSectionRect.top
+                        : null,
+                    sectionExtraHeightOverRightButton: rightButtonRect
+                        ? titleSectionRect.height - rightButtonRect.height
+                        : null,
+                    sectionExtraHeightOverTitleRow:
+                        titleSectionRect.height - titleRowRect.height,
+                    titleRowBottomInsetWithinTitleSection:
+                        titleSectionRect.bottom - titleRowRect.bottom,
+                    titleRowTopInsetWithinTitleSection:
+                        titleRowRect.top - titleSectionRect.top,
+                    titleSectionTopInsetWithinBox:
+                        titleSectionRect.top - boxRect.top,
+                    titleTextBottomInsetWithinTitleSection:
+                        titleSectionRect.bottom - titleTextRect.bottom,
+                    titleTextTopInsetWithinTitleSection:
+                        titleTextRect.top - titleSectionRect.top,
+                    toggleBottomToBoxTop: boxRect.top - toggleRect.bottom,
+                    toggleBottomToTitleRowTop:
+                        titleRowRect.top - toggleRect.bottom,
+                    toggleBottomToTitleTextTop:
+                        titleTextRect.top - toggleRect.bottom,
+                },
+                icon: iconRect,
+                key: target.key,
+                rightButton: rightButtonRect,
+                styles: {
+                    boxPaddingBottom: numberStyle(boxStyles, "padding-bottom"),
+                    boxPaddingTop: numberStyle(boxStyles, "padding-top"),
+                    titleRowAlignItems: titleRowStyles.alignItems,
+                    titleRowColumnGap: titleRowStyles.columnGap,
+                    titleSectionAlignItems: titleSectionStyles.alignItems,
+                    titleSectionBorderBottomWidth: numberStyle(
+                        titleSectionStyles,
+                        "border-bottom-width",
+                    ),
+                    titleSectionDisplay: titleSectionStyles.display,
+                    titleSectionJustifyContent:
+                        titleSectionStyles.justifyContent,
+                    titleSectionPaddingBottom: numberStyle(
+                        titleSectionStyles,
+                        "padding-bottom",
+                    ),
+                    titleSectionPaddingTop: numberStyle(
+                        titleSectionStyles,
+                        "padding-top",
+                    ),
+                    titleSectionRowGap: titleSectionStyles.rowGap,
+                },
+                title: titleText.textContent?.trim() ?? "",
+                titleRow: titleRowRect,
+                titleSection: titleSectionRect,
+                titleText: titleTextRect,
+            };
+        }
+
+        return {
+            boxes,
+            mode: combinedShell.dataset.searchFileMode ?? "",
+            toggle: toggleRect,
+            viewport: {
+                height: window.innerHeight,
+                width: window.innerWidth,
+            },
+        };
+    });
+}
+
+function compareBoxTitleSpacing(
+    combined: BoxTitleSpacingSnapshot,
+    resultSets: BoxTitleSpacingSnapshot,
+): BoxTitleSpacingComparison {
+    const fileBrowser = combined.boxes.fileBrowser;
+    const search = combined.boxes.search;
+    const searchResults = resultSets.boxes.searchResults;
+
+    if (!fileBrowser || !search || !searchResults) {
+        throw new Error("Missing box title spacing comparison target");
+    }
+
+    const titleRowTopFromToggleDelta =
+        fileBrowser.distances.toggleBottomToTitleRowTop === null ||
+        searchResults.distances.toggleBottomToTitleRowTop === null
+            ? null
+            : Math.abs(
+                  fileBrowser.distances.toggleBottomToTitleRowTop -
+                      searchResults.distances.toggleBottomToTitleRowTop,
+              );
+
+    return {
+        fileBrowserToResultSetsSectionHeightDelta: Math.abs(
+            fileBrowser.titleSection.height - searchResults.titleSection.height,
+        ),
+        fileBrowserToResultSetsTitleRowTopFromToggleDelta:
+            titleRowTopFromToggleDelta,
+        resultSetsRightButtonCenterDeltaFromTitleRow:
+            searchResults.distances.rightButtonCenterDeltaFromTitleRow,
+        resultSetsSectionExtraHeightOverTitleRow:
+            searchResults.distances.sectionExtraHeightOverTitleRow,
+        searchRightButtonCenterDeltaFromTitleRow:
+            search.distances.rightButtonCenterDeltaFromTitleRow,
+        searchSectionExtraHeightOverTitleRow:
+            search.distances.sectionExtraHeightOverTitleRow,
+    };
 }
 
 async function collectSubfolderPreviewEvidence(page: Page) {
@@ -958,6 +1305,111 @@ test.describe("search combined file browser repro", () => {
             resultSetsSpacing.belowButtonsGap,
             "Result sets content should match the vertical rhythm above the toggle",
         ).toBeCloseTo(resultSetsSpacing.aboveButtonsGap, tolerance);
+    });
+
+    test("keeps title spacing consistent between combined files and result sets boxes", async ({
+        page,
+    }) => {
+        const combinedScreenshotPath = path.join(
+            evidenceDir,
+            "box-title-spacing-repro-combined.png",
+        );
+        const resultSetsScreenshotPath = path.join(
+            evidenceDir,
+            "box-title-spacing-repro-result-sets.png",
+        );
+        const evidencePath = path.join(
+            evidenceDir,
+            "box-title-spacing-repro.json",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
+
+        const combinedShell = page.locator(
+            '[data-search-combined-file-browser="true"]',
+        );
+
+        await expect(combinedShell).toHaveAttribute(
+            "data-search-file-mode",
+            "combined",
+        );
+        await expect(page.locator('[data-file-browser="true"]')).toBeVisible();
+
+        const combined = await collectBoxTitleSpacingSnapshot(page);
+
+        await page.screenshot({
+            animations: "disabled",
+            fullPage: true,
+            path: combinedScreenshotPath,
+        });
+
+        await page.getByRole("button", { name: "Result sets" }).click();
+        await expect(combinedShell).toHaveAttribute(
+            "data-search-file-mode",
+            "rows",
+        );
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+
+        const resultSets = await collectBoxTitleSpacingSnapshot(page);
+        const comparisons = compareBoxTitleSpacing(combined, resultSets);
+
+        await page.screenshot({
+            animations: "disabled",
+            fullPage: true,
+            path: resultSetsScreenshotPath,
+        });
+        writeFileSync(
+            evidencePath,
+            `${JSON.stringify(
+                {
+                    combined,
+                    comparisons,
+                    resultSets,
+                    screenshots: {
+                        combined: combinedScreenshotPath,
+                        resultSets: resultSetsScreenshotPath,
+                    },
+                    searchUrl: page.url(),
+                },
+                null,
+                2,
+            )}\n`,
+        );
+
+        expect(combined.boxes.fileBrowser.title).toBe("File Browser");
+        expect(resultSets.boxes.searchResults.title).toBe("Search results");
+        expect(
+            comparisons.fileBrowserToResultSetsTitleRowTopFromToggleDelta,
+            "Combined files and Result sets title rows should start the same distance below the display toggle",
+        ).not.toBeNull();
+        expect(
+            comparisons.fileBrowserToResultSetsTitleRowTopFromToggleDelta ?? 0,
+        ).toBeLessThanOrEqual(1);
+        expect(
+            comparisons.fileBrowserToResultSetsSectionHeightDelta,
+            "Result sets should keep the same compact title-section height as File Browser",
+        ).toBeLessThanOrEqual(1);
+        expect(
+            comparisons.resultSetsSectionExtraHeightOverTitleRow,
+            "The Columns control should not add extra vertical spacing around the Result sets title row",
+        ).toBeLessThanOrEqual(
+            combined.boxes.fileBrowser.distances
+                .sectionExtraHeightOverTitleRow + 1,
+        );
+        expect(
+            Math.abs(comparisons.searchRightButtonCenterDeltaFromTitleRow ?? 0),
+            "Add filter should stay vertically centered on the Search title row",
+        ).toBeLessThanOrEqual(1);
+        expect(
+            Math.abs(
+                comparisons.resultSetsRightButtonCenterDeltaFromTitleRow ?? 0,
+            ),
+            "Columns should stay vertically centered on the Search results title row",
+        ).toBeLessThanOrEqual(1);
     });
 
     test("narrows the combined file browser when the search filters to one sample", async ({

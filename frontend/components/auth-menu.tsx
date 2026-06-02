@@ -23,7 +23,11 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { loginAction, type CurrentSession } from "@/app/(results)/auth/actions";
+import {
+    loginAction,
+    logoutAction,
+    type CurrentSession,
+} from "@/app/(results)/auth/actions";
 
 type AuthMenuProps = {
     initialSession: CurrentSession;
@@ -37,21 +41,9 @@ function anonymousSession(): CurrentSession {
 }
 
 async function logoutFromBrowser(): Promise<CurrentSession> {
-    const response = await fetch("/api/auth/logout", {
-        cache: "no-store",
-        credentials: "same-origin",
-        method: "POST",
-    });
+    const nextSession = await logoutAction();
 
-    if (!response.ok) {
-        return anonymousSession();
-    }
-
-    const body = (await response
-        .json()
-        .catch(() => null)) as CurrentSession | null;
-
-    return body?.authenticated ? body : anonymousSession();
+    return nextSession.authenticated ? anonymousSession() : nextSession;
 }
 
 async function refreshFromBrowser(): Promise<CurrentSession> {

@@ -7,8 +7,10 @@ import { usePathname, useRouter } from "next/navigation";
 import {
     boxPanelInsetClass,
     boxPanelRadiusClass,
+    boxTitleActionClass,
     boxTitleIconClass,
     boxTitleRowClass,
+    boxTitleSectionClass,
     boxTitleTextClass,
 } from "@/components/box-title-section";
 import {
@@ -339,8 +341,8 @@ export function FilterBuilder({
                 "border border-border/70 bg-background/80 shadow-[0_24px_80px_-64px_rgba(29,44,69,0.78)]",
             )}
         >
-            <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col">
+                <div className={boxTitleSectionClass}>
                     <div className={boxTitleRowClass}>
                         <Search
                             className={boxTitleIconClass}
@@ -357,7 +359,7 @@ export function FilterBuilder({
                             onClick={() =>
                                 setIsPopoverOpen((current) => !current)
                             }
-                            className="inline-flex items-center justify-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 py-2 text-sm font-medium text-muted-foreground transition hover:border-primary/40 hover:bg-accent/35 hover:text-foreground"
+                            className={boxTitleActionClass}
                         >
                             <Plus className="size-4" />
                             Add filter
@@ -521,126 +523,134 @@ export function FilterBuilder({
                     </div>
                 </div>
 
-                <div
-                    data-search-builder-permanent-fields="true"
-                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
-                >
-                    {permanentFieldOptions.map((field) => {
-                        const fieldInputId = `permanent-filter-${field.key}`;
-                        const fieldDraftValue =
-                            permanentDraftValues[field.key] ?? "";
-                        const fieldSuggestions = getVisibleSuggestions(
-                            currentFilters,
-                            suggestionValues,
-                            field.key,
-                            fieldDraftValue,
-                        );
-                        const fieldSuggestionListId = `filter-suggestions-${field.key}`;
+                <div className="mt-2 flex flex-col gap-4">
+                    <div
+                        data-search-builder-permanent-fields="true"
+                        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
+                    >
+                        {permanentFieldOptions.map((field) => {
+                            const fieldInputId = `permanent-filter-${field.key}`;
+                            const fieldDraftValue =
+                                permanentDraftValues[field.key] ?? "";
+                            const fieldSuggestions = getVisibleSuggestions(
+                                currentFilters,
+                                suggestionValues,
+                                field.key,
+                                fieldDraftValue,
+                            );
+                            const fieldSuggestionListId = `filter-suggestions-${field.key}`;
 
-                        return (
-                            <form
-                                key={field.key}
-                                className="min-w-0 space-y-1.5"
-                                onSubmit={(event) =>
-                                    handlePermanentFilterSubmit(
-                                        event,
-                                        field.key,
-                                    )
-                                }
-                            >
-                                <label
-                                    htmlFor={fieldInputId}
-                                    className="block truncate text-xs font-semibold text-muted-foreground"
+                            return (
+                                <form
+                                    key={field.key}
+                                    className="min-w-0 space-y-1.5"
+                                    onSubmit={(event) =>
+                                        handlePermanentFilterSubmit(
+                                            event,
+                                            field.key,
+                                        )
+                                    }
                                 >
-                                    {field.label}
-                                </label>
-                                <div className="flex h-11 min-w-0 overflow-hidden rounded-xl border border-border bg-background transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
-                                    <input
-                                        data-permanent-filter-input={field.key}
-                                        id={fieldInputId}
-                                        list={fieldSuggestionListId}
-                                        value={fieldDraftValue}
-                                        onChange={(event) =>
-                                            setPermanentDraftValues(
-                                                (currentValues) => ({
-                                                    ...currentValues,
-                                                    [field.key]:
-                                                        event.target.value,
-                                                }),
-                                            )
-                                        }
-                                        className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
-                                    />
-                                    <button
-                                        type="submit"
-                                        aria-label={`Add ${field.label} filter`}
-                                        title={`Add ${field.label} filter`}
-                                        className="grid size-11 shrink-0 place-items-center border-l border-border bg-card text-foreground transition hover:bg-accent/35"
+                                    <label
+                                        htmlFor={fieldInputId}
+                                        className="block truncate text-xs font-semibold text-muted-foreground"
                                     >
-                                        <Plus className="size-4" />
-                                    </button>
-                                </div>
-                                {fieldSuggestions.length > 0 ? (
-                                    <datalist id={fieldSuggestionListId}>
-                                        {fieldSuggestions.map((suggestion) => (
-                                            <option
-                                                key={suggestion}
-                                                value={suggestion}
-                                            />
-                                        ))}
-                                    </datalist>
-                                ) : null}
-                            </form>
-                        );
-                    })}
-                </div>
-
-                {Object.keys(currentFilters).length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-border/80 bg-muted/35 px-4 py-5 text-sm text-muted-foreground">
-                        No filters applied. Use the permanent fields above, or
-                        add another filter.
-                    </div>
-                ) : (
-                    <div className="flex flex-wrap gap-3">
-                        {Object.entries(currentFilters).map(([key, values]) => (
-                            <div
-                                key={key}
-                                className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-card/90 px-3 py-2"
-                            >
-                                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                    {getFieldLabel(fieldOptions, key)}
-                                </span>
-                                {values.map((value) => {
-                                    const fieldLabel = getFieldLabel(
-                                        fieldOptions,
-                                        key,
-                                    );
-
-                                    return (
-                                        <button
-                                            key={`${key}:${value}`}
-                                            type="button"
-                                            onClick={() =>
-                                                pushFilters(
-                                                    removeFilterValue(
-                                                        currentFilters,
-                                                        key,
-                                                        value,
-                                                    ),
+                                        {field.label}
+                                    </label>
+                                    <div className="flex h-11 min-w-0 overflow-hidden rounded-xl border border-border bg-background transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
+                                        <input
+                                            data-permanent-filter-input={
+                                                field.key
+                                            }
+                                            id={fieldInputId}
+                                            list={fieldSuggestionListId}
+                                            value={fieldDraftValue}
+                                            onChange={(event) =>
+                                                setPermanentDraftValues(
+                                                    (currentValues) => ({
+                                                        ...currentValues,
+                                                        [field.key]:
+                                                            event.target.value,
+                                                    }),
                                                 )
                                             }
-                                            aria-label={`Remove ${fieldLabel} ${value}`}
-                                            className="inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1.5 text-sm text-secondary-foreground transition hover:bg-secondary/80"
+                                            className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
+                                        />
+                                        <button
+                                            type="submit"
+                                            aria-label={`Add ${field.label} filter`}
+                                            title={`Add ${field.label} filter`}
+                                            className="grid size-11 shrink-0 place-items-center border-l border-border bg-card text-foreground transition hover:bg-accent/35"
                                         >
-                                            <span>{value}</span>
-                                            <X className="size-3.5" />
+                                            <Plus className="size-4" />
                                         </button>
-                                    );
-                                })}
-                            </div>
-                        ))}
+                                    </div>
+                                    {fieldSuggestions.length > 0 ? (
+                                        <datalist id={fieldSuggestionListId}>
+                                            {fieldSuggestions.map(
+                                                (suggestion) => (
+                                                    <option
+                                                        key={suggestion}
+                                                        value={suggestion}
+                                                    />
+                                                ),
+                                            )}
+                                        </datalist>
+                                    ) : null}
+                                </form>
+                            );
+                        })}
                     </div>
-                )}
+
+                    {Object.keys(currentFilters).length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-border/80 bg-muted/35 px-4 py-5 text-sm text-muted-foreground">
+                            No filters applied. Use the permanent fields above,
+                            or add another filter.
+                        </div>
+                    ) : (
+                        <div className="flex flex-wrap gap-3">
+                            {Object.entries(currentFilters).map(
+                                ([key, values]) => (
+                                    <div
+                                        key={key}
+                                        className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-card/90 px-3 py-2"
+                                    >
+                                        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                            {getFieldLabel(fieldOptions, key)}
+                                        </span>
+                                        {values.map((value) => {
+                                            const fieldLabel = getFieldLabel(
+                                                fieldOptions,
+                                                key,
+                                            );
+
+                                            return (
+                                                <button
+                                                    key={`${key}:${value}`}
+                                                    type="button"
+                                                    onClick={() =>
+                                                        pushFilters(
+                                                            removeFilterValue(
+                                                                currentFilters,
+                                                                key,
+                                                                value,
+                                                            ),
+                                                        )
+                                                    }
+                                                    aria-label={`Remove ${fieldLabel} ${value}`}
+                                                    className="inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1.5 text-sm text-secondary-foreground transition hover:bg-secondary/80"
+                                                >
+                                                    <span>{value}</span>
+                                                    <X className="size-3.5" />
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                ),
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
         </section>
     );

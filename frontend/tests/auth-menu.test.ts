@@ -265,6 +265,10 @@ describe("E3 auth menu", () => {
             ),
         );
         vi.stubGlobal("fetch", fetchMock);
+        authActionMocks.logoutAction.mockResolvedValueOnce({
+            authenticated: false,
+            username: null,
+        });
 
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
@@ -280,32 +284,18 @@ describe("E3 auth menu", () => {
             fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
         });
 
-        expect(fetchMock).toHaveBeenCalledWith(
-            "/api/auth/logout",
-            expect.any(Object),
-        );
+        expect(authActionMocks.logoutAction).toHaveBeenCalled();
 
         await waitFor(() => {
             expect(screen.queryByText("alice")).toBeNull();
         });
         expect(screen.getByRole("button", { name: "Log in" })).toBeTruthy();
         expect(navigationMocks.refresh).toHaveBeenCalled();
-        expect(fetch).toHaveBeenCalledWith(
-            "/api/auth/logout",
-            expect.objectContaining({
-                cache: "no-store",
-                credentials: "same-origin",
-                method: "POST",
-            }),
-        );
     });
 
     it("shows Log in after logout clears the cookie but the backend call fails", async () => {
-        vi.stubGlobal(
-            "fetch",
-            vi
-                .fn()
-                .mockRejectedValue(new Error("results backend request failed")),
+        authActionMocks.logoutAction.mockRejectedValueOnce(
+            new Error("results backend request failed"),
         );
 
         await renderAuthMenu({ authenticated: true, username: "alice" });

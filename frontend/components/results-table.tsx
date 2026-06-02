@@ -21,8 +21,10 @@ import {
 
 import {
     boxPanelRadiusClass,
+    boxTitleActionClass,
     boxTitleIconClass,
     boxTitleRowClass,
+    boxTitleSectionClass,
     boxTitleTextClass,
 } from "@/components/box-title-section";
 import {
@@ -131,12 +133,15 @@ export function ResultsTable({
             className={cn(
                 "overflow-hidden border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]",
                 boxPanelRadiusClass,
-                hideSummary ? "" : "pt-3",
+                hideSummary ? "" : "pt-4",
             )}
         >
             {hideSummary ? null : (
                 <div
-                    className="flex items-center justify-between gap-4 border-b border-border/70 px-4 py-1"
+                    className={cn(
+                        boxTitleSectionClass,
+                        "border-b border-border/70 px-4",
+                    )}
                     data-results-table-summary="true"
                 >
                     <div className="min-w-0">
@@ -154,7 +159,7 @@ export function ResultsTable({
                         <DropdownMenu>
                             <DropdownMenuTrigger
                                 aria-label="Toggle column visibility"
-                                className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+                                className={boxTitleActionClass}
                             >
                                 <span>Columns</span>
                                 <ChevronDown

@@ -126,7 +126,7 @@ describe("E1 auth server actions", () => {
         );
     });
 
-    it("logs out through the backend, expires the JWT cookie, and returns an anonymous session", async () => {
+    it("expires the JWT cookie, notifies the backend, and returns an anonymous session", async () => {
         headerMocks.getCookie.mockReturnValue({ value: "jwt-old" });
         vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
 
@@ -152,6 +152,46 @@ describe("E1 auth server actions", () => {
             expect.objectContaining({
                 maxAge: 0,
                 secure: true,
+            }),
+        );
+        expect(headerMocks.setCookie.mock.invocationCallOrder[0]).toBeLessThan(
+            vi.mocked(fetch).mock.invocationCallOrder[0]!,
+        );
+    });
+
+    it("expires the JWT cookie without waiting for backend logout", async () => {
+        headerMocks.getCookie.mockReturnValue({ value: "jwt-old" });
+        vi.mocked(fetch).mockReturnValue(new Promise<Response>(() => {}));
+
+        const { logoutAction } = await import("@/app/(results)/auth/actions");
+        const response = await Promise.race([
+            logoutAction(),
+            new Promise<"timed out">((resolve) => {
+                setTimeout(() => {
+                    resolve("timed out");
+                }, 50);
+            }),
+        ]);
+
+        expect(response).not.toBe("timed out");
+        expect(response).toEqual({
+            authenticated: false,
+            username: null,
+        });
+        expect(headerMocks.setCookie).toHaveBeenCalledWith(
+            "wa_results_jwt",
+            "",
+            expect.objectContaining({
+                maxAge: 0,
+            }),
+        );
+        expect(fetch).toHaveBeenCalledWith(
+            "https://results.example/api/rest/v1/auth/logout",
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    authorization: "Bearer jwt-old",
+                }),
+                method: "POST",
             }),
         );
     });
