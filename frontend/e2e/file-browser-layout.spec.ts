@@ -2041,10 +2041,11 @@ test.describe("File Browser single preview layout", () => {
             `${JSON.stringify(metrics, null, 2)}\n`,
         );
 
-        expect(metrics.padding.top).toBeGreaterThanOrEqual(8);
+        expect(metrics.padding.top).toBe(6);
         expect(metrics.padding.bottom).toBe(metrics.padding.top);
         expect(metrics.padding.left).toBe(metrics.padding.top);
         expect(metrics.padding.right).toBe(metrics.padding.top);
+        expect(metrics.height).toBeLessThanOrEqual(56);
         expect(metrics.backgroundAlpha).toBe(1);
         expect(metrics.contrastAgainstDirectoryRow).toBeGreaterThanOrEqual(1.2);
     });

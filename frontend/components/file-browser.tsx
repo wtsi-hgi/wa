@@ -454,7 +454,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground",
     fileNameClass: "block truncate text-sm font-semibold text-foreground",
     folderControlsClass:
-        "file-browser-control-surface inline-nameplate-controls flex w-fit max-w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border bg-[color-mix(in_oklab,var(--card)_72%,var(--foreground)_28%)] p-2 text-sm shadow-sm",
+        "file-browser-control-surface inline-nameplate-controls flex w-fit max-w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border bg-[color-mix(in_oklab,var(--card)_72%,var(--foreground)_28%)] p-1.5 text-sm shadow-sm",
     gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
