@@ -183,6 +183,72 @@ describe("K1 filter builder component", () => {
         expect(screen.getByText("No matching fields.")).toBeTruthy();
     });
 
+    it("does not show suggested placeholders in empty permanent or add-filter value inputs", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        const { container } = render(
+            createElement(FilterBuilder, {
+                currentFilters: {
+                    pipeline_name: ["nf-core/rnaseq"],
+                },
+                metaKeys: ["library"],
+                seqmetaAvailable: true,
+                studies: [],
+                suggestionValues: {
+                    pipeline_name: ["nf-core/sarek"],
+                    run_key: ["48522 / random_exon"],
+                    study: ["6568"],
+                    sample: ["SMP1001"],
+                    user: ["alice"],
+                    library: ["RNA"],
+                },
+            }),
+        );
+
+        for (const label of [
+            "Pipeline name",
+            "Unique",
+            "Study",
+            "Sample",
+            "Requester",
+        ]) {
+            const input = screen.getByLabelText(
+                new RegExp(`^${label}$`, "i"),
+            ) as HTMLInputElement;
+
+            expect(input.value).toBe("");
+            expect(input.getAttribute("placeholder")).toBeNull();
+            expect(input.getAttribute("list")).toMatch(/^filter-suggestions-/);
+        }
+
+        expect(
+            screen.getByRole("button", { name: /nf-core\/rnaseq/i }),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                "datalist#filter-suggestions-pipeline_name option[value='nf-core/sarek']",
+            ),
+        ).toBeTruthy();
+
+        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(screen.getByRole("option", { name: /^library$/i }));
+
+        const valueInput = screen.getByLabelText(
+            /library value/i,
+        ) as HTMLInputElement;
+
+        expect(valueInput.value).toBe("");
+        expect(valueInput.getAttribute("placeholder")).toBeNull();
+        expect(valueInput.getAttribute("list")).toBe(
+            "filter-suggestions-library",
+        );
+        expect(
+            container.querySelector(
+                "datalist#filter-suggestions-library option[value='RNA']",
+            ),
+        ).toBeTruthy();
+    });
+
     it("updates the URL when a permanent field is added alongside an existing filter", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 

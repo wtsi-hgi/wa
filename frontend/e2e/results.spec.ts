@@ -84,6 +84,13 @@ type RowCountPlacementMetric = {
     };
 };
 
+type FilterInputMetric = {
+    key: string;
+    list: string | null;
+    placeholder: string | null;
+    value: string;
+};
+
 async function collectRecentSortIconMetrics(
     page: Page,
 ): Promise<SortIconMetric[]> {
@@ -190,6 +197,36 @@ async function collectPermanentSearchLabels(page: Page): Promise<string[]> {
             ),
         ).map((label) => label.textContent?.trim() ?? ""),
     );
+}
+
+async function collectSearchInputMetrics(page: Page): Promise<{
+    additional: FilterInputMetric[];
+    permanent: FilterInputMetric[];
+}> {
+    return page.evaluate(() => {
+        const toMetric = (input: HTMLInputElement): FilterInputMetric => ({
+            key:
+                input.dataset.permanentFilterInput ??
+                input.dataset.filterValueInput ??
+                "",
+            list: input.getAttribute("list"),
+            placeholder: input.getAttribute("placeholder"),
+            value: input.value,
+        });
+
+        return {
+            additional: Array.from(
+                document.querySelectorAll<HTMLInputElement>(
+                    "[data-filter-value-input]",
+                ),
+            ).map(toMetric),
+            permanent: Array.from(
+                document.querySelectorAll<HTMLInputElement>(
+                    "[data-permanent-filter-input]",
+                ),
+            ).map(toMetric),
+        };
+    });
 }
 
 async function collectPillMetric(locator: Locator): Promise<PillMetric> {
@@ -821,6 +858,76 @@ test.describe("Q1 critical results flows", () => {
         expect(placement.rowCount.centerY).toBeGreaterThan(
             placement.title.centerY,
         );
+    });
+
+    test("does not show suggested values in empty permanent or add-filter inputs", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "search-filter-empty-inputs-no-placeholders-postfix.png",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent("nf-core/rnaseq")}`,
+        );
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+
+        await expect(searchBuilder).toBeVisible();
+        await expect(
+            searchBuilder.getByRole("button", { name: /nf-core\/rnaseq/i }),
+        ).toBeVisible();
+
+        await searchBuilder.getByRole("button", { name: "Add filter" }).click();
+        await page.getByRole("option", { name: /^library$/i }).click();
+        await expect(page.getByLabel(/library value/i)).toBeVisible();
+
+        const metrics = await collectSearchInputMetrics(page);
+
+        await searchBuilder.screenshot({
+            animations: "disabled",
+            path: screenshotPath,
+        });
+
+        expect(metrics.permanent.map((metric) => metric.key)).toEqual([
+            "pipeline_name",
+            "run_key",
+            "study",
+            "sample",
+            "user",
+        ]);
+        expect(metrics.permanent.map((metric) => metric.value)).toEqual([
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]);
+        expect(metrics.permanent.map((metric) => metric.placeholder)).toEqual([
+            null,
+            null,
+            null,
+            null,
+            null,
+        ]);
+        expect(metrics.permanent.map((metric) => metric.list)).toEqual([
+            "filter-suggestions-pipeline_name",
+            "filter-suggestions-run_key",
+            "filter-suggestions-study",
+            "filter-suggestions-sample",
+            "filter-suggestions-user",
+        ]);
+        expect(metrics.additional).toEqual([
+            {
+                key: "library",
+                list: "filter-suggestions-library",
+                placeholder: null,
+                value: "",
+            },
+        ]);
     });
 
     test("renders the add filter pill with the same compact density as columns", async ({
