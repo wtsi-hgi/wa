@@ -523,7 +523,7 @@ export function FilterBuilder({
                     </div>
                 </div>
 
-                <div className="mt-2 flex flex-col gap-4">
+                <div className="flex flex-col gap-4">
                     <div
                         data-search-builder-permanent-fields="true"
                         className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"

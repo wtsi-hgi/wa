@@ -43,6 +43,12 @@ function anonymousSession(): CurrentSession {
 async function logoutFromBrowser(): Promise<CurrentSession> {
     const nextSession = await logoutAction();
 
+    await fetch("/api/auth/logout", {
+        cache: "no-store",
+        credentials: "same-origin",
+        method: "POST",
+    }).catch(() => null);
+
     return nextSession.authenticated ? anonymousSession() : nextSession;
 }
 

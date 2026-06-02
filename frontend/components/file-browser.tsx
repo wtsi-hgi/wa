@@ -28,6 +28,7 @@ import {
     boxPanelRadiusClass,
     boxTitleIconClass,
     boxTitleTextClass,
+    boxTitleTopAlignedRowClass,
 } from "@/components/box-title-section";
 import { PreviewPagination } from "@/components/preview-pagination";
 import { type FileEntry } from "@/lib/contracts";
@@ -458,7 +459,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass: "-mx-0.5 flex min-h-9 flex-wrap items-start gap-3 pb-4",
+    headerClass: "-mx-0.5 flex min-h-9 items-start pb-4",
     headerIconClass: boxTitleIconClass,
     headerTitleClass: boxTitleTextClass,
     id: "inline",
@@ -2228,11 +2229,15 @@ export function FileBrowser({
                 className={activeDesign.headerClass}
                 data-file-browser-header="true"
             >
-                <FolderTree
-                    className={activeDesign.headerIconClass}
-                    aria-hidden="true"
-                />
-                <p className={activeDesign.headerTitleClass}>File Browser</p>
+                <div className={boxTitleTopAlignedRowClass}>
+                    <FolderTree
+                        className={activeDesign.headerIconClass}
+                        aria-hidden="true"
+                    />
+                    <p className={activeDesign.headerTitleClass}>
+                        File Browser
+                    </p>
+                </div>
             </div>
 
             {files.length === 0 ? (
