@@ -23,6 +23,10 @@ import {
     ListFilter,
 } from "lucide-react";
 
+import {
+    boxTitleIconClass,
+    boxTitleTextClass,
+} from "@/components/box-title-section";
 import { PreviewPagination } from "@/components/preview-pagination";
 import { type FileEntry } from "@/lib/contracts";
 import { cn, formatBytes } from "@/lib/utils";
@@ -452,17 +456,16 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass: "flex flex-wrap items-center gap-3",
-    headerIconClass: "size-4 text-primary",
-    headerTitleClass:
-        "text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground",
+    headerClass: "-mx-0.5 flex flex-wrap items-start gap-3 pb-4",
+    headerIconClass: boxTitleIconClass,
+    headerTitleClass: boxTitleTextClass,
     id: "inline",
     pageBadgeClass:
         "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1 text-muted-foreground",
     paginationClass:
         "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
     sectionClass:
-        "rounded-xl border border-border/75 bg-card p-3 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]",
+        "rounded-xl border border-border/75 bg-card p-4 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]",
     singlePreviewClass:
         "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
     subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
@@ -479,7 +482,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
     treeInnerClass: "space-y-2",
     treeShellClass:
-        "mt-3 rounded-lg border border-border/70 bg-background/65 p-1",
+        "mt-0 rounded-lg border border-border/70 bg-background/65 p-0.5",
 };
 
 const inlineControlPlacement: FileBrowserControlPlacement = "name-area";

@@ -84,6 +84,18 @@ type RowCountPlacementMetric = {
     };
 };
 
+type TitleSectionGeometryMetric = {
+    box: {
+        paddingBottom: number;
+        paddingTop: number;
+    };
+    contentGapFromTitleContent: number | null;
+    effectiveBorderBottomWidth: number;
+    sectionTopInsetWithinBox: number;
+    title: string;
+    titleSectionHeight: number;
+};
+
 type FilterInputMetric = {
     key: string;
     list: string | null;
@@ -314,6 +326,82 @@ async function collectLatestRowCountPlacementMetric(
             },
         };
     });
+}
+
+async function collectTitleSectionGeometryMetric(
+    page: Page,
+    {
+        boxSelector,
+        contentSelector,
+        title,
+        titleSectionSelector,
+    }: {
+        boxSelector: string;
+        contentSelector?: string;
+        title: string;
+        titleSectionSelector: string;
+    },
+): Promise<TitleSectionGeometryMetric> {
+    return page.evaluate(
+        ({ boxSelector, contentSelector, title, titleSectionSelector }) => {
+            const box = document.querySelector(boxSelector);
+            const titleSection = document.querySelector(titleSectionSelector);
+
+            if (
+                !(box instanceof HTMLElement) ||
+                !(titleSection instanceof HTMLElement)
+            ) {
+                throw new Error(`Missing title geometry target for ${title}`);
+            }
+
+            const titleElement = Array.from(
+                titleSection.querySelectorAll("p"),
+            ).find(
+                (candidate): candidate is HTMLParagraphElement =>
+                    candidate instanceof HTMLParagraphElement &&
+                    candidate.textContent?.trim() === title,
+            );
+
+            if (!titleElement) {
+                throw new Error(`Missing title text for ${title}`);
+            }
+
+            const contentElement = contentSelector
+                ? document.querySelector(contentSelector)
+                : null;
+            const boxRect = box.getBoundingClientRect();
+            const sectionRect = titleSection.getBoundingClientRect();
+            const titleRect = titleElement.getBoundingClientRect();
+            const boxStyles = window.getComputedStyle(box);
+            const sectionStyles = window.getComputedStyle(titleSection);
+            const borderBottomWidth = Number.parseFloat(
+                sectionStyles.borderBottomWidth,
+            );
+            const borderBottomAlpha =
+                sectionStyles.borderBottomStyle === "none" ||
+                sectionStyles.borderBottomStyle === "hidden"
+                    ? 0
+                    : 1;
+
+            return {
+                box: {
+                    paddingBottom: Number.parseFloat(boxStyles.paddingBottom),
+                    paddingTop: Number.parseFloat(boxStyles.paddingTop),
+                },
+                contentGapFromTitleContent:
+                    contentElement instanceof HTMLElement
+                        ? contentElement.getBoundingClientRect().top -
+                          titleRect.bottom
+                        : null,
+                effectiveBorderBottomWidth:
+                    borderBottomWidth * borderBottomAlpha,
+                sectionTopInsetWithinBox: sectionRect.top - boxRect.top,
+                title: titleElement.textContent?.trim() ?? "",
+                titleSectionHeight: sectionRect.height,
+            };
+        },
+        { boxSelector, contentSelector, title, titleSectionSelector },
+    );
 }
 
 async function addRequesterFilter(
@@ -820,6 +908,106 @@ test.describe("Q1 critical results flows", () => {
             fileBrowserMetric.icon.height,
             1,
         );
+    });
+
+    test("keeps box title section geometry consistent across search, results, and file browser", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "box-title-section-geometry-postfix.png",
+        );
+        const evidencePath = path.join(
+            evidenceDir,
+            "box-title-section-geometry-postfix.json",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto("/");
+
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+        await expectRecentRowsLoaded(page);
+
+        const latest = await collectTitleSectionGeometryMetric(page, {
+            boxSelector: '[data-results-table-summary="true"]',
+            contentSelector: "tbody",
+            title: "Latest result sets",
+            titleSectionSelector: '[data-results-table-summary="true"]',
+        });
+
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent(rnaseqPipelineName)}`,
+        );
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+
+        await expect(searchBuilder).toBeVisible();
+        await expect(fileBrowser).toBeVisible();
+
+        const search = await collectTitleSectionGeometryMetric(page, {
+            boxSelector: '[data-search-builder="true"]',
+            contentSelector: '[data-search-builder-permanent-fields="true"]',
+            title: "Search",
+            titleSectionSelector:
+                '[data-search-builder="true"] > div > div:first-child',
+        });
+        const fileBrowserMetric = await collectTitleSectionGeometryMetric(
+            page,
+            {
+                boxSelector: '[data-file-browser="true"]',
+                contentSelector:
+                    '[data-file-browser="true"] [data-preview-mode]',
+                title: "File Browser",
+                titleSectionSelector: '[data-file-browser-header="true"]',
+            },
+        );
+
+        await page.getByRole("button", { name: "Result sets" }).click();
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+
+        const searchResults = await collectTitleSectionGeometryMetric(page, {
+            boxSelector: '[data-results-table-summary="true"]',
+            contentSelector: "tbody",
+            title: "Search results",
+            titleSectionSelector: '[data-results-table-summary="true"]',
+        });
+
+        await page
+            .locator("main")
+            .screenshot({ animations: "disabled", path: screenshotPath });
+
+        const metrics = {
+            fileBrowser: fileBrowserMetric,
+            latest,
+            screenshotPath,
+            search,
+            searchResults,
+        };
+
+        writeFileSync(evidencePath, `${JSON.stringify(metrics, null, 2)}\n`);
+
+        const titleSectionHeights = [
+            fileBrowserMetric.titleSectionHeight,
+            latest.titleSectionHeight,
+            search.titleSectionHeight,
+            searchResults.titleSectionHeight,
+        ];
+
+        expect(fileBrowserMetric.effectiveBorderBottomWidth).toBe(0);
+        expect(fileBrowserMetric.contentGapFromTitleContent).not.toBeNull();
+        expect(
+            fileBrowserMetric.contentGapFromTitleContent ?? 0,
+        ).toBeLessThanOrEqual(24);
+        expect(Math.min(...titleSectionHeights)).toBeGreaterThanOrEqual(34);
+        expect(
+            Math.max(...titleSectionHeights) - Math.min(...titleSectionHeights),
+        ).toBeLessThanOrEqual(12);
     });
 
     test("places the latest row count beside the rows-per-page footer control", async ({

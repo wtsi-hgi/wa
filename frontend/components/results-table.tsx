@@ -20,6 +20,11 @@ import {
 } from "lucide-react";
 
 import {
+    boxTitleIconClass,
+    boxTitleRowClass,
+    boxTitleTextClass,
+} from "@/components/box-title-section";
+import {
     getResultsColumns,
     isResultsTableRowLocked,
     toResultsTableRows,
@@ -124,16 +129,16 @@ export function ResultsTable({
         <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
             {hideSummary ? null : (
                 <div
-                    className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5"
+                    className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-1"
                     data-results-table-summary="true"
                 >
                     <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-3">
+                        <div className={boxTitleRowClass}>
                             <titleConfig.Icon
-                                className="size-4 text-primary"
+                                className={boxTitleIconClass}
                                 aria-hidden="true"
                             />
-                            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                            <p className={boxTitleTextClass}>
                                 {titleConfig.label}
                             </p>
                         </div>

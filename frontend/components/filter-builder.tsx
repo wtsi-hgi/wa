@@ -5,6 +5,11 @@ import { Check, Plus, Search, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
 import {
+    boxTitleIconClass,
+    boxTitleRowClass,
+    boxTitleTextClass,
+} from "@/components/box-title-section";
+import {
     Command,
     CommandEmpty,
     CommandGroup,
@@ -330,14 +335,12 @@ export function FilterBuilder({
         >
             <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex items-center gap-3">
+                    <div className={boxTitleRowClass}>
                         <Search
-                            className="size-4 text-primary"
+                            className={boxTitleIconClass}
                             aria-hidden="true"
                         />
-                        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                            Search
-                        </p>
+                        <p className={boxTitleTextClass}>Search</p>
                     </div>
 
                     <div className="relative">
