@@ -1991,7 +1991,10 @@ export function FileBrowser({
                         )}
                     </span>
                     <span className="min-w-0">
-                        <span className="block truncate text-base font-medium text-foreground">
+                        <span
+                            className="block truncate text-base font-medium text-foreground"
+                            title={node.path}
+                        >
                             {visibleDirectoryLabel(
                                 node.path,
                                 node.label,

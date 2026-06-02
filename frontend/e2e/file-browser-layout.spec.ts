@@ -826,6 +826,14 @@ test.describe("File Browser single preview layout", () => {
         screenshotEvidenceDir,
         "bug3-file-browser-subdir-indent-postfix.json",
     );
+    const truncatedDirectoryHoverScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-truncated-directory-hover-postfix.png",
+    );
+    const truncatedDirectoryHoverEvidencePath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-truncated-directory-hover-postfix.json",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -864,6 +872,100 @@ test.describe("File Browser single preview layout", () => {
         "lane-1",
         "lane-1-notes.tsv",
     );
+
+    test("shows the full path on hover for a truncated directory path", async ({
+        page,
+    }) => {
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await openResultFileBrowser(page);
+        await page.setViewportSize({ width: 360, height: 720 });
+
+        const directoryButton = page
+            .locator(`[data-directory-path="${rnaseqRootPath}"]`)
+            .first();
+
+        await expect(directoryButton).toBeVisible();
+        await directoryButton.scrollIntoViewIfNeeded();
+        await expect
+            .poll(async () =>
+                directoryButton.evaluate((button) => {
+                    const textColumn = button.children.item(1);
+                    const label = textColumn?.firstElementChild;
+
+                    if (!(label instanceof HTMLElement)) {
+                        return false;
+                    }
+
+                    return label.scrollWidth > label.clientWidth + 1;
+                }),
+            )
+            .toBe(true);
+
+        await directoryButton.hover();
+        await page.waitForTimeout(350);
+        await page.screenshot({
+            fullPage: true,
+            path: truncatedDirectoryHoverScreenshotPath,
+        });
+
+        const evidence = await directoryButton.evaluate(
+            (button, expectedPath) => {
+                const textColumn = button.children.item(1);
+                const label = textColumn?.firstElementChild;
+
+                if (!(label instanceof HTMLElement)) {
+                    throw new Error("Missing directory path label");
+                }
+
+                const styles = window.getComputedStyle(label);
+                const rect = label.getBoundingClientRect();
+                const tooltipTexts = Array.from(
+                    document.querySelectorAll(
+                        '[role="tooltip"], [data-radix-popper-content-wrapper], [data-tooltip]',
+                    ),
+                )
+                    .map((element) => element.textContent?.trim() ?? "")
+                    .filter((text) => text.length > 0);
+                const buttonTitle = button.getAttribute("title");
+                const labelTitle = label.getAttribute("title");
+                const hasFullPathHoverSignal =
+                    buttonTitle === expectedPath ||
+                    labelTitle === expectedPath ||
+                    tooltipTexts.some((text) => text.includes(expectedPath));
+
+                return {
+                    buttonAriaDescribedBy:
+                        button.getAttribute("aria-describedby"),
+                    buttonTitle,
+                    expectedPath,
+                    hasFullPathHoverSignal,
+                    isTruncated: label.scrollWidth > label.clientWidth + 1,
+                    labelClientWidth: label.clientWidth,
+                    labelRectWidth: rect.width,
+                    labelScrollWidth: label.scrollWidth,
+                    labelText: label.textContent?.trim() ?? "",
+                    labelTitle,
+                    overflowX: styles.overflowX,
+                    screenshotPath:
+                        "file-browser-truncated-directory-hover-postfix.png",
+                    textOverflow: styles.textOverflow,
+                    tooltipTexts,
+                    whiteSpace: styles.whiteSpace,
+                };
+            },
+            rnaseqRootPath,
+        );
+
+        writeFileSync(
+            truncatedDirectoryHoverEvidencePath,
+            `${JSON.stringify(evidence, null, 2)}\n`,
+            "utf8",
+        );
+
+        expect(evidence.isTruncated).toBe(true);
+        expect(evidence.textOverflow).toBe("ellipsis");
+        expect(evidence.hasFullPathHoverSignal).toBe(true);
+    });
 
     test("does not draw a divider under the file browser title row", async ({
         page,
