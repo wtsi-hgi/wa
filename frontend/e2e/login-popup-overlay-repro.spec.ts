@@ -183,8 +183,7 @@ async function snapshotDashboardGeometry(
         const resultsHeading =
             document.querySelector('[data-results-table-summary="true"] p') ??
             Array.from(document.querySelectorAll("h2")).find(
-                (heading) =>
-                    heading.textContent?.trim() === "Matching result sets",
+                (heading) => heading.textContent?.trim() === "Search results",
             ) ??
             null;
 

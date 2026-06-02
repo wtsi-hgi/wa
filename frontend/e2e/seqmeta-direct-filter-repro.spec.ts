@@ -19,7 +19,7 @@ type FilterEvidence = {
     screenshotPath: string;
     textSamples: Array<{
         elapsedMs: number;
-        matchingHeadingVisible: boolean;
+        searchResultsVisible: boolean;
         renderingVisible: boolean;
         resultRows: number;
     }>;
@@ -100,9 +100,10 @@ async function captureFilterEvidence(
     while (Date.now() - startedAt < maxCaptureMs) {
         const elapsedMs = Date.now() - startedAt;
         const bodyText = await page.locator("body").innerText();
-        const matchingHeadingVisible =
+        const searchResultsVisible =
             (await page
-                .getByRole("heading", { name: "Matching result sets" })
+                .locator('[data-results-table-summary="true"]')
+                .getByText("Search results")
                 .count()) > 0;
         const resultRows = await page
             .locator('tbody tr[data-result-row="true"]')
@@ -111,12 +112,12 @@ async function captureFilterEvidence(
 
         textSamples.push({
             elapsedMs,
-            matchingHeadingVisible,
             renderingVisible,
             resultRows,
+            searchResultsVisible,
         });
 
-        if (matchingHeadingVisible) {
+        if (searchResultsVisible) {
             millisUntilSearchResults = elapsedMs;
             break;
         }

@@ -607,7 +607,9 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         expect(searchResultsMock).toHaveBeenCalledWith({ user: ["alice"] });
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
-        expect(markup).toContain("Showing search results");
+        expect(markup).toContain("Search results");
+        expect(markup).not.toContain("Showing search results");
+        expect(markup).not.toContain("Matching result sets");
     });
 
     it("renders the combined search file browser by default for viewable matching result files", async () => {

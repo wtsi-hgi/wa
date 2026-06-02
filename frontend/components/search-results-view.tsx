@@ -37,7 +37,9 @@ export function SearchResultsView({
                 onModeChange={setMode}
                 registrations={registrations}
             />
-            {mode === "rows" ? <ResultsTable {...resultsTable} /> : null}
+            {mode === "rows" ? (
+                <ResultsTable {...resultsTable} hideSummary={false} />
+            ) : null}
         </>
     );
 }

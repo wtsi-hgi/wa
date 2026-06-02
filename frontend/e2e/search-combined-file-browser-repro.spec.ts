@@ -40,6 +40,39 @@ type CapturedConsoleMessage = {
     type: string;
 };
 
+type TitleTreatmentMetric = {
+    icon: {
+        color: string;
+        height: number;
+        present: boolean;
+        width: number;
+    };
+    row: {
+        alignItems: string;
+        columnGap: string;
+        display: string;
+    };
+    title: {
+        color: string;
+        fontSize: string;
+        fontWeight: string;
+        letterSpacing: string;
+        text: string;
+        textTransform: string;
+    };
+};
+
+type PillMetric = {
+    borderRadius: number;
+    height: number;
+    icon: {
+        height: number;
+        width: number;
+    };
+    paddingLeft: number;
+    paddingRight: number;
+};
+
 test.beforeAll(() => {
     registeredResults = [
         registerCombinedBrowserResult({
@@ -171,6 +204,101 @@ async function writeEvidence(
         evidencePath,
         `${JSON.stringify({ ...evidence, ...extraEvidence, screenshotPath }, null, 2)}\n`,
     );
+}
+
+async function collectTitleTreatmentMetric(
+    page: Page,
+    rootSelector: string,
+    titleText: string,
+): Promise<TitleTreatmentMetric> {
+    return page.evaluate(
+        ({ rootSelector, titleText }) => {
+            const root = document.querySelector(rootSelector);
+
+            if (!(root instanceof HTMLElement)) {
+                throw new Error(`Missing title root ${rootSelector}`);
+            }
+
+            const title = Array.from(root.querySelectorAll("p")).find(
+                (candidate): candidate is HTMLParagraphElement =>
+                    candidate instanceof HTMLParagraphElement &&
+                    candidate.textContent?.trim() === titleText,
+            );
+
+            if (!title) {
+                throw new Error(`Missing title ${titleText}`);
+            }
+
+            const row = title.parentElement;
+
+            if (!(row instanceof HTMLElement)) {
+                throw new Error(`Missing title row for ${titleText}`);
+            }
+
+            const icon = row.querySelector("svg");
+            const rowStyles = window.getComputedStyle(row);
+            const titleStyles = window.getComputedStyle(title);
+            const iconStyles =
+                icon instanceof SVGElement
+                    ? window.getComputedStyle(icon)
+                    : null;
+            const iconRect =
+                icon instanceof SVGElement
+                    ? icon.getBoundingClientRect()
+                    : null;
+
+            return {
+                icon: {
+                    color: iconStyles?.color ?? "",
+                    height: iconRect?.height ?? 0,
+                    present: icon instanceof SVGElement,
+                    width: iconRect?.width ?? 0,
+                },
+                row: {
+                    alignItems: rowStyles.alignItems,
+                    columnGap: rowStyles.columnGap,
+                    display: rowStyles.display,
+                },
+                title: {
+                    color: titleStyles.color,
+                    fontSize: titleStyles.fontSize,
+                    fontWeight: titleStyles.fontWeight,
+                    letterSpacing: titleStyles.letterSpacing,
+                    text: title.textContent?.trim() ?? "",
+                    textTransform: titleStyles.textTransform,
+                },
+            };
+        },
+        { rootSelector, titleText },
+    );
+}
+
+async function collectPillMetric(locator: Locator): Promise<PillMetric> {
+    return locator.evaluate((element) => {
+        const button = element as HTMLElement;
+        const svg = button.querySelector("svg");
+
+        if (!(svg instanceof SVGElement)) {
+            throw new Error(
+                `Missing pill icon for ${button.textContent?.trim() ?? "button"}`,
+            );
+        }
+
+        const buttonRect = button.getBoundingClientRect();
+        const iconRect = svg.getBoundingClientRect();
+        const computed = window.getComputedStyle(button);
+
+        return {
+            borderRadius: Number.parseFloat(computed.borderTopLeftRadius),
+            height: buttonRect.height,
+            icon: {
+                height: iconRect.height,
+                width: iconRect.width,
+            },
+            paddingLeft: Number.parseFloat(computed.paddingLeft),
+            paddingRight: Number.parseFloat(computed.paddingRight),
+        };
+    });
 }
 
 async function collectSubfolderPreviewEvidence(page: Page) {
@@ -620,9 +748,23 @@ test.describe("search combined file browser repro", () => {
         ).toBe(0);
     });
 
-    test("does not show the matching result sets box under the result rows view", async ({
+    test("shows the latest-style title and columns menu in the result sets view", async ({
         page,
     }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto("/");
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+        const latestMetric = await collectTitleTreatmentMetric(
+            page,
+            '[data-results-table-summary="true"]',
+            "Latest result sets",
+        );
+        const latestColumnsMetric = await collectPillMetric(
+            page.getByRole("button", { name: "Toggle column visibility" }),
+        );
+
         await page.goto(`/?pipeline_name=${encodeURIComponent(pipelineName)}`);
 
         await page.getByRole("button", { name: "Result sets" }).click();
@@ -630,21 +772,88 @@ test.describe("search combined file browser repro", () => {
         const combinedBrowserShell = page.locator(
             '[data-search-combined-file-browser="true"]',
         );
+        const summary = page.locator('[data-results-table-summary="true"]');
+        const columnsButton = page.getByRole("button", {
+            name: "Toggle column visibility",
+        });
+
         await expect(combinedBrowserShell).toHaveAttribute(
             "data-search-file-mode",
             "rows",
         );
-
-        await writeEvidence(
-            page,
-            "search-combined-file-browser-result-rows-matching-box.png",
+        await expect(summary).toBeVisible();
+        await expect(summary.getByText("Search results")).toBeVisible();
+        await expect(summary.getByText("Columns")).toBeVisible();
+        await expect(summary.getByText("Showing search results")).toHaveCount(
+            0,
         );
-
         await expect(
             page.getByRole("heading", { name: "Matching result sets" }),
         ).toHaveCount(0);
         await expect(matchingRows(page)).toHaveCount(2);
         await expect(page.locator('[data-file-browser="true"]')).toHaveCount(0);
+
+        const searchMetric = await collectTitleTreatmentMetric(
+            page,
+            '[data-results-table-summary="true"]',
+            "Search results",
+        );
+        const searchColumnsMetric = await collectPillMetric(columnsButton);
+        const headerTextsBefore = await page
+            .locator("thead th")
+            .allTextContents();
+
+        await columnsButton.click();
+        await page.getByRole("menuitemcheckbox", { name: "Requester" }).click();
+
+        const headerTextsAfter = await page
+            .locator("thead th")
+            .allTextContents();
+
+        await writeEvidence(
+            page,
+            "search-result-sets-title-treatment-postfix.png",
+            {
+                headerTextsAfter,
+                headerTextsBefore,
+                latestColumnsMetric,
+                latestMetric,
+                searchColumnsMetric,
+                searchMetric,
+                searchUrl: page.url(),
+            },
+        );
+
+        expect(searchMetric.title).toEqual({
+            ...latestMetric.title,
+            text: "Search results",
+        });
+        expect(searchMetric.row).toEqual(latestMetric.row);
+        expect(searchMetric.icon.present).toBe(true);
+        expect(searchMetric.icon.color).toBe(latestMetric.icon.color);
+        expect(searchMetric.icon.width).toBeCloseTo(latestMetric.icon.width, 1);
+        expect(searchMetric.icon.height).toBeCloseTo(
+            latestMetric.icon.height,
+            1,
+        );
+        expect(searchColumnsMetric.height).toBeCloseTo(
+            latestColumnsMetric.height,
+            1,
+        );
+        expect(searchColumnsMetric.paddingLeft).toBeCloseTo(
+            latestColumnsMetric.paddingLeft,
+            1,
+        );
+        expect(searchColumnsMetric.paddingRight).toBeCloseTo(
+            latestColumnsMetric.paddingRight,
+            1,
+        );
+        expect(searchColumnsMetric.borderRadius).toBeCloseTo(
+            latestColumnsMetric.borderRadius,
+            1,
+        );
+        expect(headerTextsBefore).toContain("Requester");
+        expect(headerTextsAfter).not.toContain("Requester");
     });
 
     test("narrows the combined file browser when the search filters to one sample", async ({

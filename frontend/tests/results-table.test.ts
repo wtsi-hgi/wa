@@ -251,7 +251,7 @@ describe("L1 results table", () => {
         expect(pageSizeControls?.textContent).toContain("25 rows");
     });
 
-    it("keeps the distinct search results summary title", async () => {
+    it("uses the latest result sets title and columns treatment for search results", async () => {
         await act(async () => {
             root.render(
                 createElement(ResultsTable, {
@@ -261,8 +261,36 @@ describe("L1 results table", () => {
             );
         });
 
-        expect(container.textContent).toContain("Showing search results");
-        expect(container.textContent).toContain("Matching result sets");
+        const summary = container.querySelector(
+            '[data-results-table-summary="true"]',
+        );
+        const title = summary?.querySelector("p");
+
+        expect(summary).not.toBeNull();
+        expect(summary?.textContent).toContain("Search results");
+        expect(summary?.textContent).toContain("Columns");
+        expect(summary?.textContent).not.toContain("Showing search results");
+        expect(summary?.textContent).not.toContain("Matching result sets");
+        expect(title?.textContent).toBe("Search results");
+        expect(title?.className).toContain("uppercase");
+        expect(title?.className).toContain("tracking-[0.18em]");
+        expect(summary?.querySelector("svg")).not.toBeNull();
+        expect(summary?.querySelector("h2")).toBeNull();
+
+        expect(getHeaderLabels(container)).toContain("Requester");
+
+        await click(
+            container.querySelector(
+                'button[aria-label="Toggle column visibility"]',
+            ),
+        );
+        await click(
+            container.querySelector(
+                'button[role="menuitemcheckbox"][data-column-id="requester"]',
+            ),
+        );
+
+        expect(getHeaderLabels(container)).not.toContain("Requester");
     });
 
     it("keeps command, pipeline version, pipeline identifier, stored key, operator, and id hidden by default", async () => {

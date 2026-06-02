@@ -11,7 +11,13 @@ import {
     type SortingState,
     useReactTable,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronLeft, ChevronRight, History } from "lucide-react";
+import {
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    History,
+    Search,
+} from "lucide-react";
 
 import {
     getResultsColumns,
@@ -109,6 +115,10 @@ export function ResultsTable({
     const visibleColumns = table
         .getAllLeafColumns()
         .filter((column) => column.getCanHide());
+    const titleConfig =
+        mode === "search"
+            ? { Icon: Search, label: "Search results" }
+            : { Icon: History, label: "Latest result sets" };
 
     return (
         <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
@@ -118,26 +128,15 @@ export function ResultsTable({
                     data-results-table-summary="true"
                 >
                     <div className="min-w-0">
-                        {mode === "search" ? (
-                            <>
-                                <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                                    Showing search results
-                                </p>
-                                <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                                    Matching result sets
-                                </h2>
-                            </>
-                        ) : (
-                            <div className="flex flex-wrap items-center gap-3">
-                                <History
-                                    className="size-4 text-primary"
-                                    aria-hidden="true"
-                                />
-                                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                    Latest result sets
-                                </p>
-                            </div>
-                        )}
+                        <div className="flex flex-wrap items-center gap-3">
+                            <titleConfig.Icon
+                                className="size-4 text-primary"
+                                aria-hidden="true"
+                            />
+                            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                {titleConfig.label}
+                            </p>
+                        </div>
                     </div>
                     <div className="flex items-center gap-3">
                         <DropdownMenu>

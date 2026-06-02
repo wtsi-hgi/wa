@@ -109,10 +109,3 @@ body {
     :where(div, section, img, iframe, article, pre, button) {
     border-bottom-right-radius: 0;
 }
-
-main:has(
-        [data-search-combined-file-browser="true"][data-search-file-mode="rows"]
-    )
-    [data-results-table-summary="true"] {
-    display: none;
-}
