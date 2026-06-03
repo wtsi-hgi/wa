@@ -285,6 +285,10 @@ describe("E3 auth menu", () => {
         });
 
         expect(authActionMocks.logoutAction).toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalledWith(
+            "/api/auth/logout",
+            expect.any(Object),
+        );
 
         await waitFor(() => {
             expect(screen.queryByText("alice")).toBeNull();
