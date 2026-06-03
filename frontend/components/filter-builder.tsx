@@ -526,7 +526,7 @@ export function FilterBuilder({
                 <div className="flex flex-col gap-4">
                     <div
                         data-search-builder-permanent-fields="true"
-                        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
+                        className="grid gap-3 sm:grid-cols-2 md:grid-cols-5"
                     >
                         {permanentFieldOptions.map((field) => {
                             const fieldInputId = `permanent-filter-${field.key}`;
@@ -557,7 +557,7 @@ export function FilterBuilder({
                                     >
                                         {field.label}
                                     </label>
-                                    <div className="flex h-11 min-w-0 overflow-hidden rounded-xl border border-border bg-background transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
+                                    <div className="flex h-10 min-w-0 overflow-hidden rounded-xl border border-border bg-background transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
                                         <input
                                             data-permanent-filter-input={
                                                 field.key
@@ -580,7 +580,7 @@ export function FilterBuilder({
                                             type="submit"
                                             aria-label={`Add ${field.label} filter`}
                                             title={`Add ${field.label} filter`}
-                                            className="grid size-11 shrink-0 place-items-center border-l border-border bg-card text-foreground transition hover:bg-accent/35"
+                                            className="grid size-10 shrink-0 place-items-center border-l border-border bg-card text-foreground transition hover:bg-accent/35"
                                         >
                                             <Plus className="size-4" />
                                         </button>

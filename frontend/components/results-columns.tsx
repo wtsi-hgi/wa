@@ -247,7 +247,7 @@ export function getResultsColumns(
                 resultCell(
                     row.original,
                     row.original.result.output_directory,
-                    "font-mono text-xs text-muted-foreground",
+                    "block max-w-full break-words font-mono text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]",
                     returnHref,
                 ),
         },

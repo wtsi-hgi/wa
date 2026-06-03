@@ -192,7 +192,7 @@ export function ResultsTable({
                 </div>
             ) : (
                 <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-border/70 text-left text-sm">
+                    <table className="w-full table-fixed divide-y divide-border/70 text-left text-sm">
                         <thead className="bg-muted/40">
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
