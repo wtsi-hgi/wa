@@ -33,6 +33,37 @@ const emptyStats: StatsResult = {
     daily: [],
     pipelines: [],
 };
+const combinedSearchFileFetchConcurrency = 6;
+
+type CombinedRegistrationFetch = {
+    index: number;
+    result: ResultSet;
+};
+type LoadedCombinedRegistration =
+    | (CombinedRegistrationFetch & { files: FileEntry[] })
+    | (CombinedRegistrationFetch & { locked: true });
+
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    const workerCount = Math.min(Math.max(1, concurrency), items.length);
+    let nextIndex = 0;
+
+    async function worker(): Promise<void> {
+        while (nextIndex < items.length) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            results[currentIndex] = await mapper(items[currentIndex]);
+        }
+    }
+
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+    return results;
+}
 
 function appendSuggestion(
     suggestions: FilterSuggestionMap,
@@ -217,6 +248,29 @@ function outputDirectorySpecificity(
     return outputDirectory.split("/").filter(Boolean).length;
 }
 
+async function fetchCombinedRegistrationFiles({
+    index,
+    result,
+}: CombinedRegistrationFetch): Promise<LoadedCombinedRegistration> {
+    try {
+        return {
+            files: await fetchFiles(result.id),
+            index,
+            result,
+        };
+    } catch (error) {
+        if (error instanceof BackendRequestError && error.status === 403) {
+            return {
+                index,
+                locked: true,
+                result,
+            };
+        }
+
+        throw error;
+    }
+}
+
 async function collectCombinedSearchFiles(
     entries: ResultSet[] | SearchResult[],
 ): Promise<{
@@ -228,41 +282,62 @@ async function collectCombinedSearchFiles(
         string,
         { file: CombinedSearchFile; specificity: number }
     >();
-    const lockedRegistrations: CombinedSearchRegistration[] = [];
+    const lockedRegistrationsByIndex: Array<{
+        index: number;
+        registration: CombinedSearchRegistration;
+    }> = [];
     const registrations: CombinedSearchRegistration[] = [];
+    const viewableRegistrations: CombinedRegistrationFetch[] = [];
 
-    for (const entry of entries) {
+    entries.forEach((entry, index) => {
         const result = toResultSet(entry);
 
         if (!isResultViewable(result)) {
-            lockedRegistrations.push({ fileCount: 0, result });
+            lockedRegistrationsByIndex.push({
+                index,
+                registration: { fileCount: 0, result },
+            });
+            return;
+        }
+
+        viewableRegistrations.push({ index, result });
+    });
+
+    const loadedRegistrations = await mapWithConcurrency(
+        viewableRegistrations,
+        combinedSearchFileFetchConcurrency,
+        fetchCombinedRegistrationFiles,
+    );
+
+    for (const loadedRegistration of loadedRegistrations) {
+        if ("locked" in loadedRegistration) {
+            lockedRegistrationsByIndex.push({
+                index: loadedRegistration.index,
+                registration: {
+                    fileCount: 0,
+                    result: loadedRegistration.result,
+                },
+            });
             continue;
         }
 
-        let resultFiles: FileEntry[];
-
-        try {
-            resultFiles = await fetchFiles(result.id);
-        } catch (error) {
-            if (error instanceof BackendRequestError && error.status === 403) {
-                lockedRegistrations.push({ fileCount: 0, result });
-                continue;
-            }
-
-            throw error;
-        }
-
-        if (resultFiles.length === 0) {
+        if (loadedRegistration.files.length === 0) {
             continue;
         }
 
-        registrations.push({ fileCount: resultFiles.length, result });
-        for (const file of resultFiles) {
+        registrations.push({
+            fileCount: loadedRegistration.files.length,
+            result: loadedRegistration.result,
+        });
+        for (const file of loadedRegistration.files) {
             const combinedFile = {
                 ...file,
-                resultId: result.id,
+                resultId: loadedRegistration.result.id,
             };
-            const specificity = outputDirectorySpecificity(result, file);
+            const specificity = outputDirectorySpecificity(
+                loadedRegistration.result,
+                file,
+            );
             const existing = filesByPath.get(file.path);
 
             if (!existing || specificity > existing.specificity) {
@@ -276,7 +351,9 @@ async function collectCombinedSearchFiles(
 
     return {
         files: [...filesByPath.values()].map(({ file }) => file),
-        lockedRegistrations,
+        lockedRegistrations: lockedRegistrationsByIndex
+            .sort((left, right) => left.index - right.index)
+            .map(({ registration }) => registration),
         registrations,
     };
 }

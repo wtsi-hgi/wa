@@ -724,6 +724,52 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(0);
     });
 
+    it("fetches combined search file lists with a small concurrency limit", async () => {
+        fetchStatsMock.mockResolvedValue(buildStats());
+        const results = Array.from({ length: 8 }, (_, index) =>
+            buildResultSet(index + 31),
+        );
+        const fileRequests = results.map(() => deferred<FileEntry[]>());
+
+        searchResultsMock.mockResolvedValue(results);
+        fetchFilesMock.mockImplementation((id: string) => {
+            const index = results.findIndex((result) => result.id === id);
+
+            return index >= 0
+                ? fileRequests[index].promise
+                : Promise.resolve([]);
+        });
+
+        const pagePromise = renderDashboard({
+            pipeline_name: "wa/concurrency-regression",
+        });
+
+        await waitFor(() => {
+            expect(fetchFilesMock).toHaveBeenCalledTimes(6);
+        });
+
+        fileRequests[0].resolve([
+            {
+                kind: "output",
+                mtime: "2026-06-01T10:00:00Z",
+                path: `${results[0].output_directory}/first.txt`,
+                size: 12,
+            },
+        ]);
+
+        await waitFor(() => {
+            expect(fetchFilesMock).toHaveBeenCalledTimes(7);
+        });
+
+        for (const request of fileRequests.slice(1)) {
+            request.resolve([]);
+        }
+
+        const markup = await pagePromise;
+
+        expect(markup).toContain("Combined files");
+    });
+
     it("renders a locked combined search file browser state for locked matching result rows", async () => {
         fetchStatsMock.mockResolvedValue(buildStats());
         const alpha = buildResultSet(21);
