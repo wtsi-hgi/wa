@@ -526,7 +526,7 @@ export function FilterBuilder({
                 <div className="flex flex-col gap-4">
                     <div
                         data-search-builder-permanent-fields="true"
-                        className="grid gap-3 sm:grid-cols-2 md:grid-cols-5"
+                        className="grid grid-cols-[repeat(auto-fit,minmax(min(7rem,100%),1fr))] gap-3"
                     >
                         {permanentFieldOptions.map((field) => {
                             const fieldInputId = `permanent-filter-${field.key}`;
@@ -580,7 +580,7 @@ export function FilterBuilder({
                                             type="submit"
                                             aria-label={`Add ${field.label} filter`}
                                             title={`Add ${field.label} filter`}
-                                            className="grid size-10 shrink-0 place-items-center border-l border-border bg-card text-foreground transition hover:bg-accent/35"
+                                            className="relative -my-px flex h-10 w-10 shrink-0 items-center justify-center bg-card text-foreground transition before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border before:content-[''] hover:bg-accent/35"
                                         >
                                             <Plus className="size-4" />
                                         </button>

@@ -56,8 +56,17 @@ type RectMetric = {
 
 type PermanentFieldMetric = {
     button: RectMetric;
+    buttonCenterDeltaFromControl: {
+        x: number;
+        y: number;
+    };
+    control: RectMetric;
     field: RectMetric;
-    icon: RectMetric | null;
+    icon: RectMetric;
+    iconCenterDeltaFromButton: {
+        x: number;
+        y: number;
+    };
     input: RectMetric;
     key: string;
     label: string;
@@ -72,9 +81,17 @@ type SearchLayoutMetric = {
     firstRowFieldCount: number;
     grid: RectMetric;
     plusButtonSizes: Array<{
+        buttonCenterDeltaFromControl: {
+            x: number;
+            y: number;
+        };
         height: number;
-        iconHeight: number | null;
-        iconWidth: number | null;
+        iconCenterDeltaFromButton: {
+            x: number;
+            y: number;
+        };
+        iconHeight: number;
+        iconWidth: number;
         key: string;
         width: number;
     }>;
@@ -163,6 +180,10 @@ async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
                     width: rect.width,
                 };
             };
+            const center = (rect: RectMetric) => ({
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+            });
 
             const searchGrid = document.querySelector<HTMLElement>(
                 '[data-search-builder-permanent-fields="true"]',
@@ -182,18 +203,45 @@ async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
                     'button[type="submit"]',
                 );
                 const label = form.querySelector("label");
-                const icon = button?.querySelector("svg") ?? null;
+                const control = input?.parentElement;
+                const icon = button?.querySelector("svg");
 
-                if (!input || !button || !label) {
+                if (
+                    !input ||
+                    !button ||
+                    !label ||
+                    !(control instanceof HTMLElement) ||
+                    !(icon instanceof SVGElement)
+                ) {
                     throw new Error(
                         "Missing permanent field measurement target",
                     );
                 }
 
+                const buttonRect = toBrowserRect(button);
+                const controlRect = toBrowserRect(control);
+                const iconRect = toBrowserRect(icon);
+                const buttonCenter = center(buttonRect);
+                const controlCenter = center(controlRect);
+                const iconCenter = center(iconRect);
+
                 return {
-                    button: toBrowserRect(button),
+                    button: buttonRect,
+                    buttonCenterDeltaFromControl: {
+                        x: Number(
+                            (buttonCenter.x - controlCenter.x).toFixed(3),
+                        ),
+                        y: Number(
+                            (buttonCenter.y - controlCenter.y).toFixed(3),
+                        ),
+                    },
+                    control: controlRect,
                     field: toBrowserRect(form),
-                    icon: icon ? toBrowserRect(icon) : null,
+                    icon: iconRect,
+                    iconCenterDeltaFromButton: {
+                        x: Number((iconCenter.x - buttonCenter.x).toFixed(3)),
+                        y: Number((iconCenter.y - buttonCenter.y).toFixed(3)),
+                    },
                     input: toBrowserRect(input),
                     key: input.dataset.permanentFilterInput ?? "",
                     label: label.textContent?.trim() ?? "",
@@ -303,9 +351,13 @@ async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
                     firstRowFieldCount,
                     grid: toBrowserRect(searchGrid),
                     plusButtonSizes: fields.map((field) => ({
+                        buttonCenterDeltaFromControl:
+                            field.buttonCenterDeltaFromControl,
                         height: field.button.height,
-                        iconHeight: field.icon?.height ?? null,
-                        iconWidth: field.icon?.width ?? null,
+                        iconCenterDeltaFromButton:
+                            field.iconCenterDeltaFromButton,
+                        iconHeight: field.icon.height,
+                        iconWidth: field.icon.width,
                         key: field.key,
                         width: field.button.width,
                     })),
@@ -377,6 +429,17 @@ test("reproduces real-data long path layout regression on latest results", async
     expect.soft(metric.search.fieldCount).toBe(5);
     expect.soft(metric.search.rowCount).toBe(1);
     expect.soft(metric.search.firstRowFieldCount).toBe(5);
+    for (const plusButton of metric.search.plusButtonSizes) {
+        expect
+            .soft(Math.abs(plusButton.iconCenterDeltaFromButton.x))
+            .toBeLessThanOrEqual(0.25);
+        expect
+            .soft(Math.abs(plusButton.iconCenterDeltaFromButton.y))
+            .toBeLessThanOrEqual(0.25);
+        expect
+            .soft(Math.abs(plusButton.buttonCenterDeltaFromControl.y))
+            .toBeLessThanOrEqual(0.25);
+    }
     expect.soft(metric.latest.tableHorizontalOverflow).toBeLessThanOrEqual(1);
     expect
         .soft(metric.latest.outputText.width)
