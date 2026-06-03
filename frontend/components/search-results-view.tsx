@@ -27,6 +27,7 @@ export function SearchResultsView({
     resultsTable,
 }: SearchResultsViewProps) {
     const [mode, setMode] = useState<SearchFileMode>("combined");
+    const { hideSummary: _hideSummary, ...resultRowsTable } = resultsTable;
 
     return (
         <>
@@ -38,7 +39,7 @@ export function SearchResultsView({
                 registrations={registrations}
             />
             {mode === "rows" ? (
-                <ResultsTable {...resultsTable} hideSummary={false} />
+                <ResultsTable {...resultRowsTable} hideSummary={false} />
             ) : null}
         </>
     );
