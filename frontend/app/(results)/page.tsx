@@ -321,15 +321,19 @@ async function collectCombinedSearchFiles(
             continue;
         }
 
-        if (loadedRegistration.files.length === 0) {
+        const outputFiles = loadedRegistration.files.filter(
+            (file) => file.kind === "output",
+        );
+
+        if (outputFiles.length === 0) {
             continue;
         }
 
         registrations.push({
-            fileCount: loadedRegistration.files.length,
+            fileCount: outputFiles.length,
             result: loadedRegistration.result,
         });
-        for (const file of loadedRegistration.files) {
+        for (const file of outputFiles) {
             const combinedFile = {
                 ...file,
                 resultId: loadedRegistration.result.id,

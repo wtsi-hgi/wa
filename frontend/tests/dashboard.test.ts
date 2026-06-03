@@ -724,6 +724,46 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(0);
     });
 
+    it("keeps combined search files scoped to output file entries", async () => {
+        fetchStatsMock.mockResolvedValue(buildStats());
+        const result = buildResultSet(25);
+        result.pipeline_name = "wa/output-file-scope-regression";
+        result.output_directory = "/tmp/results/output-root";
+        searchResultsMock.mockResolvedValue([result]);
+        fetchFilesMock.mockResolvedValue([
+            {
+                kind: "input",
+                mtime: "2026-06-01T10:00:00Z",
+                path: "/input/shared/reads.fastq",
+                size: 12,
+            },
+            {
+                kind: "pipeline",
+                mtime: "2026-06-01T10:00:00Z",
+                path: "/workflow/main.nf",
+                size: 12,
+            },
+            {
+                kind: "output",
+                mtime: "2026-06-01T10:00:00Z",
+                path: `${result.output_directory}/report.txt`,
+                size: 12,
+            },
+        ]);
+
+        const markup = await renderDashboard({
+            pipeline_name: "wa/output-file-scope-regression",
+        });
+
+        expect(markup).toContain(
+            'data-directory-path="/tmp/results/output-root"',
+        );
+        expect(markup).not.toContain("/input/shared/reads.fastq");
+        expect(markup).not.toContain("/workflow/main.nf");
+        expect(markup).toContain(`data-combined-result-info="${result.id}"`);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(0);
+    });
+
     it("fetches combined search file lists with a small concurrency limit", async () => {
         fetchStatsMock.mockResolvedValue(buildStats());
         const results = Array.from({ length: 8 }, (_, index) =>
