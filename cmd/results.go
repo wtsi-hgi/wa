@@ -1186,6 +1186,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var legacyRunID string
 	var additionalUnique string
 	var inputFiles []string
+	var matchPatterns []string
 	var metaValues []string
 	var lookupValues resultsRegisterLookupValues
 	var includeHidden bool
@@ -1238,6 +1239,7 @@ create a new result set.`,
 				legacyRunID,
 				additionalUnique,
 				inputFiles,
+				matchPatterns,
 				metaValues,
 				lookupValues,
 				includeHidden,
@@ -1264,6 +1266,7 @@ create a new result set.`,
 	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
+	command.Flags().StringArrayVar(&matchPatterns, "match", nil, "Output-relative glob for files to register; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
 	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric id_run through MLWH and store it as seqmeta_id_run")
 	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_id_study_lims")
@@ -1289,6 +1292,7 @@ func buildResultsRegistrationForCommand(
 	legacyRunID string,
 	additionalUnique string,
 	inputFiles []string,
+	matchPatterns []string,
 	metaValues []string,
 	lookupValues resultsRegisterLookupValues,
 	includeHidden bool,
@@ -1352,7 +1356,7 @@ func buildResultsRegistrationForCommand(
 		return nil, err
 	}
 
-	outputFiles, scanWarnings, err := results.ScanDirectory(outputDir, includeHidden)
+	outputFiles, scanWarnings, err := results.ScanDirectory(outputDir, includeHidden, matchPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("scan output directory: %w", err)
 	}

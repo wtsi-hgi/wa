@@ -169,6 +169,62 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(registration.RunKey, convey.ShouldEqual, "runid=48522-random-exon")
 	})
 
+	convey.Convey("Given repeated --match globs, register only sends output files matching any glob", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "reports", "summary.html"), "html")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "reports", "summary.txt"), "text")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "metrics", "qc.json"), "{}")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "metrics", "qc.tsv"), "col\n")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "matched-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results",
+			"--server", server.URL,
+			"register",
+			"--user", "alice",
+			"--unique", "matched",
+			"--nextflow-workflow", workflowPath,
+			"--match", "reports/*.html",
+			"--match", "metrics/*.json",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registerCommandFileRelPathsByKind(t, outputDir, registration.Files, "output"), convey.ShouldResemble, map[string]bool{
+			filepath.Join("metrics", "qc.json"):      true,
+			filepath.Join("reports", "summary.html"): true,
+		})
+		convey.So(countRegisterCommandFilesByKind(registration.Files, "pipeline"), convey.ShouldEqual, 1)
+	})
+
 	convey.Convey("G1.2: Given --json, when registration JSON is piped to stdin, then it is sent as-is to the server without scanning", t, func() {
 		payload := registerCommandRegistrationForTest()
 		payload.OutputDirectory = "/does/not/need/to/exist"
@@ -1018,6 +1074,26 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "user")
 	})
+}
+
+func registerCommandFileRelPathsByKind(t *testing.T, root string, files []results.FileEntry, kind string) map[string]bool {
+	t.Helper()
+
+	paths := make(map[string]bool)
+	for _, file := range files {
+		if file.Kind != kind {
+			continue
+		}
+
+		relPath, err := filepath.Rel(root, file.Path)
+		if err != nil {
+			t.Fatalf("relative path for %s: %v", file.Path, err)
+		}
+
+		paths[relPath] = true
+	}
+
+	return paths
 }
 
 func registerCommandRegistrationForTest() *results.Registration {
