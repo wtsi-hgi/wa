@@ -54,6 +54,13 @@ import (
 	"github.com/wtsi-hgi/wa/results"
 )
 
+const (
+	runDevDefaultFrontendHealthAttemptsForTest = 120
+	runDevDefaultSeqmetaHealthAttemptsForTest  = 1200
+	runDevHealthPollIntervalForTest            = 250 * time.Millisecond
+	runDevSnapshotStartupGraceForTest          = 45 * time.Second
+)
+
 type runDevEnvSnapshot struct {
 	ResultsBackendURL string `json:"WA_RESULTS_BACKEND_URL"`
 	ResultsCACert     string `json:"WA_RESULTS_BACKEND_CA_CERT"`
@@ -67,6 +74,47 @@ type runDevEnvSnapshot struct {
 
 func runDevUnsetSeqmetaEnvForTest() []string {
 	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL"}
+}
+
+func TestRunDevSnapshotWaitAllowsSlowFrontendStartup(t *testing.T) {
+	convey.Convey("run-dev.sh test harness waits for a frontend snapshot after slow startup prerequisites", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		frontendScriptPath := filepath.Join(t.TempDir(), "delayed-frontend")
+
+		frontendScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+sleep 21
+exec node %q "$WA_TEST_FRONTEND_PORT"
+`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"))
+		convey.So(os.WriteFile(frontendScriptPath, []byte(frontendScript), 0o755), convey.ShouldBeNil)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env: map[string]string{
+				"WA_RUN_DEV_ENV_SNAPSHOT":                 snapshotPath,
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD":   `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":            `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":            `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":             fmt.Sprintf("bash %q", frontendScriptPath),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":          fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS": "180",
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
+
+		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
 }
 
 func runDevEnsureTLSCertificateForTest(t *testing.T, repoRoot string) (string, string) {
@@ -139,7 +187,7 @@ func TestRunDevScriptF1DevCertificates(t *testing.T) {
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
 		convey.So(snapshot.ResultsCACert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
@@ -170,7 +218,7 @@ func TestRunDevScriptF1DevCertificates(t *testing.T) {
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		cmdline := waitForRunDevChildCommandLineForTest(t, process.Command.Process.Pid, " results serve ")
 
 		convey.So(snapshot.ResultsServerCert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
@@ -334,6 +382,79 @@ func runRunDevExpectingFailureWithinForTest(
 	}
 }
 
+func runDevSnapshotTimeoutForTest(process *runDevProcess) time.Duration {
+	timeout := runDevSnapshotStartupGraceForTest
+	timeout += time.Duration(runDevHealthAttemptsForTest(process, "WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS", runDevDefaultFrontendHealthAttemptsForTest)) *
+		runDevHealthPollIntervalForTest
+
+	if runDevStartsSeqmetaBeforeFrontendForTest(process) {
+		timeout += time.Duration(runDevHealthAttemptsForTest(process, "WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS", runDevDefaultSeqmetaHealthAttemptsForTest)) *
+			runDevHealthPollIntervalForTest
+	}
+
+	return timeout
+}
+
+func runDevHealthAttemptsForTest(process *runDevProcess, key string, defaultAttempts int) int {
+	value, found := runDevCommandEnvValueForTest(process, key)
+	if !found || value == "" {
+		return defaultAttempts
+	}
+
+	attempts, err := strconv.Atoi(value)
+	if err != nil || attempts < 1 {
+		return defaultAttempts
+	}
+
+	return attempts
+}
+
+func runDevStartsSeqmetaBeforeFrontendForTest(process *runDevProcess) bool {
+	if process == nil {
+		return false
+	}
+
+	if value, found := runDevCommandEnvValueForTest(process, "WA_RUN_DEV_SEQMETA_CMD"); found && value != "" {
+		return true
+	}
+
+	value, found := runDevCommandEnvValueForTest(process, "WA_MLWH_DSN")
+
+	return found && value != ""
+}
+
+func runDevCommandEnvValueForTest(process *runDevProcess, key string) (string, bool) {
+	if process == nil || process.Command == nil {
+		return "", false
+	}
+
+	for i := range len(process.Command.Env) {
+		entry := process.Command.Env[len(process.Command.Env)-1-i]
+		envKey, value, found := strings.Cut(entry, "=")
+		if found && envKey == key {
+			return value, true
+		}
+	}
+
+	return "", false
+}
+
+func failRunDevSnapshotWaitForExitedProcess(t *testing.T, process *runDevProcess, snapshotPath string) {
+	t.Helper()
+
+	err := process.Wait()
+	if err != nil {
+		t.Fatalf("run-dev.sh exited before writing frontend snapshot %s: %v", snapshotPath, err)
+	}
+
+	t.Fatalf(
+		"run-dev.sh exited before writing frontend snapshot %s\nstdout:\n%s\nstderr:\n%s",
+		snapshotPath,
+		process.stdout.String(),
+		process.stderr.String(),
+	)
+}
+
 func TestRunDevSeqmetaDefaultReadinessBudgetAllowsColdMLWHSync(t *testing.T) {
 	convey.Convey("run-dev.sh gives seqmeta studies readiness at least five minutes by default", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
@@ -380,7 +501,7 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
 		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
@@ -490,7 +611,7 @@ func TestRunDevScript(t *testing.T) {
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		resultsList := waitForSeededResultsForTest(t, resultsPort)
 		fixtureSummary := summarizeRunDevFixturesForTest(t, repoRoot, resultsPort, resultsList)
 
@@ -544,7 +665,7 @@ func TestRunDevScript(t *testing.T) {
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		waitForTCPPortForTest(t, seqmetaPort)
 
 		convey.So(snapshot.SeqmetaBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
@@ -580,7 +701,7 @@ func TestRunDevScript(t *testing.T) {
 			},
 		})
 
-		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -708,7 +829,7 @@ exec %q "$@"
 
 		convey.So(runDevPathExistsWithinForTest(snapshotPath, 1400*time.Millisecond), convey.ShouldBeFalse)
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		convey.So(snapshot.SeqmetaBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 
@@ -739,7 +860,7 @@ exec %q "$@"
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
 
@@ -768,7 +889,7 @@ exec %q "$@"
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		cmdline := waitForRunDevChildCommandLineForTest(t, process.Command.Process.Pid, " results serve ")
 
 		convey.So(cmdline, convey.ShouldContainSubstring, " results serve ")
@@ -796,7 +917,7 @@ exec %q "$@"
 			},
 		})
 
-		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -824,7 +945,7 @@ exec %q "$@"
 			},
 		})
 
-		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
 
@@ -880,7 +1001,7 @@ exit 0
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		loggedArgs := waitForRunDevStepsForTest(t, pnpmLogPath, 1)
 
 		convey.So(snapshot.ResultsServerCert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
@@ -961,7 +1082,7 @@ exec %q "$@"
 		})
 
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
@@ -989,7 +1110,7 @@ exec %q "$@"
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
 		origins := splitRunDevOriginsForTest(snapshot.AllowedDevOrigins)
 
@@ -1033,7 +1154,7 @@ exec %q "$@"
 			},
 		})
 
-		snapshot := waitForRunDevSnapshotForTest(t, snapshotPath)
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		origins := splitRunDevOriginsForTest(snapshot.AllowedDevOrigins)
 
 		convey.So(origins, convey.ShouldContain, "localhost")
@@ -1416,7 +1537,7 @@ func TestStartRunDevForTestAutoCleanup(t *testing.T) {
 			},
 		})
 
-		_ = waitForRunDevSnapshotForTest(t, snapshotPath)
+		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		_ = waitForSeededResultsForTest(t, resultsPort)
 		if process.Command.Process == nil {
 			t.Fatal("run-dev.sh did not start a process")
@@ -1707,10 +1828,11 @@ func startRunDevResultsStubForTest(t *testing.T, repoRoot string, port int, onSe
 	})
 }
 
-func waitForRunDevSnapshotForTest(t *testing.T, snapshotPath string) runDevEnvSnapshot {
+func waitForRunDevSnapshotForTest(t *testing.T, process *runDevProcess, snapshotPath string) runDevEnvSnapshot {
 	t.Helper()
 
-	deadline := time.Now().Add(20 * time.Second)
+	timeout := runDevSnapshotTimeoutForTest(process)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		body, err := os.ReadFile(snapshotPath)
 		if err == nil {
@@ -1722,10 +1844,24 @@ func waitForRunDevSnapshotForTest(t *testing.T, snapshotPath string) runDevEnvSn
 			return snapshot
 		}
 
+		if process != nil && process.ExitedWithin(0) {
+			failRunDevSnapshotWaitForExitedProcess(t, process, snapshotPath)
+		}
+
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	t.Fatalf("timed out waiting for frontend snapshot %s", snapshotPath)
+	if process != nil {
+		t.Fatalf(
+			"timed out after %s waiting for frontend snapshot %s\nstdout:\n%s\nstderr:\n%s",
+			timeout,
+			snapshotPath,
+			process.stdout.String(),
+			process.stderr.String(),
+		)
+	}
+
+	t.Fatalf("timed out after %s waiting for frontend snapshot %s", timeout, snapshotPath)
 
 	return runDevEnvSnapshot{}
 }
