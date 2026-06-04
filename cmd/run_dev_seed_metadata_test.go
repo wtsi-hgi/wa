@@ -272,3 +272,139 @@ func TestRunDevSeedMetadataUsesRealSeqmetaIdentifiers(t *testing.T) {
 		convey.So(nestedKinds["sample-a/lanes/lane-2"]["code"], convey.ShouldBeTrue)
 	})
 }
+
+func TestRunDevSeedCombinedGalleriesSampleARegistersOverviewFiles(t *testing.T) {
+	convey.Convey("combined galleries sample-a registers both overview preview files", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		seedPath := filepath.Join(repoRoot, ".docs", "results-web", "fixtures", "seed.json")
+
+		raw, err := os.ReadFile(seedPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		var fixtures []map[string]any
+
+		convey.So(json.Unmarshal(raw, &fixtures), convey.ShouldBeNil)
+
+		filePaths := []string{}
+
+		for _, fixture := range fixtures {
+			runKey, _ := fixture["run_key"].(string)
+
+			if runKey != "runid=88205&unique=galleries_sample_a" {
+				continue
+			}
+
+			files, _ := fixture["files"].([]any)
+
+			for _, file := range files {
+				fileMap, _ := file.(map[string]any)
+				filePath, _ := fileMap["path"].(string)
+
+				filePaths = append(filePaths, filePath)
+			}
+		}
+
+		convey.So(filePaths, convey.ShouldContain, "overview/navy-summary.svg")
+		convey.So(filePaths, convey.ShouldContain, "overview/gold-summary.svg")
+	})
+}
+
+func TestRunDevSeedOutputDirectoriesDoNotOverlapWithinPipeline(t *testing.T) {
+	convey.Convey("seed.json does not register parent and child output directories for the same pipeline", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		seedPath := filepath.Join(repoRoot, ".docs", "results-web", "fixtures", "seed.json")
+
+		raw, err := os.ReadFile(seedPath)
+		convey.So(err, convey.ShouldBeNil)
+
+		var fixtures []map[string]any
+
+		convey.So(json.Unmarshal(raw, &fixtures), convey.ShouldBeNil)
+
+		outputDirectoriesByPipeline := make(map[string][]string)
+		galleriesOutputDirectories := []string{}
+		combinedGalleriesOutputDirectories := []string{}
+		combinedGalleriesRunKeys := []string{}
+		sampleCOutputDirectories := []string{}
+		retiredSampleOutputDirectories := []string{}
+
+		for _, fixture := range fixtures {
+			pipelineName, _ := fixture["pipeline_name"].(string)
+			outputDirectory, _ := fixture["output_directory"].(string)
+			runKey, _ := fixture["run_key"].(string)
+
+			if pipelineName == "" || outputDirectory == "" {
+				continue
+			}
+
+			outputDirectoriesByPipeline[pipelineName] = append(outputDirectoriesByPipeline[pipelineName], outputDirectory)
+
+			if pipelineName == "wtsi/galleries-demo" {
+				galleriesOutputDirectories = append(galleriesOutputDirectories, outputDirectory)
+			}
+
+			if pipelineName == "wtsi/combined-galleries-demo" {
+				combinedGalleriesOutputDirectories = append(combinedGalleriesOutputDirectories, outputDirectory)
+				combinedGalleriesRunKeys = append(combinedGalleriesRunKeys, runKey)
+			}
+
+			if strings.HasSuffix(filepath.ToSlash(filepath.Clean(outputDirectory)), "/galleries-demo/sample-c") {
+				sampleCOutputDirectories = append(sampleCOutputDirectories, outputDirectory)
+			}
+
+			cleanOutputDirectory := filepath.ToSlash(filepath.Clean(outputDirectory))
+			if strings.Contains(cleanOutputDirectory, "galleries-demo/sample-a") ||
+				strings.Contains(cleanOutputDirectory, "galleries-demo/sample-b") ||
+				strings.Contains(cleanOutputDirectory, "combined-galleries-demo/sample-a") ||
+				strings.Contains(cleanOutputDirectory, "combined-galleries-demo/sample-b") {
+				retiredSampleOutputDirectories = append(
+					retiredSampleOutputDirectories,
+					outputDirectory,
+				)
+			}
+		}
+
+		convey.So(galleriesOutputDirectories, convey.ShouldContain, ".docs/results-web/fixtures/files/galleries-demo")
+		convey.So(galleriesOutputDirectories, convey.ShouldHaveLength, 1)
+		convey.So(
+			combinedGalleriesOutputDirectories,
+			convey.ShouldContain,
+			".docs/results-web/fixtures/files/sibling-gallery-runs/sample-a",
+		)
+		convey.So(
+			combinedGalleriesOutputDirectories,
+			convey.ShouldContain,
+			".docs/results-web/fixtures/files/sibling-gallery-runs/sample-b",
+		)
+		convey.So(
+			combinedGalleriesOutputDirectories,
+			convey.ShouldNotContain,
+			".docs/results-web/fixtures/files/sibling-gallery-runs",
+		)
+		convey.So(combinedGalleriesRunKeys, convey.ShouldContain, "runid=88205&unique=galleries_sample_a")
+		convey.So(combinedGalleriesRunKeys, convey.ShouldContain, "runid=88206&unique=galleries_sample_b")
+		convey.So(sampleCOutputDirectories, convey.ShouldBeEmpty)
+		convey.So(retiredSampleOutputDirectories, convey.ShouldBeEmpty)
+
+		overlaps := []string{}
+
+		for pipelineName, outputDirectories := range outputDirectoriesByPipeline {
+			for _, parent := range outputDirectories {
+				for _, child := range outputDirectories {
+					if outputDirectoryIsAncestorForTest(parent, child) {
+						overlaps = append(overlaps, pipelineName+": "+parent+" -> "+child)
+					}
+				}
+			}
+		}
+
+		convey.So(overlaps, convey.ShouldBeEmpty)
+	})
+}
+
+func outputDirectoryIsAncestorForTest(parent string, child string) bool {
+	parent = strings.TrimSuffix(filepath.ToSlash(filepath.Clean(parent)), "/")
+	child = strings.TrimSuffix(filepath.ToSlash(filepath.Clean(child)), "/")
+
+	return parent != child && strings.HasPrefix(child, parent+"/")
+}

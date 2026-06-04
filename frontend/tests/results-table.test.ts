@@ -189,6 +189,110 @@ describe("L1 results table", () => {
         expect(container.textContent).toContain("No results found.");
     });
 
+    it("omits the summary header when requested by a parent layout", async () => {
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, {
+                    data: [buildResultSet(1)],
+                    hideSummary: true,
+                    mode: "search",
+                }),
+            );
+        });
+
+        expect(
+            container.querySelector('[data-results-table-summary="true"]'),
+        ).toBeNull();
+        expect(container.textContent).not.toContain("Showing search results");
+        expect(getBodyRows(container)).toHaveLength(1);
+    });
+
+    it("uses a single latest result sets title with icon treatment for recent results", async () => {
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, { data: [buildResultSet(1)] }),
+            );
+        });
+
+        const summary = container.querySelector(
+            '[data-results-table-summary="true"]',
+        );
+        const title = summary?.querySelector("p");
+
+        expect(summary).not.toBeNull();
+        expect(summary?.textContent).toContain("Latest result sets");
+        expect(summary?.textContent).not.toContain("Recent registrations");
+        expect(title?.textContent).toBe("Latest result sets");
+        expect(title?.className).toContain("uppercase");
+        expect(title?.className).toContain("tracking-[0.18em]");
+        expect(summary?.querySelector("svg")).not.toBeNull();
+        expect(summary?.querySelector("h2")).toBeNull();
+    });
+
+    it("places the latest row count with the rows-per-page footer controls", async () => {
+        const data = Array.from({ length: 25 }, (_, index) =>
+            buildResultSet(index + 1),
+        );
+
+        await act(async () => {
+            root.render(createElement(ResultsTable, { data }));
+        });
+
+        const summary = container.querySelector(
+            '[data-results-table-summary="true"]',
+        );
+        const pageSizeSelect = container.querySelector(
+            'select[aria-label="Rows per page"]',
+        );
+        const pageSizeControls = pageSizeSelect?.closest("div");
+
+        expect(summary?.textContent).not.toContain("25 rows");
+        expect(pageSizeControls?.textContent).toContain("Rows per page");
+        expect(pageSizeControls?.textContent).toContain("25 rows");
+    });
+
+    it("uses the latest result sets title and columns treatment for search results", async () => {
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, {
+                    data: [buildSearchResult(1)],
+                    mode: "search",
+                }),
+            );
+        });
+
+        const summary = container.querySelector(
+            '[data-results-table-summary="true"]',
+        );
+        const title = summary?.querySelector("p");
+
+        expect(summary).not.toBeNull();
+        expect(summary?.textContent).toContain("Search results");
+        expect(summary?.textContent).toContain("Columns");
+        expect(summary?.textContent).not.toContain("Showing search results");
+        expect(summary?.textContent).not.toContain("Matching result sets");
+        expect(title?.textContent).toBe("Search results");
+        expect(title?.className).toContain("uppercase");
+        expect(title?.className).toContain("tracking-[0.18em]");
+        expect(summary?.querySelector("svg")).not.toBeNull();
+        expect(summary?.querySelector("h2")).toBeNull();
+
+        expect(getHeaderLabels(container)).toContain("Requester");
+
+        await click(
+            container.querySelector(
+                'button[aria-label="Toggle column visibility"]',
+            ),
+        );
+        await click(
+            container.querySelector(
+                'button[role="menuitemcheckbox"][data-column-id="requester"]',
+            ),
+        );
+
+        expect(getHeaderLabels(container)).not.toContain("Requester");
+    });
+
     it("keeps command, pipeline version, pipeline identifier, stored key, operator, and id hidden by default", async () => {
         await act(async () => {
             root.render(

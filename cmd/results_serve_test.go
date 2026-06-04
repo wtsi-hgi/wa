@@ -521,6 +521,8 @@ func (f *fakeResultsServeAuthServer) Stop() {}
 
 func TestResultsServeCommandA2(t *testing.T) {
 	convey.Convey("A2.1: Given results serve --url without certs, when validation runs, then TLS material is required", t, func() {
+		clearResultsServeTLSModeEnvForTest(t)
+
 		_, err := executeRootCommandForTest(t, []string{"results", "serve", "--db", ":memory:", "--url", "127.0.0.1:8443"})
 
 		convey.So(err, convey.ShouldNotBeNil)
@@ -583,6 +585,8 @@ func TestResultsServeCommandA2(t *testing.T) {
 	})
 
 	convey.Convey("A2.4: Given ACME cache dir with loose permissions, when startup runs, then it fails before serving", t, func() {
+		clearResultsServeTLSModeEnvForTest(t)
+
 		cacheDir := filepath.Join(t.TempDir(), "certs")
 		convey.So(os.Mkdir(cacheDir, 0o755), convey.ShouldBeNil)
 
@@ -610,6 +614,15 @@ func TestResultsServeCommandA2(t *testing.T) {
 		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "start")
 		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "127.0.0.1:9443")
 	})
+}
+
+func clearResultsServeTLSModeEnvForTest(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("WA_RESULTS_SERVER_CERT", "")
+	t.Setenv("WA_RESULTS_SERVER_KEY", "")
+	t.Setenv("WA_RESULTS_SERVER_ACME", "")
+	t.Setenv("WA_RESULTS_SERVER_CACHE", "")
 }
 
 func resultsServeListenFuncForTest(addrCh chan<- string) func(string, string) (net.Listener, error) {

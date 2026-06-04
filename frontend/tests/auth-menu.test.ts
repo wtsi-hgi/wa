@@ -11,6 +11,7 @@ import {
     render,
     screen,
     waitFor,
+    within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -120,7 +121,7 @@ describe("E3 auth menu", () => {
         expect(markup).not.toContain("fixed top-4 right-4");
     });
 
-    it("shows the username and a Log out menu item for signed-in sessions", async () => {
+    it("shows only the username in the signed-in account trigger and menu", async () => {
         vi.stubGlobal(
             "fetch",
             vi.fn().mockResolvedValue(
@@ -133,11 +134,28 @@ describe("E3 auth menu", () => {
 
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
-        expect(screen.getByText("alice")).toBeTruthy();
+        const accountButton = screen.getByRole("button", {
+            name: /alice account/i,
+        });
 
-        fireEvent.click(screen.getByRole("button", { name: /alice account/i }));
+        expect(within(accountButton).getByText("alice")).toBeTruthy();
+        expect(document.querySelector('[data-slot="avatar"]')).toBeNull();
+        expect(
+            document.querySelector('[data-slot="avatar-fallback"]'),
+        ).toBeNull();
 
-        expect(screen.getByRole("menuitem", { name: "Log out" })).toBeTruthy();
+        fireEvent.click(accountButton);
+
+        const accountMenu = screen.getByRole("menu");
+
+        expect(within(accountMenu).getByText("alice")).toBeTruthy();
+        expect(
+            within(accountMenu).getByRole("menuitem", { name: "Log out" }),
+        ).toBeTruthy();
+        expect(document.querySelector('[data-slot="avatar"]')).toBeNull();
+        expect(
+            document.querySelector('[data-slot="avatar-fallback"]'),
+        ).toBeNull();
     });
 
     it("refreshes an authenticated session through the browser on access", async () => {
@@ -209,9 +227,25 @@ describe("E3 auth menu", () => {
         });
         fireEvent.submit(screen.getByRole("form", { name: "Log in" }));
 
-        await screen.findByRole("button", { name: /alice account/i });
+        const accountButton = await screen.findByRole("button", {
+            name: /alice account/i,
+        });
 
-        expect(screen.getByText("alice")).toBeTruthy();
+        expect(within(accountButton).getByText("alice")).toBeTruthy();
+        expect(document.querySelector('[data-slot="avatar"]')).toBeNull();
+        expect(
+            document.querySelector('[data-slot="avatar-fallback"]'),
+        ).toBeNull();
+
+        fireEvent.click(accountButton);
+
+        expect(
+            within(screen.getByRole("menu")).getByText("alice"),
+        ).toBeTruthy();
+        expect(document.querySelector('[data-slot="avatar"]')).toBeNull();
+        expect(
+            document.querySelector('[data-slot="avatar-fallback"]'),
+        ).toBeNull();
     });
 
     it("removes the username and shows Log in after successful logout", async () => {
@@ -231,6 +265,10 @@ describe("E3 auth menu", () => {
             ),
         );
         vi.stubGlobal("fetch", fetchMock);
+        authActionMocks.logoutAction.mockResolvedValueOnce({
+            authenticated: false,
+            username: null,
+        });
 
         await renderAuthMenu({ authenticated: true, username: "alice" });
 
@@ -246,7 +284,8 @@ describe("E3 auth menu", () => {
             fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
         });
 
-        expect(fetchMock).toHaveBeenCalledWith(
+        expect(authActionMocks.logoutAction).toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalledWith(
             "/api/auth/logout",
             expect.any(Object),
         );
@@ -256,22 +295,11 @@ describe("E3 auth menu", () => {
         });
         expect(screen.getByRole("button", { name: "Log in" })).toBeTruthy();
         expect(navigationMocks.refresh).toHaveBeenCalled();
-        expect(fetch).toHaveBeenCalledWith(
-            "/api/auth/logout",
-            expect.objectContaining({
-                cache: "no-store",
-                credentials: "same-origin",
-                method: "POST",
-            }),
-        );
     });
 
     it("shows Log in after logout clears the cookie but the backend call fails", async () => {
-        vi.stubGlobal(
-            "fetch",
-            vi
-                .fn()
-                .mockRejectedValue(new Error("results backend request failed")),
+        authActionMocks.logoutAction.mockRejectedValueOnce(
+            new Error("results backend request failed"),
         );
 
         await renderAuthMenu({ authenticated: true, username: "alice" });

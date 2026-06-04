@@ -9,6 +9,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/go-resty/resty/v2 v2.17.0
 	github.com/go-sql-driver/mysql v1.9.3
+	github.com/goccy/go-yaml v1.19.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/joho/godotenv v1.5.1
 	github.com/smartystreets/goconvey v1.8.1
@@ -35,7 +36,6 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.28.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
-	github.com/goccy/go-yaml v1.19.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect

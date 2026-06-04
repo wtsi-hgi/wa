@@ -287,10 +287,8 @@ describe("N1 file browser", () => {
         expect(Number(alphaChildButton?.dataset.depth)).toBe(
             Number(alphaButton?.dataset.depth) + 1,
         );
-        expect(
-            Number.parseFloat(alphaChildButton?.style.paddingLeft ?? "0"),
-        ).toBeGreaterThan(
-            Number.parseFloat(alphaButton?.style.paddingLeft ?? "0"),
+        expect(alphaChildButton?.style.paddingLeft).toBe(
+            alphaButton?.style.paddingLeft,
         );
     });
 
@@ -1661,7 +1659,7 @@ describe("N1 file browser", () => {
         ).toBe(true);
     });
 
-    it("hides the subfolder preview gallery controls when only one subdirectory contains previewable files", async () => {
+    it("shows the subfolder preview gallery controls when one subdirectory contains previewable files", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
             buildFile("/demo/sample-a/img-1.png", "output"),
@@ -1683,14 +1681,32 @@ describe("N1 file browser", () => {
                             },
                             file.path,
                         ),
+                    selectedDirectory: "/demo",
                     visibleFiles: [],
                 }),
             );
         });
 
+        const controls = container.querySelector(
+            '[data-subdir-preview-controls="/demo"]',
+        );
+        const toggle = controls?.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        ) as HTMLInputElement | null;
+
+        expect(controls).toBeTruthy();
+        expect(toggle).toBeTruthy();
+
+        await click(toggle);
+
         expect(
             container.querySelector('[data-subdir-preview-controls="/demo"]'),
-        ).toBeNull();
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-subdir-preview-row="/demo/sample-a"]',
+            ),
+        ).toBeTruthy();
     });
 
     it("hides subfolder preview controls when immediate subdirectories only contain nested previewable files", async () => {

@@ -1,9 +1,17 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import {
+    memo,
+    type ReactNode,
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+} from "react";
 
 import {
     buildDirectoryGroups,
+    type DirectoryTreeNode,
     FileBrowser,
     findInitialSubdirPreviewDirectory,
     type PreviewMode,
@@ -15,8 +23,15 @@ import {
 } from "@/components/file-preview";
 import type { FileEntry } from "@/lib/contracts";
 
+export type RegisteredFileEntry = FileEntry & {
+    resultId?: string;
+};
+
 type ResultDetailFilesProps = {
-    files: FileEntry[];
+    directoryFileOverrides?: Record<string, RegisteredFileEntry[]>;
+    files: RegisteredFileEntry[];
+    initialSelectedDirectory?: string;
+    renderDirectoryAction?: (node: DirectoryTreeNode) => ReactNode;
     resultId: string;
 };
 
@@ -361,13 +376,31 @@ function areGalleryPreviewRowPropsEqual(
     );
 }
 
-export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
+export function ResultDetailFiles({
+    directoryFileOverrides,
+    files,
+    initialSelectedDirectory: preferredInitialSelectedDirectory,
+    renderDirectoryAction,
+    resultId,
+}: ResultDetailFilesProps) {
+    const resultIdsByPath = useMemo(
+        () =>
+            new Map(
+                files.map((file) => [file.path, file.resultId ?? resultId]),
+            ),
+        [files, resultId],
+    );
+    const resultIdForFile = useCallback(
+        (file: FileEntry): string => resultIdsByPath.get(file.path) ?? resultId,
+        [resultIdsByPath, resultId],
+    );
     const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
     const initialSelectedDirectory = useMemo(
         () =>
+            preferredInitialSelectedDirectory ??
             findInitialSubdirPreviewDirectory(files) ??
             directoryGroups[0]?.path,
-        [directoryGroups, files],
+        [directoryGroups, files, preferredInitialSelectedDirectory],
     );
     const initialSelectedFile = useMemo(
         () =>
@@ -404,8 +437,13 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         [directoryGroups, effectiveSelectedDirectory],
     );
     const selectedDirectoryFiles = useMemo(
-        () => selectedGroup?.files ?? [],
-        [selectedGroup],
+        () =>
+            (effectiveSelectedDirectory
+                ? directoryFileOverrides?.[effectiveSelectedDirectory]
+                : undefined) ??
+            selectedGroup?.files ??
+            [],
+        [directoryFileOverrides, effectiveSelectedDirectory, selectedGroup],
     );
     const effectiveSelectedFile = useMemo(() => {
         if (!selectedFile) {
@@ -440,7 +478,11 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         let cancelled = false;
         const selectedPath = effectiveSelectedFile.path;
 
-        void fetchPreviewContent(resultId, selectedPath, "inline")
+        void fetchPreviewContent(
+            resultIdForFile(effectiveSelectedFile),
+            selectedPath,
+            "inline",
+        )
             .then((nextContent) => {
                 if (cancelled) {
                     return;
@@ -492,7 +534,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
         return () => {
             cancelled = true;
         };
-    }, [effectiveSelectedFile, previewMode, resultId]);
+    }, [effectiveSelectedFile, previewMode, resultIdForFile]);
 
     const renderSinglePreview = (file: FileEntry | null) => {
         if (!file) {
@@ -541,7 +583,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                         });
 
                         void fetchPreviewContent(
-                            resultId,
+                            resultIdForFile(file),
                             file.path,
                             "enlarged",
                         )
@@ -605,7 +647,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                                 });
                             });
                     }}
-                    proxyUrl={buildFileUrl(resultId, file.path)}
+                    proxyUrl={buildFileUrl(resultIdForFile(file), file.path)}
                 />
             </div>
         );
@@ -613,6 +655,7 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
 
     return (
         <FileBrowser
+            activeFiles={selectedDirectoryFiles}
             files={files}
             onPreviewHeightChange={setPreviewHeight}
             onPreviewModeChange={(nextMode) => {
@@ -674,27 +717,35 @@ export function ResultDetailFiles({ files, resultId }: ResultDetailFilesProps) {
                       )
                     : undefined
             }
+            renderDirectoryAction={renderDirectoryAction}
             renderGridPreview={(file) =>
                 isImageFile(file.path) ? (
                     <FileImageThumbnail
                         file={file}
-                        fullSizeUrl={buildFileUrl(resultId, file.path)}
+                        fullSizeUrl={buildFileUrl(
+                            resultIdForFile(file),
+                            file.path,
+                        )}
                         height={previewHeight}
-                        thumbnailUrl={buildFileUrl(resultId, file.path, {
-                            height: thumbnailRenderHeight,
-                            thumbnail: true,
-                            width: Math.max(
-                                320,
-                                Math.round(thumbnailRenderHeight * 1.6),
-                            ),
-                        })}
+                        thumbnailUrl={buildFileUrl(
+                            resultIdForFile(file),
+                            file.path,
+                            {
+                                height: thumbnailRenderHeight,
+                                thumbnail: true,
+                                width: Math.max(
+                                    320,
+                                    Math.round(thumbnailRenderHeight * 1.6),
+                                ),
+                            },
+                        )}
                     />
                 ) : (
                     <GalleryPreviewRow
                         file={file}
                         key={file.path}
                         maxHeight={previewHeight}
-                        resultId={resultId}
+                        resultId={resultIdForFile(file)}
                     />
                 )
             }

@@ -1629,7 +1629,12 @@ func searchResults(ctx context.Context, serverURL string, certPath string, query
 		return nil, fmt.Errorf("create search request: %w", err)
 	}
 
-	client, err := resultsPublicHTTPClient(certPath)
+	effectiveCertPath := certPath
+	if endpoint.Scheme == "http" {
+		effectiveCertPath = ""
+	}
+
+	client, err := resultsPublicHTTPClient(effectiveCertPath)
 	if err != nil {
 		return nil, err
 	}

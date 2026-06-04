@@ -18,7 +18,7 @@ test.describe("Lane filtering support (bugfix 260501-4)", () => {
         page,
     }) => {
         await page.goto("/");
-        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
 
         const targetRow = page
             .locator('tbody tr[data-result-row="true"]')

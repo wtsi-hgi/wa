@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -41,6 +42,7 @@ func TestResultsSearchCommand(t *testing.T) {
 	convey.Convey("D2.1: Given no token and no terminal, search calls the public REST endpoint without auth", t, func() {
 		stateDir := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", stateDir)
+		t.Setenv("WA_RESULTS_SERVER_CERT", filepath.Join(t.TempDir(), "missing-ca.pem"))
 		installGasResultsClientCLIForTest(t, &resultsAuthPasswordHandler{terminal: false})
 
 		pathCh := make(chan string, 1)

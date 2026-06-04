@@ -72,6 +72,9 @@ test("reproduces reopened result detail header layout issues", async ({
     ).toContainText("Study");
     await expect(
         metadataStrip.locator('[data-metadata-row="library"]'),
+    ).toContainText("exon");
+    await expect(
+        summary.getByRole("button", { name: "All metadata" }),
     ).toHaveCount(0);
 
     const evidence = await summary.evaluate((element) => {
@@ -233,11 +236,10 @@ test("reproduces reopened result detail header layout issues", async ({
     expect(evidence.registrationDetailsButtonGap).toBeGreaterThanOrEqual(0);
     expect(evidence.registrationDetailsButtonGap).toBeLessThanOrEqual(16);
     expect(evidence.metadataHeaderLine).toContain("Metadata");
-    expect(evidence.metadataHeaderLine).toContain("all");
+    expect(evidence.metadataHeaderLine).not.toContain("all");
     expect(evidence.metadataHeaderLine).not.toContain("All metadata");
-    expect(evidence.metadataDetailsButtonText).toBe("all");
-    expect(evidence.metadataDetailsButtonGap).toBeGreaterThanOrEqual(0);
-    expect(evidence.metadataDetailsButtonGap).toBeLessThanOrEqual(16);
+    expect(evidence.metadataDetailsButtonText).toBe("");
+    expect(evidence.metadataDetailsButtonGap).toBeNull();
     expect(evidence.eyebrowTexts).not.toContain("Result detail");
 
     await summary.getByRole("button", { name: "All details" }).click();

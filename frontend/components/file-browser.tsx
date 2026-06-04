@@ -23,6 +23,13 @@ import {
     ListFilter,
 } from "lucide-react";
 
+import {
+    boxPanelInsetClass,
+    boxPanelRadiusClass,
+    boxTitleIconClass,
+    boxTitleTextClass,
+    boxTitleTopAlignedRowClass,
+} from "@/components/box-title-section";
 import { PreviewPagination } from "@/components/preview-pagination";
 import { type FileEntry } from "@/lib/contracts";
 import { cn, formatBytes } from "@/lib/utils";
@@ -322,6 +329,7 @@ function clampPreviewHeight(value: number): number {
 }
 
 type FileBrowserProps = {
+    activeFiles?: FileEntry[];
     files: FileEntry[];
     onPreviewHeightChange?: (value: number) => void;
     onPreviewModeChange?: (mode: PreviewMode) => void;
@@ -336,6 +344,7 @@ type FileBrowserProps = {
     previewPage?: number;
     previewPageCount?: number;
     previewSummary?: string;
+    renderDirectoryAction?: (node: DirectoryTreeNode) => ReactNode;
     renderGridPreview?: (file: FileEntry) => ReactNode;
     renderSinglePreview?: (file: FileEntry | null) => ReactNode;
     selectedDirectory?: string;
@@ -445,22 +454,20 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground",
     fileNameClass: "block truncate text-sm font-semibold text-foreground",
     folderControlsClass:
-        "file-browser-control-surface inline-nameplate-controls flex w-fit max-w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border/80 bg-muted/55 px-2 py-1 text-sm shadow-inner",
+        "file-browser-control-surface inline-nameplate-controls flex w-fit max-w-full min-w-0 flex-wrap items-center justify-start gap-1.5 rounded-md border border-border bg-[color-mix(in_oklab,var(--card)_72%,var(--foreground)_28%)] p-1.5 text-sm shadow-sm",
     gridFileCellClass: "min-w-0 border-r border-border/60 pr-2",
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass: "flex flex-wrap items-center gap-3",
-    headerIconClass: "size-4 text-primary",
-    headerTitleClass:
-        "text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground",
+    headerClass: "-mx-0.5 flex min-h-9 items-start pb-4",
+    headerIconClass: boxTitleIconClass,
+    headerTitleClass: boxTitleTextClass,
     id: "inline",
     pageBadgeClass:
         "inline-flex items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1 text-muted-foreground",
     paginationClass:
         "inline-flex items-center gap-1 rounded-md border border-border/70 bg-background p-1",
-    sectionClass:
-        "rounded-xl border border-border/75 bg-card p-3 shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]",
+    sectionClass: `${boxPanelRadiusClass} border border-border/75 bg-card ${boxPanelInsetClass} shadow-[0_18px_60px_-48px_rgba(48,67,98,0.8)]`,
     singlePreviewClass:
         "sticky top-4 z-10 min-w-0 col-start-2 row-start-1 self-start",
     subdirCardBaseClass: "inline-flex max-w-full shrink-0 flex-col gap-1.5",
@@ -477,7 +484,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
         "w-fit items-stretch [&_button]:max-w-none [&_button]:justify-start [&_button]:w-auto [&_img]:max-w-none [&_img]:w-auto",
     treeInnerClass: "space-y-2",
     treeShellClass:
-        "mt-3 rounded-lg border border-border/70 bg-background/65 p-1",
+        "mt-0 rounded-lg border border-border/70 bg-background/65 p-0.5",
 };
 
 const inlineControlPlacement: FileBrowserControlPlacement = "name-area";
@@ -1008,6 +1015,7 @@ export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
 }
 
 export function FileBrowser({
+    activeFiles: activeFilesOverride,
     files,
     onPreviewHeightChange,
     onPreviewModeChange,
@@ -1019,6 +1027,7 @@ export function FileBrowser({
     previewPage = 1,
     previewPageCount = 1,
     previewSummary,
+    renderDirectoryAction,
     renderGridPreview,
     renderSinglePreview,
     selectedDirectory,
@@ -1064,7 +1073,7 @@ export function FileBrowser({
     const activeDirectory = directoryGroups.find(
         (group) => group.path === preferredDirectory,
     );
-    const activeFiles = activeDirectory?.files ?? [];
+    const activeFiles = activeFilesOverride ?? activeDirectory?.files ?? [];
     const effectiveSelectedDirectory = preferredDirectory;
     const [uncontrolledPreviewHeight, setUncontrolledPreviewHeight] =
         useState(previewHeight);
@@ -1720,7 +1729,7 @@ export function FileBrowser({
             node,
             subdirPreviewKinds,
         );
-        const available = eligibleSubdirs.length > 1;
+        const available = eligibleSubdirs.length > 0;
         const pageCount = Math.max(
             1,
             Math.ceil(qualifyingSubdirs.length / SUBDIR_PREVIEW_PAGE_SIZE),
@@ -1899,6 +1908,17 @@ export function FileBrowser({
             const controlPlacement = inlineControlPlacement;
             const folderControlsInNameArea =
                 controlPlacement === "name-area" && Boolean(folderControls);
+            const directoryAction = renderDirectoryAction?.(node) ?? null;
+            const headingSideContent =
+                folderControlsInNameArea || directoryAction ? (
+                    <div
+                        className="flex max-w-full min-w-0 flex-wrap items-center justify-end gap-2"
+                        data-file-browser-name-area-actions={node.path}
+                    >
+                        {directoryAction}
+                        {folderControlsInNameArea ? folderControls : null}
+                    </div>
+                ) : null;
             const renderDirectoryButton = () => (
                 <button
                     type="button"
@@ -1953,7 +1973,6 @@ export function FileBrowser({
                             parentPath,
                         });
                     }}
-                    style={{ paddingLeft: `${depth * 1.2 + 0.75}rem` }}
                 >
                     <span className={activeDesign.directoryChevronClass}>
                         {hasChildren || hasFiles ? (
@@ -1973,7 +1992,10 @@ export function FileBrowser({
                         )}
                     </span>
                     <span className="min-w-0">
-                        <span className="block truncate text-base font-medium text-foreground">
+                        <span
+                            className="block truncate text-base font-medium text-foreground"
+                            title={node.path}
+                        >
                             {visibleDirectoryLabel(
                                 node.path,
                                 node.label,
@@ -2013,7 +2035,7 @@ export function FileBrowser({
                             showInlineSubdirPreview ? node.path : undefined
                         }
                     >
-                        {folderControlsInNameArea ? (
+                        {headingSideContent ? (
                             <div
                                 className={cn(
                                     "grid w-full grid-cols-1 items-start gap-2",
@@ -2023,12 +2045,12 @@ export function FileBrowser({
                             >
                                 {renderDirectoryButton()}
                                 <div
-                                    className="min-w-0 self-center px-2 pb-2 lg:px-0 lg:pb-0 lg:pr-2"
+                                    className="min-w-0 self-center p-2 lg:pl-0"
                                     data-file-browser-name-area-controls={
                                         node.path
                                     }
                                 >
-                                    {folderControls}
+                                    {headingSideContent}
                                 </div>
                             </div>
                         ) : (
@@ -2207,11 +2229,15 @@ export function FileBrowser({
                 className={activeDesign.headerClass}
                 data-file-browser-header="true"
             >
-                <FolderTree
-                    className={activeDesign.headerIconClass}
-                    aria-hidden="true"
-                />
-                <p className={activeDesign.headerTitleClass}>File Browser</p>
+                <div className={boxTitleTopAlignedRowClass}>
+                    <FolderTree
+                        className={activeDesign.headerIconClass}
+                        aria-hidden="true"
+                    />
+                    <p className={activeDesign.headerTitleClass}>
+                        File Browser
+                    </p>
+                </div>
             </div>
 
             {files.length === 0 ? (

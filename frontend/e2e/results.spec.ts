@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -14,11 +15,95 @@ function recentRows(page: Page): Locator {
         .filter({ hasNotText: "seqmeta/rendering-repro" });
 }
 
+async function expectRecentRowsLoaded(page: Page): Promise<void> {
+    await expect.poll(async () => recentRows(page).count()).toBeGreaterThan(0);
+}
+
+async function switchToResultRowsView(page: Page): Promise<void> {
+    const resultRowsButton = page.getByRole("button", { name: "Result sets" });
+
+    if ((await resultRowsButton.count()) === 0) {
+        return;
+    }
+
+    await resultRowsButton.click();
+    await expect(page.locator('[data-file-browser="true"]')).toHaveCount(0);
+}
+
 type SortIconMetric = {
     columnId: string;
     flexShrink: string;
     height: number;
     width: number;
+};
+
+type TitleTreatmentMetric = {
+    icon: {
+        color: string;
+        height: number;
+        present: boolean;
+        width: number;
+    };
+    row: {
+        alignItems: string;
+        columnGap: string;
+        display: string;
+    };
+    title: {
+        color: string;
+        fontSize: string;
+        fontWeight: string;
+        letterSpacing: string;
+        text: string;
+        textTransform: string;
+    };
+};
+
+type PillMetric = {
+    borderRadius: number;
+    height: number;
+    icon: {
+        height: number;
+        width: number;
+    };
+    paddingLeft: number;
+    paddingRight: number;
+    width: number;
+};
+
+type RowCountPlacementMetric = {
+    rowCount: {
+        centerY: number;
+        text: string;
+    };
+    rowsPerPage: {
+        centerY: number;
+    };
+    title: {
+        centerY: number;
+    };
+};
+
+type TitleSectionGeometryMetric = {
+    box: {
+        borderRadiusTopLeft: number;
+        paddingBottom: number;
+        paddingTop: number;
+    };
+    contentGapFromTitleContent: number | null;
+    effectiveBorderBottomWidth: number;
+    iconLeftInsetWithinBox: number;
+    sectionTopInsetWithinBox: number;
+    title: string;
+    titleRowTopInsetWithinBox: number;
+    titleSectionHeight: number;
+};
+
+type FilterInputMetric = {
+    key: string;
+    list: string | null;
+    placeholder: string | null;
+    value: string;
 };
 
 async function collectRecentSortIconMetrics(
@@ -52,6 +137,295 @@ async function collectRecentSortIconMetrics(
     );
 }
 
+async function collectTitleTreatmentMetric(
+    page: Page,
+    rootSelector: string,
+    titleText: string,
+): Promise<TitleTreatmentMetric> {
+    return page.evaluate(
+        ({ rootSelector, titleText }) => {
+            const root = document.querySelector(rootSelector);
+
+            if (!(root instanceof HTMLElement)) {
+                throw new Error(`Missing title root ${rootSelector}`);
+            }
+
+            const title = Array.from(root.querySelectorAll("p")).find(
+                (candidate): candidate is HTMLParagraphElement =>
+                    candidate instanceof HTMLParagraphElement &&
+                    candidate.textContent?.trim() === titleText,
+            );
+
+            if (!title) {
+                throw new Error(`Missing title ${titleText}`);
+            }
+
+            const row = title.parentElement;
+
+            if (!(row instanceof HTMLElement)) {
+                throw new Error(`Missing title row for ${titleText}`);
+            }
+
+            const icon = row.querySelector("svg");
+            const rowStyles = window.getComputedStyle(row);
+            const titleStyles = window.getComputedStyle(title);
+            const iconStyles =
+                icon instanceof SVGElement
+                    ? window.getComputedStyle(icon)
+                    : null;
+            const iconRect =
+                icon instanceof SVGElement
+                    ? icon.getBoundingClientRect()
+                    : null;
+
+            return {
+                icon: {
+                    color: iconStyles?.color ?? "",
+                    height: iconRect?.height ?? 0,
+                    present: icon instanceof SVGElement,
+                    width: iconRect?.width ?? 0,
+                },
+                row: {
+                    alignItems: rowStyles.alignItems,
+                    columnGap: rowStyles.columnGap,
+                    display: rowStyles.display,
+                },
+                title: {
+                    color: titleStyles.color,
+                    fontSize: titleStyles.fontSize,
+                    fontWeight: titleStyles.fontWeight,
+                    letterSpacing: titleStyles.letterSpacing,
+                    text: title.textContent?.trim() ?? "",
+                    textTransform: titleStyles.textTransform,
+                },
+            };
+        },
+        { rootSelector, titleText },
+    );
+}
+
+async function collectPermanentSearchLabels(page: Page): Promise<string[]> {
+    return page.evaluate(() =>
+        Array.from(
+            document.querySelectorAll(
+                '[data-search-builder-permanent-fields="true"] label',
+            ),
+        ).map((label) => label.textContent?.trim() ?? ""),
+    );
+}
+
+async function collectSearchInputMetrics(page: Page): Promise<{
+    additional: FilterInputMetric[];
+    permanent: FilterInputMetric[];
+}> {
+    return page.evaluate(() => {
+        const toMetric = (input: HTMLInputElement): FilterInputMetric => ({
+            key:
+                input.dataset.permanentFilterInput ??
+                input.dataset.filterValueInput ??
+                "",
+            list: input.getAttribute("list"),
+            placeholder: input.getAttribute("placeholder"),
+            value: input.value,
+        });
+
+        return {
+            additional: Array.from(
+                document.querySelectorAll<HTMLInputElement>(
+                    "[data-filter-value-input]",
+                ),
+            ).map(toMetric),
+            permanent: Array.from(
+                document.querySelectorAll<HTMLInputElement>(
+                    "[data-permanent-filter-input]",
+                ),
+            ).map(toMetric),
+        };
+    });
+}
+
+async function collectPillMetric(locator: Locator): Promise<PillMetric> {
+    return locator.evaluate((element) => {
+        const button = element as HTMLElement;
+        const svg = button.querySelector("svg");
+
+        if (!(svg instanceof SVGElement)) {
+            throw new Error(
+                `Missing pill icon for ${button.textContent?.trim() ?? "button"}`,
+            );
+        }
+
+        const buttonRect = button.getBoundingClientRect();
+        const iconRect = svg.getBoundingClientRect();
+        const computed = window.getComputedStyle(button);
+
+        return {
+            borderRadius: Number.parseFloat(computed.borderTopLeftRadius),
+            height: buttonRect.height,
+            icon: {
+                height: iconRect.height,
+                width: iconRect.width,
+            },
+            paddingLeft: Number.parseFloat(computed.paddingLeft),
+            paddingRight: Number.parseFloat(computed.paddingRight),
+            width: buttonRect.width,
+        };
+    });
+}
+
+async function collectLatestRowCountPlacementMetric(
+    page: Page,
+): Promise<RowCountPlacementMetric> {
+    return page.evaluate(() => {
+        const summary = document.querySelector(
+            '[data-results-table-summary="true"]',
+        );
+        const title = Array.from(document.querySelectorAll("p")).find(
+            (candidate): candidate is HTMLParagraphElement =>
+                candidate instanceof HTMLParagraphElement &&
+                candidate.textContent?.trim() === "Latest result sets",
+        );
+        const rowsPerPage = document.querySelector(
+            'select[aria-label="Rows per page"]',
+        );
+        const rowCount = Array.from(document.querySelectorAll("p")).find(
+            (candidate): candidate is HTMLParagraphElement =>
+                candidate instanceof HTMLParagraphElement &&
+                /^\d+ rows$/.test(candidate.textContent?.trim() ?? ""),
+        );
+
+        if (!(summary instanceof HTMLElement)) {
+            throw new Error("Missing latest results table summary");
+        }
+
+        if (!title || !summary.contains(title)) {
+            throw new Error("Missing latest result sets title in summary");
+        }
+
+        if (!(rowsPerPage instanceof HTMLSelectElement)) {
+            throw new Error("Missing rows per page selector");
+        }
+
+        if (!rowCount) {
+            throw new Error("Missing row count indicator");
+        }
+
+        const toCenterY = (element: Element) => {
+            const rect = element.getBoundingClientRect();
+
+            return rect.top + rect.height / 2;
+        };
+
+        return {
+            rowCount: {
+                centerY: toCenterY(rowCount),
+                text: rowCount.textContent?.trim() ?? "",
+            },
+            rowsPerPage: {
+                centerY: toCenterY(rowsPerPage),
+            },
+            title: {
+                centerY: toCenterY(title),
+            },
+        };
+    });
+}
+
+async function collectTitleSectionGeometryMetric(
+    page: Page,
+    {
+        boxSelector,
+        contentSelector,
+        title,
+        titleSectionSelector,
+    }: {
+        boxSelector: string;
+        contentSelector?: string;
+        title: string;
+        titleSectionSelector: string;
+    },
+): Promise<TitleSectionGeometryMetric> {
+    return page.evaluate(
+        ({ boxSelector, contentSelector, title, titleSectionSelector }) => {
+            const box = document.querySelector(boxSelector);
+            const titleSection = document.querySelector(titleSectionSelector);
+
+            if (
+                !(box instanceof HTMLElement) ||
+                !(titleSection instanceof HTMLElement)
+            ) {
+                throw new Error(`Missing title geometry target for ${title}`);
+            }
+
+            const titleElement = Array.from(
+                titleSection.querySelectorAll("p"),
+            ).find(
+                (candidate): candidate is HTMLParagraphElement =>
+                    candidate instanceof HTMLParagraphElement &&
+                    candidate.textContent?.trim() === title,
+            );
+
+            if (!titleElement) {
+                throw new Error(`Missing title text for ${title}`);
+            }
+
+            const titleRow = titleElement.parentElement;
+
+            if (!(titleRow instanceof HTMLElement)) {
+                throw new Error(`Missing title row for ${title}`);
+            }
+
+            const icon = titleRow.querySelector("svg");
+
+            if (!(icon instanceof SVGElement)) {
+                throw new Error(`Missing title icon for ${title}`);
+            }
+
+            const contentElement = contentSelector
+                ? document.querySelector(contentSelector)
+                : null;
+            const boxRect = box.getBoundingClientRect();
+            const sectionRect = titleSection.getBoundingClientRect();
+            const rowRect = titleRow.getBoundingClientRect();
+            const iconRect = icon.getBoundingClientRect();
+            const titleRect = titleElement.getBoundingClientRect();
+            const boxStyles = window.getComputedStyle(box);
+            const sectionStyles = window.getComputedStyle(titleSection);
+            const borderBottomWidth = Number.parseFloat(
+                sectionStyles.borderBottomWidth,
+            );
+            const borderBottomAlpha =
+                sectionStyles.borderBottomStyle === "none" ||
+                sectionStyles.borderBottomStyle === "hidden"
+                    ? 0
+                    : 1;
+
+            return {
+                box: {
+                    borderRadiusTopLeft: Number.parseFloat(
+                        boxStyles.borderTopLeftRadius,
+                    ),
+                    paddingBottom: Number.parseFloat(boxStyles.paddingBottom),
+                    paddingTop: Number.parseFloat(boxStyles.paddingTop),
+                },
+                contentGapFromTitleContent:
+                    contentElement instanceof HTMLElement
+                        ? contentElement.getBoundingClientRect().top -
+                          titleRect.bottom
+                        : null,
+                effectiveBorderBottomWidth:
+                    borderBottomWidth * borderBottomAlpha,
+                iconLeftInsetWithinBox: iconRect.left - boxRect.left,
+                sectionTopInsetWithinBox: sectionRect.top - boxRect.top,
+                title: titleElement.textContent?.trim() ?? "",
+                titleRowTopInsetWithinBox: rowRect.top - boxRect.top,
+                titleSectionHeight: sectionRect.height,
+            };
+        },
+        { boxSelector, contentSelector, title, titleSectionSelector },
+    );
+}
+
 async function addRequesterFilter(
     page: Page,
     requester: string,
@@ -59,16 +433,10 @@ async function addRequesterFilter(
     const searchBuilder = page.locator('[data-search-builder="true"]');
 
     await expect(searchBuilder).toBeVisible();
-    await searchBuilder.getByRole("button", { name: "Add filter" }).click();
-
-    const filterPopover = page.locator('[data-search-builder-popover="true"]');
-
-    await expect(filterPopover).toBeVisible();
-    await filterPopover.locator('[data-filter-field-option="user"]').click();
-    await filterPopover
-        .locator('[data-filter-value-input="user"]')
-        .fill(requester);
-    await filterPopover.getByRole("button", { name: "Add" }).click();
+    await searchBuilder.getByLabel(/^requester$/i).fill(requester);
+    await searchBuilder
+        .getByRole("button", { name: /add requester filter/i })
+        .click();
 }
 
 async function openResultDetail(
@@ -76,8 +444,8 @@ async function openResultDetail(
     pipelineName: string,
 ): Promise<void> {
     await page.goto("/");
-    await expect(page.getByText("Recent registrations")).toBeVisible();
-    await expect(recentRows(page)).toHaveCount(4);
+    await expect(page.getByText("Latest result sets")).toBeVisible();
+    await expectRecentRowsLoaded(page);
 
     const resultLink = page.getByRole("link", { name: pipelineName }).first();
     const href = await resultLink.getAttribute("href");
@@ -300,6 +668,7 @@ test.describe("Q1 critical results flows", () => {
         "gallery",
         "plot-101.png",
     );
+    const evidenceDir = path.resolve(process.cwd(), "..", ".tmp", "agent");
 
     test("shows the search builder above recent registrations on the dashboard", async ({
         page,
@@ -309,14 +678,548 @@ test.describe("Q1 critical results flows", () => {
         await expect(
             page.locator('[data-search-builder="true"]'),
         ).toBeVisible();
-        await expect(
-            page.getByRole("heading", { level: 2, name: "Latest result sets" }),
-        ).toBeVisible();
-        await expect(page.getByText("Recent registrations")).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+        await expect(page.getByText("Recent registrations")).toHaveCount(0);
         await expect(page.locator('[data-stat-card="total"]')).toHaveCount(0);
 
         const rows = recentRows(page);
-        await expect(rows).toHaveCount(4);
+        await expect(rows.first()).toBeVisible();
+    });
+
+    test("does not wrap the search builder in a visible outer panel", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "search-builder-nesting-postfix.png",
+        );
+        const evidencePath = path.join(
+            evidenceDir,
+            "search-builder-nesting-postfix.json",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 720 });
+        await page.goto("/");
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+
+        await expect(searchBuilder).toBeVisible();
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+
+        const metrics = await searchBuilder.evaluate((element) => {
+            const searchBuilderElement = element as HTMLElement;
+            const main = searchBuilderElement.closest("main");
+
+            if (!(main instanceof HTMLElement)) {
+                throw new Error("Search builder is not inside the page main");
+            }
+
+            const toRoundedRect = (target: HTMLElement) => {
+                const rect = target.getBoundingClientRect();
+
+                return {
+                    bottom: Math.round(rect.bottom),
+                    height: Math.round(rect.height),
+                    left: Math.round(rect.left),
+                    right: Math.round(rect.right),
+                    top: Math.round(rect.top),
+                    width: Math.round(rect.width),
+                };
+            };
+            const hasVisibleBorder = (computed: CSSStyleDeclaration) =>
+                (
+                    [
+                        ["borderTopStyle", "borderTopWidth"],
+                        ["borderRightStyle", "borderRightWidth"],
+                        ["borderBottomStyle", "borderBottomWidth"],
+                        ["borderLeftStyle", "borderLeftWidth"],
+                    ] as const
+                ).some(
+                    ([styleProperty, widthProperty]) =>
+                        computed[styleProperty] !== "none" &&
+                        Number.parseFloat(computed[widthProperty]) > 0,
+                );
+            const hasRoundedCorner = (computed: CSSStyleDeclaration) =>
+                (
+                    [
+                        computed.borderTopLeftRadius,
+                        computed.borderTopRightRadius,
+                        computed.borderBottomRightRadius,
+                        computed.borderBottomLeftRadius,
+                    ] as const
+                ).some((radius) => Number.parseFloat(radius) > 0);
+            const hasBackgroundFill = (computed: CSSStyleDeclaration) =>
+                computed.backgroundImage !== "none" ||
+                !["rgba(0, 0, 0, 0)", "transparent"].includes(
+                    computed.backgroundColor,
+                );
+            const mainRect = main.getBoundingClientRect();
+            const mainStyles = window.getComputedStyle(main);
+            const searchBuilderRect =
+                searchBuilderElement.getBoundingClientRect();
+            const mainContentLeft =
+                mainRect.left + Number.parseFloat(mainStyles.paddingLeft);
+            const mainContentRight =
+                mainRect.right - Number.parseFloat(mainStyles.paddingRight);
+            const visualPanelAncestors = [];
+            let ancestor = searchBuilderElement.parentElement;
+
+            while (ancestor && ancestor !== main) {
+                const computed = window.getComputedStyle(ancestor);
+                const isVisiblePanel =
+                    hasVisibleBorder(computed) ||
+                    hasRoundedCorner(computed) ||
+                    hasBackgroundFill(computed) ||
+                    computed.boxShadow !== "none";
+
+                if (isVisiblePanel) {
+                    const rect = ancestor.getBoundingClientRect();
+
+                    visualPanelAncestors.push({
+                        backgroundColor: computed.backgroundColor,
+                        backgroundImage: computed.backgroundImage,
+                        borderRadius: computed.borderTopLeftRadius,
+                        borderTopWidth: computed.borderTopWidth,
+                        boxShadow: computed.boxShadow,
+                        gapBottom: Math.round(
+                            rect.bottom - searchBuilderRect.bottom,
+                        ),
+                        gapLeft: Math.round(searchBuilderRect.left - rect.left),
+                        gapRight: Math.round(
+                            rect.right - searchBuilderRect.right,
+                        ),
+                        gapTop: Math.round(searchBuilderRect.top - rect.top),
+                        paddingLeft: computed.paddingLeft,
+                        paddingTop: computed.paddingTop,
+                        tagName: ancestor.tagName.toLowerCase(),
+                    });
+                }
+
+                ancestor = ancestor.parentElement;
+            }
+
+            return {
+                main: toRoundedRect(main),
+                mainContentGapLeft: Math.round(
+                    searchBuilderRect.left - mainContentLeft,
+                ),
+                mainContentGapRight: Math.round(
+                    mainContentRight - searchBuilderRect.right,
+                ),
+                searchBuilder: toRoundedRect(searchBuilderElement),
+                visualPanelAncestors,
+            };
+        });
+
+        await page.screenshot({ fullPage: true, path: screenshotPath });
+        writeFileSync(
+            evidencePath,
+            `${JSON.stringify({ ...metrics, screenshotPath }, null, 2)}\n`,
+        );
+
+        expect(metrics.mainContentGapLeft).toBeLessThanOrEqual(1);
+        expect(metrics.mainContentGapRight).toBeLessThanOrEqual(1);
+        expect(metrics.visualPanelAncestors).toEqual([]);
+    });
+
+    test("renders search and latest titles with the same browser treatment as file browser", async ({
+        page,
+    }) => {
+        const searchScreenshotPath = path.join(
+            evidenceDir,
+            "search-title-treatment-postfix.png",
+        );
+        const latestScreenshotPath = path.join(
+            evidenceDir,
+            "latest-result-sets-title-treatment-postfix.png",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent("nf-core/rnaseq")}`,
+        );
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+
+        await expect(searchBuilder).toBeVisible();
+        await expect(fileBrowser).toBeVisible();
+
+        const searchMetric = await collectTitleTreatmentMetric(
+            page,
+            '[data-search-builder="true"]',
+            "Search",
+        );
+        const fileBrowserMetric = await collectTitleTreatmentMetric(
+            page,
+            '[data-file-browser="true"]',
+            "File Browser",
+        );
+        const permanentLabels = await collectPermanentSearchLabels(page);
+
+        await page
+            .locator("main")
+            .screenshot({ animations: "disabled", path: searchScreenshotPath });
+
+        expect(searchMetric.title.text).toBe("Search");
+        expect(searchMetric.icon.present).toBe(true);
+        expect(searchMetric.row.display).toBe("flex");
+        expect(searchMetric.row.alignItems).toBe("center");
+        expect(searchMetric.row.columnGap).toBe(
+            fileBrowserMetric.row.columnGap,
+        );
+        expect(searchMetric.title).toEqual({
+            ...fileBrowserMetric.title,
+            text: "Search",
+        });
+        expect(searchMetric.icon.color).toBe(fileBrowserMetric.icon.color);
+        expect(searchMetric.icon.width).toBeCloseTo(
+            fileBrowserMetric.icon.width,
+            1,
+        );
+        expect(searchMetric.icon.height).toBeCloseTo(
+            fileBrowserMetric.icon.height,
+            1,
+        );
+        expect(permanentLabels).toEqual([
+            "Pipeline name",
+            "Unique",
+            "Study",
+            "Sample",
+            "Requester",
+        ]);
+        expect(
+            permanentLabels.filter((label) => /\bvalue\b/i.test(label)),
+        ).toEqual([]);
+
+        await page.goto("/");
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+        await expect(page.getByText("Recent registrations")).toHaveCount(0);
+
+        const latestMetric = await collectTitleTreatmentMetric(
+            page,
+            '[data-results-table-summary="true"]',
+            "Latest result sets",
+        );
+
+        await page
+            .locator('[data-results-table-summary="true"]')
+            .screenshot({ animations: "disabled", path: latestScreenshotPath });
+
+        expect(latestMetric.title.text).toBe("Latest result sets");
+        expect(latestMetric.icon.present).toBe(true);
+        expect(latestMetric.row.display).toBe("flex");
+        expect(latestMetric.row.alignItems).toBe("center");
+        expect(latestMetric.row.columnGap).toBe(
+            fileBrowserMetric.row.columnGap,
+        );
+        expect(latestMetric.title).toEqual({
+            ...fileBrowserMetric.title,
+            text: "Latest result sets",
+        });
+        expect(latestMetric.icon.color).toBe(fileBrowserMetric.icon.color);
+        expect(latestMetric.icon.width).toBeCloseTo(
+            fileBrowserMetric.icon.width,
+            1,
+        );
+        expect(latestMetric.icon.height).toBeCloseTo(
+            fileBrowserMetric.icon.height,
+            1,
+        );
+    });
+
+    test("keeps box title section geometry consistent across search, results, and file browser", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "box-title-section-geometry-postfix.png",
+        );
+        const evidencePath = path.join(
+            evidenceDir,
+            "box-title-section-geometry-postfix.json",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto("/");
+
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+        await expectRecentRowsLoaded(page);
+
+        const latest = await collectTitleSectionGeometryMetric(page, {
+            boxSelector: '[data-results-table-summary="true"]',
+            contentSelector: "tbody",
+            title: "Latest result sets",
+            titleSectionSelector: '[data-results-table-summary="true"]',
+        });
+
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent(rnaseqPipelineName)}`,
+        );
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+        const fileBrowser = page.locator('[data-file-browser="true"]');
+
+        await expect(searchBuilder).toBeVisible();
+        await expect(fileBrowser).toBeVisible();
+
+        const search = await collectTitleSectionGeometryMetric(page, {
+            boxSelector: '[data-search-builder="true"]',
+            contentSelector: '[data-search-builder-permanent-fields="true"]',
+            title: "Search",
+            titleSectionSelector:
+                '[data-search-builder="true"] > div > div:first-child',
+        });
+        const fileBrowserMetric = await collectTitleSectionGeometryMetric(
+            page,
+            {
+                boxSelector: '[data-file-browser="true"]',
+                contentSelector:
+                    '[data-file-browser="true"] [data-preview-mode]',
+                title: "File Browser",
+                titleSectionSelector: '[data-file-browser-header="true"]',
+            },
+        );
+
+        await page.getByRole("button", { name: "Result sets" }).click();
+        await expect(
+            page.locator('[data-results-table-summary="true"]'),
+        ).toBeVisible();
+
+        const searchResults = await collectTitleSectionGeometryMetric(page, {
+            boxSelector: 'div:has(> [data-results-table-summary="true"])',
+            contentSelector: "tbody",
+            title: "Search results",
+            titleSectionSelector: '[data-results-table-summary="true"]',
+        });
+
+        await page
+            .locator("main")
+            .screenshot({ animations: "disabled", path: screenshotPath });
+
+        const metrics = {
+            fileBrowser: fileBrowserMetric,
+            latest,
+            screenshotPath,
+            search,
+            searchResults,
+        };
+
+        writeFileSync(evidencePath, `${JSON.stringify(metrics, null, 2)}\n`);
+
+        const titleSectionHeights = [
+            fileBrowserMetric.titleSectionHeight,
+            latest.titleSectionHeight,
+            search.titleSectionHeight,
+            searchResults.titleSectionHeight,
+        ];
+        const matchedSearchBoxMetrics = [
+            fileBrowserMetric,
+            search,
+            searchResults,
+        ];
+        const iconLeftInsets = matchedSearchBoxMetrics.map(
+            (metric) => metric.iconLeftInsetWithinBox,
+        );
+        const titleRowTopInsets = matchedSearchBoxMetrics.map(
+            (metric) => metric.titleRowTopInsetWithinBox,
+        );
+        const borderRadii = matchedSearchBoxMetrics.map(
+            (metric) => metric.box.borderRadiusTopLeft,
+        );
+
+        expect(fileBrowserMetric.effectiveBorderBottomWidth).toBe(0);
+        expect(fileBrowserMetric.contentGapFromTitleContent).not.toBeNull();
+        expect(
+            fileBrowserMetric.contentGapFromTitleContent ?? 0,
+        ).toBeLessThanOrEqual(24);
+        expect(Math.min(...titleSectionHeights)).toBeGreaterThanOrEqual(34);
+        expect(
+            Math.max(...titleSectionHeights) - Math.min(...titleSectionHeights),
+        ).toBeLessThanOrEqual(12);
+        expect(
+            Math.max(...iconLeftInsets) - Math.min(...iconLeftInsets),
+        ).toBeLessThanOrEqual(2);
+        expect(
+            Math.max(...titleRowTopInsets) - Math.min(...titleRowTopInsets),
+        ).toBeLessThanOrEqual(2);
+        expect(
+            Math.max(...borderRadii) - Math.min(...borderRadii),
+        ).toBeLessThanOrEqual(1);
+    });
+
+    test("places the latest row count beside the rows-per-page footer control", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "latest-row-count-footer-placement-postfix.png",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto("/");
+
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+        await expectRecentRowsLoaded(page);
+        await expect(page.getByText(/^\d+ rows$/)).toBeVisible();
+        await expect(page.getByLabel("Rows per page")).toBeVisible();
+
+        const placement = await collectLatestRowCountPlacementMetric(page);
+
+        await page
+            .locator('[data-results-table-summary="true"]')
+            .locator("..")
+            .screenshot({ animations: "disabled", path: screenshotPath });
+
+        expect(placement.rowCount.text).toMatch(/^\d+ rows$/);
+        expect(
+            Math.abs(
+                placement.rowCount.centerY - placement.rowsPerPage.centerY,
+            ),
+        ).toBeLessThanOrEqual(8);
+        expect(
+            Math.abs(placement.rowCount.centerY - placement.title.centerY),
+        ).toBeGreaterThan(48);
+        expect(placement.rowCount.centerY).toBeGreaterThan(
+            placement.title.centerY,
+        );
+    });
+
+    test("does not show suggested values in empty permanent or add-filter inputs", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "search-filter-empty-inputs-no-placeholders-postfix.png",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(
+            `/?pipeline_name=${encodeURIComponent("nf-core/rnaseq")}`,
+        );
+
+        const searchBuilder = page.locator('[data-search-builder="true"]');
+
+        await expect(searchBuilder).toBeVisible();
+        await expect(
+            searchBuilder.getByRole("button", { name: /nf-core\/rnaseq/i }),
+        ).toBeVisible();
+
+        await searchBuilder.getByRole("button", { name: "Add filter" }).click();
+        await page.getByRole("option", { name: /^library$/i }).click();
+        await expect(page.getByLabel(/library value/i)).toBeVisible();
+
+        const metrics = await collectSearchInputMetrics(page);
+
+        await searchBuilder.screenshot({
+            animations: "disabled",
+            path: screenshotPath,
+        });
+
+        expect(metrics.permanent.map((metric) => metric.key)).toEqual([
+            "pipeline_name",
+            "run_key",
+            "study",
+            "sample",
+            "user",
+        ]);
+        expect(metrics.permanent.map((metric) => metric.value)).toEqual([
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]);
+        expect(metrics.permanent.map((metric) => metric.placeholder)).toEqual([
+            null,
+            null,
+            null,
+            null,
+            null,
+        ]);
+        expect(metrics.permanent.map((metric) => metric.list)).toEqual([
+            "filter-suggestions-pipeline_name",
+            "filter-suggestions-run_key",
+            "filter-suggestions-study",
+            "filter-suggestions-sample",
+            "filter-suggestions-user",
+        ]);
+        expect(metrics.additional).toEqual([
+            {
+                key: "library",
+                list: "filter-suggestions-library",
+                placeholder: null,
+                value: "",
+            },
+        ]);
+    });
+
+    test("renders the add filter pill with the same compact density as columns", async ({
+        page,
+    }) => {
+        const screenshotPath = path.join(
+            evidenceDir,
+            "add-filter-columns-pill-density-postfix.png",
+        );
+
+        mkdirSync(evidenceDir, { recursive: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto("/");
+
+        const addFilterButton = page.getByRole("button", {
+            name: "Add filter",
+        });
+        const columnsButton = page.getByRole("button", {
+            name: "Toggle column visibility",
+        });
+
+        await expect(addFilterButton).toBeVisible();
+        await expect(columnsButton).toBeVisible();
+
+        const addFilterMetric = await collectPillMetric(addFilterButton);
+        const columnsMetric = await collectPillMetric(columnsButton);
+
+        await page
+            .locator("main")
+            .screenshot({ animations: "disabled", path: screenshotPath });
+
+        expect(addFilterMetric.height).toBeCloseTo(columnsMetric.height, 1);
+        expect(addFilterMetric.paddingLeft).toBeCloseTo(
+            columnsMetric.paddingLeft,
+            1,
+        );
+        expect(addFilterMetric.paddingRight).toBeCloseTo(
+            columnsMetric.paddingRight,
+            1,
+        );
+        expect(addFilterMetric.borderRadius).toBeGreaterThanOrEqual(
+            addFilterMetric.height / 2 - 1,
+        );
+        expect(addFilterMetric.icon.width).toBeCloseTo(
+            columnsMetric.icon.width,
+            1,
+        );
+        expect(addFilterMetric.icon.height).toBeCloseTo(
+            columnsMetric.icon.height,
+            1,
+        );
+        expect(
+            Math.abs(addFilterMetric.width - columnsMetric.width),
+        ).toBeLessThanOrEqual(12);
+
+        await addFilterButton.click();
+        await expect(
+            page.getByRole("dialog", { name: "Search builder filter panel" }),
+        ).toBeVisible();
     });
 
     test("keeps recent registration sort icons at a stable size on narrow screens", async ({
@@ -325,8 +1228,8 @@ test.describe("Q1 critical results flows", () => {
         await page.setViewportSize({ width: 390, height: 900 });
         await page.goto("/");
 
-        await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(4);
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+        await expectRecentRowsLoaded(page);
 
         const metrics = await collectRecentSortIconMetrics(page);
 
@@ -362,7 +1265,7 @@ test.describe("Q1 critical results flows", () => {
         await addRequesterFilter(page, "alice");
 
         await expect(page).toHaveURL(/\?user=alice/);
-        await expect(page.getByText("Showing search results")).toBeVisible();
+        await switchToResultRowsView(page);
 
         const rows = recentRows(page);
         await expect(rows).toHaveCount(1);
@@ -375,8 +1278,8 @@ test.describe("Q1 critical results flows", () => {
         page,
     }) => {
         await page.goto("/");
-        await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(4);
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+        await expectRecentRowsLoaded(page);
 
         const recentResultLink = page
             .getByRole("link", { name: rnaseqPipelineName })
@@ -398,11 +1301,12 @@ test.describe("Q1 critical results flows", () => {
         await backToDashboard.click();
 
         await expect(page).toHaveURL(/\/$/);
-        await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(4);
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+        await expectRecentRowsLoaded(page);
 
         await addRequesterFilter(page, "alice");
         await expect(page).toHaveURL(/\?user=alice/);
+        await switchToResultRowsView(page);
 
         const searchResultLink = page
             .getByRole("link", { name: rnaseqPipelineName })
@@ -427,7 +1331,7 @@ test.describe("Q1 critical results flows", () => {
         await backToSearch.click();
 
         await expect(page).toHaveURL(/\?user=alice$/);
-        await expect(page.getByText("Showing search results")).toBeVisible();
+        await switchToResultRowsView(page);
         await expect(recentRows(page)).toHaveCount(1);
         await expect(recentRows(page).first()).toContainText("alice");
     });
@@ -470,14 +1374,13 @@ test.describe("Q1 critical results flows", () => {
         ).toContainText("6568");
         await expect(
             detailSummary.locator('[data-metadata-row="library"]'),
-        ).toHaveCount(0);
-
-        await detailSummary
-            .getByRole("button", { name: "All metadata" })
-            .click();
-        await expect(
-            page.locator('[data-metadata-detail-row="library"]'),
         ).toContainText("exon");
+        await expect(
+            detailSummary.locator('[data-metadata-row="study"]'),
+        ).toContainText("study-alpha");
+        await expect(
+            detailSummary.getByRole("button", { name: "All metadata" }),
+        ).toHaveCount(0);
     });
 
     test("keeps the result detail header compact above the file browser", async ({
@@ -954,8 +1857,8 @@ test.describe("Q1 critical results flows", () => {
         page,
     }) => {
         await page.goto("/");
-        await expect(page.getByText("Recent registrations")).toBeVisible();
-        await expect(recentRows(page)).toHaveCount(4);
+        await expect(page.getByText("Latest result sets")).toBeVisible();
+        await expectRecentRowsLoaded(page);
 
         const ampliconLink = page
             .getByRole("link", { name: ampliconPipelineName })

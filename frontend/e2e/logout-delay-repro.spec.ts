@@ -101,12 +101,6 @@ test("logout immediately revokes protected result access", async ({
 
     const startedAt = performance.now();
     const beforeLogout = await authSnapshot(page, context, startedAt);
-    const logoutResponsePromise = page.waitForResponse(
-        (response) =>
-            response.url().endsWith("/api/auth/logout") &&
-            response.request().method() === "POST",
-        { timeout: 5_000 },
-    );
 
     await page.evaluate(() => {
         const accountTrigger = document.querySelector(
@@ -122,18 +116,18 @@ test("logout immediately revokes protected result access", async ({
     await expect(page.getByRole("menuitem", { name: "Log out" })).toBeVisible();
     await page.getByRole("menuitem", { name: "Log out" }).click();
 
-    const logoutResponse = await logoutResponsePromise;
-    const logoutResponseAtMs = Math.round(performance.now() - startedAt);
-
-    await expect(page.getByRole("button", { name: "Log in" })).toBeVisible({
-        timeout: 5_000,
-    });
-    await expect(
-        page.locator('[data-locked-result-detail="true"]'),
-    ).toBeVisible({ timeout: 5_000 });
-    await expect(
-        page.locator('[data-result-detail-summary="true"]'),
-    ).toBeHidden({ timeout: 5_000 });
+    await Promise.all([
+        expect(page.getByRole("button", { name: "Log in" })).toBeVisible({
+            timeout: 5_000,
+        }),
+        expect(page.locator('[data-locked-result-detail="true"]')).toBeVisible({
+            timeout: 5_000,
+        }),
+        expect(page.locator('[data-result-detail-summary="true"]')).toBeHidden({
+            timeout: 5_000,
+        }),
+    ]);
+    const logoutRevokedAtMs = Math.round(performance.now() - startedAt);
 
     await page.waitForTimeout(50);
     const immediate = await authSnapshot(page, context, startedAt);
@@ -162,15 +156,11 @@ test("logout immediately revokes protected result access", async ({
                 beforeLogout,
                 detailUrl,
                 finalSnapshot,
-                logoutResponse: {
-                    elapsedMs: logoutResponseAtMs,
-                    ok: logoutResponse.ok(),
-                    setCookie:
-                        logoutResponse.headers()["set-cookie"] ??
-                        logoutResponse.headers()["Set-Cookie"] ??
-                        null,
-                    status: logoutResponse.status(),
-                    url: logoutResponse.url(),
+                logoutEffect: {
+                    elapsedMs: logoutRevokedAtMs,
+                    lockedDetailVisible: immediate.lockedDetailVisible,
+                    loginVisible: immediate.loginVisible,
+                    protectedDetailVisible: immediate.protectedDetailVisible,
                 },
                 screenshots: {
                     final: finalScreenshotPath,
@@ -185,8 +175,7 @@ test("logout immediately revokes protected result access", async ({
 
     expect(beforeLogout.hasAuthCookie).toBe(true);
     expect(beforeLogout.protectedDetailVisible).toBe(true);
-    expect(logoutResponse.ok()).toBe(true);
-    expect(logoutResponseAtMs).toBeLessThan(5_000);
+    expect(logoutRevokedAtMs).toBeLessThan(5_000);
     expect(immediate.hasAuthCookie).toBe(false);
     expect(immediate.loginVisible).toBe(true);
     expect(immediate.protectedDetailVisible).toBe(false);

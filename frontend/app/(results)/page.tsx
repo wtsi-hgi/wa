@@ -1,13 +1,21 @@
 import { DashboardToast } from "@/components/dashboard-toast";
 import { FilterBuilder } from "@/components/filter-builder";
 import { ResultsTable } from "@/components/results-table";
+import type {
+    CombinedSearchFile,
+    CombinedSearchRegistration,
+} from "@/components/search-combined-file-browser";
+import { SearchResultsView } from "@/components/search-results-view";
 import type { FilterSuggestionMap } from "@/components/filter-builder";
 import {
     fetchMetaKeys,
+    fetchFiles,
     fetchStats,
     searchResults,
 } from "@/app/(results)/actions";
+import { BackendRequestError } from "@/lib/backend-client";
 import type {
+    FileEntry,
     ResultSet,
     SearchResult,
     StatsResult,
@@ -25,6 +33,37 @@ const emptyStats: StatsResult = {
     daily: [],
     pipelines: [],
 };
+const combinedSearchFileFetchConcurrency = 6;
+
+type CombinedRegistrationFetch = {
+    index: number;
+    result: ResultSet;
+};
+type LoadedCombinedRegistration =
+    | (CombinedRegistrationFetch & { files: FileEntry[] })
+    | (CombinedRegistrationFetch & { locked: true });
+
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    const workerCount = Math.min(Math.max(1, concurrency), items.length);
+    let nextIndex = 0;
+
+    async function worker(): Promise<void> {
+        while (nextIndex < items.length) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            results[currentIndex] = await mapper(items[currentIndex]);
+        }
+    }
+
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+    return results;
+}
 
 function appendSuggestion(
     suggestions: FilterSuggestionMap,
@@ -189,6 +228,140 @@ function buildReturnHref(searchParams: SearchParams): string {
     return query ? `/?${query}` : "/";
 }
 
+function isResultViewable(result: ResultSet): boolean {
+    return result.access?.locked !== true && result.access?.can_view !== false;
+}
+
+function outputDirectorySpecificity(
+    result: ResultSet,
+    file: FileEntry,
+): number {
+    const outputDirectory = result.output_directory.replace(/\/+$/, "");
+
+    if (
+        file.path !== outputDirectory &&
+        !file.path.startsWith(`${outputDirectory}/`)
+    ) {
+        return 0;
+    }
+
+    return outputDirectory.split("/").filter(Boolean).length;
+}
+
+async function fetchCombinedRegistrationFiles({
+    index,
+    result,
+}: CombinedRegistrationFetch): Promise<LoadedCombinedRegistration> {
+    try {
+        return {
+            files: await fetchFiles(result.id),
+            index,
+            result,
+        };
+    } catch (error) {
+        if (error instanceof BackendRequestError && error.status === 403) {
+            return {
+                index,
+                locked: true,
+                result,
+            };
+        }
+
+        throw error;
+    }
+}
+
+async function collectCombinedSearchFiles(
+    entries: ResultSet[] | SearchResult[],
+): Promise<{
+    files: CombinedSearchFile[];
+    lockedRegistrations: CombinedSearchRegistration[];
+    registrations: CombinedSearchRegistration[];
+}> {
+    const filesByPath = new Map<
+        string,
+        { file: CombinedSearchFile; specificity: number }
+    >();
+    const lockedRegistrationsByIndex: Array<{
+        index: number;
+        registration: CombinedSearchRegistration;
+    }> = [];
+    const registrations: CombinedSearchRegistration[] = [];
+    const viewableRegistrations: CombinedRegistrationFetch[] = [];
+
+    entries.forEach((entry, index) => {
+        const result = toResultSet(entry);
+
+        if (!isResultViewable(result)) {
+            lockedRegistrationsByIndex.push({
+                index,
+                registration: { fileCount: 0, result },
+            });
+            return;
+        }
+
+        viewableRegistrations.push({ index, result });
+    });
+
+    const loadedRegistrations = await mapWithConcurrency(
+        viewableRegistrations,
+        combinedSearchFileFetchConcurrency,
+        fetchCombinedRegistrationFiles,
+    );
+
+    for (const loadedRegistration of loadedRegistrations) {
+        if ("locked" in loadedRegistration) {
+            lockedRegistrationsByIndex.push({
+                index: loadedRegistration.index,
+                registration: {
+                    fileCount: 0,
+                    result: loadedRegistration.result,
+                },
+            });
+            continue;
+        }
+
+        const outputFiles = loadedRegistration.files.filter(
+            (file) => file.kind === "output",
+        );
+
+        if (outputFiles.length === 0) {
+            continue;
+        }
+
+        registrations.push({
+            fileCount: outputFiles.length,
+            result: loadedRegistration.result,
+        });
+        for (const file of outputFiles) {
+            const combinedFile = {
+                ...file,
+                resultId: loadedRegistration.result.id,
+            };
+            const specificity = outputDirectorySpecificity(
+                loadedRegistration.result,
+                file,
+            );
+            const existing = filesByPath.get(file.path);
+
+            if (!existing || specificity > existing.specificity) {
+                filesByPath.set(file.path, {
+                    file: combinedFile,
+                    specificity,
+                });
+            }
+        }
+    }
+
+    return {
+        files: [...filesByPath.values()].map(({ file }) => file),
+        lockedRegistrations: lockedRegistrationsByIndex
+            .sort((left, right) => left.index - right.index)
+            .map(({ registration }) => registration),
+        registrations,
+    };
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
     if (error instanceof Error && error.message.trim()) {
         return error.message;
@@ -241,6 +414,9 @@ export default async function ResultsLandingPage({
     let tableData: ResultSet[] | SearchResult[] = stats.recent;
     let tableMode: "recent" | "search" = "recent";
     let tableEmptyMessage = "No recent results yet.";
+    let combinedSearchFiles: CombinedSearchFile[] = [];
+    let combinedSearchLockedRegistrations: CombinedSearchRegistration[] = [];
+    let combinedSearchRegistrations: CombinedSearchRegistration[] = [];
 
     if (hasSearch) {
         tableMode = "search";
@@ -254,31 +430,60 @@ export default async function ResultsLandingPage({
                 statsError ??
                 getErrorMessage(error, "Unable to search results");
         }
+
+        try {
+            const combined = await collectCombinedSearchFiles(tableData);
+            combinedSearchFiles = combined.files;
+            combinedSearchLockedRegistrations = combined.lockedRegistrations;
+            combinedSearchRegistrations = combined.registrations;
+        } catch (error) {
+            statsError =
+                statsError ??
+                getErrorMessage(error, "Unable to load search result files");
+        }
     }
 
+    const showCombinedSearchFileBrowser =
+        combinedSearchFiles.length > 0 ||
+        combinedSearchLockedRegistrations.length > 0;
     const suggestionValues = buildSuggestionValues(stats, tableData, studies);
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
             <DashboardToast message={statsError} />
 
-            <section className="rounded-[2rem] border border-border/70 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--card)_90%,white_10%),color-mix(in_oklab,var(--accent)_10%,var(--card)_90%))] p-4 shadow-[0_32px_110px_-76px_rgba(41,58,85,0.82)] sm:p-6">
-                <FilterBuilder
-                    currentFilters={resolvedSearchParams}
-                    metaKeys={metaKeys}
-                    seqmetaAvailable={seqmetaAvailable}
-                    suggestionValues={suggestionValues}
-                    studies={studies}
-                />
-            </section>
-
-            <ResultsTable
-                data={tableData}
-                emptyMessage={tableEmptyMessage}
-                mode={tableMode}
-                returnHref={returnHref}
-                studyActive={studyActive}
+            <FilterBuilder
+                currentFilters={resolvedSearchParams}
+                metaKeys={metaKeys}
+                seqmetaAvailable={seqmetaAvailable}
+                suggestionValues={suggestionValues}
+                studies={studies}
             />
+
+            {hasSearch && showCombinedSearchFileBrowser ? (
+                <SearchResultsView
+                    combinedFiles={combinedSearchFiles}
+                    lockedRegistrations={combinedSearchLockedRegistrations}
+                    registrations={combinedSearchRegistrations}
+                    resultsTable={{
+                        data: tableData,
+                        emptyMessage: tableEmptyMessage,
+                        hideSummary: showCombinedSearchFileBrowser,
+                        mode: tableMode,
+                        returnHref,
+                        studyActive,
+                    }}
+                />
+            ) : (
+                <ResultsTable
+                    data={tableData}
+                    emptyMessage={tableEmptyMessage}
+                    hideSummary={showCombinedSearchFileBrowser}
+                    mode={tableMode}
+                    returnHref={returnHref}
+                    studyActive={studyActive}
+                />
+            )}
         </main>
     );
 }

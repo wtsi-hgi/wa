@@ -1,9 +1,18 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Check, Plus, X } from "lucide-react";
+import { Check, Plus, Search, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
+import {
+    boxPanelInsetClass,
+    boxPanelRadiusClass,
+    boxTitleActionClass,
+    boxTitleIconClass,
+    boxTitleRowClass,
+    boxTitleSectionClass,
+    boxTitleTextClass,
+} from "@/components/box-title-section";
 import {
     Command,
     CommandEmpty,
@@ -64,22 +73,31 @@ const combinedLibraryMetaKeys = new Set([
     "seqmeta_pipeline_id_lims",
 ]);
 
-const coreFieldOptions: FieldOption[] = [
-    { key: "user", label: "Requester", placeholder: "alice" },
-    { key: "operator", label: "Operator", placeholder: "operator-1" },
+const permanentFieldOptions: FieldOption[] = [
+    {
+        key: "pipeline_name",
+        label: "Pipeline name",
+        placeholder: "nf-core/rnaseq",
+    },
+    { key: "run_key", label: "Unique", placeholder: "48522 or 48522 / exon" },
     { key: "study", label: "Study", placeholder: "6568 or ERP012345" },
+    { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
+    { key: "user", label: "Requester", placeholder: "alice" },
+];
+
+const permanentFieldKeys = new Set(
+    permanentFieldOptions.map((option) => option.key),
+);
+
+const coreFieldOptions: FieldOption[] = [
+    ...permanentFieldOptions,
+    { key: "operator", label: "Operator", placeholder: "operator-1" },
     { key: "library", label: "Library", placeholder: "RNA or WGS" },
     { key: "seqmeta_library_id", label: "Library ID", placeholder: "71046409" },
     {
         key: "seqmeta_id_library_lims",
         label: "Library LIMS ID",
         placeholder: "SQPP-47463-G:B1",
-    },
-    { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
-    {
-        key: "pipeline_name",
-        label: "Pipeline name",
-        placeholder: "nf-core/rnaseq",
     },
     {
         key: "pipeline_version",
@@ -91,7 +109,6 @@ const coreFieldOptions: FieldOption[] = [
         label: "Pipeline identifier",
         placeholder: "gh://repo/workflow.nf",
     },
-    { key: "run_key", label: "Unique", placeholder: "48522 or 48522 / exon" },
     {
         key: "output_dir_prefix",
         label: "Output directory prefix",
@@ -148,6 +165,10 @@ function getFieldLabel(fieldOptions: FieldOption[], key: string): string {
         fieldOptions.find((option) => option.key === key)?.label ??
         toTitleCase(key.replace(/^meta_/, ""))
     );
+}
+
+function getAdditionalFieldOptions(fieldOptions: FieldOption[]): FieldOption[] {
+    return fieldOptions.filter((option) => !permanentFieldKeys.has(option.key));
 }
 
 function createNextFilters(
@@ -225,15 +246,21 @@ export function FilterBuilder({
     const pathname = usePathname();
     const router = useRouter();
     const fieldOptions = getFieldOptions(metaKeys, seqmetaAvailable);
+    const additionalFieldOptions = getAdditionalFieldOptions(fieldOptions);
 
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
     const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(
         null,
     );
     const [draftValue, setDraftValue] = useState("");
+    const [permanentDraftValues, setPermanentDraftValues] = useState<
+        Record<string, string>
+    >({});
 
     const selectedField =
-        fieldOptions.find((option) => option.key === selectedFieldKey) ?? null;
+        additionalFieldOptions.find(
+            (option) => option.key === selectedFieldKey,
+        ) ?? null;
     const visibleSuggestions = getVisibleSuggestions(
         currentFilters,
         suggestionValues,
@@ -262,6 +289,20 @@ export function FilterBuilder({
         setIsPopoverOpen(false);
     }
 
+    function applyPermanentFilterValue(fieldKey: string, value: string) {
+        const nextFilters = createNextFilters(currentFilters, fieldKey, value);
+        if (nextFilters === currentFilters) {
+            return;
+        }
+
+        pushFilters(nextFilters);
+        setPermanentDraftValues((currentValues) => {
+            const { [fieldKey]: _removed, ...remainingValues } = currentValues;
+
+            return remainingValues;
+        });
+    }
+
     function handleFieldSelect(fieldKey: string) {
         setSelectedFieldKey(fieldKey);
         setDraftValue("");
@@ -280,17 +321,34 @@ export function FilterBuilder({
         applyFilterValue(selectedField.key, draftValue);
     }
 
+    function handlePermanentFilterSubmit(
+        event: FormEvent<HTMLFormElement>,
+        fieldKey: string,
+    ) {
+        event.preventDefault();
+        applyPermanentFilterValue(
+            fieldKey,
+            permanentDraftValues[fieldKey] ?? "",
+        );
+    }
+
     return (
         <section
             data-search-builder="true"
-            className="rounded-[1.5rem] border border-border/70 bg-background/80 p-4 shadow-[0_24px_80px_-64px_rgba(29,44,69,0.78)] sm:p-5"
+            className={cn(
+                boxPanelRadiusClass,
+                boxPanelInsetClass,
+                "border border-border/70 bg-background/80 shadow-[0_24px_80px_-64px_rgba(29,44,69,0.78)]",
+            )}
         >
-            <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="space-y-1">
-                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            Search builder
-                        </p>
+            <div className="flex flex-col">
+                <div className={boxTitleSectionClass}>
+                    <div className={boxTitleRowClass}>
+                        <Search
+                            className={boxTitleIconClass}
+                            aria-hidden="true"
+                        />
+                        <p className={boxTitleTextClass}>Search</p>
                     </div>
 
                     <div className="relative">
@@ -301,7 +359,7 @@ export function FilterBuilder({
                             onClick={() =>
                                 setIsPopoverOpen((current) => !current)
                             }
-                            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border/80 bg-card px-4 text-sm font-medium text-foreground transition hover:border-primary/40 hover:bg-accent/35"
+                            className={boxTitleActionClass}
                         >
                             <Plus className="size-4" />
                             Add filter
@@ -325,42 +383,46 @@ export function FilterBuilder({
                                                 No matching fields.
                                             </CommandEmpty>
                                             <CommandGroup>
-                                                {fieldOptions.map((field) => {
-                                                    const isSelected =
-                                                        field.key ===
-                                                        selectedFieldKey;
+                                                {additionalFieldOptions.map(
+                                                    (field) => {
+                                                        const isSelected =
+                                                            field.key ===
+                                                            selectedFieldKey;
 
-                                                    return (
-                                                        <CommandItem
-                                                            key={field.key}
-                                                            aria-label={
-                                                                field.label
-                                                            }
-                                                            className="flex w-full items-center justify-between gap-3 text-left"
-                                                            data-filter-field-option={
-                                                                field.key
-                                                            }
-                                                            value={`${field.label} ${field.key}`}
-                                                            onSelect={() =>
-                                                                handleFieldSelect(
-                                                                    field.key,
-                                                                )
-                                                            }
-                                                        >
-                                                            <span className="font-medium text-foreground">
-                                                                {field.label}
-                                                            </span>
-                                                            <Check
-                                                                className={cn(
-                                                                    "ml-auto size-4 text-primary",
-                                                                    isSelected
-                                                                        ? "opacity-100"
-                                                                        : "opacity-0",
-                                                                )}
-                                                            />
-                                                        </CommandItem>
-                                                    );
-                                                })}
+                                                        return (
+                                                            <CommandItem
+                                                                key={field.key}
+                                                                aria-label={
+                                                                    field.label
+                                                                }
+                                                                className="flex w-full items-center justify-between gap-3 text-left"
+                                                                data-filter-field-option={
+                                                                    field.key
+                                                                }
+                                                                value={`${field.label} ${field.key}`}
+                                                                onSelect={() =>
+                                                                    handleFieldSelect(
+                                                                        field.key,
+                                                                    )
+                                                                }
+                                                            >
+                                                                <span className="font-medium text-foreground">
+                                                                    {
+                                                                        field.label
+                                                                    }
+                                                                </span>
+                                                                <Check
+                                                                    className={cn(
+                                                                        "ml-auto size-4 text-primary",
+                                                                        isSelected
+                                                                            ? "opacity-100"
+                                                                            : "opacity-0",
+                                                                    )}
+                                                                />
+                                                            </CommandItem>
+                                                        );
+                                                    },
+                                                )}
                                             </CommandGroup>
                                         </CommandList>
                                         <div
@@ -396,9 +458,6 @@ export function FilterBuilder({
                                                                     event.target
                                                                         .value,
                                                                 )
-                                                            }
-                                                            placeholder={
-                                                                selectedField.placeholder
                                                             }
                                                             className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/30"
                                                         />
@@ -464,52 +523,134 @@ export function FilterBuilder({
                     </div>
                 </div>
 
-                {Object.keys(currentFilters).length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-border/80 bg-muted/35 px-4 py-5 text-sm text-muted-foreground">
-                        No filters applied. Start with Requester, Pipeline name,
-                        or any metadata key exposed by the results service.
-                    </div>
-                ) : (
-                    <div className="flex flex-wrap gap-3">
-                        {Object.entries(currentFilters).map(([key, values]) => (
-                            <div
-                                key={key}
-                                className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-card/90 px-3 py-2"
-                            >
-                                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                                    {getFieldLabel(fieldOptions, key)}
-                                </span>
-                                {values.map((value) => {
-                                    const fieldLabel = getFieldLabel(
-                                        fieldOptions,
-                                        key,
-                                    );
+                <div className="flex flex-col gap-4">
+                    <div
+                        data-search-builder-permanent-fields="true"
+                        className="grid grid-cols-[repeat(auto-fit,minmax(min(7rem,100%),1fr))] gap-3"
+                    >
+                        {permanentFieldOptions.map((field) => {
+                            const fieldInputId = `permanent-filter-${field.key}`;
+                            const fieldDraftValue =
+                                permanentDraftValues[field.key] ?? "";
+                            const fieldSuggestions = getVisibleSuggestions(
+                                currentFilters,
+                                suggestionValues,
+                                field.key,
+                                fieldDraftValue,
+                            );
+                            const fieldSuggestionListId = `filter-suggestions-${field.key}`;
 
-                                    return (
-                                        <button
-                                            key={`${key}:${value}`}
-                                            type="button"
-                                            onClick={() =>
-                                                pushFilters(
-                                                    removeFilterValue(
-                                                        currentFilters,
-                                                        key,
-                                                        value,
-                                                    ),
+                            return (
+                                <form
+                                    key={field.key}
+                                    className="min-w-0 space-y-1.5"
+                                    onSubmit={(event) =>
+                                        handlePermanentFilterSubmit(
+                                            event,
+                                            field.key,
+                                        )
+                                    }
+                                >
+                                    <label
+                                        htmlFor={fieldInputId}
+                                        className="block truncate text-xs font-semibold text-muted-foreground"
+                                    >
+                                        {field.label}
+                                    </label>
+                                    <div className="flex h-10 min-w-0 overflow-hidden rounded-xl border border-border bg-background transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
+                                        <input
+                                            data-permanent-filter-input={
+                                                field.key
+                                            }
+                                            id={fieldInputId}
+                                            list={fieldSuggestionListId}
+                                            value={fieldDraftValue}
+                                            onChange={(event) =>
+                                                setPermanentDraftValues(
+                                                    (currentValues) => ({
+                                                        ...currentValues,
+                                                        [field.key]:
+                                                            event.target.value,
+                                                    }),
                                                 )
                                             }
-                                            aria-label={`Remove ${fieldLabel} ${value}`}
-                                            className="inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1.5 text-sm text-secondary-foreground transition hover:bg-secondary/80"
+                                            className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
+                                        />
+                                        <button
+                                            type="submit"
+                                            aria-label={`Add ${field.label} filter`}
+                                            title={`Add ${field.label} filter`}
+                                            className="relative -my-px flex h-10 w-10 shrink-0 items-center justify-center bg-card text-foreground transition before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border before:content-[''] hover:bg-accent/35"
                                         >
-                                            <span>{value}</span>
-                                            <X className="size-3.5" />
+                                            <Plus className="size-4" />
                                         </button>
-                                    );
-                                })}
-                            </div>
-                        ))}
+                                    </div>
+                                    {fieldSuggestions.length > 0 ? (
+                                        <datalist id={fieldSuggestionListId}>
+                                            {fieldSuggestions.map(
+                                                (suggestion) => (
+                                                    <option
+                                                        key={suggestion}
+                                                        value={suggestion}
+                                                    />
+                                                ),
+                                            )}
+                                        </datalist>
+                                    ) : null}
+                                </form>
+                            );
+                        })}
                     </div>
-                )}
+
+                    {Object.keys(currentFilters).length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-border/80 bg-muted/35 px-4 py-5 text-sm text-muted-foreground">
+                            No filters applied. Use the permanent fields above,
+                            or add another filter.
+                        </div>
+                    ) : (
+                        <div className="flex flex-wrap gap-3">
+                            {Object.entries(currentFilters).map(
+                                ([key, values]) => (
+                                    <div
+                                        key={key}
+                                        className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-card/90 px-3 py-2"
+                                    >
+                                        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                            {getFieldLabel(fieldOptions, key)}
+                                        </span>
+                                        {values.map((value) => {
+                                            const fieldLabel = getFieldLabel(
+                                                fieldOptions,
+                                                key,
+                                            );
+
+                                            return (
+                                                <button
+                                                    key={`${key}:${value}`}
+                                                    type="button"
+                                                    onClick={() =>
+                                                        pushFilters(
+                                                            removeFilterValue(
+                                                                currentFilters,
+                                                                key,
+                                                                value,
+                                                            ),
+                                                        )
+                                                    }
+                                                    aria-label={`Remove ${fieldLabel} ${value}`}
+                                                    className="inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1.5 text-sm text-secondary-foreground transition hover:bg-secondary/80"
+                                                >
+                                                    <span>{value}</span>
+                                                    <X className="size-3.5" />
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                ),
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
         </section>
     );

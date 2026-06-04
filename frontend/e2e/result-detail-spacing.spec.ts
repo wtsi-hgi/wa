@@ -116,7 +116,7 @@ function recentRows(page: Page) {
 
 async function seededResultDetailUrl(page: Page): Promise<string> {
     await page.goto("/");
-    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.getByText("Latest result sets")).toBeVisible();
     await expect
         .poll(async () => recentRows(page).count())
         .toBeGreaterThanOrEqual(4);

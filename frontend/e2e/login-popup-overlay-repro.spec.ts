@@ -181,11 +181,11 @@ async function snapshotDashboardGeometry(
                 (button) => button.textContent?.trim() === "Log in",
             ) ?? null;
         const resultsHeading =
-            Array.from(document.querySelectorAll("h2")).find((heading) =>
-                ["Latest result sets", "Matching result sets"].includes(
-                    heading.textContent?.trim() ?? "",
-                ),
-            ) ?? null;
+            document.querySelector('[data-results-table-summary="true"] p') ??
+            Array.from(document.querySelectorAll("h2")).find(
+                (heading) => heading.textContent?.trim() === "Search results",
+            ) ??
+            null;
 
         return {
             authBar: roundedRect(
@@ -380,9 +380,7 @@ test("login popup overlays the logged-out dashboard without shifting the search 
     await expect(page.locator('[data-search-builder="true"]')).toBeVisible({
         timeout: 30_000,
     });
-    await expect(
-        page.getByRole("heading", { level: 2, name: "Latest result sets" }),
-    ).toBeVisible();
+    await expect(page.getByText("Latest result sets")).toBeVisible();
 
     const before = await snapshotDashboardGeometry(page);
 

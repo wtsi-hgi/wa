@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -49,6 +49,25 @@ type ExpandedDirectoryBoxMetrics = {
     rowRect: RectMetrics | null;
 };
 
+type DirectoryDepthIndentMetrics = {
+    additionalButtonPaddingPx: number;
+    childButtonPaddingLeftPx: number;
+    childDepth: string | null;
+    childGroupRect: RectMetrics | null;
+    childNameInsetWithinOwnRowPx: number | null;
+    childNameRect: RectMetrics | null;
+    childPath: string;
+    childRowRect: RectMetrics | null;
+    naturalNestedBoxOffsetPx: number | null;
+    parentButtonPaddingLeftPx: number;
+    parentDepth: string | null;
+    parentNameInsetWithinOwnRowPx: number | null;
+    parentNameRect: RectMetrics | null;
+    parentPath: string;
+    parentRowRect: RectMetrics | null;
+    totalChildNameOffsetFromParentNamePx: number | null;
+};
+
 type PreviewCornerGripMetrics = {
     backgroundAlpha: number;
     backgroundImage: string;
@@ -88,7 +107,7 @@ type PreviewCornerGripMetrics = {
 async function openResultFileBrowser(page: Page) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
-    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.getByText("Latest result sets")).toBeVisible();
     await expect
         .poll(async () => seededRecentRows(page).count())
         .toBeGreaterThanOrEqual(4);
@@ -111,7 +130,7 @@ async function openResultFileBrowser(page: Page) {
 async function openNamedResultFileBrowser(page: Page, pipelineName: string) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/");
-    await expect(page.getByText("Recent registrations")).toBeVisible();
+    await expect(page.getByText("Latest result sets")).toBeVisible();
     await expect
         .poll(async () => seededRecentRows(page).count())
         .toBeGreaterThanOrEqual(4);
@@ -634,6 +653,111 @@ async function measureExpandedDirectoryBox(
     );
 }
 
+async function measureDirectoryDepthIndent(
+    page: Page,
+    parentPath: string,
+    childPath: string,
+): Promise<DirectoryDepthIndentMetrics> {
+    return page.evaluate(
+        ({ childPath, parentPath }) => {
+            function byData(attributeName: string, value: string) {
+                return document.querySelector(
+                    `[${attributeName}="${CSS.escape(value)}"]`,
+                );
+            }
+
+            function rectMetrics(element: Element | null) {
+                if (!(element instanceof HTMLElement)) {
+                    return null;
+                }
+
+                const rect = element.getBoundingClientRect();
+
+                return {
+                    height: rect.height,
+                    width: rect.width,
+                    x: rect.x,
+                    y: rect.y,
+                };
+            }
+
+            function directoryNameElement(button: Element | null) {
+                if (!(button instanceof HTMLElement)) {
+                    return null;
+                }
+
+                const textColumn = button.children.item(1);
+
+                return textColumn?.firstElementChild ?? null;
+            }
+
+            function paddingLeft(element: Element | null) {
+                if (!(element instanceof HTMLElement)) {
+                    return 0;
+                }
+
+                return Number.parseFloat(
+                    window.getComputedStyle(element).paddingLeft,
+                );
+            }
+
+            const parentButton = byData("data-directory-path", parentPath);
+            const childButton = byData("data-directory-path", childPath);
+            const parentRow = byData("data-directory-row", parentPath);
+            const childRow = byData("data-directory-row", childPath);
+            const childGroup = byData("data-directory-group", childPath);
+            const parentNameRect = rectMetrics(
+                directoryNameElement(parentButton),
+            );
+            const childNameRect = rectMetrics(
+                directoryNameElement(childButton),
+            );
+            const parentRowRect = rectMetrics(parentRow);
+            const childRowRect = rectMetrics(childRow);
+            const parentPaddingLeft = paddingLeft(parentButton);
+            const childPaddingLeft = paddingLeft(childButton);
+
+            return {
+                additionalButtonPaddingPx: childPaddingLeft - parentPaddingLeft,
+                childButtonPaddingLeftPx: childPaddingLeft,
+                childDepth:
+                    childButton instanceof HTMLElement
+                        ? (childButton.dataset.depth ?? null)
+                        : null,
+                childGroupRect: rectMetrics(childGroup),
+                childNameInsetWithinOwnRowPx:
+                    childNameRect && childRowRect
+                        ? childNameRect.x - childRowRect.x
+                        : null,
+                childNameRect,
+                childPath,
+                childRowRect,
+                naturalNestedBoxOffsetPx:
+                    childRowRect && parentRowRect
+                        ? childRowRect.x - parentRowRect.x
+                        : null,
+                parentButtonPaddingLeftPx: parentPaddingLeft,
+                parentDepth:
+                    parentButton instanceof HTMLElement
+                        ? (parentButton.dataset.depth ?? null)
+                        : null,
+                parentNameInsetWithinOwnRowPx:
+                    parentNameRect && parentRowRect
+                        ? parentNameRect.x - parentRowRect.x
+                        : null,
+                parentNameRect,
+                parentPath,
+                parentRowRect,
+                totalChildNameOffsetFromParentNamePx:
+                    childNameRect && parentNameRect
+                        ? childNameRect.x - parentNameRect.x
+                        : null,
+            };
+        },
+        { childPath, parentPath },
+    );
+}
+
 test.describe("File Browser single preview layout", () => {
     const fixturesRoot = path.resolve(
         process.cwd(),
@@ -686,6 +810,30 @@ test.describe("File Browser single preview layout", () => {
         screenshotEvidenceDir,
         "bug3-nested-controls-hidden-parent-right-aligned-postfix.png",
     );
+    const toolsPanelScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-tools-panel-postfix.png",
+    );
+    const toolsPanelMetricsPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-tools-panel-postfix.json",
+    );
+    const subdirIndentScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "bug3-file-browser-subdir-indent-postfix.png",
+    );
+    const subdirIndentMetricsPath = path.join(
+        screenshotEvidenceDir,
+        "bug3-file-browser-subdir-indent-postfix.json",
+    );
+    const truncatedDirectoryHoverScreenshotPath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-truncated-directory-hover-postfix.png",
+    );
+    const truncatedDirectoryHoverEvidencePath = path.join(
+        screenshotEvidenceDir,
+        "file-browser-truncated-directory-hover-postfix.json",
+    );
     const rnaseqRootPath = path.join(fixturesRoot, "rnaseq");
     const rnaseqQcPath = path.join(rnaseqRootPath, "qc");
     const rnaseqImagesPath = path.join(fixturesRoot, "rnaseq", "qc", "images");
@@ -724,6 +872,100 @@ test.describe("File Browser single preview layout", () => {
         "lane-1",
         "lane-1-notes.tsv",
     );
+
+    test("shows the full path on hover for a truncated directory path", async ({
+        page,
+    }) => {
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await openResultFileBrowser(page);
+        await page.setViewportSize({ width: 360, height: 720 });
+
+        const directoryButton = page
+            .locator(`[data-directory-path="${rnaseqRootPath}"]`)
+            .first();
+
+        await expect(directoryButton).toBeVisible();
+        await directoryButton.scrollIntoViewIfNeeded();
+        await expect
+            .poll(async () =>
+                directoryButton.evaluate((button) => {
+                    const textColumn = button.children.item(1);
+                    const label = textColumn?.firstElementChild;
+
+                    if (!(label instanceof HTMLElement)) {
+                        return false;
+                    }
+
+                    return label.scrollWidth > label.clientWidth + 1;
+                }),
+            )
+            .toBe(true);
+
+        await directoryButton.hover();
+        await page.waitForTimeout(350);
+        await page.screenshot({
+            fullPage: true,
+            path: truncatedDirectoryHoverScreenshotPath,
+        });
+
+        const evidence = await directoryButton.evaluate(
+            (button, expectedPath) => {
+                const textColumn = button.children.item(1);
+                const label = textColumn?.firstElementChild;
+
+                if (!(label instanceof HTMLElement)) {
+                    throw new Error("Missing directory path label");
+                }
+
+                const styles = window.getComputedStyle(label);
+                const rect = label.getBoundingClientRect();
+                const tooltipTexts = Array.from(
+                    document.querySelectorAll(
+                        '[role="tooltip"], [data-radix-popper-content-wrapper], [data-tooltip]',
+                    ),
+                )
+                    .map((element) => element.textContent?.trim() ?? "")
+                    .filter((text) => text.length > 0);
+                const buttonTitle = button.getAttribute("title");
+                const labelTitle = label.getAttribute("title");
+                const hasFullPathHoverSignal =
+                    buttonTitle === expectedPath ||
+                    labelTitle === expectedPath ||
+                    tooltipTexts.some((text) => text.includes(expectedPath));
+
+                return {
+                    buttonAriaDescribedBy:
+                        button.getAttribute("aria-describedby"),
+                    buttonTitle,
+                    expectedPath,
+                    hasFullPathHoverSignal,
+                    isTruncated: label.scrollWidth > label.clientWidth + 1,
+                    labelClientWidth: label.clientWidth,
+                    labelRectWidth: rect.width,
+                    labelScrollWidth: label.scrollWidth,
+                    labelText: label.textContent?.trim() ?? "",
+                    labelTitle,
+                    overflowX: styles.overflowX,
+                    screenshotPath:
+                        "file-browser-truncated-directory-hover-postfix.png",
+                    textOverflow: styles.textOverflow,
+                    tooltipTexts,
+                    whiteSpace: styles.whiteSpace,
+                };
+            },
+            rnaseqRootPath,
+        );
+
+        writeFileSync(
+            truncatedDirectoryHoverEvidencePath,
+            `${JSON.stringify(evidence, null, 2)}\n`,
+            "utf8",
+        );
+
+        expect(evidence.isTruncated).toBe(true);
+        expect(evidence.textOverflow).toBe("ellipsis");
+        expect(evidence.hasFullPathHoverSignal).toBe(true);
+    });
 
     test("does not draw a divider under the file browser title row", async ({
         page,
@@ -1265,7 +1507,82 @@ test.describe("File Browser single preview layout", () => {
         );
 
         expect(metrics.childIndentMarkerRect.x).toBeGreaterThan(
-            metrics.parentIndentMarkerRect.x + 12,
+            metrics.parentIndentMarkerRect.x,
+        );
+        expect(metrics.childIndentMarkerRect.x).toBeLessThanOrEqual(
+            metrics.childGroupRect.x + 24,
+        );
+    });
+
+    test("does not add depth-based indentation to nested directory names", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const parentButton = page.locator(
+            `[data-directory-path="${rnaseqImagesPath}"]`,
+        );
+        const childButton = page.locator(
+            `[data-directory-path="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(parentButton).toBeVisible();
+        await expect(childButton).toBeVisible();
+
+        const metrics = await measureDirectoryDepthIndent(
+            page,
+            rnaseqImagesPath,
+            rnaseqGalleryPath,
+        );
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await page.screenshot({
+            fullPage: true,
+            path: subdirIndentScreenshotPath,
+        });
+        writeFileSync(
+            subdirIndentMetricsPath,
+            `${JSON.stringify(
+                {
+                    ...metrics,
+                    screenshotPath: subdirIndentScreenshotPath,
+                },
+                null,
+                2,
+            )}\n`,
+        );
+
+        if (
+            !metrics.parentRowRect ||
+            !metrics.childRowRect ||
+            metrics.parentNameInsetWithinOwnRowPx === null ||
+            metrics.childNameInsetWithinOwnRowPx === null ||
+            metrics.naturalNestedBoxOffsetPx === null ||
+            metrics.totalChildNameOffsetFromParentNamePx === null
+        ) {
+            throw new Error(
+                "Missing nested directory indentation metrics for browser assertion",
+            );
+        }
+
+        expect(Number(metrics.childDepth)).toBe(
+            Number(metrics.parentDepth) + 1,
+        );
+        expect(metrics.naturalNestedBoxOffsetPx).toBeGreaterThanOrEqual(8);
+        expect(metrics.naturalNestedBoxOffsetPx).toBeLessThanOrEqual(24);
+        expect(metrics.additionalButtonPaddingPx).toBeCloseTo(0, 1);
+        expect(metrics.childButtonPaddingLeftPx).toBeCloseTo(
+            metrics.parentButtonPaddingLeftPx,
+            1,
+        );
+        expect(metrics.childNameInsetWithinOwnRowPx).toBeCloseTo(
+            metrics.parentNameInsetWithinOwnRowPx,
+            1,
+        );
+        expect(metrics.totalChildNameOffsetFromParentNamePx).toBeCloseTo(
+            metrics.naturalNestedBoxOffsetPx,
+            1,
         );
     });
 
@@ -1515,6 +1832,222 @@ test.describe("File Browser single preview layout", () => {
         }
 
         expect(controlsBBox.height).toBeLessThan(72);
+    });
+
+    test("renders file browser tools as a clear equal-padded panel", async ({
+        page,
+    }) => {
+        await openResultFileBrowser(page);
+        await selectDirectory(page, rnaseqGalleryPath);
+
+        const controls = page.locator(
+            `[data-file-browser-folder-controls="${rnaseqGalleryPath}"]`,
+        );
+        const directoryRow = page.locator(
+            `[data-directory-row="${rnaseqGalleryPath}"]`,
+        );
+
+        await expect(directoryRow).toBeVisible();
+        await expect(controls).toBeVisible();
+
+        mkdirSync(screenshotEvidenceDir, { recursive: true });
+        await controls.screenshot({
+            path: toolsPanelScreenshotPath,
+        });
+
+        const measuredMetrics = await page.evaluate((directoryPath) => {
+            const controlsElement = document.querySelector(
+                `[data-file-browser-folder-controls="${CSS.escape(directoryPath)}"]`,
+            );
+            const rowElement = document.querySelector(
+                `[data-directory-row="${CSS.escape(directoryPath)}"]`,
+            );
+
+            if (
+                !(controlsElement instanceof HTMLElement) ||
+                !(rowElement instanceof HTMLElement)
+            ) {
+                throw new Error("Missing file-browser tools panel metrics");
+            }
+
+            function colorToRgba(color: string) {
+                const canvas = document.createElement("canvas");
+                canvas.width = 1;
+                canvas.height = 1;
+                const context = canvas.getContext("2d", {
+                    willReadFrequently: true,
+                });
+
+                if (!context) {
+                    throw new Error("Unable to resolve CSS color");
+                }
+
+                context.clearRect(0, 0, 1, 1);
+                context.fillStyle = color;
+                context.fillRect(0, 0, 1, 1);
+
+                const [red = 0, green = 0, blue = 0, alpha = 0] =
+                    context.getImageData(0, 0, 1, 1).data;
+
+                return {
+                    alpha: alpha / 255,
+                    blue,
+                    green,
+                    red,
+                };
+            }
+
+            function relativeLuminance({
+                blue,
+                green,
+                red,
+            }: {
+                blue: number;
+                green: number;
+                red: number;
+            }) {
+                const channels = [red, green, blue].map((value) => {
+                    const channel = value / 255;
+
+                    return channel <= 0.03928
+                        ? channel / 12.92
+                        : ((channel + 0.055) / 1.055) ** 2.4;
+                });
+
+                return (
+                    0.2126 * (channels[0] ?? 0) +
+                    0.7152 * (channels[1] ?? 0) +
+                    0.0722 * (channels[2] ?? 0)
+                );
+            }
+
+            function contrastRatio(
+                firstColor: ReturnType<typeof colorToRgba>,
+                secondColor: ReturnType<typeof colorToRgba>,
+            ) {
+                const first = relativeLuminance(firstColor);
+                const second = relativeLuminance(secondColor);
+                const lighter = Math.max(first, second);
+                const darker = Math.min(first, second);
+
+                return (lighter + 0.05) / (darker + 0.05);
+            }
+
+            function compositeColor(
+                foreground: ReturnType<typeof colorToRgba>,
+                background: ReturnType<typeof colorToRgba>,
+            ) {
+                const alpha =
+                    foreground.alpha +
+                    background.alpha * (1 - foreground.alpha);
+
+                if (alpha === 0) {
+                    return {
+                        alpha: 0,
+                        blue: 0,
+                        green: 0,
+                        red: 0,
+                    };
+                }
+
+                return {
+                    alpha,
+                    blue:
+                        (foreground.blue * foreground.alpha +
+                            background.blue *
+                                background.alpha *
+                                (1 - foreground.alpha)) /
+                        alpha,
+                    green:
+                        (foreground.green * foreground.alpha +
+                            background.green *
+                                background.alpha *
+                                (1 - foreground.alpha)) /
+                        alpha,
+                    red:
+                        (foreground.red * foreground.alpha +
+                            background.red *
+                                background.alpha *
+                                (1 - foreground.alpha)) /
+                        alpha,
+                };
+            }
+
+            function visibleBackground(element: HTMLElement) {
+                const ancestors: HTMLElement[] = [];
+                let current: HTMLElement | null = element;
+
+                while (current) {
+                    ancestors.unshift(current);
+                    current = current.parentElement;
+                }
+
+                return ancestors.reduce(
+                    (background, ancestor) => {
+                        const ancestorColor = colorToRgba(
+                            window.getComputedStyle(ancestor).backgroundColor,
+                        );
+
+                        return compositeColor(ancestorColor, background);
+                    },
+                    {
+                        alpha: 1,
+                        blue: 255,
+                        green: 255,
+                        red: 255,
+                    },
+                );
+            }
+
+            const styles = window.getComputedStyle(controlsElement);
+            const rowStyles = window.getComputedStyle(rowElement);
+            const rect = controlsElement.getBoundingClientRect();
+            const padding = {
+                bottom: Number.parseFloat(styles.paddingBottom),
+                left: Number.parseFloat(styles.paddingLeft),
+                right: Number.parseFloat(styles.paddingRight),
+                top: Number.parseFloat(styles.paddingTop),
+            };
+            const panelColor = colorToRgba(styles.backgroundColor);
+            const rowColor = colorToRgba(rowStyles.backgroundColor);
+            const panelVisibleColor = visibleBackground(controlsElement);
+            const rowVisibleColor = visibleBackground(rowElement);
+
+            return {
+                backgroundAlpha: panelColor.alpha,
+                backgroundColor: styles.backgroundColor,
+                borderColor: styles.borderColor,
+                contrastAgainstDirectoryRow: contrastRatio(
+                    panelVisibleColor,
+                    rowVisibleColor,
+                ),
+                rawContrastAgainstDirectoryRow: contrastRatio(
+                    panelColor,
+                    rowColor,
+                ),
+                height: rect.height,
+                padding,
+                rowBackgroundColor: rowStyles.backgroundColor,
+                width: rect.width,
+            };
+        }, rnaseqGalleryPath);
+        const metrics = {
+            ...measuredMetrics,
+            screenshotPath: toolsPanelScreenshotPath,
+        };
+
+        writeFileSync(
+            toolsPanelMetricsPath,
+            `${JSON.stringify(metrics, null, 2)}\n`,
+        );
+
+        expect(metrics.padding.top).toBe(6);
+        expect(metrics.padding.bottom).toBe(metrics.padding.top);
+        expect(metrics.padding.left).toBe(metrics.padding.top);
+        expect(metrics.padding.right).toBe(metrics.padding.top);
+        expect(metrics.height).toBeLessThanOrEqual(56);
+        expect(metrics.backgroundAlpha).toBe(1);
+        expect(metrics.contrastAgainstDirectoryRow).toBeGreaterThanOrEqual(1.2);
     });
 
     test("renders subfolder preview controls in the folder-row control slot without the generic preview toggle", async ({

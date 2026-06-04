@@ -11,8 +11,22 @@ import {
     type SortingState,
     useReactTable,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    History,
+    Search,
+} from "lucide-react";
 
+import {
+    boxPanelRadiusClass,
+    boxTitleActionClass,
+    boxTitleIconClass,
+    boxTitleRowClass,
+    boxTitleSectionClass,
+    boxTitleTextClass,
+} from "@/components/box-title-section";
 import {
     getResultsColumns,
     isResultsTableRowLocked,
@@ -28,9 +42,10 @@ import {
 import type { ResultSet, SearchResult } from "@/lib/contracts";
 import { cn } from "@/lib/utils";
 
-type ResultsTableProps = {
+export type ResultsTableProps = {
     data: ResultSet[] | SearchResult[];
     emptyMessage?: string;
+    hideSummary?: boolean;
     mode?: "recent" | "search";
     returnHref?: string;
     studyActive?: boolean;
@@ -67,6 +82,7 @@ function columnVisibilityLabel(columnId: string): string {
 export function ResultsTable({
     data,
     emptyMessage = "No results found.",
+    hideSummary = false,
     mode = "recent",
     returnHref = "/",
     studyActive = false,
@@ -107,55 +123,68 @@ export function ResultsTable({
     const visibleColumns = table
         .getAllLeafColumns()
         .filter((column) => column.getCanHide());
+    const titleConfig =
+        mode === "search"
+            ? { Icon: Search, label: "Search results" }
+            : { Icon: History, label: "Latest result sets" };
 
     return (
-        <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]">
-            <div className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5">
-                <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                        {mode === "search"
-                            ? "Showing search results"
-                            : "Recent registrations"}
-                    </p>
-                    <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                        {mode === "search"
-                            ? "Matching result sets"
-                            : "Latest result sets"}
-                    </h2>
-                </div>
-                <div className="flex items-center gap-3">
-                    <DropdownMenu>
-                        <DropdownMenuTrigger
-                            aria-label="Toggle column visibility"
-                            className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 py-2 text-sm text-muted-foreground transition hover:text-foreground"
-                        >
-                            <span>Columns</span>
-                            <ChevronDown
-                                className="h-4 w-4"
+        <div
+            className={cn(
+                "overflow-hidden border border-border/70 bg-card/85 shadow-[0_24px_90px_-72px_rgba(48,67,98,0.85)]",
+                boxPanelRadiusClass,
+                hideSummary ? "" : "pt-4",
+            )}
+        >
+            {hideSummary ? null : (
+                <div
+                    className={cn(
+                        boxTitleSectionClass,
+                        "border-b border-border/70 px-4",
+                    )}
+                    data-results-table-summary="true"
+                >
+                    <div className="min-w-0">
+                        <div className={boxTitleRowClass}>
+                            <titleConfig.Icon
+                                className={boxTitleIconClass}
                                 aria-hidden="true"
                             />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                            {visibleColumns.map((column) => (
-                                <DropdownMenuCheckboxItem
-                                    key={column.id}
-                                    checked={column.getIsVisible()}
-                                    data-column-id={column.id}
-                                    onCheckedChange={(checked) =>
-                                        column.toggleVisibility(checked)
-                                    }
-                                >
-                                    {columnVisibilityLabel(column.id)}
-                                </DropdownMenuCheckboxItem>
-                            ))}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-
-                    <p className="rounded-full border border-border/70 bg-background/90 px-3 py-1 text-sm text-muted-foreground">
-                        {rows.length} rows
-                    </p>
+                            <p className={boxTitleTextClass}>
+                                {titleConfig.label}
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <DropdownMenu>
+                            <DropdownMenuTrigger
+                                aria-label="Toggle column visibility"
+                                className={boxTitleActionClass}
+                            >
+                                <span>Columns</span>
+                                <ChevronDown
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                                {visibleColumns.map((column) => (
+                                    <DropdownMenuCheckboxItem
+                                        key={column.id}
+                                        checked={column.getIsVisible()}
+                                        data-column-id={column.id}
+                                        onCheckedChange={(checked) =>
+                                            column.toggleVisibility(checked)
+                                        }
+                                    >
+                                        {columnVisibilityLabel(column.id)}
+                                    </DropdownMenuCheckboxItem>
+                                ))}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </div>
                 </div>
-            </div>
+            )}
 
             {rows.length === 0 ? (
                 <div className="px-6 py-10 text-sm leading-7 text-muted-foreground">
@@ -163,7 +192,7 @@ export function ResultsTable({
                 </div>
             ) : (
                 <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-border/70 text-left text-sm">
+                    <table className="w-full table-fixed divide-y divide-border/70 text-left text-sm">
                         <thead className="bg-muted/40">
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
@@ -242,6 +271,9 @@ export function ResultsTable({
                             <option value="25">25</option>
                             <option value="50">50</option>
                         </select>
+                        <p className="rounded-full border border-border/70 bg-background/90 px-3 py-1 text-sm text-muted-foreground">
+                            {rows.length} rows
+                        </p>
                     </div>
 
                     <div className="flex items-center justify-between gap-4 sm:justify-end">
