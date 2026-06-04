@@ -99,14 +99,20 @@ function resultCell(
     const isLocked = isResultsTableRowLocked(row);
 
     if (isLocked) {
+        const text = (
+            <span className={cn(className, "min-w-0 text-muted-foreground")}>
+                {value}
+            </span>
+        );
+
+        if (!options.showLock) {
+            return text;
+        }
+
         return (
-            <span className="inline-flex min-w-0 items-center gap-2">
-                {options.showLock ? (
-                    <LockedResultIndicator result={row.result} />
-                ) : null}
-                <span className={cn(className, "text-muted-foreground")}>
-                    {value}
-                </span>
+            <span className="flex min-w-0 max-w-full items-start gap-2">
+                <LockedResultIndicator result={row.result} />
+                {text}
             </span>
         );
     }

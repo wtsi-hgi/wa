@@ -101,14 +101,27 @@ type SearchLayoutMetric = {
 
 type LatestLayoutMetric = {
     box: RectMetric;
+    outputColumnIndex: number;
     outputCell: RectMetric;
     outputCellHorizontalOverflow: number;
     outputText: RectMetric;
+    outputTextOverflowRightPx: number;
+    outputTextOverlapWithNextCellPx: number;
     outputTextLineCount: number;
     outputTextLength: number;
+    rowCells: Array<{
+        column: string;
+        cell: RectMetric;
+        text: RectMetric | null;
+        textLength: number;
+        textOverflowRightPx: number;
+        textOverlapWithNextCellPx: number;
+    }>;
+    rowLocked: boolean;
     scroller: RectMetric;
     table: RectMetric;
     tableHorizontalOverflow: number;
+    visibleHeaders: string[];
 };
 
 type LayoutMetric = {
@@ -159,10 +172,6 @@ test.afterAll(() => {
     if (registeredResult) {
         deleteResult(registeredResult.id);
     }
-});
-
-test.beforeEach(async ({ context }) => {
-    await installResultsAuthCookie(context);
 });
 
 async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
@@ -303,6 +312,9 @@ async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
             }
 
             const headers = Array.from(table.querySelectorAll("thead th"));
+            const visibleHeaders = headers.map(
+                (header) => header.textContent?.trim() ?? "",
+            );
             const outputColumnIndex = headers.findIndex((header) =>
                 header.textContent?.includes("Output Directory"),
             );
@@ -311,13 +323,46 @@ async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
                 throw new Error("Missing Output Directory column");
             }
 
-            const outputCell =
-                resultRow.querySelectorAll("td")[outputColumnIndex];
+            const cells = Array.from(resultRow.querySelectorAll("td"));
+            const outputCell = cells[outputColumnIndex];
             const outputText = outputCell?.firstElementChild;
 
             if (!outputCell || !outputText) {
                 throw new Error("Missing Output Directory cell");
             }
+
+            const rowCells = cells.map((cell, index) => {
+                const cellRect = toBrowserRect(cell);
+                const text = cell.firstElementChild;
+                const textRect = text ? toBrowserRect(text) : null;
+                const nextCell = cells[index + 1];
+                const nextCellRect = nextCell ? toBrowserRect(nextCell) : null;
+
+                return {
+                    cell: cellRect,
+                    column: visibleHeaders[index] ?? "",
+                    text: textRect,
+                    textLength: text?.textContent?.length ?? 0,
+                    textOverflowRightPx: textRect
+                        ? Number(
+                              Math.max(
+                                  0,
+                                  textRect.right - cellRect.right,
+                              ).toFixed(3),
+                          )
+                        : 0,
+                    textOverlapWithNextCellPx:
+                        textRect && nextCellRect
+                            ? Number(
+                                  Math.max(
+                                      0,
+                                      textRect.right - nextCellRect.left,
+                                  ).toFixed(3),
+                              )
+                            : 0,
+                };
+            });
+            const outputCellMetric = rowCells[outputColumnIndex];
 
             const outputTextStyles = window.getComputedStyle(outputText);
             const lineHeight =
@@ -328,19 +373,29 @@ async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
             return {
                 latest: {
                     box: toBrowserRect(latestBox),
+                    outputColumnIndex,
                     outputCell: toBrowserRect(outputCell),
                     outputCellHorizontalOverflow:
                         outputCell.scrollWidth - outputCell.clientWidth,
                     outputText: outputTextRect,
+                    outputTextOverflowRightPx:
+                        outputCellMetric?.textOverflowRightPx ?? 0,
+                    outputTextOverlapWithNextCellPx:
+                        outputCellMetric?.textOverlapWithNextCellPx ?? 0,
                     outputTextLength: outputText.textContent?.length ?? 0,
                     outputTextLineCount: Math.max(
                         1,
                         Math.round(outputTextRect.height / lineHeight),
                     ),
+                    rowCells,
+                    rowLocked:
+                        resultRow.dataset.resultRowLocked === "true" ||
+                        resultRow.getAttribute("aria-disabled") === "true",
                     scroller: toBrowserRect(scroller),
                     table: toBrowserRect(table),
                     tableHorizontalOverflow:
                         scroller.scrollWidth - scroller.clientWidth,
+                    visibleHeaders,
                 },
                 search: {
                     fieldCount: fields.length,
@@ -374,7 +429,22 @@ async function collectLayoutMetric(page: Page): Promise<LayoutMetric> {
     );
 }
 
+async function showColumn(
+    page: Page,
+    name: string,
+    columnId: string,
+): Promise<void> {
+    await page
+        .getByRole("button", { name: "Toggle column visibility" })
+        .click();
+    await page.getByRole("menuitemcheckbox", { name }).click();
+    await expect(
+        page.locator(`button[data-column-sort="${columnId}"]`),
+    ).toBeVisible();
+}
+
 test("reproduces real-data long path layout regression on latest results", async ({
+    context,
     page,
 }) => {
     const screenshotPath = path.join(
@@ -387,6 +457,7 @@ test("reproduces real-data long path layout regression on latest results", async
     );
 
     mkdirSync(evidenceDir, { recursive: true });
+    await installResultsAuthCookie(context);
     await page.setViewportSize({ width: 1000, height: 900 });
     await page.goto("/");
 
@@ -448,4 +519,103 @@ test("reproduces real-data long path layout regression on latest results", async
         .soft(metric.latest.outputCellHorizontalOverflow)
         .toBeLessThanOrEqual(1);
     expect.soft(metric.latest.outputTextLineCount).toBeGreaterThanOrEqual(2);
+});
+
+test("reproduces logged-out long path truncation and column overlap on latest results", async ({
+    page,
+}) => {
+    const beforeScreenshotPath = path.join(
+        evidenceDir,
+        "latest-result-sets-logged-out-long-path-repro-before-column.png",
+    );
+    const afterScreenshotPath = path.join(
+        evidenceDir,
+        "latest-result-sets-logged-out-column-overlap-repro.png",
+    );
+    const evidencePath = path.join(
+        evidenceDir,
+        "latest-result-sets-logged-out-column-overlap-repro.json",
+    );
+
+    mkdirSync(evidenceDir, { recursive: true });
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await page.goto("/");
+
+    await expect(page.getByText("Latest result sets")).toBeVisible();
+    await expect(
+        page
+            .locator('tbody tr[data-result-row="true"]')
+            .filter({ hasText: pipelineName })
+            .first(),
+    ).toBeVisible();
+
+    const beforeColumnMetric = await collectLayoutMetric(page);
+    await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: beforeScreenshotPath,
+    });
+
+    await showColumn(page, "Operator", "operator");
+
+    const afterColumnMetric = await collectLayoutMetric(page);
+    await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: afterScreenshotPath,
+    });
+    writeFileSync(
+        evidencePath,
+        `${JSON.stringify(
+            {
+                afterColumnMetric,
+                beforeColumnMetric,
+                expected: {
+                    addedColumnName: "Operator",
+                    latestResultSetsHorizontalOverflowMaxPx: 1,
+                    outputTextOverlapWithNextCellMaxPx: 1,
+                    outputTextOverflowRightMaxPx: 1,
+                    wrappedOutputDirectoryLineCountMin: 2,
+                },
+                longOutputDirectory,
+                screenshots: {
+                    afterColumn: afterScreenshotPath,
+                    beforeColumn: beforeScreenshotPath,
+                },
+            },
+            null,
+            2,
+        )}\n`,
+    );
+
+    expect.soft(beforeColumnMetric.latest.rowLocked).toBe(true);
+    expect
+        .soft(beforeColumnMetric.latest.tableHorizontalOverflow)
+        .toBeLessThanOrEqual(1);
+    expect
+        .soft(beforeColumnMetric.latest.outputCellHorizontalOverflow)
+        .toBeLessThanOrEqual(1);
+    expect
+        .soft(beforeColumnMetric.latest.outputTextOverflowRightPx)
+        .toBeLessThanOrEqual(1);
+    expect
+        .soft(beforeColumnMetric.latest.outputTextLineCount)
+        .toBeGreaterThanOrEqual(2);
+
+    expect(afterColumnMetric.latest.visibleHeaders).toContain("Operator");
+    expect
+        .soft(afterColumnMetric.latest.tableHorizontalOverflow)
+        .toBeLessThanOrEqual(1);
+    expect
+        .soft(afterColumnMetric.latest.outputCellHorizontalOverflow)
+        .toBeLessThanOrEqual(1);
+    expect
+        .soft(afterColumnMetric.latest.outputTextOverflowRightPx)
+        .toBeLessThanOrEqual(1);
+    expect
+        .soft(afterColumnMetric.latest.outputTextOverlapWithNextCellPx)
+        .toBeLessThanOrEqual(1);
+    expect
+        .soft(afterColumnMetric.latest.outputTextLineCount)
+        .toBeGreaterThanOrEqual(2);
 });
