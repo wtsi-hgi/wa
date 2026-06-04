@@ -42,6 +42,7 @@ import (
 	osuser "os/user"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -579,6 +580,35 @@ func (r *resultsServeMLWHRuntime) Close() error {
 	return errors.Join(closeErrs...)
 }
 
+func hasResultsRegisterLookupValues(values resultsRegisterLookupValues) bool {
+	return len(nonEmptyRegisterLookupValues(values.run)) > 0 ||
+		len(nonEmptyRegisterLookupValues(values.study)) > 0 ||
+		len(nonEmptyRegisterLookupValues(values.sample)) > 0 ||
+		len(nonEmptyRegisterLookupValues(values.library)) > 0
+}
+
+func nonEmptyRegisterLookupValues(values []string) []string {
+	nonEmpty := make([]string, 0, len(values))
+
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			nonEmpty = append(nonEmpty, trimmed)
+		}
+	}
+
+	return nonEmpty
+}
+
+func appendResultsRegisterMetadataValue(metadata map[string][]string, key string, value string) {
+	for _, existingValue := range metadata[key] {
+		if existingValue == value {
+			return
+		}
+	}
+
+	metadata[key] = append(metadata[key], value)
+}
+
 func resultsPublicHTTPClient(certPath string) (*http.Client, error) {
 	trimmedCertPath := strings.TrimSpace(certPath)
 	if trimmedCertPath == "" {
@@ -624,14 +654,14 @@ func resultsPublicHTTPClient(certPath string) (*http.Client, error) {
 }
 
 type resultsRegisterLookupValues struct {
-	run     string
-	study   string
-	sample  string
-	library string
+	run     []string
+	study   []string
+	sample  []string
+	library []string
 }
 
-func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsRegisterLookupValues) (map[string]string, error) {
-	if strings.TrimSpace(values.run) == "" && strings.TrimSpace(values.study) == "" && strings.TrimSpace(values.sample) == "" && strings.TrimSpace(values.library) == "" {
+func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsRegisterLookupValues) (map[string][]string, error) {
+	if !hasResultsRegisterLookupValues(values) {
 		return nil, nil
 	}
 
@@ -641,43 +671,43 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 	}
 	defer func() { _ = client.Close() }()
 
-	metadata := make(map[string]string, 4)
+	metadata := make(map[string][]string, 4)
 
-	if trimmedRun := strings.TrimSpace(values.run); trimmedRun != "" {
+	for _, trimmedRun := range nonEmptyRegisterLookupValues(values.run) {
 		resolvedRunID, err := resolveResultsRegisterRunID(ctx, client, trimmedRun)
 		if err != nil {
 			return nil, err
 		}
 
-		metadata[results.SeqmetaIDRunKey] = resolvedRunID
+		appendResultsRegisterMetadataValue(metadata, results.SeqmetaIDRunKey, resolvedRunID)
 	}
 
-	if trimmedStudy := strings.TrimSpace(values.study); trimmedStudy != "" {
+	for _, trimmedStudy := range nonEmptyRegisterLookupValues(values.study) {
 		resolvedStudyID, err := resolveResultsRegisterStudyID(ctx, client, trimmedStudy)
 		if err != nil {
 			return nil, err
 		}
 
-		metadata[results.SeqmetaIDStudyLimsKey] = resolvedStudyID
+		appendResultsRegisterMetadataValue(metadata, results.SeqmetaIDStudyLimsKey, resolvedStudyID)
 	}
 
-	if trimmedSample := strings.TrimSpace(values.sample); trimmedSample != "" {
+	for _, trimmedSample := range nonEmptyRegisterLookupValues(values.sample) {
 		resolvedSampleID, err := resolveResultsRegisterSampleID(ctx, client, trimmedSample)
 		if err != nil {
 			return nil, err
 		}
 
-		metadata[results.SeqmetaSampleNameKey] = resolvedSampleID
+		appendResultsRegisterMetadataValue(metadata, results.SeqmetaSampleNameKey, resolvedSampleID)
 	}
 
-	if trimmedLibrary := strings.TrimSpace(values.library); trimmedLibrary != "" {
+	for _, trimmedLibrary := range nonEmptyRegisterLookupValues(values.library) {
 		libraryMetadata, err := resolveResultsRegisterLibraryMetadata(ctx, client, trimmedLibrary)
 		if err != nil {
 			return nil, err
 		}
 
 		for key, value := range libraryMetadata {
-			metadata[key] = value
+			appendResultsRegisterMetadataValue(metadata, key, value)
 		}
 	}
 
@@ -816,6 +846,58 @@ func matchLibraryType(match mlwh.Match) string {
 	}
 
 	return ""
+}
+
+func parseResultsMetadataValueFilters(metaValues []string) (map[string][]string, error) {
+	metadata := make(map[string][]string, len(metaValues))
+
+	for _, metaValue := range metaValues {
+		key, value, err := parseResultsMetadataValue(metaValue)
+		if err != nil {
+			return nil, err
+		}
+
+		appendResultsRegisterMetadataValue(metadata, key, value)
+	}
+
+	return metadata, nil
+}
+
+func parseResultsMetadataValue(metaValue string) (string, string, error) {
+	key, value, found := strings.Cut(metaValue, "=")
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if !found || key == "" || value == "" {
+		return "", "", fmt.Errorf("invalid --meta value %q: expected key=value", metaValue)
+	}
+
+	return key, value, nil
+}
+
+func sortedResultsRegisterMetadataKeys(metadata map[string][]string) []string {
+	keys := make([]string, 0, len(metadata))
+
+	for key := range metadata {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+func singleResultsRegisterMetadata(metadata map[string][]string) map[string]string {
+	single := make(map[string]string, len(metadata))
+
+	for key, values := range metadata {
+		if len(values) == 0 {
+			continue
+		}
+
+		single[key] = values[0]
+	}
+
+	return single
 }
 
 func resultsRegisterWorkflowFiles(identity results.WorkflowIdentity) ([]results.FileEntry, error) {
@@ -1298,10 +1380,10 @@ create a new result set.`,
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
 	command.Flags().StringArrayVar(&matchPatterns, "match", nil, "Output-relative glob for files to register; may be supplied multiple times")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
-	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric id_run through MLWH and store it as seqmeta_id_run")
-	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_id_study_lims")
-	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_name")
-	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache")
+	command.Flags().StringArrayVar(&lookupValues.run, "run", nil, "Resolve a numeric id_run through MLWH and store it as seqmeta_id_run; may be supplied multiple times")
+	command.Flags().StringArrayVar(&lookupValues.study, "study", nil, "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_id_study_lims; may be supplied multiple times")
+	command.Flags().StringArrayVar(&lookupValues.sample, "sample", nil, "Resolve a sample name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_name; may be supplied multiple times")
+	command.Flags().StringArrayVar(&lookupValues.library, "library", nil, "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache; may be supplied multiple times")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 	_ = command.Flags().MarkHidden("runid")
@@ -1373,7 +1455,7 @@ func buildResultsRegistrationForCommand(
 		return nil, err
 	}
 
-	metadata, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
+	metadata, metadataValues, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
 	if err != nil {
 		return nil, err
 	}
@@ -1420,6 +1502,7 @@ func buildResultsRegistrationForCommand(
 		OutputDirectory:    outputDir,
 		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, workflowFiles...),
 		Metadata:           metadata,
+		MetadataValues:     metadataValues,
 	}, nil
 }
 
@@ -1442,32 +1525,34 @@ func decodeResultsRegistration(input io.Reader) (*results.Registration, error) {
 	return &registration, nil
 }
 
-func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[string]string) (map[string]string, error) {
-	metadata, err := parseResultsMetadataFilters(metaValues)
+func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[string][]string) (map[string]string, map[string][]string, error) {
+	metadataValues, err := parseResultsMetadataValueFilters(metaValues)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	for key, value := range seqmetaMetadata {
-		trimmedValue := strings.TrimSpace(value)
-		if trimmedValue == "" {
+	for _, key := range sortedResultsRegisterMetadataKeys(seqmetaMetadata) {
+		values := nonEmptyRegisterLookupValues(seqmetaMetadata[key])
+		if len(values) == 0 {
 			continue
 		}
 
 		for _, equivalentKey := range resultsRegisterEquivalentSeqmetaKeys(key) {
-			if _, exists := metadata[equivalentKey]; exists {
-				return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", equivalentKey, resultsRegisterSeqmetaFlagName(key))
+			if _, exists := metadataValues[equivalentKey]; exists {
+				return nil, nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", equivalentKey, resultsRegisterSeqmetaFlagName(key))
 			}
 		}
 
-		if _, exists := metadata[key]; exists {
-			return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", key, resultsRegisterSeqmetaFlagName(key))
+		if _, exists := metadataValues[key]; exists {
+			return nil, nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", key, resultsRegisterSeqmetaFlagName(key))
 		}
 
-		metadata[key] = trimmedValue
+		for _, value := range values {
+			appendResultsRegisterMetadataValue(metadataValues, key, value)
+		}
 	}
 
-	return metadata, nil
+	return singleResultsRegisterMetadata(metadataValues), metadataValues, nil
 }
 
 func resultsRegisterSeqmetaFlagName(metaKey string) string {
@@ -1639,11 +1724,9 @@ func parseResultsMetadataFilters(metaValues []string) (map[string]string, error)
 	metadata := make(map[string]string, len(metaValues))
 
 	for _, metaValue := range metaValues {
-		key, value, found := strings.Cut(metaValue, "=")
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if !found || key == "" || value == "" {
-			return nil, fmt.Errorf("invalid --meta value %q: expected key=value", metaValue)
+		key, value, err := parseResultsMetadataValue(metaValue)
+		if err != nil {
+			return nil, err
 		}
 
 		metadata[key] = value

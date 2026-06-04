@@ -31,6 +31,7 @@ export const resultSetSchema = z.object({
         locked: false,
     }),
     metadata: z.record(z.string(), z.string()),
+    metadata_values: z.record(z.string(), z.array(z.string())).optional(),
     created_at: z.string(),
     updated_at: z.string(),
 });

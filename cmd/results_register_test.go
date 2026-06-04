@@ -1003,6 +1003,225 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 	})
 
+	convey.Convey("Given repeated --sample flags, register sends every resolved sample metadata value", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		sampleCalls := []string{}
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				sampleCalls = append(sampleCalls, raw)
+
+				return mlwh.Match{Canonical: raw, Sample: &mlwh.Sample{Name: raw}}, nil
+			},
+		})
+
+		type registrationPayload struct {
+			Metadata       map[string]string   `json:"metadata"`
+			MetadataValues map[string][]string `json:"metadata_values"`
+		}
+
+		registrationCh := make(chan registrationPayload, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration registrationPayload
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "multi-sample-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--workflow", workflowPath,
+			"--sample", "7607STDY14643771",
+			"--sample", "7607STDY14643772",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(sampleCalls, convey.ShouldResemble, []string{"7607STDY14643771", "7607STDY14643772"})
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.Metadata[results.SeqmetaSampleNameKey], convey.ShouldEqual, "7607STDY14643771")
+		convey.So(registration.MetadataValues[results.SeqmetaSampleNameKey], convey.ShouldResemble, []string{"7607STDY14643771", "7607STDY14643772"})
+	})
+
+	convey.Convey("Given repeated --run flags, register sends every resolved run metadata value", t, func() {
+		runCalls := []string{}
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			runFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				runCalls = append(runCalls, raw)
+
+				return mlwh.Match{Canonical: raw, Run: &mlwh.Run{IDRun: 48522}}, nil
+			},
+		})
+
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--run", "48522",
+			"--run", "48523",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(runCalls, convey.ShouldResemble, []string{"48522", "48523"})
+		convey.So(registration.Metadata[results.SeqmetaIDRunKey], convey.ShouldEqual, "48522")
+		convey.So(registration.MetadataValues[results.SeqmetaIDRunKey], convey.ShouldResemble, []string{"48522", "48523"})
+	})
+
+	convey.Convey("Given repeated --study flags, register sends every resolved study metadata value", t, func() {
+		studyCalls := []string{}
+		studyIDs := map[string]string{
+			"EGAS00001005445": "6568",
+			"EGAS00001005446": "6569",
+		}
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			studyFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				studyCalls = append(studyCalls, raw)
+
+				return mlwh.Match{Canonical: studyIDs[raw], Study: &mlwh.Study{IDStudyLims: studyIDs[raw]}}, nil
+			},
+		})
+
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--study", "EGAS00001005445",
+			"--study", "EGAS00001005446",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(studyCalls, convey.ShouldResemble, []string{"EGAS00001005445", "EGAS00001005446"})
+		convey.So(registration.Metadata[results.SeqmetaIDStudyLimsKey], convey.ShouldEqual, "6568")
+		convey.So(registration.MetadataValues[results.SeqmetaIDStudyLimsKey], convey.ShouldResemble, []string{"6568", "6569"})
+	})
+
+	convey.Convey("Given repeated --library flags, register sends every resolved library metadata value across all library keys", t, func() {
+		libraryCalls := []string{}
+		libraryMatches := map[string]mlwh.Match{
+			"71046409": {
+				Kind:      mlwh.KindLibraryID,
+				Canonical: "71046409",
+				Library: &mlwh.Library{
+					PipelineIDLims: "PCR-free",
+					LibraryID:      "71046409",
+				},
+			},
+			"71046410": {
+				Kind:      mlwh.KindLibraryID,
+				Canonical: "71046410",
+				Library: &mlwh.Library{
+					PipelineIDLims: "Custom",
+					LibraryID:      "71046410",
+				},
+			},
+			"SQPP-47463-G:B1": {
+				Kind:      mlwh.KindLibraryLimsID,
+				Canonical: "SQPP-47463-G:B1",
+				Library: &mlwh.Library{
+					PipelineIDLims: "Standard",
+					IDLibraryLims:  "SQPP-47463-G:B1",
+				},
+			},
+		}
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			libraryFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				libraryCalls = append(libraryCalls, raw)
+
+				return libraryMatches[raw], nil
+			},
+		})
+
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--library", "71046409",
+			"--library", "71046410",
+			"--library", "SQPP-47463-G:B1",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(libraryCalls, convey.ShouldResemble, []string{"71046409", "71046410", "SQPP-47463-G:B1"})
+		convey.So(registration.Metadata[results.SeqmetaPipelineIDLimsKey], convey.ShouldEqual, "PCR-free")
+		convey.So(registration.Metadata[results.SeqmetaLibraryIDKey], convey.ShouldEqual, "71046409")
+		convey.So(registration.Metadata[results.SeqmetaIDLibraryLimsKey], convey.ShouldEqual, "SQPP-47463-G:B1")
+		convey.So(registration.MetadataValues[results.SeqmetaPipelineIDLimsKey], convey.ShouldResemble, []string{"PCR-free", "Custom", "Standard"})
+		convey.So(registration.MetadataValues[results.SeqmetaLibraryIDKey], convey.ShouldResemble, []string{"71046409", "71046410"})
+		convey.So(registration.MetadataValues[results.SeqmetaIDLibraryLimsKey], convey.ShouldResemble, []string{"SQPP-47463-G:B1"})
+	})
+
+	convey.Convey("Given repeated --meta keys, register sends every metadata value while preserving the single-value metadata object", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		type registrationPayload struct {
+			Metadata       map[string]string   `json:"metadata"`
+			MetadataValues map[string][]string `json:"metadata_values"`
+		}
+
+		registrationCh := make(chan registrationPayload, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration registrationPayload
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "multi-meta-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--runid", "48522",
+			"--workflow", workflowPath,
+			"--meta", "assay=RNA",
+			"--meta", "assay=WGS",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.Metadata["assay"], convey.ShouldEqual, "RNA")
+		convey.So(registration.MetadataValues["assay"], convey.ShouldResemble, []string{"RNA", "WGS"})
+	})
+
 	convey.Convey("Given --sample is a canonical Sanger sample name, register uses the exact sample-name resolver before the broad sample cascade", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -1403,4 +1622,69 @@ func stubResultsRegisterResolverOpener(t *testing.T, resolver *fakeResultsRegist
 	t.Cleanup(func() {
 		resultsRegisterResolverOpener = original
 	})
+}
+
+func runResultsRegisterAndCaptureRegistrationForTest(t *testing.T, extraArgs ...string) (results.Registration, *bytes.Buffer, error) {
+	t.Helper()
+
+	outputDir := t.TempDir()
+	workflowPath := filepath.Join(t.TempDir(), "main.nf")
+	writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+	writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+	registrationCh := make(chan results.Registration, 1)
+	handlerErrCh := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var registration results.Registration
+		if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+			handlerErrCh <- err
+
+			return
+		}
+
+		registrationCh <- registration
+		w.WriteHeader(http.StatusCreated)
+
+		if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "captured-result"}); err != nil {
+			handlerErrCh <- err
+
+			return
+		}
+
+		handlerErrCh <- nil
+	}))
+	defer server.Close()
+
+	args := []string{
+		"results", "register",
+		"--server", server.URL,
+		"--user", "alice",
+		"--runid", "48522",
+		"--workflow", workflowPath,
+	}
+	args = append(args, extraArgs...)
+	args = append(args, outputDir)
+
+	_, stderr, err := executeRootCommandWithInputForRegisterTest(t, args, nil)
+	if err != nil {
+		return results.Registration{}, stderr, err
+	}
+
+	var registration results.Registration
+	select {
+	case registration = <-registrationCh:
+	case <-time.After(time.Second):
+		t.Fatal("results register test server did not receive a registration")
+	}
+
+	select {
+	case handlerErr := <-handlerErrCh:
+		if handlerErr != nil {
+			t.Fatalf("handle results register request: %v", handlerErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("results register test server did not finish handling the registration")
+	}
+
+	return registration, stderr, nil
 }

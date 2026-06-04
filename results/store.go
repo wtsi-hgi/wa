@@ -70,13 +70,23 @@ CREATE TABLE IF NOT EXISTS result_files (
 
 const createResultMetadataTableSQL = `
 CREATE TABLE IF NOT EXISTS result_metadata (
-	result_id VARCHAR(64)  NOT NULL,
-	meta_key  VARCHAR(255) NOT NULL,
-	value     TEXT         NOT NULL,
-	PRIMARY KEY (result_id, meta_key),
+	result_id      VARCHAR(64)  NOT NULL,
+	meta_key       VARCHAR(255) NOT NULL,
+	value_ordinal  INTEGER      NOT NULL DEFAULT 0,
+	value          TEXT         NOT NULL,
 	FOREIGN KEY (result_id)
 		REFERENCES result_sets(id) ON DELETE CASCADE
 );`
+
+const dropResultMetadataPrimaryKeySQL = `
+ALTER TABLE result_metadata DROP PRIMARY KEY;`
+
+const addResultMetadataValueOrdinalColumnSQL = `
+ALTER TABLE result_metadata ADD COLUMN value_ordinal INTEGER NOT NULL DEFAULT 0;`
+
+const createResultMetadataResultIDIndexSQL = `
+CREATE INDEX idx_result_metadata_result_id
+	ON result_metadata(result_id);`
 
 const createResultMetadataMetaKeyValueIndexSQL = `
 CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value
@@ -103,6 +113,200 @@ func OutputDirectoryGID(path string) (*int64, error) {
 	return &gid, nil
 }
 
+type loadedResultMetadata struct {
+	single map[string]string
+	values map[string][]string
+}
+
+func appendMetadataValue(metadata map[string][]string, key string, value string) {
+	for _, existingValue := range metadata[key] {
+		if existingValue == value {
+			return
+		}
+	}
+
+	metadata[key] = append(metadata[key], value)
+}
+
+func singleMetadataFromValues(metadata map[string][]string) map[string]string {
+	if len(metadata) == 0 {
+		return map[string]string{}
+	}
+
+	single := make(map[string]string, len(metadata))
+	for key, values := range metadata {
+		if len(values) == 0 {
+			continue
+		}
+
+		single[key] = values[0]
+	}
+
+	return single
+}
+
+type sqliteResultMetadataSchema struct {
+	primaryKeyColumns []string
+	hasValueOrdinal   bool
+}
+
+func sqliteResultMetadataSchemaInfo(db *sql.DB) (sqliteResultMetadataSchema, bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(result_metadata)`)
+	if err != nil {
+		if isIgnorablePragmaError(err) {
+			return sqliteResultMetadataSchema{}, false, nil
+		}
+
+		return sqliteResultMetadataSchema{}, false, fmt.Errorf("inspect result_metadata schema: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	type primaryKeyColumn struct {
+		name     string
+		position int
+	}
+
+	columns := []primaryKeyColumn{}
+	hasValueOrdinal := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var dataType string
+		var notNull int
+		var defaultValue any
+		var primaryKeyPosition int
+
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKeyPosition); err != nil {
+			return sqliteResultMetadataSchema{}, true, fmt.Errorf("scan result_metadata schema: %w", err)
+		}
+		if name == "value_ordinal" {
+			hasValueOrdinal = true
+		}
+		if primaryKeyPosition > 0 {
+			columns = append(columns, primaryKeyColumn{name: name, position: primaryKeyPosition})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return sqliteResultMetadataSchema{}, true, fmt.Errorf("iterate result_metadata schema: %w", err)
+	}
+
+	sort.Slice(columns, func(i, j int) bool {
+		return columns[i].position < columns[j].position
+	})
+
+	names := make([]string, len(columns))
+	for i, column := range columns {
+		names[i] = column.name
+	}
+
+	return sqliteResultMetadataSchema{
+		primaryKeyColumns: names,
+		hasValueOrdinal:   hasValueOrdinal,
+	}, true, nil
+}
+
+func ensureResultMetadataSchema(db *sql.DB) error {
+	schema, inspectedSQLite, err := sqliteResultMetadataSchemaInfo(db)
+	if err != nil {
+		return err
+	}
+	if inspectedSQLite {
+		if len(schema.primaryKeyColumns) == 0 && schema.hasValueOrdinal {
+			return nil
+		}
+
+		return migrateSQLiteResultMetadataSchema(db, schema.hasValueOrdinal)
+	}
+
+	if err := ensureResultMetadataResultIDIndex(db); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(dropResultMetadataPrimaryKeySQL); err != nil && !isMissingPrimaryKeyError(err) {
+		return fmt.Errorf("drop result_metadata primary key: %w", err)
+	}
+
+	if _, err := db.Exec(addResultMetadataValueOrdinalColumnSQL); err != nil && !isDuplicateColumnError(err) {
+		return fmt.Errorf("add result_metadata value_ordinal column: %w", err)
+	}
+
+	return nil
+}
+
+func migrateSQLiteResultMetadataSchema(db *sql.DB, hasValueOrdinal bool) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin result_metadata migration: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	for _, statement := range []string{
+		`DROP INDEX IF EXISTS idx_result_metadata_meta_key_value`,
+		`ALTER TABLE result_metadata RENAME TO result_metadata_old`,
+		createResultMetadataTableSQL,
+		sqliteResultMetadataMigrationInsertSQL(hasValueOrdinal),
+		`DROP TABLE result_metadata_old`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("migrate result_metadata schema: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit result_metadata migration: %w", err)
+	}
+
+	committed = true
+
+	return nil
+}
+
+func sqliteResultMetadataMigrationInsertSQL(hasValueOrdinal bool) string {
+	if hasValueOrdinal {
+		return `INSERT INTO result_metadata(result_id, meta_key, value_ordinal, value)
+			SELECT result_id, meta_key, value_ordinal, value
+			FROM result_metadata_old
+			ORDER BY result_id, meta_key, value_ordinal, rowid`
+	}
+
+	return `INSERT INTO result_metadata(result_id, meta_key, value_ordinal, value)
+		SELECT result_id, meta_key,
+		       ROW_NUMBER() OVER (PARTITION BY result_id, meta_key ORDER BY rowid) - 1,
+		       value
+		FROM result_metadata_old
+		ORDER BY rowid`
+}
+
+func ensureResultMetadataResultIDIndex(db *sql.DB) error {
+	if _, err := db.Exec(createResultMetadataResultIDIndexSQL); err != nil && !isDuplicateIndexError(err) {
+		return fmt.Errorf("create result_metadata result_id index: %w", err)
+	}
+
+	return nil
+}
+
+func isMissingPrimaryKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+
+	return strings.Contains(message, "1091") ||
+		strings.Contains(message, "can't drop") ||
+		strings.Contains(message, "check that column/key exists") ||
+		strings.Contains(message, "no such index") ||
+		strings.Contains(message, "does not exist")
+}
+
 // NewStore enables foreign keys and creates the SQL schema on demand.
 func NewStore(db *sql.DB) (*Store, error) {
 	if db == nil {
@@ -122,6 +326,10 @@ func NewStore(db *sql.DB) (*Store, error) {
 
 			return nil, fmt.Errorf("initialise results store: %w", err)
 		}
+	}
+
+	if err := ensureResultMetadataSchema(db); err != nil {
+		return nil, fmt.Errorf("initialise results store: %w", err)
 	}
 
 	if err := ensureResultMetadataMetaKeyValueIndex(db); err != nil {
@@ -351,6 +559,24 @@ func ensureUpdatedAtAfterCreatedAt(createdAt, now time.Time) time.Time {
 	return createdAt.Add(time.Nanosecond)
 }
 
+func normalizedRegistrationMetadataValues(reg *Registration) map[string][]string {
+	if reg == nil {
+		return map[string][]string{}
+	}
+
+	values := cloneMetadataValues(reg.MetadataValues)
+
+	for key, value := range reg.Metadata {
+		if existingValues, exists := values[key]; exists && len(existingValues) > 0 {
+			continue
+		}
+
+		appendMetadataValue(values, key, value)
+	}
+
+	return values
+}
+
 func nullableInt64Pointer(value sql.NullInt64) *int64 {
 	if !value.Valid {
 		return nil
@@ -359,6 +585,31 @@ func nullableInt64Pointer(value sql.NullInt64) *int64 {
 	intValue := value.Int64
 
 	return &intValue
+}
+
+func responseMetadataValues(metadata map[string][]string) map[string][]string {
+	for _, values := range metadata {
+		if len(values) > 1 {
+			return cloneMetadataValues(metadata)
+		}
+	}
+
+	return nil
+}
+
+func cloneMetadataValues(metadata map[string][]string) map[string][]string {
+	if len(metadata) == 0 {
+		return map[string][]string{}
+	}
+
+	cloned := make(map[string][]string, len(metadata))
+	for key, value := range metadata {
+		for _, singleValue := range value {
+			appendMetadataValue(cloned, key, singleValue)
+		}
+	}
+
+	return cloned
 }
 
 func copyInt64Pointer(value *int64) *int64 {
@@ -394,38 +645,38 @@ func replaceResultFiles(ctx context.Context, tx *sql.Tx, resultID string, files 
 	return nil
 }
 
-func replaceResultMetadata(ctx context.Context, tx *sql.Tx, resultID string, metadata map[string]string) error {
+func replaceResultMetadata(ctx context.Context, tx *sql.Tx, resultID string, metadata map[string][]string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM result_metadata WHERE result_id = ?`, resultID); err != nil {
 		return fmt.Errorf("delete existing result metadata: %w", err)
 	}
 
-	for key, value := range metadata {
-		_, err := tx.ExecContext(
-			ctx,
-			`INSERT INTO result_metadata (result_id, meta_key, value) VALUES (?, ?, ?)`,
-			resultID,
-			key,
-			value,
-		)
-		if err != nil {
-			return fmt.Errorf("insert result metadata: %w", err)
+	for _, key := range sortedMultiMetadataKeys(metadata) {
+		for valueOrdinal, value := range metadata[key] {
+			_, err := tx.ExecContext(
+				ctx,
+				`INSERT INTO result_metadata (result_id, meta_key, value_ordinal, value) VALUES (?, ?, ?, ?)`,
+				resultID,
+				key,
+				valueOrdinal,
+				value,
+			)
+			if err != nil {
+				return fmt.Errorf("insert result metadata: %w", err)
+			}
 		}
 	}
 
 	return nil
 }
 
-func cloneMetadata(metadata map[string]string) map[string]string {
-	if len(metadata) == 0 {
-		return map[string]string{}
-	}
+func metadataValuesFromMap(metadata map[string]string) map[string][]string {
+	values := make(map[string][]string, len(metadata))
 
-	cloned := make(map[string]string, len(metadata))
 	for key, value := range metadata {
-		cloned[key] = value
+		appendMetadataValue(values, key, value)
 	}
 
-	return cloned
+	return values
 }
 
 func loadDailyStatsCounts(ctx context.Context, conn *sql.Conn, now time.Time, days int) ([]DailyCount, error) {
@@ -535,7 +786,9 @@ func loadRecentStatsResults(ctx context.Context, conn *sql.Conn, recent int) ([]
 	}
 
 	for i := range results {
-		results[i].Metadata = metadataByID[results[i].ID]
+		metadata := metadataByID[results[i].ID]
+		results[i].Metadata = metadata.single
+		results[i].MetadataValues = responseMetadataValues(metadata.values)
 	}
 
 	return results, nil
@@ -587,7 +840,9 @@ func querySearchResults(ctx context.Context, conn *sql.Conn, filters []string, a
 	}
 
 	for i := range results {
-		results[i].Metadata = metadataByID[results[i].ID]
+		metadata := metadataByID[results[i].ID]
+		results[i].Metadata = metadata.single
+		results[i].MetadataValues = responseMetadataValues(metadata.values)
 	}
 
 	return results, nil
@@ -671,43 +926,43 @@ func loadPipelineStatsCounts(ctx context.Context, conn *sql.Conn) ([]PipelineCou
 
 func loadResultMetadata(ctx context.Context, querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}, resultID string) (map[string]string, error) {
+}, resultID string) (loadedResultMetadata, error) {
 	rows, err := querier.QueryContext(
 		ctx,
-		`SELECT meta_key, value FROM result_metadata WHERE result_id = ? ORDER BY meta_key`,
+		`SELECT meta_key, value FROM result_metadata WHERE result_id = ? ORDER BY meta_key, value_ordinal, value`,
 		resultID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("query result metadata: %w", err)
+		return loadedResultMetadata{}, fmt.Errorf("query result metadata: %w", err)
 	}
 	defer func() {
 		_ = rows.Close()
 	}()
 
-	metadata := map[string]string{}
+	values := map[string][]string{}
 
 	for rows.Next() {
 		var key string
 		var value string
 
 		if err := rows.Scan(&key, &value); err != nil {
-			return nil, fmt.Errorf("scan result metadata: %w", err)
+			return loadedResultMetadata{}, fmt.Errorf("scan result metadata: %w", err)
 		}
 
-		metadata[key] = value
+		appendMetadataValue(values, key, value)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate result metadata: %w", err)
+		return loadedResultMetadata{}, fmt.Errorf("iterate result metadata: %w", err)
 	}
 
-	return metadata, nil
+	return loadedResultMetadata{single: singleMetadataFromValues(values), values: values}, nil
 }
 
 func loadResultMetadataByIDs(ctx context.Context, querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}, resultIDs []string) (map[string]map[string]string, error) {
-	metadataByID := make(map[string]map[string]string, len(resultIDs))
+}, resultIDs []string) (map[string]loadedResultMetadata, error) {
+	metadataByID := make(map[string]loadedResultMetadata, len(resultIDs))
 	if len(resultIDs) == 0 {
 		return metadataByID, nil
 	}
@@ -716,7 +971,7 @@ func loadResultMetadataByIDs(ctx context.Context, querier interface {
 	placeholders := make([]string, 0, len(resultIDs))
 
 	for _, resultID := range resultIDs {
-		metadataByID[resultID] = map[string]string{}
+		metadataByID[resultID] = loadedResultMetadata{single: map[string]string{}, values: map[string][]string{}}
 		placeholders = append(placeholders, "?")
 		args = append(args, resultID)
 	}
@@ -725,7 +980,7 @@ func loadResultMetadataByIDs(ctx context.Context, querier interface {
 		`SELECT result_id, meta_key, value
 		 FROM result_metadata
 		 WHERE result_id IN (%s)
-		 ORDER BY result_id, meta_key`,
+		 ORDER BY result_id, meta_key, value_ordinal, value`,
 		strings.Join(placeholders, ", "),
 	)
 
@@ -746,11 +1001,21 @@ func loadResultMetadataByIDs(ctx context.Context, querier interface {
 			return nil, fmt.Errorf("scan result metadata: %w", err)
 		}
 
-		metadataByID[resultID][key] = value
+		metadata := metadataByID[resultID]
+		if metadata.values == nil {
+			metadata.values = map[string][]string{}
+		}
+		appendMetadataValue(metadata.values, key, value)
+		metadataByID[resultID] = metadata
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate result metadata: %w", err)
+	}
+
+	for resultID, metadata := range metadataByID {
+		metadata.single = singleMetadataFromValues(metadata.values)
+		metadataByID[resultID] = metadata
 	}
 
 	return metadataByID, nil
@@ -1026,7 +1291,8 @@ func (s *Store) Upsert(ctx context.Context, reg *Registration) (*ResultSet, erro
 		return nil, err
 	}
 
-	if err := replaceResultMetadata(ctx, tx, id, reg.Metadata); err != nil {
+	metadataValues := normalizedRegistrationMetadataValues(reg)
+	if err := replaceResultMetadata(ctx, tx, id, metadataValues); err != nil {
 		return nil, err
 	}
 
@@ -1047,7 +1313,8 @@ func (s *Store) Upsert(ctx context.Context, reg *Registration) (*ResultSet, erro
 		PipelineVersion:    reg.PipelineVersion,
 		OutputDirectory:    reg.OutputDirectory,
 		OutputDirectoryGID: copyInt64Pointer(reg.OutputDirectoryGID),
-		Metadata:           cloneMetadata(reg.Metadata),
+		Metadata:           singleMetadataFromValues(metadataValues),
+		MetadataValues:     responseMetadataValues(metadataValues),
 		CreatedAt:          createdAt,
 		UpdatedAt:          updatedAt,
 	}, nil
@@ -1261,10 +1528,12 @@ func (s *Store) Get(ctx context.Context, id string) (*ResultSet, error) {
 	}
 
 	result.OutputDirectoryGID = nullableInt64Pointer(outputDirectoryGID)
-	result.Metadata, err = loadResultMetadata(ctx, s.db, id)
+	metadata, err := loadResultMetadata(ctx, s.db, id)
 	if err != nil {
 		return nil, err
 	}
+	result.Metadata = metadata.single
+	result.MetadataValues = responseMetadataValues(metadata.values)
 
 	return &result, nil
 }

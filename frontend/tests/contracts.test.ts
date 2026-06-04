@@ -48,6 +48,9 @@ describe("contract schemas", () => {
             metadata: {
                 seqmeta_sampleid: "SANG123",
             },
+            metadata_values: {
+                seqmeta_sampleid: ["SANG123", "SANG456"],
+            },
             created_at: "2026-04-16T09:00:00Z",
             updated_at: "2026-04-16T10:00:00Z",
         });
@@ -55,6 +58,10 @@ describe("contract schemas", () => {
         expect(parsed.id).toBe("result-1");
         expect(parsed.pipeline_name).toBe("nf-core/rnaseq");
         expect(parsed.metadata.seqmeta_sampleid).toBe("SANG123");
+        expect(parsed.metadata_values?.seqmeta_sampleid).toEqual([
+            "SANG123",
+            "SANG456",
+        ]);
     });
 
     it("parses access-aware ResultSet rows and locked detail responses", () => {

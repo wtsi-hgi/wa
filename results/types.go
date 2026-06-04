@@ -112,20 +112,21 @@ var SeqmetaFieldTypes = map[string]string{
 
 // ResultSet is the core domain object returned by queries.
 type ResultSet struct {
-	ID                 string            `json:"id"`
-	PipelineIdentifier string            `json:"pipeline_identifier"`
-	RunKey             string            `json:"run_key"`
-	Requester          string            `json:"requester"`
-	Operator           string            `json:"operator"`
-	Command            string            `json:"command"`
-	PipelineName       string            `json:"pipeline_name"`
-	PipelineVersion    string            `json:"pipeline_version"`
-	OutputDirectory    string            `json:"output_directory"`
-	OutputDirectoryGID *int64            `json:"output_directory_gid"`
-	Metadata           map[string]string `json:"metadata"`
-	Access             AccessState       `json:"access"`
-	CreatedAt          time.Time         `json:"created_at"`
-	UpdatedAt          time.Time         `json:"updated_at"`
+	ID                 string              `json:"id"`
+	PipelineIdentifier string              `json:"pipeline_identifier"`
+	RunKey             string              `json:"run_key"`
+	Requester          string              `json:"requester"`
+	Operator           string              `json:"operator"`
+	Command            string              `json:"command"`
+	PipelineName       string              `json:"pipeline_name"`
+	PipelineVersion    string              `json:"pipeline_version"`
+	OutputDirectory    string              `json:"output_directory"`
+	OutputDirectoryGID *int64              `json:"output_directory_gid"`
+	Metadata           map[string]string   `json:"metadata"`
+	MetadataValues     map[string][]string `json:"metadata_values,omitempty"`
+	Access             AccessState         `json:"access"`
+	CreatedAt          time.Time           `json:"created_at"`
+	UpdatedAt          time.Time           `json:"updated_at"`
 }
 
 // FileEntry represents one tracked file.
@@ -138,17 +139,18 @@ type FileEntry struct {
 
 // Registration is the POST /results request body.
 type Registration struct {
-	PipelineIdentifier string            `json:"pipeline_identifier"`
-	RunKey             string            `json:"run_key"`
-	Requester          string            `json:"requester"`
-	Operator           string            `json:"operator"`
-	Command            string            `json:"command"`
-	PipelineName       string            `json:"pipeline_name"`
-	PipelineVersion    string            `json:"pipeline_version"`
-	OutputDirectory    string            `json:"output_directory"`
-	OutputDirectoryGID *int64            `json:"-"`
-	Files              []FileEntry       `json:"files"`
-	Metadata           map[string]string `json:"metadata"`
+	PipelineIdentifier string              `json:"pipeline_identifier"`
+	RunKey             string              `json:"run_key"`
+	Requester          string              `json:"requester"`
+	Operator           string              `json:"operator"`
+	Command            string              `json:"command"`
+	PipelineName       string              `json:"pipeline_name"`
+	PipelineVersion    string              `json:"pipeline_version"`
+	OutputDirectory    string              `json:"output_directory"`
+	OutputDirectoryGID *int64              `json:"-"`
+	Files              []FileEntry         `json:"files"`
+	Metadata           map[string]string   `json:"metadata"`
+	MetadataValues     map[string][]string `json:"metadata_values,omitempty"`
 }
 
 // SearchParams holds parsed query parameters for filtering.

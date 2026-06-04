@@ -695,7 +695,7 @@ func (s *Server) handlePostResults(c *gin.Context) {
 
 	registration.OutputDirectoryGID = outputDirectoryGID
 
-	if err := s.validator.ValidateMetadata(c.Request.Context(), registration.Metadata); err != nil {
+	if err := s.validator.ValidateMetadataValues(c.Request.Context(), normalizedRegistrationMetadataValues(registration)); err != nil {
 		writeDomainError(c, err)
 
 		return
@@ -1378,9 +1378,9 @@ func wrapSearchResults(results []ResultSet, resolvedSamples []string) []SearchRe
 	for _, result := range results {
 		wrappedResult := SearchResult{ResultSet: result}
 
-		if sampleID := resultSampleName(result.Metadata); sampleID != "" {
+		for _, sampleID := range resultSampleNames(result) {
 			if _, ok := resolved[sampleID]; ok {
-				wrappedResult.MatchedSamples = []string{sampleID}
+				wrappedResult.MatchedSamples = append(wrappedResult.MatchedSamples, sampleID)
 			}
 		}
 
@@ -1558,14 +1558,21 @@ func currentUserFromValue(value any) *CurrentUser {
 	}
 }
 
-func resultSampleName(metadata map[string]string) string {
+func resultSampleNames(result ResultSet) []string {
+	sampleNames := []string{}
+
 	for _, key := range []string{SeqmetaSampleNameKey, SeqmetaSampleNameURLKey, LegacySeqmetaSampleIDKey} {
-		if sampleName := strings.TrimSpace(metadata[key]); sampleName != "" {
-			return sampleName
+		for _, value := range result.MetadataValues[key] {
+			if sampleName := strings.TrimSpace(value); sampleName != "" {
+				sampleNames = mergeSearchValues(sampleNames, []string{sampleName})
+			}
+		}
+		if sampleName := strings.TrimSpace(result.Metadata[key]); sampleName != "" {
+			sampleNames = mergeSearchValues(sampleNames, []string{sampleName})
 		}
 	}
 
-	return ""
+	return sampleNames
 }
 
 func decodeJSONBody(body io.ReadCloser, target any) error {

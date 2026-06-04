@@ -938,6 +938,50 @@ func TestServerPostResults(t *testing.T) {
 		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
 	})
 
+	convey.Convey("Given repeated metadata values in a registration, then all values are stored and searchable", t, func() {
+		store := newSQLiteStoreForTest(t)
+		server := NewServer(store, nil, nil)
+		reg := testServerRegistration(t)
+		reg.RunKey = "run-multi-values"
+		reg.Metadata = map[string]string{
+			SeqmetaSampleNameKey: "SANG1",
+			"assay":              "RNA",
+		}
+		body := mustJSONBodyForTest(t, struct {
+			*Registration
+			MetadataValues map[string][]string `json:"metadata_values"`
+		}{
+			Registration: reg,
+			MetadataValues: map[string][]string{
+				SeqmetaSampleNameKey: {"SANG1", "SANG2"},
+				"assay":              {"RNA", "WGS"},
+			},
+		})
+
+		postResponse := performOwnerResultsRequestForTest(t, server, http.MethodPost, "/results", body)
+		convey.So(postResponse.Code, convey.ShouldEqual, http.StatusCreated)
+
+		var result ResultSet
+		decodeJSONResponseForTest(t, postResponse, &result)
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, SeqmetaSampleNameKey), convey.ShouldResemble, []string{"SANG1", "SANG2"})
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, "assay"), convey.ShouldResemble, []string{"RNA", "WGS"})
+
+		for _, path := range []string{
+			"/results?sample=SANG1",
+			"/results?sample=SANG2",
+			"/results?meta_assay=RNA",
+			"/results?meta_assay=WGS",
+		} {
+			response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, path, nil)
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var results []ResultSet
+			decodeJSONResponseForTest(t, response, &results)
+			convey.So(results, convey.ShouldHaveLength, 1)
+			convey.So(results[0].ID, convey.ShouldEqual, result.ID)
+		}
+	})
+
 	convey.Convey("E1.4: Given seqmeta returns the wrong type, then status is 422 with an error body", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seqmeta := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
@@ -953,6 +997,34 @@ func TestServerPostResults(t *testing.T) {
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusUnprocessableEntity)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldNotBeBlank)
+	})
+
+	convey.Convey("Given repeated seqmeta metadata values and one has the wrong type, then validation rejects the registration", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seqmeta := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
+			"48522": {status: http.StatusOK, body: `{"identifier":"48522","type":"run_id","object":{}}`},
+			"SANG1": {status: http.StatusOK, body: `{"identifier":"SANG1","type":"sanger_sample_name","object":{}}`},
+		})
+		defer seqmeta.Close()
+
+		validator := NewSeqmetaValidator(seqmeta.URL, time.Second)
+		reg := testServerRegistration(t)
+		reg.Metadata = map[string]string{SeqmetaIDRunKey: "48522"}
+		body := mustJSONBodyForTest(t, struct {
+			*Registration
+			MetadataValues map[string][]string `json:"metadata_values"`
+		}{
+			Registration: reg,
+			MetadataValues: map[string][]string{
+				SeqmetaIDRunKey: {"48522", "SANG1"},
+			},
+		})
+
+		response := performOwnerResultsRequestForTest(t, NewServer(store, validator, nil), http.MethodPost, "/results", body)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusUnprocessableEntity)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "seqmeta_id_run")
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "SANG1")
 	})
 
 	convey.Convey("E1.5: Given seqmeta is unreachable, then status is 502", t, func() {
@@ -2347,6 +2419,37 @@ func testServerRegistration(t *testing.T) *Registration {
 	}
 
 	return reg
+}
+
+func metadataValuesForResultForTest(t *testing.T, store *Store, resultID string, key string) []string {
+	t.Helper()
+
+	rows, err := store.db.Query(
+		`SELECT value FROM result_metadata WHERE result_id = ? AND meta_key = ? ORDER BY value_ordinal`,
+		resultID,
+		key,
+	)
+	if err != nil {
+		t.Fatalf("query result metadata values: %v", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatalf("scan result metadata value: %v", err)
+		}
+
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate result metadata values: %v", err)
+	}
+
+	return values
 }
 
 func statGIDForTest(t *testing.T, path string) int64 {
