@@ -36,15 +36,14 @@ keys sorted alphabetically, omitting empty values. Covers all
 
 ### Batch 1 (parallel, after item 1.2 is reviewed)
 
-#### Item 1.3: A3 - DetectPipeline [parallel with 1.4]
+#### Item 1.3: A3 - ResolveWorkflowIdentity [parallel with 1.4]
 
 spec.md section: A3
 
-Implement `DetectPipeline(workflowPath string) (identifier,
-name, version string, err error)` in `results/types.go`.
-Auto-detects pipeline identity from a workflow file path using
-git metadata or file content hashing. Covers all 5 acceptance
-tests from A3.
+Implement `ResolveWorkflowIdentity(workflow string) (WorkflowIdentity, error)`
+in `results/workflow.go`. Resolves workflow identity from a generic string or
+workflow-manager-specific reference, with Nextflow local-file git metadata and
+content hashing. Covers all acceptance tests from A3.
 
 - [x] implemented
 - [x] reviewed

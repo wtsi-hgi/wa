@@ -818,6 +818,33 @@ func matchLibraryType(match mlwh.Match) string {
 	return ""
 }
 
+func resultsRegisterWorkflowFiles(identity results.WorkflowIdentity) ([]results.FileEntry, error) {
+	if strings.TrimSpace(identity.LocalPath) == "" {
+		return nil, nil
+	}
+
+	absPath, err := filepath.Abs(identity.LocalPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow file %q: %w", identity.LocalPath, err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("stat workflow file %q: %w", identity.LocalPath, err)
+	}
+
+	if info.IsDir() {
+		return nil, fmt.Errorf("workflow file %q: is a directory", identity.LocalPath)
+	}
+
+	return []results.FileEntry{{
+		Path:  absPath,
+		Mtime: info.ModTime(),
+		Size:  info.Size(),
+		Kind:  "pipeline",
+	}}, nil
+}
+
 func resultsAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
 	return resultsAuthenticatedRequestWithOwnerLogin(serverURL, certPath, false)
 }
@@ -1181,7 +1208,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var requester string
 	var operator string
 	var commandLine string
-	var workflowPath string
+	var workflowReference string
 	var unique string
 	var legacyRunID string
 	var additionalUnique string
@@ -1206,13 +1233,15 @@ IDs.
 --library accepts exact pipeline_id_lims, library_id, or id_library_lims values
 and requires the MLWH cache to have been synced already.
 
-Registrations are keyed by the detected pipeline identity and the unique key.
+Registrations are keyed by the detected workflow identity and the unique key.
 The server replaces an existing result set instead of adding a new one when a
-registration has the same pipeline identity and unique key.
-The pipeline identity comes from --nextflow-workflow: files inside git use
-repository/commit metadata, GitHub URLs and owner/repo shorthands use GitHub
-repository metadata, and files outside git use the workflow path and content
-hash.
+registration has the same workflow identity and unique key.
+The workflow identity comes from --workflow. Local Nextflow workflow files use
+repository/commit metadata when they are inside git and otherwise use the
+workflow path and content hash. GitHub URLs and owner/repo shorthands for
+Nextflow workflows use GitHub repository metadata. Values that are not
+recognized by a workflow-specific resolver are stored as the raw workflow
+identity string.
 The unique key is built from --unique. Use the same value
 when rerunning the same logical result and you want the stored registration,
 files and metadata to be refreshed.
@@ -1234,7 +1263,7 @@ create a new result set.`,
 				requester,
 				operator,
 				commandLine,
-				workflowPath,
+				workflowReference,
 				unique,
 				legacyRunID,
 				additionalUnique,
@@ -1260,8 +1289,9 @@ create a new result set.`,
 
 	command.Flags().StringVar(&requester, "user", "", "Requester name")
 	command.Flags().StringVar(&operator, "operator", "", "Operator name")
-	command.Flags().StringVar(&commandLine, "command", "", "Pipeline command line")
-	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path, GitHub URL, or owner/repo shorthand for the Nextflow workflow used for the run")
+	command.Flags().StringVar(&commandLine, "command", "", "Command line used to produce the results")
+	command.Flags().StringVar(&workflowReference, "workflow", "", "Workflow identity; may be a raw string, local Nextflow file, GitHub URL, or owner/repo shorthand")
+	command.Flags().StringVar(&workflowReference, "nextflow-workflow", "", "Deprecated alias for --workflow")
 	command.Flags().StringVar(&unique, "unique", "", "Stable unique label for this result set")
 	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
@@ -1276,6 +1306,7 @@ create a new result set.`,
 	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 	_ = command.Flags().MarkHidden("runid")
 	_ = command.Flags().MarkHidden("additional-unique")
+	_ = command.Flags().MarkHidden("nextflow-workflow")
 
 	return command
 }
@@ -1287,7 +1318,7 @@ func buildResultsRegistrationForCommand(
 	requester string,
 	operator string,
 	commandLine string,
-	workflowPath string,
+	workflowReference string,
 	unique string,
 	legacyRunID string,
 	additionalUnique string,
@@ -1323,8 +1354,8 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("--user is required")
 	}
 
-	if strings.TrimSpace(workflowPath) == "" {
-		return nil, errors.New("--nextflow-workflow is required")
+	if strings.TrimSpace(workflowReference) == "" {
+		return nil, errors.New("--workflow is required")
 	}
 
 	uniqueValue, err := resultsRegisterUniqueValue(unique, legacyRunID)
@@ -1363,9 +1394,9 @@ func buildResultsRegistrationForCommand(
 
 	writeResultsScanWarnings(cmd.ErrOrStderr(), scanWarnings)
 
-	pipelineIdentifier, pipelineName, pipelineVersion, err := results.DetectPipeline(workflowPath)
+	workflowIdentity, err := results.ResolveWorkflowIdentity(workflowReference)
 	if err != nil {
-		return nil, fmt.Errorf("detect pipeline: %w", err)
+		return nil, fmt.Errorf("resolve workflow identity: %w", err)
 	}
 
 	trackedInputs, err := resultsRegisterInputFiles(inputFiles)
@@ -1373,21 +1404,21 @@ func buildResultsRegistrationForCommand(
 		return nil, err
 	}
 
-	pipelineFiles, err := resultsRegisterPipelineFiles(workflowPath)
+	workflowFiles, err := resultsRegisterWorkflowFiles(workflowIdentity)
 	if err != nil {
 		return nil, err
 	}
 
 	return &results.Registration{
-		PipelineIdentifier: pipelineIdentifier,
+		PipelineIdentifier: workflowIdentity.Identifier,
 		RunKey:             runKey,
 		Requester:          strings.TrimSpace(requester),
 		Operator:           strings.TrimSpace(operator),
 		Command:            strings.TrimSpace(commandLine),
-		PipelineName:       pipelineName,
-		PipelineVersion:    pipelineVersion,
+		PipelineName:       workflowIdentity.Name,
+		PipelineVersion:    workflowIdentity.Version,
 		OutputDirectory:    outputDir,
-		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, pipelineFiles...),
+		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, workflowFiles...),
 		Metadata:           metadata,
 	}, nil
 }
@@ -2167,33 +2198,6 @@ func resultsPathWithinDirectory(rootPath, candidatePath string) bool {
 	}
 
 	return relPath == "." || (relPath != ".." && !strings.HasPrefix(relPath, ".."+string(os.PathSeparator)))
-}
-
-func resultsRegisterPipelineFiles(workflowPath string) ([]results.FileEntry, error) {
-	if results.RemotePipelineReference(workflowPath) {
-		return nil, nil
-	}
-
-	absPath, err := filepath.Abs(workflowPath)
-	if err != nil {
-		return nil, fmt.Errorf("resolve workflow file %q: %w", workflowPath, err)
-	}
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("stat workflow file %q: %w", workflowPath, err)
-	}
-
-	if info.IsDir() {
-		return nil, fmt.Errorf("workflow file %q: is a directory", workflowPath)
-	}
-
-	return []results.FileEntry{{
-		Path:  absPath,
-		Mtime: info.ModTime(),
-		Size:  info.Size(),
-		Kind:  "pipeline",
-	}}, nil
 }
 
 func resultsAuthAddr(serverURL string) (string, error) {

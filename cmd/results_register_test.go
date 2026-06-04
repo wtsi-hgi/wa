@@ -45,6 +45,28 @@ import (
 	"github.com/wtsi-hgi/wa/results"
 )
 
+func TestResultsRegisterWorkflowFiles(t *testing.T) {
+	convey.Convey("register does not stat non-local workflow identities as local pipeline files", t, func() {
+		for _, identity := range []results.WorkflowIdentity{
+			{
+				Identifier: "https://github.com/nf-core/sarek::main.nf",
+				Name:       "nf-core/sarek",
+				Version:    "abc123",
+			},
+			{
+				Identifier: "manual-qc-v1",
+				Name:       "manual-qc-v1",
+				Version:    "manual-qc-v1",
+			},
+		} {
+			files, err := resultsRegisterWorkflowFiles(identity)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(files, convey.ShouldBeEmpty)
+		}
+	})
+}
+
 func TestResultsRegisterCommand(t *testing.T) {
 	installPassthroughResultsAuthClientForTest(t)
 
@@ -99,7 +121,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--operator", "bob",
 			"--runid", "48522",
 			"--additional-unique", "exon",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			outputDir,
 		}, nil)
 
@@ -157,7 +179,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--user", "alice",
 			"--operator", "bob",
 			"--unique", "48522-random-exon",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			outputDir,
 		}, nil)
 
@@ -167,6 +189,94 @@ func TestResultsRegisterCommand(t *testing.T) {
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 		convey.So(registration.RunKey, convey.ShouldEqual, "runid=48522-random-exon")
+	})
+
+	convey.Convey("Given a generic --workflow string, when register is run, then it is used as the deterministic workflow identity without tracking a pipeline file", t, func() {
+		outputDir := t.TempDir()
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+
+		var registration results.Registration
+		var handlerErr error
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErr = err
+
+				return
+			}
+
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "generic-workflow"}); err != nil {
+				handlerErr = err
+
+				return
+			}
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results",
+			"--server", server.URL,
+			"register",
+			"--user", "alice",
+			"--unique", "generic-001",
+			"--workflow", "manual-qc-v1",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(handlerErr, convey.ShouldBeNil)
+		convey.So(registration.PipelineIdentifier, convey.ShouldEqual, "manual-qc-v1")
+		convey.So(registration.PipelineName, convey.ShouldEqual, "manual-qc-v1")
+		convey.So(registration.PipelineVersion, convey.ShouldEqual, "manual-qc-v1")
+		convey.So(registration.RunKey, convey.ShouldEqual, "runid=generic-001")
+		convey.So(countRegisterCommandFilesByKind(registration.Files, "pipeline"), convey.ShouldEqual, 0)
+
+		resultID := results.CompositeKeyID(registration.PipelineIdentifier, registration.RunKey)
+		convey.So(resultID, convey.ShouldEqual, results.CompositeKeyID("manual-qc-v1", "runid=generic-001"))
+		convey.So(resultID, convey.ShouldNotEqual, results.CompositeKeyID("manual-qc-v2", "runid=generic-001"))
+	})
+
+	convey.Convey("Given deprecated --nextflow-workflow, when register is run, then it remains a hidden alias for --workflow", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		var registration results.Registration
+		var handlerErr error
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErr = err
+
+				return
+			}
+
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "deprecated-workflow"}); err != nil {
+				handlerErr = err
+
+				return
+			}
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results",
+			"--server", server.URL,
+			"register",
+			"--user", "alice",
+			"--unique", "deprecated-001",
+			"--nextflow-workflow", workflowPath,
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(handlerErr, convey.ShouldBeNil)
+		convey.So(registration.PipelineIdentifier, convey.ShouldContainSubstring, filepath.Base(workflowPath))
 	})
 
 	convey.Convey("Given repeated --match globs, register only sends output files matching any glob", t, func() {
@@ -207,7 +317,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"register",
 			"--user", "alice",
 			"--unique", "matched",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--match", "reports/*.html",
 			"--match", "metrics/*.json",
 			outputDir,
@@ -429,7 +539,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--input-file", inputPath,
 			outputDir,
 		}, nil)
@@ -463,7 +573,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			outputDir,
 		}, nil)
 
@@ -493,7 +603,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			outputDir,
 		}, nil)
 
@@ -522,7 +632,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			outputDir,
 		}, nil)
 
@@ -551,7 +661,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"register",
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			outputDir,
 		}, nil)
 
@@ -603,7 +713,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--run", "48522",
 			outputDir,
 		}, nil)
@@ -667,7 +777,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--run", "12345",
 			"--study", "EGAS00001005445",
 			"--sample", "7607STDY14643771",
@@ -739,7 +849,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--library", "71046409",
 			outputDir,
 		}, nil)
@@ -823,7 +933,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--user", "alice",
 			"--operator", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--run", "48522",
 			"--study", "7607",
 			"--sample", "7607STDY14643771",
@@ -882,7 +992,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--sample", "7607STDY14643771",
 			outputDir,
 		}, nil)
@@ -937,7 +1047,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--sample", "7607STDY14643771",
 			outputDir,
 		}, nil)
@@ -973,7 +1083,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--sample", "SQSCP",
 			outputDir,
 		}, nil)
@@ -1010,7 +1120,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--server", server.URL,
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			"--sample", "missing-id",
 			outputDir,
 		}, nil)
@@ -1049,8 +1159,9 @@ func TestResultsRegisterCommand(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"results", "register", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "same pipeline identity and unique key")
-		convey.So(output, convey.ShouldContainSubstring, "--nextflow-workflow")
+		convey.So(output, convey.ShouldContainSubstring, "same workflow identity and unique key")
+		convey.So(output, convey.ShouldContainSubstring, "--workflow")
+		convey.So(output, convey.ShouldNotContainSubstring, "--nextflow-workflow")
 		convey.So(output, convey.ShouldContainSubstring, "--unique")
 		convey.So(output, convey.ShouldContainSubstring, "single stable, human-readable label")
 		convey.So(output, convey.ShouldContainSubstring, "timestamp, random value, or output path")
@@ -1067,7 +1178,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
 			"results", "register",
 			"--unique", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			outputDir,
 		}, nil)
 
@@ -1192,20 +1303,6 @@ func countRegisterCommandFilesByKind(files []results.FileEntry, kind string) int
 	}
 
 	return count
-}
-
-func TestResultsRegisterPipelineFiles(t *testing.T) {
-	convey.Convey("register does not stat online Nextflow workflow references as local pipeline files", t, func() {
-		for _, workflowPath := range []string{
-			"https://github.com/nf-core/sarek",
-			"seqeralabs/nf-hello-world",
-		} {
-			files, err := resultsRegisterPipelineFiles(workflowPath)
-
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(files, convey.ShouldBeEmpty)
-		}
-	})
 }
 
 func findRegisterCommandFileByKind(files []results.FileEntry, kind string) (results.FileEntry, error) {

@@ -33,10 +33,10 @@ tests from H1.
 spec.md section: G1
 
 Implement the `results register` subcommand in
-`cmd/results.go`. Scans output directory, detects pipeline
-via DetectPipeline, builds run key via BuildRunKey, constructs
+`cmd/results.go`. Scans output directory, resolves workflow
+identity via ResolveWorkflowIdentity, builds run key via BuildRunKey, constructs
 Registration, POSTs to server. Supports --server, --user,
---operator, --command, --nextflow-workflow, --runid,
+--operator, --command, --workflow, --runid,
 --additional-unique, --input-file (repeatable), --meta
 (repeatable key=value), --include-hidden, --json (stdin),
 and positional output directory. Covers all 4 acceptance

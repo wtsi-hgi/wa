@@ -147,11 +147,12 @@ command after a pipeline completes to register all outputs.
 - Package structure: `results/` package with CLI subcommands in a unified
   `wa` binary (e.g. `wa results register ...`, `wa results search ...`),
   not a separate binary. The main binary lives in `cmd/` or project root.
-- Result set natural key: operator supplies `--nextflow_workflow /path/to/main.nf
---runid 48522 --additional_unique random_exon`. The CLI can detect if main.nf
-  is in a git checkout and auto-derive pipeline_repo_url, pipeline_name,
-  pipeline_version (commit hash). The system builds a consistent composite key
-  like `(pipeline_repo_url, "seqmeta:runid=48522&unique=random_exon")`.
+- Result set natural key: operator supplies `--workflow /path/to/main.nf
+--runid 48522 --additional_unique random_exon`. The CLI resolves the workflow
+  identity. Local Nextflow `.nf` files can derive repository and commit
+  metadata; values that do not match a workflow-specific resolver are stored as
+  the raw workflow identity string. The system builds a consistent composite key
+  like `(workflow_identifier, "seqmeta:runid=48522&unique=random_exon")`.
   The key is a (pipeline_identifier, run_key) pair where pipeline_identifier
   is either a repo URL or a normalised path, and run_key is a structured
   string built from operator-supplied identifiers. The CLI also auto-fills
@@ -192,7 +193,7 @@ command after a pipeline completes to register all outputs.
   repeatable --input-file (CLI auto-fills mtime/size via os.Stat), repeatable
   --meta key=value pairs. Also support --json to read full registration
   payload from stdin (for programmatic callers). Output directory is a
-  positional argument. Key-building flags: --nextflow_workflow, --runid,
+  positional argument. Key-building flags: --workflow, --runid,
   --additional_unique.
 - Directory scanning: follow symlinks (record target's mtime/size), exclude
   hidden files/dirs by default (--include-hidden to override), warn above
