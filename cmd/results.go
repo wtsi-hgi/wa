@@ -1303,35 +1303,50 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "register [output-dir]",
-		Short: "Register a result set",
-		Long: `Register a result set.
+		Short: "Register result files",
+		Long: `Register result files from an output directory.
 
-The --run, --study, --sample and --library shorthands resolve through MLWH
-and store canonical seqmeta metadata keys.
---sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or
-donor ID.
---study accepts LIMS ID, accession, UUID, or name; --run accepts numeric run
-IDs.
---library accepts exact pipeline_id_lims, library_id, or id_library_lims values
-and requires the MLWH cache to have been synced already.
+Identity:
+  output-dir (required) is the directory to scan for output files.
+  --user (required) records the requester or owner.
+  --operator (optional) records who performed the registration.
+  --command (optional) records the command line that produced the results.
+  --workflow (required) is the workflow identity: a raw string, local Nextflow
+    file, GitHub URL, or owner/repo shorthand.
+  --unique (required) is the stable unique run key. Use the same value when
+    rerunning the same logical result so the stored registration, files and
+    metadata are refreshed.
 
-Registrations are keyed by the detected workflow identity and the unique key.
 The server replaces an existing result set instead of adding a new one when a
 registration has the same workflow identity and unique key.
-The workflow identity comes from --workflow. Local Nextflow workflow files use
-repository/commit metadata when they are inside git and otherwise use the
-workflow path and content hash. GitHub URLs and owner/repo shorthands for
-Nextflow workflows use GitHub repository metadata. Values that are not
-recognized by a workflow-specific resolver are stored as the raw workflow
-identity string.
-The unique key is built from --unique. Use the same value
-when rerunning the same logical result and you want the stored registration,
-files and metadata to be refreshed.
-Choose a single stable, human-readable label for --unique that describes the
+Use a single stable, human-readable label for --unique that describes the
 output, such as a run, cohort, panel or parameter-set label, and reuse it for
 future replacements.
 Avoid a timestamp, random value, or output path unless every registration should
-create a new result set.`,
+create a new result set.
+
+Files:
+  --input-file tracks input files separately from scanned outputs.
+  --match limits scanned outputs with output-relative globs; repeat it to match
+    any glob.
+  --include-hidden includes hidden files and directories in the scan.
+  --json reads a complete registration JSON payload from stdin instead of
+    scanning output-dir.
+
+Metadata:
+  --run, --study, --sample and --library resolve through MLWH and store
+    canonical seqmeta metadata keys. They require a previously synced MLWH cache.
+  --run accepts numeric run IDs.
+  --study accepts LIMS ID, accession, UUID, or name.
+  --sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or
+    donor ID.
+  --library accepts exact pipeline_id_lims, library_id, or id_library_lims
+    values and requires a previously synced MLWH cache.
+  --meta adds literal key=value metadata; repeat it to keep multiple values.
+
+Server:
+  --server selects the results server, and --cert sets the CA/cert path used to
+  trust it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -1369,26 +1384,27 @@ create a new result set.`,
 		},
 	}
 
-	command.Flags().StringVar(&requester, "user", "", "Requester name")
-	command.Flags().StringVar(&operator, "operator", "", "Operator name")
-	command.Flags().StringVar(&commandLine, "command", "", "Command line used to produce the results")
-	command.Flags().StringVar(&workflowReference, "workflow", "", "Workflow identity; may be a raw string, local Nextflow file, GitHub URL, or owner/repo shorthand")
+	command.Flags().StringVar(&requester, "user", "", "Requester or owner name (required)")
+	command.Flags().StringVar(&operator, "operator", "", "Operator who performed the registration")
+	command.Flags().StringVar(&commandLine, "command", "", "Command line that produced the results")
+	command.Flags().StringVar(&workflowReference, "workflow", "", "Workflow identity (required): raw string, local Nextflow file, GitHub URL, or owner/repo")
+	command.Flags().StringVar(&unique, "unique", "", "Stable unique run key for replacement (required)")
+	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track separately from outputs; repeat as needed")
+	command.Flags().StringArrayVar(&matchPatterns, "match", nil, "Output-relative glob of files to register; repeat to match any glob")
+	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Scan hidden files and directories")
+	command.Flags().StringArrayVar(&lookupValues.run, "run", nil, "MLWH id_run lookup; repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.study, "study", nil, "MLWH study lookup (LIMS ID, accession, UUID, or name); repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.sample, "sample", nil, "MLWH sample lookup (Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID); repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.library, "library", nil, "MLWH library lookup (pipeline_id_lims, library_id, or id_library_lims); requires a previously synced MLWH cache; repeat as needed")
+	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Literal metadata as key=value; repeat to keep multiple values")
+	command.Flags().BoolVar(&useJSON, "json", false, "Read complete registration JSON from stdin instead of scanning output-dir")
 	command.Flags().StringVar(&workflowReference, "nextflow-workflow", "", "Deprecated alias for --workflow")
-	command.Flags().StringVar(&unique, "unique", "", "Stable unique label for this result set")
 	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
-	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
-	command.Flags().StringArrayVar(&matchPatterns, "match", nil, "Output-relative glob for files to register; may be supplied multiple times")
-	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
-	command.Flags().StringArrayVar(&lookupValues.run, "run", nil, "Resolve a numeric id_run through MLWH and store it as seqmeta_id_run; may be supplied multiple times")
-	command.Flags().StringArrayVar(&lookupValues.study, "study", nil, "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_id_study_lims; may be supplied multiple times")
-	command.Flags().StringArrayVar(&lookupValues.sample, "sample", nil, "Resolve a sample name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_name; may be supplied multiple times")
-	command.Flags().StringArrayVar(&lookupValues.library, "library", nil, "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache; may be supplied multiple times")
-	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
-	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 	_ = command.Flags().MarkHidden("runid")
 	_ = command.Flags().MarkHidden("additional-unique")
 	_ = command.Flags().MarkHidden("nextflow-workflow")
+	command.Flags().SortFlags = false
 
 	return command
 }

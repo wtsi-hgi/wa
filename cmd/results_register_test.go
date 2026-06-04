@@ -36,6 +36,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1388,6 +1389,57 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(output, convey.ShouldNotContainSubstring, "--additional-unique")
 	})
 
+	convey.Convey("Given register help, when printed, then it presents required identity, file, metadata, and server options in priority order", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"results", "register", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		assertHelpMarkersInOrder(output,
+			"Identity:",
+			"output-dir (required)",
+			"--user (required)",
+			"--operator (optional)",
+			"--command (optional)",
+			"--workflow (required)",
+			"--unique (required)",
+			"Files:",
+			"--input-file",
+			"--match",
+			"--include-hidden",
+			"Metadata:",
+			"--run",
+			"--study",
+			"--sample",
+			"--library",
+			"--meta",
+			"Server:",
+			"--server",
+			"--cert",
+		)
+
+		_, flagsOutput, foundFlags := strings.Cut(output, "\nFlags:")
+		convey.So(foundFlags, convey.ShouldBeTrue)
+		localFlags, globalFlags, foundGlobalFlags := strings.Cut(flagsOutput, "\nGlobal Flags:")
+		convey.So(foundGlobalFlags, convey.ShouldBeTrue)
+		assertHelpMarkersInOrder(localFlags,
+			"--user string",
+			"--operator string",
+			"--command string",
+			"--workflow string",
+			"--unique string",
+			"--input-file stringArray",
+			"--match stringArray",
+			"--include-hidden",
+			"--run stringArray",
+			"--study stringArray",
+			"--sample stringArray",
+			"--library stringArray",
+			"--meta stringArray",
+		)
+		convey.So(globalFlags, convey.ShouldContainSubstring, "--server string")
+		convey.So(globalFlags, convey.ShouldContainSubstring, "--cert string")
+		convey.So(output, convey.ShouldNotContainSubstring, "--nextflow-workflow")
+	})
+
 	convey.Convey("G1.4: Given missing --user, then the command returns an error and stderr contains the error", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -1477,6 +1529,19 @@ func writeRegisterCommandTestFile(t *testing.T, path, content string) {
 
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func assertHelpMarkersInOrder(output string, markers ...string) {
+	previousIndex := -1
+
+	for _, marker := range markers {
+		index := strings.Index(output, marker)
+
+		convey.So(index, convey.ShouldBeGreaterThan, -1)
+		convey.So(index, convey.ShouldBeGreaterThan, previousIndex)
+
+		previousIndex = index
 	}
 }
 
