@@ -48,7 +48,9 @@ var combinedStudyMetaKeys = []string{
 	"study_id",
 	SeqmetaIDStudyLimsKey,
 	LegacySeqmetaStudyIDKey,
-	"seqmeta_study_accession",
+	SeqmetaStudyAccessionKey,
+	SeqmetaStudyUUIDKey,
+	SeqmetaStudyNameKey,
 }
 
 var libraryTypeMetaKeys = []string{
@@ -80,6 +82,8 @@ var combinedSampleMetaKeys = []string{
 	SeqmetaSupplierNameKey,
 	SeqmetaIDSampleLimsKey,
 	SeqmetaAccessionNumberKey,
+	SeqmetaSampleUUIDKey,
+	SeqmetaDonorIDKey,
 	LegacySeqmetaSampleIDKey,
 	LegacySeqmetaSampleLimsKey,
 }
@@ -1130,10 +1134,14 @@ func (s *Server) handleGetResults(c *gin.Context) {
 	laneValues = mergeSearchValues(laneValues, params.Meta["seqmeta_lane"])
 	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaIDStudyLimsKey])
 	studyValues = mergeSearchValues(studyValues, params.Meta[LegacySeqmetaStudyIDKey])
-	studyValues = mergeSearchValues(studyValues, params.Meta["seqmeta_study_accession"])
+	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaStudyAccessionKey])
+	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaStudyUUIDKey])
+	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaStudyNameKey])
 	delete(params.Meta, SeqmetaIDStudyLimsKey)
 	delete(params.Meta, LegacySeqmetaStudyIDKey)
-	delete(params.Meta, "seqmeta_study_accession")
+	delete(params.Meta, SeqmetaStudyAccessionKey)
+	delete(params.Meta, SeqmetaStudyUUIDKey)
+	delete(params.Meta, SeqmetaStudyNameKey)
 	delete(params.Meta, "library")
 	delete(params.Meta, SeqmetaPipelineIDLimsKey)
 	delete(params.Meta, LegacySeqmetaLibraryKey)

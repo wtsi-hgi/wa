@@ -462,6 +462,42 @@ type resultsRegisterResolver interface {
 	Close() error
 }
 
+func resolveResultsRegisterStudyMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
+	match, err := client.ResolveStudy(ctx, value)
+	if err != nil {
+		return nil, fmt.Errorf("resolve --study %q: %w", value, err)
+	}
+
+	canonicalStudyID, err := resultsRegisterResolvedCanonical("--study", value, match.Canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := map[string]string{results.SeqmetaIDStudyLimsKey: canonicalStudyID}
+	trimmedValue := strings.TrimSpace(value)
+	if sourceKey := resultsRegisterStudySourceMetadataKey(match.Kind); sourceKey != "" && trimmedValue != "" {
+		metadata[sourceKey] = trimmedValue
+		if !strings.EqualFold(trimmedValue, canonicalStudyID) {
+			metadata["study"] = trimmedValue
+		}
+	}
+
+	return metadata, nil
+}
+
+func resultsRegisterStudySourceMetadataKey(kind mlwh.IdentifierKind) string {
+	switch kind {
+	case mlwh.KindStudyAccession:
+		return results.SeqmetaStudyAccessionKey
+	case mlwh.KindStudyUUID:
+		return results.SeqmetaStudyUUIDKey
+	case mlwh.KindStudyName:
+		return results.SeqmetaStudyNameKey
+	default:
+		return ""
+	}
+}
+
 func resolveResultsRegisterSampleMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
 	match, err := resolveResultsRegisterSample(ctx, client, value)
 	if err != nil {
@@ -475,11 +511,33 @@ func resolveResultsRegisterSampleMetadata(ctx context.Context, client resultsReg
 
 	metadata := map[string]string{results.SeqmetaSampleNameKey: canonicalSampleName}
 	trimmedValue := strings.TrimSpace(value)
+	if sourceKey := resultsRegisterSampleSourceMetadataKey(match.Kind); sourceKey != "" && trimmedValue != "" {
+		metadata[sourceKey] = trimmedValue
+	}
 	if trimmedValue != "" && !strings.EqualFold(trimmedValue, canonicalSampleName) {
 		metadata["sample"] = trimmedValue
 	}
 
 	return metadata, nil
+}
+
+func resultsRegisterSampleSourceMetadataKey(kind mlwh.IdentifierKind) string {
+	switch kind {
+	case mlwh.KindSampleLimsID:
+		return results.SeqmetaIDSampleLimsKey
+	case mlwh.KindSangerSampleID:
+		return results.SeqmetaSangerSampleIDKey
+	case mlwh.KindSupplierName:
+		return results.SeqmetaSupplierNameKey
+	case mlwh.KindSampleAccession:
+		return results.SeqmetaAccessionNumberKey
+	case mlwh.KindSampleUUID:
+		return results.SeqmetaSampleUUIDKey
+	case mlwh.KindDonorID:
+		return results.SeqmetaDonorIDKey
+	default:
+		return ""
+	}
 }
 
 func resolveResultsRegisterSample(ctx context.Context, client resultsRegisterResolver, value string) (mlwh.Match, error) {
@@ -725,12 +783,14 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 	}
 
 	for _, trimmedStudy := range nonEmptyRegisterLookupValues(values.study) {
-		resolvedStudyID, err := resolveResultsRegisterStudyID(ctx, client, trimmedStudy)
+		studyMetadata, err := resolveResultsRegisterStudyMetadata(ctx, client, trimmedStudy)
 		if err != nil {
 			return nil, err
 		}
 
-		appendResultsRegisterMetadataValue(metadata, results.SeqmetaIDStudyLimsKey, resolvedStudyID)
+		for key, value := range studyMetadata {
+			appendResultsRegisterMetadataValue(metadata, key, value)
+		}
 	}
 
 	for _, trimmedSample := range nonEmptyRegisterLookupValues(values.sample) {
@@ -765,15 +825,6 @@ func resolveResultsRegisterRunID(ctx context.Context, client resultsRegisterReso
 	}
 
 	return resultsRegisterResolvedCanonical("--run", value, match.Canonical)
-}
-
-func resolveResultsRegisterStudyID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
-	match, err := client.ResolveStudy(ctx, value)
-	if err != nil {
-		return "", fmt.Errorf("resolve --study %q: %w", value, err)
-	}
-
-	return resultsRegisterResolvedCanonical("--study", value, match.Canonical)
 }
 
 func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
@@ -1619,6 +1670,28 @@ func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[strin
 }
 
 func resultsRegisterSeqmetaFlagName(metaKey string) string {
+	switch metaKey {
+	case results.SeqmetaIDStudyLimsKey,
+		results.SeqmetaStudyAccessionKey,
+		results.SeqmetaStudyUUIDKey,
+		results.SeqmetaStudyNameKey,
+		results.LegacySeqmetaStudyIDKey,
+		"study":
+		return "study"
+	case results.SeqmetaSampleNameKey,
+		results.SeqmetaSampleNameURLKey,
+		results.SeqmetaIDSampleLimsKey,
+		results.SeqmetaSangerSampleIDKey,
+		results.SeqmetaSupplierNameKey,
+		results.SeqmetaAccessionNumberKey,
+		results.SeqmetaSampleUUIDKey,
+		results.SeqmetaDonorIDKey,
+		results.LegacySeqmetaSampleIDKey,
+		results.LegacySeqmetaSampleLimsKey,
+		"sample":
+		return "sample"
+	}
+
 	switch metaKey {
 	case results.SeqmetaLibraryIDKey,
 		results.SeqmetaIDLibraryLimsKey,

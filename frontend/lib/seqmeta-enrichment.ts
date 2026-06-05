@@ -22,16 +22,21 @@ export type SeqmetaEnrichmentLookupResult = {
 };
 
 type SeqmetaAliasType =
+    | "donor_id"
     | "id_library_lims"
     | "library_type"
     | "library_id"
     | "run_id"
     | "sample_accession"
     | "sample_lims_id"
+    | "sample_uuid"
     | "sanger_sample_name"
     | "sanger_sample_id"
+    | "supplier_name"
     | "study_accession"
-    | "study_lims_id";
+    | "study_lims_id"
+    | "study_name"
+    | "study_uuid";
 
 export function isSeqmetaKey(key: string): boolean {
     return isSeqmetaKeyValue(key);
@@ -189,15 +194,21 @@ function seqmetaLookupPriority(metadataKey: string): number {
 
     if (
         canonicalKey === "seqmeta_id_study_lims" ||
-        metadataKey === "seqmeta_study_accession"
+        canonicalKey === "seqmeta_study_accession" ||
+        canonicalKey === "seqmeta_uuid_study_lims" ||
+        canonicalKey === "seqmeta_study_name"
     ) {
         return 0;
     }
 
     if (
         canonicalKey === "seqmeta_sample_name" ||
+        canonicalKey === "seqmeta_supplier_name" ||
         canonicalKey === "seqmeta_sanger_sample_id" ||
-        canonicalKey === "seqmeta_id_sample_lims"
+        canonicalKey === "seqmeta_id_sample_lims" ||
+        canonicalKey === "seqmeta_accession_number" ||
+        canonicalKey === "seqmeta_uuid_sample_lims" ||
+        canonicalKey === "seqmeta_donor_id"
     ) {
         return 1;
     }
@@ -342,6 +353,8 @@ function collectSeqmetaAliases(
     add(enrichment.identifier, enrichment.type as SeqmetaAliasType);
     add(enrichment.graph.study?.id_study_lims, "study_lims_id");
     add(enrichment.graph.study?.accession_number, "study_accession");
+    add(enrichment.graph.study?.uuid_study_lims, "study_uuid");
+    add(enrichment.graph.study?.name, "study_name");
     add(enrichment.graph.library?.id_study_lims, "study_lims_id");
     add(enrichment.graph.library?.library_type, "library_type");
     add(enrichment.graph.library?.library_id, "library_id");
@@ -361,11 +374,13 @@ function collectSeqmetaAliases(
         library_type?: string;
         sanger_id?: string;
         sample_name?: string;
+        supplier_name?: string;
         study_accession_number?: string;
         id_run?: number;
     }) {
         add(sample.sample_name, "sanger_sample_name");
         add(sample.sanger_id, "sanger_sample_id");
+        add(sample.supplier_name, "supplier_name");
         add(sample.id_sample_lims, "sample_lims_id");
         add(sample.id_study_lims, "study_lims_id");
         add(sample.study_accession_number, "study_accession");

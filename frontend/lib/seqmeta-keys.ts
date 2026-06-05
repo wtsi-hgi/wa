@@ -14,14 +14,23 @@ const userFacingMlwhKeyConfigs = {
     sample: {
         label: "Sample",
         seqmetaKeys: [
-            "seqmeta_sample_name",
+            "seqmeta_supplier_name",
             "seqmeta_sanger_sample_id",
             "seqmeta_id_sample_lims",
+            "seqmeta_accession_number",
+            "seqmeta_uuid_sample_lims",
+            "seqmeta_donor_id",
+            "seqmeta_sample_name",
         ],
     },
     study: {
         label: "Study",
-        seqmetaKeys: ["seqmeta_id_study_lims", "seqmeta_study_accession"],
+        seqmetaKeys: [
+            "seqmeta_study_accession",
+            "seqmeta_uuid_study_lims",
+            "seqmeta_study_name",
+            "seqmeta_id_study_lims",
+        ],
     },
     library: {
         label: "Library",

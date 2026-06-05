@@ -3349,12 +3349,12 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(filterLink.getAttribute("href")).toBe("/?sample=Hek_R1");
     });
 
-    it("labels supplier-backed sample dialogs as Sample and hides the duplicate supplier-name direct row", async () => {
+    it("labels supplier-backed sample dialogs with the source-specific supplier key and hides the duplicate supplier-name direct row", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 
         render(
             createElement(SeqmetaBadge, {
-                metadataKey: "seqmeta_sample_name",
+                metadataKey: "seqmeta_supplier_name",
                 rawValue: "Hek_R1",
                 enrichment: buildEnrichment({
                     identifier: "Hek_R1",
@@ -3384,20 +3384,24 @@ describe("M1 result detail seqmeta enrichment", () => {
         ).map((label) => label.textContent);
 
         expect(dialogHeader?.querySelector("h3")?.textContent).toBe("Hek_R1");
-        expect(titleLabels).toContain("Sample");
+        expect(titleLabels).toContain("seqmeta_supplier_name");
         expect(titleLabels).not.toContain("seqmeta_sample_name");
         expect(
-            screen.getByRole("button", { name: "Open Sample details" }),
+            screen.getByRole("button", {
+                name: "Open seqmeta_supplier_name details",
+            }),
         ).toBeTruthy();
         expect(
             screen
                 .getByTestId("seqmeta-title-actions")
-                .querySelector('[aria-label="Copy Sample"]'),
+                .querySelector('[aria-label="Copy seqmeta_supplier_name"]'),
         ).toBeTruthy();
         expect(
             screen
                 .getByTestId("seqmeta-title-actions")
-                .querySelector('[aria-label="Send Sample to search filter"]')
+                .querySelector(
+                    '[aria-label="Send seqmeta_supplier_name to search filter"]',
+                )
                 ?.getAttribute("href"),
         ).toBe("/?sample=Hek_R1");
 

@@ -216,7 +216,7 @@ describe("ResultMetadata", () => {
         expect(sampleRow?.textContent).not.toContain("7607STDY14643771");
         expect(
             within(sampleRow as HTMLElement).getByRole("button", {
-                name: "Open seqmeta_sample_name details",
+                name: "Open Sample details",
             }),
         ).toBeTruthy();
     });
@@ -228,11 +228,13 @@ describe("ResultMetadata", () => {
                 metadata: {
                     foo: "bar",
                     sample: "Hek_R1",
+                    seqmeta_supplier_name: "Hek_R1",
                     seqmeta_name: "7607STDY14643771",
                 },
                 metadataValues: {
                     foo: ["bar", "baz"],
                     sample: ["Hek_R1", "Hek_R2"],
+                    seqmeta_supplier_name: ["Hek_R1", "Hek_R2"],
                     seqmeta_name: ["7607STDY14643771", "7607STDY14643772"],
                 },
                 enrichments: {
@@ -273,7 +275,7 @@ describe("ResultMetadata", () => {
         ).toEqual(["Hek_R1", "Hek_R2"]);
         expect(
             within(sampleRow as HTMLElement).getAllByRole("button", {
-                name: "Open seqmeta_sample_name details",
+                name: "Open Sample details",
             }),
         ).toHaveLength(2);
     });
@@ -355,6 +357,46 @@ describe("ResultMetadata", () => {
         ).toHaveLength(2);
         expect(within(sampleRow as HTMLElement).queryByText(",")).toBeNull();
         expect(sampleRow?.textContent).not.toContain("Hek_R1,Hek_R2");
+
+        fireEvent.click(
+            within(sampleRow as HTMLElement).getAllByRole("button", {
+                name: "Open Sample details",
+            })[0]!,
+        );
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const dialogHeader = screen.getByText("Seqmeta details").closest("div");
+        const titleLabels = Array.from(
+            dialogHeader?.querySelectorAll("p") ?? [],
+        ).map((label) => label.textContent);
+
+        expect(titleLabels).toContain("seqmeta_supplier_name");
+        expect(titleLabels).not.toContain("Sample");
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector('[aria-label="Copy seqmeta_supplier_name"]'),
+        ).toBeTruthy();
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector(
+                    '[aria-label="Send seqmeta_supplier_name to search filter"]',
+                )
+                ?.getAttribute("href"),
+        ).toBe("/?sample=Hek_R1");
+
+        const directMetadataSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_supplier_name"]',
+            ),
+        ).toBeNull();
     });
 
     it("applies user-facing MLWH rendering to study, library, and run metadata with canonical companions", async () => {
@@ -399,7 +441,7 @@ describe("ResultMetadata", () => {
 
         expect(visibleKeys).toEqual(["study", "library", "run"]);
 
-        for (const [key, label, detailKey] of [
+        for (const [key, label, triggerLabel] of [
             ["study", "Study", "seqmeta_id_study_lims"],
             ["library", "Library", "seqmeta_pipeline_id_lims"],
             ["run", "Run", "seqmeta_id_run"],
@@ -411,7 +453,7 @@ describe("ResultMetadata", () => {
             expect(row?.querySelector("td")?.textContent).toBe(label);
             expect(
                 within(row as HTMLElement).getByRole("button", {
-                    name: `Open ${detailKey} details`,
+                    name: `Open ${triggerLabel} details`,
                 }),
             ).toBeTruthy();
         }

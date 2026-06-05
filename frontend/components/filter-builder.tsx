@@ -47,6 +47,8 @@ const combinedStudyMetaKeys = new Set([
     "seqmeta_id_study_lims",
     "seqmeta_studyid",
     "seqmeta_study_accession",
+    "seqmeta_uuid_study_lims",
+    "seqmeta_study_name",
 ]);
 
 const combinedSampleMetaKeys = new Set([
@@ -58,6 +60,10 @@ const combinedSampleMetaKeys = new Set([
     "seqmeta_name",
     "seqmeta_sample_name",
     "seqmeta_sanger_sample_id",
+    "seqmeta_supplier_name",
+    "seqmeta_accession_number",
+    "seqmeta_uuid_sample_lims",
+    "seqmeta_donor_id",
     "seqmeta_sampleid",
     "seqmeta_sample_lims",
 ]);

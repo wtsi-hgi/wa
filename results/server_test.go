@@ -1180,6 +1180,27 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-study-lims-match")
 	})
 
+	convey.Convey("Bug 260605-5: Given GET /results?study=ERP7607, then source-specific study metadata is matched by the combined Study field", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-accession-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaStudyAccessionKey: "ERP7607"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-accession-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{SeqmetaStudyAccessionKey: "ERP7608"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?study=ERP7607", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-study-accession-match")
+	})
+
 	convey.Convey("Bug 3: Given GET /results?sample=SMP1001, then metadata aliases like seqmeta_sample_lims are matched by the combined Sample field", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-alias-match", func(reg *Registration) {
@@ -1220,6 +1241,27 @@ func TestServerGetResults(t *testing.T) {
 
 		convey.So(results, convey.ShouldHaveLength, 1)
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-name-match")
+	})
+
+	convey.Convey("Bug 260605-5: Given GET /results?sample=Hek_R1, then source-specific sample metadata is matched by the combined Sample field", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-source-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSupplierNameKey: "Hek_R1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-source-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{SeqmetaSupplierNameKey: "Hek_R2"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?sample=Hek_R1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-source-match")
 	})
 
 	convey.Convey("Bug item 4: Given GET /results?sample=Hek_R1, then supplier-name sample aliases are resolved from registered sample candidates without slow live expansion", t, func() {

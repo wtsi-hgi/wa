@@ -1211,10 +1211,92 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(sampleCalls, convey.ShouldResemble, []string{"Hek_R1", "Hek_R2"})
 		convey.So(registration.Metadata["sample"], convey.ShouldEqual, "Hek_R1")
 		convey.So(registration.MetadataValues["sample"], convey.ShouldResemble, []string{"Hek_R1", "Hek_R2"})
+		convey.So(registration.Metadata[results.SeqmetaSupplierNameKey], convey.ShouldEqual, "Hek_R1")
+		convey.So(registration.MetadataValues[results.SeqmetaSupplierNameKey], convey.ShouldResemble, []string{"Hek_R1", "Hek_R2"})
 		convey.So(registration.Metadata[results.SeqmetaSampleNameKey], convey.ShouldEqual, "7607STDY14643771")
 		convey.So(registration.MetadataValues[results.SeqmetaSampleNameKey], convey.ShouldResemble, []string{"7607STDY14643771"})
 		convey.So(registration.Metadata["foo"], convey.ShouldEqual, "bar")
 		convey.So(registration.MetadataValues["foo"], convey.ShouldResemble, []string{"bar", "baz"})
+	})
+
+	convey.Convey("Given alternate --sample source kinds, register preserves the MLWH column-specific metadata keys", t, func() {
+		sampleMatches := map[string]mlwh.Match{
+			"SANGER_SOURCE_3": {
+				Kind:      mlwh.KindSangerSampleID,
+				Canonical: "CANONICAL_SAMPLE_3",
+				Sample: &mlwh.Sample{
+					Name:           "CANONICAL_SAMPLE_3",
+					SangerSampleID: "SANGER_SOURCE_3",
+				},
+			},
+			"6050954": {
+				Kind:      mlwh.KindSampleLimsID,
+				Canonical: "7607STDY14643771",
+				Sample: &mlwh.Sample{
+					Name:         "7607STDY14643771",
+					IDSampleLims: "6050954",
+				},
+			},
+			"SAMEA76070": {
+				Kind:      mlwh.KindSampleAccession,
+				Canonical: "7607STDY14643771",
+				Sample: &mlwh.Sample{
+					Name:            "7607STDY14643771",
+					AccessionNumber: "SAMEA76070",
+				},
+			},
+			"22222222-2222-3333-4444-555555557601": {
+				Kind:      mlwh.KindSampleUUID,
+				Canonical: "7607STDY14643771",
+				Sample: &mlwh.Sample{
+					Name:           "7607STDY14643771",
+					UUIDSampleLims: "22222222-2222-3333-4444-555555557601",
+				},
+			},
+			"DONOR_HEK1": {
+				Kind:      mlwh.KindDonorID,
+				Canonical: "7607STDY14643771",
+				Sample: &mlwh.Sample{
+					Name:    "7607STDY14643771",
+					DonorID: "DONOR_HEK1",
+				},
+			},
+		}
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleNameFn: func(context.Context, string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return sampleMatches[raw], nil
+			},
+		})
+
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--sample", "SANGER_SOURCE_3",
+			"--sample", "6050954",
+			"--sample", "SAMEA76070",
+			"--sample", "22222222-2222-3333-4444-555555557601",
+			"--sample", "DONOR_HEK1",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(registration.MetadataValues["sample"], convey.ShouldResemble, []string{
+			"SANGER_SOURCE_3",
+			"6050954",
+			"SAMEA76070",
+			"22222222-2222-3333-4444-555555557601",
+			"DONOR_HEK1",
+		})
+		convey.So(registration.MetadataValues[results.SeqmetaSampleNameKey], convey.ShouldResemble, []string{
+			"CANONICAL_SAMPLE_3",
+			"7607STDY14643771",
+		})
+		convey.So(registration.MetadataValues[results.SeqmetaSangerSampleIDKey], convey.ShouldResemble, []string{"SANGER_SOURCE_3"})
+		convey.So(registration.MetadataValues[results.SeqmetaIDSampleLimsKey], convey.ShouldResemble, []string{"6050954"})
+		convey.So(registration.MetadataValues[results.SeqmetaAccessionNumberKey], convey.ShouldResemble, []string{"SAMEA76070"})
+		convey.So(registration.MetadataValues["seqmeta_uuid_sample_lims"], convey.ShouldResemble, []string{"22222222-2222-3333-4444-555555557601"})
+		convey.So(registration.MetadataValues["seqmeta_donor_id"], convey.ShouldResemble, []string{"DONOR_HEK1"})
 	})
 
 	convey.Convey("Given repeated --run flags, register sends every resolved run metadata value", t, func() {
@@ -1263,6 +1345,58 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(studyCalls, convey.ShouldResemble, []string{"EGAS00001005445", "EGAS00001005446"})
 		convey.So(registration.Metadata[results.SeqmetaIDStudyLimsKey], convey.ShouldEqual, "6568")
 		convey.So(registration.MetadataValues[results.SeqmetaIDStudyLimsKey], convey.ShouldResemble, []string{"6568", "6569"})
+	})
+
+	convey.Convey("Given alternate --study source kinds, register preserves the MLWH column-specific metadata keys", t, func() {
+		studyMatches := map[string]mlwh.Match{
+			"ERP7607": {
+				Kind:      mlwh.KindStudyAccession,
+				Canonical: "7607",
+				Study: &mlwh.Study{
+					IDStudyLims:     "7607",
+					AccessionNumber: "ERP7607",
+				},
+			},
+			"11111111-2222-3333-4444-555555557607": {
+				Kind:      mlwh.KindStudyUUID,
+				Canonical: "7608",
+				Study: &mlwh.Study{
+					IDStudyLims:   "7608",
+					UUIDStudyLims: "11111111-2222-3333-4444-555555557607",
+				},
+			},
+			"Study 7609 Name": {
+				Kind:      mlwh.KindStudyName,
+				Canonical: "7609",
+				Study: &mlwh.Study{
+					IDStudyLims: "7609",
+					Name:        "Study 7609 Name",
+				},
+			},
+		}
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			studyFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return studyMatches[raw], nil
+			},
+		})
+
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--study", "ERP7607",
+			"--study", "11111111-2222-3333-4444-555555557607",
+			"--study", "Study 7609 Name",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(registration.MetadataValues["study"], convey.ShouldResemble, []string{
+			"ERP7607",
+			"11111111-2222-3333-4444-555555557607",
+			"Study 7609 Name",
+		})
+		convey.So(registration.MetadataValues[results.SeqmetaIDStudyLimsKey], convey.ShouldResemble, []string{"7607", "7608", "7609"})
+		convey.So(registration.MetadataValues["seqmeta_study_accession"], convey.ShouldResemble, []string{"ERP7607"})
+		convey.So(registration.MetadataValues["seqmeta_uuid_study_lims"], convey.ShouldResemble, []string{"11111111-2222-3333-4444-555555557607"})
+		convey.So(registration.MetadataValues["seqmeta_study_name"], convey.ShouldResemble, []string{"Study 7609 Name"})
 	})
 
 	convey.Convey("Given repeated --library flags, register sends every resolved library metadata value across all library keys", t, func() {

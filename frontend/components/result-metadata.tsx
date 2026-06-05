@@ -218,7 +218,9 @@ function displayMetadataStripKey(key: string, entryDisplayKey = key): string {
 
     if (
         displayKey === "seqmeta_id_study_lims" ||
-        displayKey === "seqmeta_study_accession"
+        displayKey === "seqmeta_study_accession" ||
+        displayKey === "seqmeta_uuid_study_lims" ||
+        displayKey === "seqmeta_study_name"
     ) {
         return "Study";
     }
@@ -227,7 +229,10 @@ function displayMetadataStripKey(key: string, entryDisplayKey = key): string {
         displayKey === "seqmeta_sample_name" ||
         displayKey === "seqmeta_sanger_sample_id" ||
         displayKey === "seqmeta_supplier_name" ||
-        displayKey === "seqmeta_id_sample_lims"
+        displayKey === "seqmeta_id_sample_lims" ||
+        displayKey === "seqmeta_accession_number" ||
+        displayKey === "seqmeta_uuid_sample_lims" ||
+        displayKey === "seqmeta_donor_id"
     ) {
         return "Sample";
     }
@@ -256,12 +261,17 @@ function integratedSeqmetaPriority(key: string): number {
 
     if (
         displayKey === "seqmeta_id_study_lims" ||
-        displayKey === "seqmeta_study_accession"
+        displayKey === "seqmeta_study_accession" ||
+        displayKey === "seqmeta_uuid_study_lims" ||
+        displayKey === "seqmeta_study_name"
     ) {
         return 0;
     }
 
-    if (displayKey === "seqmeta_sample_name") {
+    if (
+        displayKey === "seqmeta_supplier_name" ||
+        displayKey === "seqmeta_sample_name"
+    ) {
         return 1;
     }
 
@@ -273,7 +283,11 @@ function integratedSeqmetaPriority(key: string): number {
         return 3;
     }
 
-    if (displayKey === "seqmeta_supplier_name") {
+    if (
+        displayKey === "seqmeta_accession_number" ||
+        displayKey === "seqmeta_uuid_sample_lims" ||
+        displayKey === "seqmeta_donor_id"
+    ) {
         return 4;
     }
 
@@ -348,6 +362,7 @@ function MetadataValue({
     errors,
     loading,
     metadataKey,
+    triggerLabel,
     value,
     values,
 }: {
@@ -356,6 +371,7 @@ function MetadataValue({
     errors: Record<string, "not_found" | "upstream_impaired">;
     loading: Record<string, boolean>;
     metadataKey: string;
+    triggerLabel?: string;
     value: string;
     values: string[];
 }) {
@@ -383,6 +399,7 @@ function MetadataValue({
                             key={`${rawValue}:${index}`}
                             metadataKey={metadataKey}
                             rawValue={rawValue}
+                            triggerLabel={triggerLabel}
                             enrichment={enrichments[lookupKey] ?? null}
                             error={errors[lookupKey]}
                             loading={Boolean(loading[lookupKey])}
@@ -407,6 +424,30 @@ function MetadataValue({
             {displayValue}
         </span>
     );
+}
+
+function userFacingTriggerLabel(
+    key: string,
+    displayKey: string,
+): string | undefined {
+    if (!isUserFacingMlwhMetadataKey(key) || displayKey === key) {
+        return undefined;
+    }
+
+    if (key === "sample") {
+        return userFacingMlwhMetadataLabel(key);
+    }
+
+    if (
+        key === "study" &&
+        (displayKey === "seqmeta_study_accession" ||
+            displayKey === "seqmeta_uuid_study_lims" ||
+            displayKey === "seqmeta_study_name")
+    ) {
+        return userFacingMlwhMetadataLabel(key);
+    }
+
+    return undefined;
 }
 
 export function ResultMetadata({
@@ -632,6 +673,10 @@ export function ResultMetadata({
                                                         errors={errors}
                                                         loading={loading}
                                                         metadataKey={displayKey}
+                                                        triggerLabel={userFacingTriggerLabel(
+                                                            key,
+                                                            displayKey,
+                                                        )}
                                                         value={value}
                                                         values={values}
                                                     />
@@ -674,6 +719,10 @@ export function ResultMetadata({
                                             errors={errors}
                                             loading={loading}
                                             metadataKey={displayKey}
+                                            triggerLabel={userFacingTriggerLabel(
+                                                key,
+                                                displayKey,
+                                            )}
                                             value={value}
                                             values={values}
                                         />
@@ -733,6 +782,10 @@ export function ResultMetadata({
                                                 errors={errors}
                                                 loading={loading}
                                                 metadataKey={displayKey}
+                                                triggerLabel={userFacingTriggerLabel(
+                                                    key,
+                                                    displayKey,
+                                                )}
                                                 value={value}
                                                 values={values}
                                             />

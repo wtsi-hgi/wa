@@ -102,7 +102,9 @@ function toMetaSuggestionKey(metaKey: string): string {
         metaKey === "study" ||
         metaKey === "study_id" ||
         canonicalKey === "seqmeta_id_study_lims" ||
-        metaKey === "seqmeta_study_accession"
+        canonicalKey === "seqmeta_study_accession" ||
+        canonicalKey === "seqmeta_uuid_study_lims" ||
+        canonicalKey === "seqmeta_study_name"
     ) {
         return "study";
     }
@@ -113,8 +115,12 @@ function toMetaSuggestionKey(metaKey: string): string {
         metaKey === "sample_name" ||
         metaKey === "sample_accession_number" ||
         canonicalKey === "seqmeta_sample_name" ||
+        canonicalKey === "seqmeta_supplier_name" ||
         canonicalKey === "seqmeta_sanger_sample_id" ||
-        canonicalKey === "seqmeta_id_sample_lims"
+        canonicalKey === "seqmeta_id_sample_lims" ||
+        canonicalKey === "seqmeta_accession_number" ||
+        canonicalKey === "seqmeta_uuid_sample_lims" ||
+        canonicalKey === "seqmeta_donor_id"
     ) {
         return "sample";
     }

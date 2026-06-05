@@ -56,6 +56,12 @@ const (
 	SeqmetaIDRunKey = "seqmeta_id_run"
 	// SeqmetaIDStudyLimsKey stores an MLWH id_study_lims value.
 	SeqmetaIDStudyLimsKey = "seqmeta_id_study_lims"
+	// SeqmetaStudyAccessionKey stores an MLWH study accession_number value.
+	SeqmetaStudyAccessionKey = "seqmeta_study_accession"
+	// SeqmetaStudyUUIDKey stores an MLWH uuid_study_lims value.
+	SeqmetaStudyUUIDKey = "seqmeta_uuid_study_lims"
+	// SeqmetaStudyNameKey stores an MLWH study name value.
+	SeqmetaStudyNameKey = "seqmeta_study_name"
 	// SeqmetaSampleNameKey stores the MLWH sample name value used as the
 	// canonical sample identity for sample-scoped result metadata.
 	SeqmetaSampleNameKey = "seqmeta_name"
@@ -71,6 +77,10 @@ const (
 	SeqmetaSupplierNameKey = "seqmeta_supplier_name"
 	// SeqmetaAccessionNumberKey stores an MLWH sample accession_number value.
 	SeqmetaAccessionNumberKey = "seqmeta_accession_number"
+	// SeqmetaSampleUUIDKey stores an MLWH uuid_sample_lims value.
+	SeqmetaSampleUUIDKey = "seqmeta_uuid_sample_lims"
+	// SeqmetaDonorIDKey stores an MLWH donor_id value.
+	SeqmetaDonorIDKey = "seqmeta_donor_id"
 	// SeqmetaPipelineIDLimsKey stores an MLWH pipeline_id_lims value.
 	SeqmetaPipelineIDLimsKey = "seqmeta_pipeline_id_lims"
 	// SeqmetaLibraryIDKey stores an MLWH library_id value.
@@ -96,11 +106,18 @@ var SeqmetaFieldTypes = map[string]string{
 	"runid":            "run_id",
 	"id_study_lims":    "study_lims_id",
 	"studyid":          "study_lims_id",
+	"study_accession":  "study_accession",
+	"uuid_study_lims":  "study_uuid",
+	"study_name":       "study_name",
 	"name":             "sanger_sample_name",
 	"sampleid":         "sanger_sample_name",
 	"id_sample_lims":   "sample_lims_id",
 	"sample_lims":      "sample_lims_id",
 	"sanger_sample_id": "sanger_sample_id",
+	"supplier_name":    "supplier_name",
+	"accession_number": "sample_accession",
+	"uuid_sample_lims": "sample_uuid",
+	"donor_id":         "donor_id",
 	"library":          "library_type",
 	"library_id":       "library_id",
 	"libraryid":        "library_id",

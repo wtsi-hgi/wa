@@ -98,6 +98,7 @@ export const enrichmentStudySchema = z.object({
     id_study_tmp: z.number(),
     id_lims: z.string(),
     id_study_lims: z.string(),
+    uuid_study_lims: z.string().optional(),
     name: z.string(),
     faculty_sponsor: z.string(),
     state: z.string(),
