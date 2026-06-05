@@ -419,6 +419,46 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(requestCount, convey.ShouldEqual, 0)
 	})
 
+	convey.Convey("Given --match filters out every scanned output, register fails before MLWH or workflow identity resolution", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "missing.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "reports", "summary.html"), "html")
+
+		originalResolverOpener := resultsRegisterResolverOpener
+		resolverOpenCount := 0
+		resultsRegisterResolverOpener = func(context.Context) (resultsRegisterResolver, error) {
+			resolverOpenCount++
+
+			return nil, errors.New("MLWH resolver opened before scanning outputs")
+		}
+		convey.Reset(func() { resultsRegisterResolverOpener = originalResolverOpener })
+
+		requestCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results",
+			"--server", server.URL,
+			"register",
+			"--user", "alice",
+			"--unique", "filtered-before-resolvers",
+			"--workflow", workflowPath,
+			"--match", "vcfs/*.vcf.gz",
+			"--sample", "sample-1",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "no output files")
+		convey.So(resolverOpenCount, convey.ShouldEqual, 0)
+		convey.So(requestCount, convey.ShouldEqual, 0)
+	})
+
 	convey.Convey("Given an empty output directory, register fails locally without sending a request", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -439,6 +479,34 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--user", "alice",
 			"--unique", "empty-dir",
 			"--workflow", workflowPath,
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "no output files")
+		convey.So(requestCount, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("Given an empty output directory, register fails before metadata parsing or workflow identity resolution", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "missing.nf")
+
+		requestCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results",
+			"--server", server.URL,
+			"register",
+			"--user", "alice",
+			"--unique", "empty-before-parsing",
+			"--workflow", workflowPath,
+			"--meta", "not-key-value",
 			outputDir,
 		}, nil)
 

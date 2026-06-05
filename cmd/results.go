@@ -1561,16 +1561,6 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("--unique is required")
 	}
 
-	seqmetaMetadata, err := resolveResultsRegisterLookupMetadata(ctx, lookupValues)
-	if err != nil {
-		return nil, err
-	}
-
-	metadata, metadataValues, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
-	if err != nil {
-		return nil, err
-	}
-
 	outputDir, err := filepath.Abs(args[0])
 	if err != nil {
 		return nil, fmt.Errorf("resolve output directory: %w", err)
@@ -1588,6 +1578,16 @@ func buildResultsRegistrationForCommand(
 	writeResultsScanWarnings(cmd.ErrOrStderr(), scanWarnings)
 	if len(outputFiles) == 0 {
 		return nil, errors.New("no output files discovered in output directory")
+	}
+
+	seqmetaMetadata, err := resolveResultsRegisterLookupMetadata(ctx, lookupValues)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata, metadataValues, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
+	if err != nil {
+		return nil, err
 	}
 
 	workflowIdentity, err := results.ResolveWorkflowIdentity(workflowReference)
