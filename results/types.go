@@ -30,14 +30,9 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -56,32 +51,17 @@ var (
 	ErrSeqmetaRejected = errors.New("results: seqmeta validation failed")
 )
 
-var (
-	detectPipelineGitHubAPIBaseURL = "https://api.github.com"
-	detectPipelineHTTPClient       = &http.Client{Timeout: 10 * time.Second}
-)
-
-type githubPipelineReference struct {
-	owner        string
-	repo         string
-	ref          string
-	workflowPath string
-}
-
-type githubRepositoryResponse struct {
-	DefaultBranch string `json:"default_branch"`
-	FullName      string `json:"full_name"`
-}
-
-type githubCommitResponse struct {
-	SHA string `json:"sha"`
-}
-
 const (
 	// SeqmetaIDRunKey stores an MLWH id_run value.
 	SeqmetaIDRunKey = "seqmeta_id_run"
 	// SeqmetaIDStudyLimsKey stores an MLWH id_study_lims value.
 	SeqmetaIDStudyLimsKey = "seqmeta_id_study_lims"
+	// SeqmetaStudyAccessionKey stores an MLWH study accession_number value.
+	SeqmetaStudyAccessionKey = "seqmeta_study_accession"
+	// SeqmetaStudyUUIDKey stores an MLWH uuid_study_lims value.
+	SeqmetaStudyUUIDKey = "seqmeta_uuid_study_lims"
+	// SeqmetaStudyNameKey stores an MLWH study name value.
+	SeqmetaStudyNameKey = "seqmeta_study_name"
 	// SeqmetaSampleNameKey stores the MLWH sample name value used as the
 	// canonical sample identity for sample-scoped result metadata.
 	SeqmetaSampleNameKey = "seqmeta_name"
@@ -97,6 +77,10 @@ const (
 	SeqmetaSupplierNameKey = "seqmeta_supplier_name"
 	// SeqmetaAccessionNumberKey stores an MLWH sample accession_number value.
 	SeqmetaAccessionNumberKey = "seqmeta_accession_number"
+	// SeqmetaSampleUUIDKey stores an MLWH uuid_sample_lims value.
+	SeqmetaSampleUUIDKey = "seqmeta_uuid_sample_lims"
+	// SeqmetaDonorIDKey stores an MLWH donor_id value.
+	SeqmetaDonorIDKey = "seqmeta_donor_id"
 	// SeqmetaPipelineIDLimsKey stores an MLWH pipeline_id_lims value.
 	SeqmetaPipelineIDLimsKey = "seqmeta_pipeline_id_lims"
 	// SeqmetaLibraryIDKey stores an MLWH library_id value.
@@ -122,11 +106,18 @@ var SeqmetaFieldTypes = map[string]string{
 	"runid":            "run_id",
 	"id_study_lims":    "study_lims_id",
 	"studyid":          "study_lims_id",
+	"study_accession":  "study_accession",
+	"uuid_study_lims":  "study_uuid",
+	"study_name":       "study_name",
 	"name":             "sanger_sample_name",
 	"sampleid":         "sanger_sample_name",
 	"id_sample_lims":   "sample_lims_id",
 	"sample_lims":      "sample_lims_id",
 	"sanger_sample_id": "sanger_sample_id",
+	"supplier_name":    "supplier_name",
+	"accession_number": "sample_accession",
+	"uuid_sample_lims": "sample_uuid",
+	"donor_id":         "donor_id",
 	"library":          "library_type",
 	"library_id":       "library_id",
 	"libraryid":        "library_id",
@@ -138,20 +129,21 @@ var SeqmetaFieldTypes = map[string]string{
 
 // ResultSet is the core domain object returned by queries.
 type ResultSet struct {
-	ID                 string            `json:"id"`
-	PipelineIdentifier string            `json:"pipeline_identifier"`
-	RunKey             string            `json:"run_key"`
-	Requester          string            `json:"requester"`
-	Operator           string            `json:"operator"`
-	Command            string            `json:"command"`
-	PipelineName       string            `json:"pipeline_name"`
-	PipelineVersion    string            `json:"pipeline_version"`
-	OutputDirectory    string            `json:"output_directory"`
-	OutputDirectoryGID *int64            `json:"output_directory_gid"`
-	Metadata           map[string]string `json:"metadata"`
-	Access             AccessState       `json:"access"`
-	CreatedAt          time.Time         `json:"created_at"`
-	UpdatedAt          time.Time         `json:"updated_at"`
+	ID                 string              `json:"id"`
+	PipelineIdentifier string              `json:"pipeline_identifier"`
+	RunKey             string              `json:"run_key"`
+	Requester          string              `json:"requester"`
+	Operator           string              `json:"operator"`
+	Command            string              `json:"command"`
+	PipelineName       string              `json:"pipeline_name"`
+	PipelineVersion    string              `json:"pipeline_version"`
+	OutputDirectory    string              `json:"output_directory"`
+	OutputDirectoryGID *int64              `json:"output_directory_gid"`
+	Metadata           map[string]string   `json:"metadata"`
+	MetadataValues     map[string][]string `json:"metadata_values,omitempty"`
+	Access             AccessState         `json:"access"`
+	CreatedAt          time.Time           `json:"created_at"`
+	UpdatedAt          time.Time           `json:"updated_at"`
 }
 
 // FileEntry represents one tracked file.
@@ -164,17 +156,18 @@ type FileEntry struct {
 
 // Registration is the POST /results request body.
 type Registration struct {
-	PipelineIdentifier string            `json:"pipeline_identifier"`
-	RunKey             string            `json:"run_key"`
-	Requester          string            `json:"requester"`
-	Operator           string            `json:"operator"`
-	Command            string            `json:"command"`
-	PipelineName       string            `json:"pipeline_name"`
-	PipelineVersion    string            `json:"pipeline_version"`
-	OutputDirectory    string            `json:"output_directory"`
-	OutputDirectoryGID *int64            `json:"-"`
-	Files              []FileEntry       `json:"files"`
-	Metadata           map[string]string `json:"metadata"`
+	PipelineIdentifier string              `json:"pipeline_identifier"`
+	RunKey             string              `json:"run_key"`
+	Requester          string              `json:"requester"`
+	Operator           string              `json:"operator"`
+	Command            string              `json:"command"`
+	PipelineName       string              `json:"pipeline_name"`
+	PipelineVersion    string              `json:"pipeline_version"`
+	OutputDirectory    string              `json:"output_directory"`
+	OutputDirectoryGID *int64              `json:"-"`
+	Files              []FileEntry         `json:"files"`
+	Metadata           map[string]string   `json:"metadata"`
+	MetadataValues     map[string][]string `json:"metadata_values,omitempty"`
 }
 
 // SearchParams holds parsed query parameters for filtering.
@@ -263,262 +256,6 @@ func appendLengthPrefixedKeyPart(key []byte, value string) []byte {
 	key = append(key, length[:]...)
 
 	return append(key, value...)
-}
-
-// DetectPipeline returns pipeline identity derived from git metadata or file content.
-func DetectPipeline(workflowPath string) (string, string, string, error) {
-	if ref, ok := remotePipelineReference(workflowPath); ok {
-		return detectGitHubPipeline(ref)
-	}
-
-	return detectLocalPipeline(workflowPath)
-}
-
-func detectLocalPipeline(workflowPath string) (string, string, string, error) {
-	absPath, err := filepath.Abs(workflowPath)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolve workflow path: %w", err)
-	}
-
-	absPath = filepath.Clean(absPath)
-	content, err := os.ReadFile(absPath)
-	if err != nil {
-		return "", "", "", fmt.Errorf("read workflow file: %w", err)
-	}
-
-	workflowDir := filepath.Dir(absPath)
-	hash := sha256.Sum256(content)
-	contentVersion := hex.EncodeToString(hash[:])
-
-	repoRoot, repoErr := gitOutput(workflowDir, "rev-parse", "--show-toplevel")
-	if repoErr == nil {
-		repoRoot = filepath.Clean(repoRoot)
-		name := filepath.Base(repoRoot)
-		relWorkflowPath, relErr := filepath.Rel(repoRoot, absPath)
-		if relErr != nil {
-			relWorkflowPath = filepath.Base(absPath)
-		}
-		relWorkflowPath = filepath.ToSlash(filepath.Clean(relWorkflowPath))
-
-		identifier := repoRoot + "::" + relWorkflowPath
-
-		if remote, remoteErr := gitOutput(repoRoot, "config", "--get", "remote.origin.url"); remoteErr == nil && remote != "" {
-			identifier = remote + "::" + relWorkflowPath
-			name = repoNameFromIdentifier(remote)
-		}
-
-		version, versionErr := gitOutput(repoRoot, "rev-parse", "HEAD")
-		if versionErr != nil {
-			return identifier, name, contentVersion, nil
-		}
-
-		return identifier, name, version, nil
-	}
-
-	return absPath, filepath.Base(workflowDir), contentVersion, nil
-}
-
-// RemotePipelineReference reports whether workflowPath names an online
-// Nextflow workflow rather than a local workflow file.
-func RemotePipelineReference(workflowPath string) bool {
-	_, ok := remotePipelineReference(workflowPath)
-
-	return ok
-}
-
-func remotePipelineReference(workflowPath string) (githubPipelineReference, bool) {
-	trimmed := strings.TrimSpace(workflowPath)
-	if trimmed == "" {
-		return githubPipelineReference{}, false
-	}
-
-	if parsed, err := url.Parse(trimmed); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
-		return githubReferenceFromURL(parsed)
-	}
-
-	if !looksLikeGitHubShorthand(trimmed) {
-		return githubPipelineReference{}, false
-	}
-
-	if _, err := os.Stat(trimmed); err == nil || !errors.Is(err, os.ErrNotExist) {
-		return githubPipelineReference{}, false
-	}
-
-	parts := strings.Split(trimmed, "/")
-
-	return githubPipelineReference{
-		owner:        parts[0],
-		repo:         strings.TrimSuffix(parts[1], ".git"),
-		workflowPath: "main.nf",
-	}, true
-}
-
-func githubReferenceFromURL(parsed *url.URL) (githubPipelineReference, bool) {
-	if !strings.EqualFold(parsed.Hostname(), "github.com") {
-		return githubPipelineReference{}, false
-	}
-
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) < 2 {
-		return githubPipelineReference{}, false
-	}
-
-	ref := githubPipelineReference{
-		owner:        parts[0],
-		repo:         strings.TrimSuffix(parts[1], ".git"),
-		workflowPath: "main.nf",
-	}
-
-	if len(parts) >= 5 && parts[2] == "blob" {
-		ref.ref = parts[3]
-		ref.workflowPath = strings.Join(parts[4:], "/")
-	} else if len(parts) >= 4 && parts[2] == "tree" {
-		ref.ref = parts[3]
-	}
-
-	return ref, ref.owner != "" && ref.repo != ""
-}
-
-func looksLikeGitHubShorthand(value string) bool {
-	if strings.Contains(value, "://") || strings.Contains(value, ":") || filepath.IsAbs(value) {
-		return false
-	}
-
-	parts := strings.Split(value, "/")
-
-	return len(parts) == 2 && validGitHubPathPart(parts[0]) && validGitHubPathPart(parts[1])
-}
-
-func validGitHubPathPart(value string) bool {
-	return value != "" && value != "." && value != ".." && !strings.ContainsAny(value, `\`)
-}
-
-func detectGitHubPipeline(ref githubPipelineReference) (string, string, string, error) {
-	repository, err := readGitHubRepository(ref)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	if ref.ref == "" {
-		ref.ref = repository.DefaultBranch
-	}
-
-	if ref.ref == "" {
-		return "", "", "", fmt.Errorf("detect GitHub pipeline: repository %s/%s has no default branch", ref.owner, ref.repo)
-	}
-
-	if err := verifyGitHubWorkflow(ref); err != nil {
-		return "", "", "", err
-	}
-
-	commit, err := readGitHubCommit(ref)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	fullName := repository.FullName
-	if fullName == "" {
-		fullName = ref.owner + "/" + ref.repo
-	}
-
-	identifier := "https://github.com/" + fullName + "::" + ref.workflowPath
-
-	return identifier, fullName, commit.SHA, nil
-}
-
-func readGitHubRepository(ref githubPipelineReference) (githubRepositoryResponse, error) {
-	var repository githubRepositoryResponse
-	err := readGitHubJSON("/repos/"+url.PathEscape(ref.owner)+"/"+url.PathEscape(ref.repo), &repository)
-	if err != nil {
-		return githubRepositoryResponse{}, fmt.Errorf("detect GitHub pipeline: %w", err)
-	}
-
-	return repository, nil
-}
-
-func readGitHubCommit(ref githubPipelineReference) (githubCommitResponse, error) {
-	var commit githubCommitResponse
-	err := readGitHubJSON("/repos/"+url.PathEscape(ref.owner)+"/"+url.PathEscape(ref.repo)+"/commits/"+url.PathEscape(ref.ref), &commit)
-	if err != nil {
-		return githubCommitResponse{}, fmt.Errorf("detect GitHub pipeline commit: %w", err)
-	}
-
-	if commit.SHA == "" {
-		return githubCommitResponse{}, errors.New("detect GitHub pipeline commit: empty commit sha")
-	}
-
-	return commit, nil
-}
-
-func verifyGitHubWorkflow(ref githubPipelineReference) error {
-	endpoint := "/repos/" + url.PathEscape(ref.owner) + "/" + url.PathEscape(ref.repo) + "/contents/" + pathEscapeGitHubContentPath(ref.workflowPath)
-	query := url.Values{"ref": []string{ref.ref}}
-
-	if err := readGitHubJSON(endpoint+"?"+query.Encode(), nil); err != nil {
-		return fmt.Errorf("detect GitHub pipeline workflow: %w", err)
-	}
-
-	return nil
-}
-
-func pathEscapeGitHubContentPath(workflowPath string) string {
-	parts := strings.Split(strings.Trim(workflowPath, "/"), "/")
-	for index, part := range parts {
-		parts[index] = url.PathEscape(part)
-	}
-
-	return strings.Join(parts, "/")
-}
-
-func readGitHubJSON(path string, target any) error {
-	endpoint := strings.TrimRight(detectPipelineGitHubAPIBaseURL, "/") + path
-	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-
-	request.Header.Set("Accept", "application/vnd.github+json")
-
-	response, err := detectPipelineHTTPClient.Do(request)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = response.Body.Close() }()
-
-	if response.StatusCode == http.StatusNotFound {
-		return errors.New("not found")
-	}
-
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("unexpected status %d", response.StatusCode)
-	}
-
-	if target == nil {
-		return nil
-	}
-
-	return json.NewDecoder(response.Body).Decode(target)
-}
-
-func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(string(output)), nil
-}
-
-func repoNameFromIdentifier(identifier string) string {
-	trimmed := strings.TrimSpace(identifier)
-	if !strings.Contains(trimmed, "://") && strings.Contains(trimmed, ":") {
-		trimmed = trimmed[strings.LastIndex(trimmed, ":")+1:]
-	}
-
-	base := filepath.Base(trimmed)
-
-	return strings.TrimSuffix(base, ".git")
 }
 
 // BuildRunKey returns a canonical query-encoded run key from non-empty parts.

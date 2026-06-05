@@ -135,6 +135,8 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 	"last_updated",
 }
 
+var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
+
 type studySourceColumnSpec struct {
 	canonical string
 	aliases   []string
@@ -164,19 +166,9 @@ var studySourceColumnSpecs = []studySourceColumnSpec{
 	{canonical: "data_release_timing"},
 }
 
-var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
-
 type syncIndexSpec struct {
 	Name   string
 	Column string
-}
-
-type syncMirrorIndexSet struct {
-	Table                 string
-	SyncTable             string
-	PrimaryKeyColumn      string
-	SkipPrimaryKeyRebuild bool
-	Indexes               []syncIndexSpec
 }
 
 var sampleMirrorSecondaryIndexes = []syncIndexSpec{
@@ -188,6 +180,14 @@ var sampleMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "sample_mirror_accession_number_idx", Column: "accession_number"},
 	{Name: "sample_mirror_donor_id_idx", Column: "donor_id"},
 	{Name: "sample_mirror_last_updated_idx", Column: "last_updated"},
+}
+
+type syncMirrorIndexSet struct {
+	Table                 string
+	SyncTable             string
+	PrimaryKeyColumn      string
+	SkipPrimaryKeyRebuild bool
+	Indexes               []syncIndexSpec
 }
 
 var sampleMirrorIndexSet = syncMirrorIndexSet{Table: "sample_mirror", SyncTable: syncTableSample, Indexes: sampleMirrorSecondaryIndexes}
@@ -830,6 +830,7 @@ func (c *Client) syncTables(ctx context.Context) (reports []SyncReport, err erro
 
 	return reports, errors.Join(errs...)
 }
+
 func readSyncStateFromDB(ctx context.Context, db *sql.DB, table string) (syncStateRecord, error) {
 	var highWaterRaw any
 	var resumeCursor sql.NullString
@@ -1429,53 +1430,11 @@ func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect
 	if err := rebuildDonorSampleTable(ctx, tx, dialect); err != nil {
 		return false, err
 	}
-	if dialect == "mysql" {
-		rebuildInline, err := shouldRebuildMySQLSampleSecondaryIndexesInline(ctx, tx)
-		if err != nil {
-			return false, err
-		}
-		if !rebuildInline {
-			return false, createMirrorSecondaryIndexes(ctx, tx, dialect, syncMirrorIndexSet{
-				Table:   "sample_mirror",
-				Indexes: []syncIndexSpec{{Name: "sample_mirror_name_idx", Column: "name"}},
-			})
-		}
-	}
-	if dialect == "sqlite" {
-		rebuildInline, err := shouldRebuildSQLiteSampleSecondaryIndexesInline(ctx, tx)
-		if err != nil {
-			return false, err
-		}
-		if !rebuildInline {
-			return false, createMirrorSecondaryIndexes(ctx, tx, dialect, syncMirrorIndexSet{
-				Table:   "sample_mirror",
-				Indexes: []syncIndexSpec{{Name: "sample_mirror_name_idx", Column: "name"}},
-			})
-		}
-	}
 	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
 		return false, err
 	}
 
 	return true, nil
-}
-
-func shouldRebuildSQLiteSampleSecondaryIndexesInline(ctx context.Context, tx *sql.Tx) (bool, error) {
-	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sample_mirror`).Scan(&count); err != nil {
-		return false, fmt.Errorf("mlwh: count sample_mirror rows before sqlite index rebuild: %w", err)
-	}
-
-	return count <= mysqlInlineSampleIndexRowLimit, nil
-}
-
-func shouldRebuildMySQLSampleSecondaryIndexesInline(ctx context.Context, tx *sql.Tx) (bool, error) {
-	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sample_mirror`).Scan(&count); err != nil {
-		return false, fmt.Errorf("mlwh: count sample_mirror rows before index rebuild: %w", err)
-	}
-
-	return count <= mysqlInlineSampleIndexRowLimit, nil
 }
 
 func rebuildDonorSampleTable(ctx context.Context, tx *sql.Tx, dialect string) error {

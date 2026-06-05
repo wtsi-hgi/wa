@@ -221,7 +221,7 @@ func TestResultsAuthClient(t *testing.T) {
 			"register",
 			"--user", "alice",
 			"--runid", "48522",
-			"--nextflow-workflow", workflowPath,
+			"--workflow", workflowPath,
 			outputDir,
 		}, nil)
 
@@ -392,7 +392,7 @@ func resultsAuthRegisterArgs(t *testing.T, server *resultsAuthTestServer) []stri
 		"register",
 		"--user", "alice",
 		"--runid", "48522",
-		"--nextflow-workflow", workflowPath,
+		"--workflow", workflowPath,
 		outputDir,
 	}
 }

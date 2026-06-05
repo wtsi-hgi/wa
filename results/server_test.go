@@ -938,6 +938,50 @@ func TestServerPostResults(t *testing.T) {
 		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
 	})
 
+	convey.Convey("Given repeated metadata values in a registration, then all values are stored and searchable", t, func() {
+		store := newSQLiteStoreForTest(t)
+		server := NewServer(store, nil, nil)
+		reg := testServerRegistration(t)
+		reg.RunKey = "run-multi-values"
+		reg.Metadata = map[string]string{
+			SeqmetaSampleNameKey: "SANG1",
+			"assay":              "RNA",
+		}
+		body := mustJSONBodyForTest(t, struct {
+			*Registration
+			MetadataValues map[string][]string `json:"metadata_values"`
+		}{
+			Registration: reg,
+			MetadataValues: map[string][]string{
+				SeqmetaSampleNameKey: {"SANG1", "SANG2"},
+				"assay":              {"RNA", "WGS"},
+			},
+		})
+
+		postResponse := performOwnerResultsRequestForTest(t, server, http.MethodPost, "/results", body)
+		convey.So(postResponse.Code, convey.ShouldEqual, http.StatusCreated)
+
+		var result ResultSet
+		decodeJSONResponseForTest(t, postResponse, &result)
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, SeqmetaSampleNameKey), convey.ShouldResemble, []string{"SANG1", "SANG2"})
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, "assay"), convey.ShouldResemble, []string{"RNA", "WGS"})
+
+		for _, path := range []string{
+			"/results?sample=SANG1",
+			"/results?sample=SANG2",
+			"/results?meta_assay=RNA",
+			"/results?meta_assay=WGS",
+		} {
+			response := performResultsRequestForTest(t, server.Handler(), http.MethodGet, path, nil)
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var results []ResultSet
+			decodeJSONResponseForTest(t, response, &results)
+			convey.So(results, convey.ShouldHaveLength, 1)
+			convey.So(results[0].ID, convey.ShouldEqual, result.ID)
+		}
+	})
+
 	convey.Convey("E1.4: Given seqmeta returns the wrong type, then status is 422 with an error body", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seqmeta := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
@@ -953,6 +997,34 @@ func TestServerPostResults(t *testing.T) {
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusUnprocessableEntity)
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldNotBeBlank)
+	})
+
+	convey.Convey("Given repeated seqmeta metadata values and one has the wrong type, then validation rejects the registration", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seqmeta := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
+			"48522": {status: http.StatusOK, body: `{"identifier":"48522","type":"run_id","object":{}}`},
+			"SANG1": {status: http.StatusOK, body: `{"identifier":"SANG1","type":"sanger_sample_name","object":{}}`},
+		})
+		defer seqmeta.Close()
+
+		validator := NewSeqmetaValidator(seqmeta.URL, time.Second)
+		reg := testServerRegistration(t)
+		reg.Metadata = map[string]string{SeqmetaIDRunKey: "48522"}
+		body := mustJSONBodyForTest(t, struct {
+			*Registration
+			MetadataValues map[string][]string `json:"metadata_values"`
+		}{
+			Registration: reg,
+			MetadataValues: map[string][]string{
+				SeqmetaIDRunKey: {"48522", "SANG1"},
+			},
+		})
+
+		response := performOwnerResultsRequestForTest(t, NewServer(store, validator, nil), http.MethodPost, "/results", body)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusUnprocessableEntity)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "seqmeta_id_run")
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "SANG1")
 	})
 
 	convey.Convey("E1.5: Given seqmeta is unreachable, then status is 502", t, func() {
@@ -1108,6 +1180,27 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-study-lims-match")
 	})
 
+	convey.Convey("Bug 260605-5: Given GET /results?study=ERP7607, then source-specific study metadata is matched by the combined Study field", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-accession-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaStudyAccessionKey: "ERP7607"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-accession-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{SeqmetaStudyAccessionKey: "ERP7608"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?study=ERP7607", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-study-accession-match")
+	})
+
 	convey.Convey("Bug 3: Given GET /results?sample=SMP1001, then metadata aliases like seqmeta_sample_lims are matched by the combined Sample field", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-alias-match", func(reg *Registration) {
@@ -1148,6 +1241,115 @@ func TestServerGetResults(t *testing.T) {
 
 		convey.So(results, convey.ShouldHaveLength, 1)
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-name-match")
+	})
+
+	convey.Convey("Bug 260605-5: Given GET /results?sample=Hek_R1, then source-specific sample metadata is matched by the combined Sample field", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-source-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSupplierNameKey: "Hek_R1"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-source-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{SeqmetaSupplierNameKey: "Hek_R2"}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?sample=Hek_R1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-source-match")
+	})
+
+	convey.Convey("Bug PR12 review: Given GET /results?sample uses a sample UUID or donor ID, then MLWH expansion can match registered sample names", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-uuid-expanded", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "SANG-UUID"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-donor-expanded", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "SANG-DONOR"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-unrelated-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "SANG-OTHER"}
+		}))
+
+		sampleExpansionCalls := map[mlwh.IdentifierKind][]string{}
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				sampleExpansionCalls[kind] = append(sampleExpansionCalls[kind], canonical)
+				switch {
+				case kind == mlwh.KindSampleUUID && canonical == "sample-uuid-123":
+					return []string{"SANG-UUID"}, nil, nil, nil
+				case kind == mlwh.KindDonorID && canonical == "DONOR-42":
+					return []string{"SANG-DONOR"}, nil, nil, nil
+				default:
+					return nil, nil, nil, nil
+				}
+			},
+		}
+		server := NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler()
+
+		uuidResponse := performResultsRequestForTest(t, server, http.MethodGet, "/results?sample=sample-uuid-123", nil)
+		convey.So(uuidResponse.Code, convey.ShouldEqual, http.StatusOK)
+		var uuidResults []ResultSet
+		decodeJSONResponseForTest(t, uuidResponse, &uuidResults)
+		convey.So(uuidResults, convey.ShouldHaveLength, 1)
+		convey.So(uuidResults[0].RunKey, convey.ShouldEqual, "run-sample-uuid-expanded")
+		convey.So(sampleExpansionCalls[mlwh.KindSampleUUID], convey.ShouldContain, "sample-uuid-123")
+
+		donorResponse := performResultsRequestForTest(t, server, http.MethodGet, "/results?sample=DONOR-42", nil)
+		convey.So(donorResponse.Code, convey.ShouldEqual, http.StatusOK)
+		var donorResults []ResultSet
+		decodeJSONResponseForTest(t, donorResponse, &donorResults)
+		convey.So(donorResults, convey.ShouldHaveLength, 1)
+		convey.So(donorResults[0].RunKey, convey.ShouldEqual, "run-donor-expanded")
+		convey.So(sampleExpansionCalls[mlwh.KindDonorID], convey.ShouldContain, "DONOR-42")
+	})
+
+	convey.Convey("Bug item 4: Given GET /results?sample=Hek_R1, then supplier-name sample aliases are resolved from registered sample candidates without slow live expansion", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-alias-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "7607STDY14643771"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-alias-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "7607STDY14643772"}
+		}))
+
+		sampleNameCalls := []string{}
+		expander := &mockSearchExpander{
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				sampleNameCalls = append(sampleNameCalls, raw)
+				switch raw {
+				case "7607STDY14643771":
+					return mlwh.Match{Sample: &mlwh.Sample{Name: raw, SupplierName: "Hek_R1"}}, nil
+				case "7607STDY14643772":
+					return mlwh.Match{Sample: &mlwh.Sample{Name: raw, SupplierName: "Hek_R2"}}, nil
+				default:
+					return mlwh.Match{}, mlwh.ErrNotFound
+				}
+			},
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
+				return nil, nil, nil, errors.New("slow live expansion should not run for supplier-name sample search")
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results?sample=Hek_R1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-alias-match")
+		convey.So(mergeSearchValues(nil, sampleNameCalls), convey.ShouldResemble, []string{"7607STDY14643771", "7607STDY14643772"})
+		convey.So(expander.expandCalls, convey.ShouldEqual, 0)
 	})
 
 	convey.Convey("Bug 260519-2.2: Given GET /results?seqmeta_sample_name=SANG1001, then existing seqmeta_name metadata is matched", t, func() {
@@ -2347,6 +2549,37 @@ func testServerRegistration(t *testing.T) *Registration {
 	}
 
 	return reg
+}
+
+func metadataValuesForResultForTest(t *testing.T, store *Store, resultID string, key string) []string {
+	t.Helper()
+
+	rows, err := store.db.Query(
+		`SELECT value FROM result_metadata WHERE result_id = ? AND meta_key = ? ORDER BY value_ordinal`,
+		resultID,
+		key,
+	)
+	if err != nil {
+		t.Fatalf("query result metadata values: %v", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatalf("scan result metadata value: %v", err)
+		}
+
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate result metadata values: %v", err)
+	}
+
+	return values
 }
 
 func statGIDForTest(t *testing.T, path string) int64 {

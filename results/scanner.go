@@ -28,6 +28,7 @@ package results
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -35,7 +36,7 @@ import (
 const scanDirectoryWarningThreshold = 10000
 
 // ScanDirectory recursively scans a directory and returns output file entries.
-func ScanDirectory(dir string, includeHidden bool) ([]FileEntry, int, error) {
+func ScanDirectory(dir string, includeHidden bool, matchPatterns ...string) ([]FileEntry, int, error) {
 	rootPath, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, 0, err
@@ -50,6 +51,11 @@ func ScanDirectory(dir string, includeHidden bool) ([]FileEntry, int, error) {
 		return nil, 0, fmt.Errorf("scan directory %q: not a directory", rootPath)
 	}
 
+	normalizedMatchPatterns, err := normalizeScanMatchPatterns(matchPatterns)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	resolvedRoot, err := filepath.EvalSymlinks(rootPath)
 	if err != nil {
 		return nil, 0, err
@@ -59,7 +65,7 @@ func ScanDirectory(dir string, includeHidden bool) ([]FileEntry, int, error) {
 	warnings := 0
 	visitedDirs := map[string]struct{}{resolvedRoot: {}}
 
-	err = scanDirectoryTree(rootPath, includeHidden, visitedDirs, &entries, &warnings, true)
+	err = scanDirectoryTree(rootPath, rootPath, includeHidden, normalizedMatchPatterns, visitedDirs, &entries, &warnings, true)
 	if err != nil {
 		return nil, warnings, err
 	}
@@ -71,9 +77,29 @@ func ScanDirectory(dir string, includeHidden bool) ([]FileEntry, int, error) {
 	return entries, warnings, nil
 }
 
+func normalizeScanMatchPatterns(matchPatterns []string) ([]string, error) {
+	if len(matchPatterns) == 0 {
+		return nil, nil
+	}
+
+	normalized := make([]string, 0, len(matchPatterns))
+	for _, pattern := range matchPatterns {
+		slashPattern := filepath.ToSlash(pattern)
+		if _, err := path.Match(slashPattern, ""); err != nil {
+			return nil, fmt.Errorf("invalid match glob %q: %w", pattern, err)
+		}
+
+		normalized = append(normalized, slashPattern)
+	}
+
+	return normalized, nil
+}
+
 func scanDirectoryTree(
+	rootPath string,
 	dir string,
 	includeHidden bool,
+	matchPatterns []string,
 	visitedDirs map[string]struct{},
 	entries *[]FileEntry,
 	warnings *int,
@@ -134,7 +160,7 @@ func scanDirectoryTree(
 
 			visitedDirs[resolvedPath] = struct{}{}
 
-			err = scanDirectoryTree(childPath, includeHidden, visitedDirs, entries, warnings, false)
+			err = scanDirectoryTree(rootPath, childPath, includeHidden, matchPatterns, visitedDirs, entries, warnings, false)
 			if err != nil {
 				return err
 			}
@@ -145,6 +171,15 @@ func scanDirectoryTree(
 		absPath, err := filepath.Abs(childPath)
 		if err != nil {
 			return err
+		}
+
+		matches, err := scanFileMatches(rootPath, absPath, matchPatterns)
+		if err != nil {
+			return err
+		}
+
+		if !matches {
+			continue
 		}
 
 		*entries = append(*entries, FileEntry{
@@ -170,4 +205,29 @@ func isSymlinkLoopError(err error) bool {
 	message := strings.ToLower(err.Error())
 
 	return strings.Contains(message, "too many links") || strings.Contains(message, "too many levels of symbolic links")
+}
+
+func scanFileMatches(rootPath string, filePath string, matchPatterns []string) (bool, error) {
+	if len(matchPatterns) == 0 {
+		return true, nil
+	}
+
+	relPath, err := filepath.Rel(rootPath, filePath)
+	if err != nil {
+		return false, err
+	}
+
+	slashRelPath := filepath.ToSlash(relPath)
+	for _, pattern := range matchPatterns {
+		matches, err := path.Match(pattern, slashRelPath)
+		if err != nil {
+			return false, err
+		}
+
+		if matches {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

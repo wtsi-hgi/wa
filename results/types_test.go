@@ -75,6 +75,30 @@ func TestDisplayRunKeyUnique(t *testing.T) {
 	})
 }
 
+func TestResolveWorkflowIdentity(t *testing.T) {
+	convey.Convey("ResolveWorkflowIdentity falls back to the raw workflow string when no manager-specific resolver recognizes it", t, func() {
+		identity, err := ResolveWorkflowIdentity(" manual-qc-v1 ")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(identity.Identifier, convey.ShouldEqual, "manual-qc-v1")
+		convey.So(identity.Name, convey.ShouldEqual, "manual-qc-v1")
+		convey.So(identity.Version, convey.ShouldEqual, "manual-qc-v1")
+		convey.So(identity.LocalPath, convey.ShouldBeBlank)
+	})
+
+	convey.Convey("Resolved generic workflow identity is a deterministic result key component", t, func() {
+		identity, err := ResolveWorkflowIdentity("manual-qc-v1")
+		convey.So(err, convey.ShouldBeNil)
+
+		first := CompositeKeyID(identity.Identifier, "runid=generic-001")
+		second := CompositeKeyID(identity.Identifier, "runid=generic-001")
+		differentWorkflow := CompositeKeyID("manual-qc-v2", "runid=generic-001")
+
+		convey.So(first, convey.ShouldEqual, second)
+		convey.So(first, convey.ShouldNotEqual, differentWorkflow)
+	})
+}
+
 func TestCompositeKeyID(t *testing.T) {
 	convey.Convey("A1.1: CompositeKeyID returns the expected lowercase SHA256 hex digest", t, func() {
 		serialized := "https://github.com/org/nf\x00runid=48522&unique=random_exon"
@@ -115,36 +139,62 @@ func TestCompositeKeyID(t *testing.T) {
 	})
 }
 
-func TestDetectPipeline(t *testing.T) {
-	convey.Convey("DetectPipeline resolves a GitHub repository URL as an online Nextflow workflow", t, func() {
-		restore := installGitHubPipelineServerForTest(t, map[string]string{
+func TestResolveWorkflowIdentityNextflow(t *testing.T) {
+	convey.Convey("readGitHubJSON sends an explicit User-Agent for GitHub REST API requests", t, func() {
+		var userAgent string
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			userAgent = request.Header.Get("User-Agent")
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"ok":true}`))
+		}))
+		defer server.Close()
+
+		oldAPIBaseURL := workflowGitHubAPIBaseURL
+		oldHTTPClient := workflowHTTPClient
+		workflowGitHubAPIBaseURL = server.URL
+		workflowHTTPClient = server.Client()
+		defer func() {
+			workflowGitHubAPIBaseURL = oldAPIBaseURL
+			workflowHTTPClient = oldHTTPClient
+		}()
+
+		err := readGitHubJSON("/rate_limit", nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(userAgent, convey.ShouldEqual, "wa-results-workflow-resolver")
+	})
+
+	convey.Convey("ResolveWorkflowIdentity resolves a GitHub repository URL as an online Nextflow workflow", t, func() {
+		restore := installGitHubWorkflowServerForTest(t, map[string]string{
 			"nf-core/sarek": "abc123",
 		})
 		defer restore()
 
-		identifier, name, version, err := DetectPipeline("https://github.com/nf-core/sarek")
+		identity, err := ResolveWorkflowIdentity("https://github.com/nf-core/sarek")
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(identifier, convey.ShouldEqual, "https://github.com/nf-core/sarek::main.nf")
-		convey.So(name, convey.ShouldEqual, "nf-core/sarek")
-		convey.So(version, convey.ShouldEqual, "abc123")
+		convey.So(identity.Identifier, convey.ShouldEqual, "https://github.com/nf-core/sarek::main.nf")
+		convey.So(identity.Name, convey.ShouldEqual, "nf-core/sarek")
+		convey.So(identity.Version, convey.ShouldEqual, "abc123")
+		convey.So(identity.LocalPath, convey.ShouldBeBlank)
 	})
 
-	convey.Convey("DetectPipeline resolves owner/repo shorthand through GitHub when no local path exists", t, func() {
-		restore := installGitHubPipelineServerForTest(t, map[string]string{
+	convey.Convey("ResolveWorkflowIdentity resolves owner/repo shorthand through GitHub when no local path exists", t, func() {
+		restore := installGitHubWorkflowServerForTest(t, map[string]string{
 			"seqeralabs/nf-hello-world": "def456",
 		})
 		defer restore()
 
-		identifier, name, version, err := DetectPipeline("seqeralabs/nf-hello-world")
+		identity, err := ResolveWorkflowIdentity("seqeralabs/nf-hello-world")
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(identifier, convey.ShouldEqual, "https://github.com/seqeralabs/nf-hello-world::main.nf")
-		convey.So(name, convey.ShouldEqual, "seqeralabs/nf-hello-world")
-		convey.So(version, convey.ShouldEqual, "def456")
+		convey.So(identity.Identifier, convey.ShouldEqual, "https://github.com/seqeralabs/nf-hello-world::main.nf")
+		convey.So(identity.Name, convey.ShouldEqual, "seqeralabs/nf-hello-world")
+		convey.So(identity.Version, convey.ShouldEqual, "def456")
+		convey.So(identity.LocalPath, convey.ShouldBeBlank)
 	})
 
-	convey.Convey("RemotePipelineReference keeps owner/repo-shaped local paths local", t, func() {
+	convey.Convey("ResolveWorkflowIdentity keeps owner/repo-shaped local paths from being treated as GitHub shorthand", t, func() {
 		cwd, err := os.Getwd()
 		convey.So(err, convey.ShouldBeNil)
 
@@ -157,10 +207,14 @@ func TestDetectPipeline(t *testing.T) {
 			_ = os.Chdir(cwd)
 		}()
 
-		convey.So(RemotePipelineReference("seqeralabs/nf-hello-world"), convey.ShouldBeFalse)
+		identity, resolveErr := ResolveWorkflowIdentity("seqeralabs/nf-hello-world")
+
+		convey.So(resolveErr, convey.ShouldBeNil)
+		convey.So(identity.Identifier, convey.ShouldEqual, "seqeralabs/nf-hello-world")
+		convey.So(identity.LocalPath, convey.ShouldBeBlank)
 	})
 
-	convey.Convey("A3.1: DetectPipeline uses git remote, repo name, and HEAD commit for files inside a git repo", t, func() {
+	convey.Convey("ResolveWorkflowIdentity uses git remote, repo name, and HEAD commit for local Nextflow files inside a git repo", t, func() {
 		repoRoot := t.TempDir()
 		workflowPath := filepath.Join(repoRoot, "main.nf")
 
@@ -172,15 +226,16 @@ func TestDetectPipeline(t *testing.T) {
 
 		commitHash := runGitForTest(t, repoRoot, "rev-parse", "HEAD")
 
-		identifier, name, version, err := DetectPipeline(workflowPath)
+		identity, err := ResolveWorkflowIdentity(workflowPath)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(identifier, convey.ShouldEqual, "https://github.com/org/nf_splicing.git::main.nf")
-		convey.So(name, convey.ShouldEqual, "nf_splicing")
-		convey.So(version, convey.ShouldEqual, commitHash)
+		convey.So(identity.Identifier, convey.ShouldEqual, "https://github.com/org/nf_splicing.git::main.nf")
+		convey.So(identity.Name, convey.ShouldEqual, "nf_splicing")
+		convey.So(identity.Version, convey.ShouldEqual, commitHash)
+		convey.So(identity.LocalPath, convey.ShouldEqual, filepath.Clean(workflowPath))
 	})
 
-	convey.Convey("DetectPipeline derives the repo name correctly from an SSH remote", t, func() {
+	convey.Convey("ResolveWorkflowIdentity derives the repo name correctly from an SSH remote", t, func() {
 		repoRoot := t.TempDir()
 		workflowPath := filepath.Join(repoRoot, "main.nf")
 
@@ -190,14 +245,14 @@ func TestDetectPipeline(t *testing.T) {
 		runGitForTest(t, repoRoot, "add", "main.nf")
 		runGitForTest(t, repoRoot, "commit", "-m", "initial commit")
 
-		identifier, name, _, err := DetectPipeline(workflowPath)
+		identity, err := ResolveWorkflowIdentity(workflowPath)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(identifier, convey.ShouldEqual, "git@github.com:org/nf_splicing.git::main.nf")
-		convey.So(name, convey.ShouldEqual, "nf_splicing")
+		convey.So(identity.Identifier, convey.ShouldEqual, "git@github.com:org/nf_splicing.git::main.nf")
+		convey.So(identity.Name, convey.ShouldEqual, "nf_splicing")
 	})
 
-	convey.Convey("A3.2: DetectPipeline falls back to the absolute repo root when a git repo has no remote", t, func() {
+	convey.Convey("ResolveWorkflowIdentity falls back to the absolute repo root when a git repo has no remote", t, func() {
 		repoRoot := t.TempDir()
 		workflowPath := filepath.Join(repoRoot, "main.nf")
 
@@ -208,15 +263,15 @@ func TestDetectPipeline(t *testing.T) {
 
 		commitHash := runGitForTest(t, repoRoot, "rev-parse", "HEAD")
 
-		identifier, name, version, err := DetectPipeline(workflowPath)
+		identity, err := ResolveWorkflowIdentity(workflowPath)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(identifier, convey.ShouldEqual, filepath.Clean(repoRoot)+"::main.nf")
-		convey.So(name, convey.ShouldEqual, filepath.Base(repoRoot))
-		convey.So(version, convey.ShouldEqual, commitHash)
+		convey.So(identity.Identifier, convey.ShouldEqual, filepath.Clean(repoRoot)+"::main.nf")
+		convey.So(identity.Name, convey.ShouldEqual, filepath.Base(repoRoot))
+		convey.So(identity.Version, convey.ShouldEqual, commitHash)
 	})
 
-	convey.Convey("DetectPipeline falls back to the workflow content hash when git HEAD cannot be resolved", t, func() {
+	convey.Convey("ResolveWorkflowIdentity falls back to the workflow content hash when git HEAD cannot be resolved", t, func() {
 		repoRoot := t.TempDir()
 		workflowPath := filepath.Join(repoRoot, "main.nf")
 		content := "workflow content\n"
@@ -225,15 +280,15 @@ func TestDetectPipeline(t *testing.T) {
 		initGitRepoForTest(t, repoRoot)
 		runGitForTest(t, repoRoot, "remote", "add", "origin", "https://github.com/org/nf_splicing.git")
 
-		identifier, name, version, err := DetectPipeline(workflowPath)
+		identity, err := ResolveWorkflowIdentity(workflowPath)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(identifier, convey.ShouldEqual, "https://github.com/org/nf_splicing.git::main.nf")
-		convey.So(name, convey.ShouldEqual, "nf_splicing")
-		convey.So(version, convey.ShouldEqual, sha256Hex(content))
+		convey.So(identity.Identifier, convey.ShouldEqual, "https://github.com/org/nf_splicing.git::main.nf")
+		convey.So(identity.Name, convey.ShouldEqual, "nf_splicing")
+		convey.So(identity.Version, convey.ShouldEqual, sha256Hex(content))
 	})
 
-	convey.Convey("DetectPipeline distinguishes multiple workflow files in the same git repository", t, func() {
+	convey.Convey("ResolveWorkflowIdentity distinguishes multiple workflow files in the same git repository", t, func() {
 		repoRoot := t.TempDir()
 		mainWorkflowPath := filepath.Join(repoRoot, "main.nf")
 		otherWorkflowPath := filepath.Join(repoRoot, "workflows", "alt.nf")
@@ -246,15 +301,15 @@ func TestDetectPipeline(t *testing.T) {
 		runGitForTest(t, repoRoot, "add", "main.nf", "workflows/alt.nf")
 		runGitForTest(t, repoRoot, "commit", "-m", "initial commit")
 
-		mainIdentifier, _, _, mainErr := DetectPipeline(mainWorkflowPath)
-		otherIdentifier, _, _, otherErr := DetectPipeline(otherWorkflowPath)
+		mainIdentity, mainErr := ResolveWorkflowIdentity(mainWorkflowPath)
+		otherIdentity, otherErr := ResolveWorkflowIdentity(otherWorkflowPath)
 
 		convey.So(mainErr, convey.ShouldBeNil)
 		convey.So(otherErr, convey.ShouldBeNil)
-		convey.So(mainIdentifier, convey.ShouldNotEqual, otherIdentifier)
+		convey.So(mainIdentity.Identifier, convey.ShouldNotEqual, otherIdentity.Identifier)
 	})
 
-	convey.Convey("A3.3: DetectPipeline hashes file contents when the workflow is not inside a git repo", t, func() {
+	convey.Convey("ResolveWorkflowIdentity hashes file contents when the workflow is not inside a git repo", t, func() {
 		workflowDir := filepath.Join(t.TempDir(), "pipeline")
 		workflowPath := filepath.Join(workflowDir, "main.nf")
 		content := "process ALIGN { }\n"
@@ -262,15 +317,16 @@ func TestDetectPipeline(t *testing.T) {
 		convey.So(os.MkdirAll(workflowDir, 0o755), convey.ShouldBeNil)
 		writeFileForTest(t, workflowPath, content)
 
-		identifier, name, version, err := DetectPipeline(workflowPath)
+		identity, err := ResolveWorkflowIdentity(workflowPath)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(identifier, convey.ShouldEqual, filepath.Clean(workflowPath))
-		convey.So(name, convey.ShouldEqual, filepath.Base(workflowDir))
-		convey.So(version, convey.ShouldEqual, sha256Hex(content))
+		convey.So(identity.Identifier, convey.ShouldEqual, filepath.Clean(workflowPath))
+		convey.So(identity.Name, convey.ShouldEqual, filepath.Base(workflowDir))
+		convey.So(identity.Version, convey.ShouldEqual, sha256Hex(content))
+		convey.So(identity.LocalPath, convey.ShouldEqual, filepath.Clean(workflowPath))
 	})
 
-	convey.Convey("A3.4: DetectPipeline returns an error for an unreadable workflow file", t, func() {
+	convey.Convey("ResolveWorkflowIdentity returns an error for an unreadable local Nextflow workflow file", t, func() {
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeFileForTest(t, workflowPath, "workflow content\n")
 		convey.So(os.Chmod(workflowPath, 0), convey.ShouldBeNil)
@@ -278,12 +334,12 @@ func TestDetectPipeline(t *testing.T) {
 			_ = os.Chmod(workflowPath, 0o600)
 		}()
 
-		_, _, _, err := DetectPipeline(workflowPath)
+		_, err := ResolveWorkflowIdentity(workflowPath)
 
 		convey.So(err, convey.ShouldNotBeNil)
 	})
 
-	convey.Convey("A3.5: DetectPipeline resolves a relative workflow path to an absolute identifier", t, func() {
+	convey.Convey("ResolveWorkflowIdentity resolves a relative local Nextflow workflow path to an absolute identifier", t, func() {
 		cwd, err := os.Getwd()
 		convey.So(err, convey.ShouldBeNil)
 
@@ -297,13 +353,68 @@ func TestDetectPipeline(t *testing.T) {
 			_ = os.Chdir(cwd)
 		}()
 
-		identifier, name, version, detectErr := DetectPipeline("./main.nf")
+		identity, detectErr := ResolveWorkflowIdentity("./main.nf")
 
 		convey.So(detectErr, convey.ShouldBeNil)
-		convey.So(identifier, convey.ShouldEqual, filepath.Clean(workflowPath))
-		convey.So(name, convey.ShouldEqual, filepath.Base(workflowDir))
-		convey.So(version, convey.ShouldEqual, sha256Hex(content))
+		convey.So(identity.Identifier, convey.ShouldEqual, filepath.Clean(workflowPath))
+		convey.So(identity.Name, convey.ShouldEqual, filepath.Base(workflowDir))
+		convey.So(identity.Version, convey.ShouldEqual, sha256Hex(content))
+		convey.So(identity.LocalPath, convey.ShouldEqual, filepath.Clean(workflowPath))
 	})
+}
+
+func installGitHubWorkflowServerForTest(t *testing.T, versions map[string]string) func() {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		for fullName, sha := range versions {
+			switch request.URL.Path {
+			case "/repos/" + fullName:
+				if err := json.NewEncoder(writer).Encode(map[string]string{
+					"default_branch": "main",
+					"full_name":      fullName,
+				}); err != nil {
+					t.Errorf("write repository response: %v", err)
+				}
+
+				return
+			case "/repos/" + fullName + "/commits/main":
+				if err := json.NewEncoder(writer).Encode(map[string]string{
+					"sha": sha,
+				}); err != nil {
+					t.Errorf("write commit response: %v", err)
+				}
+
+				return
+			case "/repos/" + fullName + "/contents/main.nf":
+				if ref := request.URL.Query().Get("ref"); ref != "main" {
+					t.Errorf("content request ref = %q, want main", ref)
+				}
+
+				if err := json.NewEncoder(writer).Encode(map[string]string{
+					"name": "main.nf",
+				}); err != nil {
+					t.Errorf("write workflow response: %v", err)
+				}
+
+				return
+			}
+		}
+
+		http.NotFound(writer, request)
+	}))
+
+	oldAPIBaseURL := workflowGitHubAPIBaseURL
+	oldHTTPClient := workflowHTTPClient
+	workflowGitHubAPIBaseURL = server.URL
+	workflowHTTPClient = server.Client()
+
+	return func() {
+		workflowGitHubAPIBaseURL = oldAPIBaseURL
+		workflowHTTPClient = oldHTTPClient
+		server.Close()
+	}
 }
 
 func writeFileForTest(t *testing.T, path, content string) {
@@ -349,60 +460,6 @@ func bytesTrimSpace(value []byte) []byte {
 	}
 
 	return value
-}
-
-func installGitHubPipelineServerForTest(t *testing.T, versions map[string]string) func() {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		for fullName, sha := range versions {
-			switch request.URL.Path {
-			case "/repos/" + fullName:
-				if err := json.NewEncoder(writer).Encode(map[string]string{
-					"default_branch": "main",
-					"full_name":      fullName,
-				}); err != nil {
-					t.Errorf("write repository response: %v", err)
-				}
-
-				return
-			case "/repos/" + fullName + "/commits/main":
-				if err := json.NewEncoder(writer).Encode(map[string]string{
-					"sha": sha,
-				}); err != nil {
-					t.Errorf("write commit response: %v", err)
-				}
-
-				return
-			case "/repos/" + fullName + "/contents/main.nf":
-				if ref := request.URL.Query().Get("ref"); ref != "main" {
-					t.Errorf("content request ref = %q, want main", ref)
-				}
-
-				if err := json.NewEncoder(writer).Encode(map[string]string{
-					"name": "main.nf",
-				}); err != nil {
-					t.Errorf("write workflow response: %v", err)
-				}
-
-				return
-			}
-		}
-
-		http.NotFound(writer, request)
-	}))
-
-	oldAPIBaseURL := detectPipelineGitHubAPIBaseURL
-	oldHTTPClient := detectPipelineHTTPClient
-	detectPipelineGitHubAPIBaseURL = server.URL
-	detectPipelineHTTPClient = server.Client()
-
-	return func() {
-		detectPipelineGitHubAPIBaseURL = oldAPIBaseURL
-		detectPipelineHTTPClient = oldHTTPClient
-		server.Close()
-	}
 }
 
 func sha256Hex(value string) string {

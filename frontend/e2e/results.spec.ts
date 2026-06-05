@@ -581,7 +581,7 @@ async function openSeqmetaDetailsDialog(
     metadataKey: string,
 ): Promise<Locator> {
     const displayKey =
-        metadataKey === "seqmeta_studyid"
+        metadataKey === "seqmeta_studyid" || metadataKey === "study"
             ? "seqmeta_id_study_lims"
             : metadataKey;
     const metadataRow = page.locator(`[data-metadata-row="${metadataKey}"]`);
@@ -1371,7 +1371,7 @@ test.describe("Q1 critical results flows", () => {
         ).toHaveCount(0);
         await expect(
             detailSummary.locator('[data-metadata-row="seqmeta_studyid"]'),
-        ).toContainText("6568");
+        ).toHaveCount(0);
         await expect(
             detailSummary.locator('[data-metadata-row="library"]'),
         ).toContainText("exon");
@@ -1436,7 +1436,7 @@ test.describe("Q1 critical results flows", () => {
         await page.setViewportSize({ width: 720, height: 250 });
         await openResultDetail(page, rnaseqPipelineName);
 
-        const dialog = await openSeqmetaDetailsDialog(page, "seqmeta_studyid");
+        const dialog = await openSeqmetaDetailsDialog(page, "study");
         const scrollContainer = dialog.getByTestId("seqmeta-dialog-body");
 
         await expect(scrollContainer).toBeVisible();

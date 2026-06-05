@@ -72,6 +72,73 @@ func TestOpenCacheSQLiteFreshSetsSchemaVersion(t *testing.T) {
 	})
 }
 
+func TestAllowLargeMySQLColdLoadIndexShapeAllowsLegacySampleNameOnlyIndex(t *testing.T) {
+	convey.Convey("Given a large MySQL sample mirror with the legacy name-only read index shape", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		expected := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"accession_number", "donor_id", "id_sample_lims", "last_updated", "name", "sanger_sample_id", "supplier_name", "uuid_sample_lims"},
+		}}
+		actual := schemaShape{Index: map[string][]string{
+			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
+			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"sample_mirror":                      {"name"},
+		}}
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
+			WithArgs("sample_mirror").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_ROWS"}).AddRow(mysqlInlineSampleIndexRowLimit + 1))
+
+		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
+
+		convey.So(actual.Index["sample_mirror"], convey.ShouldResemble, expected.Index["sample_mirror"])
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestRepairCompletedSampleMirrorCreatesMissingLookupIndexes(t *testing.T) {
+	convey.Convey("Given a completed MySQL sample mirror with only the legacy name index", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		highWater := time.Date(2026, time.June, 5, 9, 45, 0, 0, time.UTC)
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
+			WithArgs(syncTableSample).
+			WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow(formatSyncTime(highWater), nil, 0))
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", sampleMirrorIndexSet.Table))).
+			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}).AddRow("sample_mirror_name_idx"))
+		mock.ExpectBegin()
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("mysql", sampleMirrorIndexSet.Table))).
+			WillReturnRows(sqlmock.NewRows([]string{"INDEX_NAME"}).AddRow("sample_mirror_name_idx"))
+
+		missing := []syncIndexSpec{
+			{Name: "sample_mirror_id_sample_lims_idx", Column: "id_sample_lims"},
+			{Name: "sample_mirror_uuid_sample_lims_idx", Column: "uuid_sample_lims"},
+			{Name: "sample_mirror_sanger_sample_id_idx", Column: "sanger_sample_id"},
+			{Name: "sample_mirror_supplier_name_idx", Column: "supplier_name"},
+			{Name: "sample_mirror_accession_number_idx", Column: "accession_number"},
+			{Name: "sample_mirror_donor_id_idx", Column: "donor_id"},
+			{Name: "sample_mirror_last_updated_idx", Column: "last_updated"},
+		}
+		mock.ExpectExec(regexp.QuoteMeta(buildMySQLCreateMirrorSecondaryIndexesStatement("sample_mirror", missing))).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta(`UPDATE sync_state SET indexes_dropped = 0 WHERE table_name = ?`)).
+			WithArgs(syncTableSample).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		err = repairDroppedMirrorIndexSet(context.Background(), db, "mysql", sampleMirrorIndexSet)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
 func TestOpenCacheSQLiteReopenPreservesExistingData(t *testing.T) {
 	convey.Convey("Given a SQLite cache already opened at the current schema version", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
@@ -323,12 +390,14 @@ func TestOpenCacheSQLiteSkipsDroppedIndexRepairDuringColdResume(t *testing.T) {
 	})
 }
 
-func TestOpenCacheSQLiteSparseSampleReadIndexDoesNotRebuildDonors(t *testing.T) {
+func TestOpenCacheSQLiteRepairsSparseSampleReadIndexes(t *testing.T) {
 	convey.Convey("Given a completed sparse SQLite sample cache with only the name read index", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
 
 		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
 		convey.So(err, convey.ShouldBeNil)
+
+		seedSampleMirrorRow(t, cache.DB(), 1, "7607STDY14643771", "Hek_R1", "donor-1", time.Date(2026, time.May, 13, 11, 24, 59, 0, time.UTC))
 		convey.So(cache.Close(), convey.ShouldBeNil)
 
 		db, err := sql.Open("sqlite", sqliteWritableDSN(cachePath))
@@ -342,8 +411,6 @@ func TestOpenCacheSQLiteSparseSampleReadIndexDoesNotRebuildDonors(t *testing.T) 
 			_, err = db.Exec(`DROP INDEX IF EXISTS ` + indexName)
 			convey.So(err, convey.ShouldBeNil)
 		}
-		_, err = db.Exec(`INSERT INTO donor_samples(donor_id, id_sample_tmp) VALUES (?, ?)`, "donor-1", 1)
-		convey.So(err, convey.ShouldBeNil)
 		_, err = db.Exec(
 			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?) ON CONFLICT(table_name) DO UPDATE SET high_water = excluded.high_water, last_run = excluded.last_run, resume_cursor = excluded.resume_cursor, indexes_dropped = excluded.indexes_dropped`,
 			syncTableSample,
@@ -358,12 +425,18 @@ func TestOpenCacheSQLiteSparseSampleReadIndexDoesNotRebuildDonors(t *testing.T) 
 			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
 			convey.So(openErr, convey.ShouldBeNil)
 			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+
+			client := &Client{cache: reopened, cacheReader: readDBFromCache(reopened)}
+			match, resolveErr := client.ResolveSample(context.Background(), "Hek_R1")
+			convey.So(resolveErr, convey.ShouldBeNil)
+			convey.So(match.Kind, convey.ShouldEqual, KindSupplierName)
+			convey.So(match.Canonical, convey.ShouldEqual, "7607STDY14643771")
 		})
 
 		convey.So(output, convey.ShouldEqual, "")
 		convey.So(countRows(t, db, `SELECT COUNT(*) FROM donor_samples`), convey.ShouldEqual, 1)
-		convey.So(sampleMirrorIndexNames(t, db, "sqlite"), convey.ShouldResemble, []string{"sample_mirror_name_idx"})
-		convey.So(readSyncStateRow(t, db, syncTableSample).IndexesDropped, convey.ShouldEqual, 1)
+		convey.So(sampleMirrorIndexNames(t, db, "sqlite"), convey.ShouldResemble, sampleMirrorSecondaryIndexNames())
+		convey.So(readSyncStateRow(t, db, syncTableSample).IndexesDropped, convey.ShouldEqual, 0)
 	})
 }
 
@@ -470,34 +543,6 @@ func TestAllowLargeMySQLColdLoadIndexShapeUsesMetadataEstimateWithoutCountingRow
 		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
 
 		convey.So(actual.Index["iseq_product_metrics_mirror"], convey.ShouldResemble, expected.Index["iseq_product_metrics_mirror"])
-		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
-	})
-}
-
-func TestAllowLargeMySQLColdLoadIndexShapeAllowsLargeSampleNameOnlyIndex(t *testing.T) {
-	convey.Convey("Given a large MySQL sample mirror repaired with only the resolver-critical name index", t, func() {
-		db, mock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		defer func() { _ = db.Close() }()
-
-		expected := schemaShape{Index: map[string][]string{
-			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
-			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
-			"sample_mirror":                      {"accession_number", "donor_id", "id_sample_lims", "last_updated", "name", "sanger_sample_id", "supplier_name", "uuid_sample_lims"},
-		}}
-		actual := schemaShape{Index: map[string][]string{
-			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
-			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
-			"sample_mirror":                      {"name"},
-		}}
-
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`)).
-			WithArgs("sample_mirror").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_ROWS"}).AddRow(mysqlInlineSampleIndexRowLimit + 1))
-
-		allowLargeMySQLColdLoadIndexShape(context.Background(), db, expected, actual)
-
-		convey.So(actual.Index["sample_mirror"], convey.ShouldResemble, expected.Index["sample_mirror"])
 		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
 }

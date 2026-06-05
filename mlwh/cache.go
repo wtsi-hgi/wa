@@ -203,6 +203,35 @@ func resolveMySQLDSN(cfg CacheConfig) (string, error) {
 	return parsed.FormatDSN(), nil
 }
 
+func sampleMirrorSecondaryIndexesIncomplete(ctx context.Context, db *sql.DB, dialect string) (bool, error) {
+	rows, err := db.QueryContext(ctx, mirrorIndexInventoryQuery(dialect, sampleMirrorIndexSet.Table))
+	if err != nil {
+		return false, fmt.Errorf("mlwh: read sample_mirror indexes for repair: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	existing := make(map[string]struct{}, len(sampleMirrorSecondaryIndexes))
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			return false, fmt.Errorf("mlwh: scan sample_mirror indexes for repair: %w", err)
+		}
+
+		existing[name] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return false, fmt.Errorf("mlwh: read sample_mirror indexes for repair: %w", err)
+	}
+
+	for _, index := range sampleMirrorSecondaryIndexes {
+		if _, ok := existing[index.Name]; !ok {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 // Client owns the cache connections used by sync and read paths.
 type Client struct {
 	cache            Cache
@@ -1241,8 +1270,19 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 	if err != nil {
 		return fmt.Errorf("mlwh: query %s dropped-index recovery state: %w", indexSet.Table, err)
 	}
+	repairSampleLookupIndexes := false
 	if indexesDropped != 1 {
-		return nil
+		if indexSet.Table != sampleMirrorIndexSet.Table {
+			return nil
+		}
+
+		repairSampleLookupIndexes, err = sampleMirrorSecondaryIndexesIncomplete(ctx, db, dialect)
+		if err != nil {
+			return err
+		}
+		if !repairSampleLookupIndexes {
+			return nil
+		}
 	}
 	if resumeCursor.Valid && strings.TrimSpace(resumeCursor.String) != "" {
 		return nil
@@ -1255,7 +1295,7 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 	if highWater.IsZero() {
 		return nil
 	}
-	if dialect == "sqlite" && sqliteSparseMirrorReadIndexesInstalled(ctx, db, indexSet) {
+	if dialect == "sqlite" && indexSet.Table != sampleMirrorIndexSet.Table && sqliteSparseMirrorReadIndexesInstalled(ctx, db, indexSet) {
 		return nil
 	}
 
@@ -1278,9 +1318,16 @@ func repairDroppedMirrorIndexSet(ctx context.Context, db *sql.DB, dialect string
 	}
 	var repaired bool
 	if indexSet.Table == "sample_mirror" {
-		repaired, err = rebuildSampleMirrorColdLoadIndexes(ctx, tx, dialect)
-		if err != nil {
-			return err
+		if repairSampleLookupIndexes {
+			if err = createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
+				return err
+			}
+			repaired = true
+		} else {
+			repaired, err = rebuildSampleMirrorColdLoadIndexes(ctx, tx, dialect)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		repaired, err = createMirrorDroppedIndexes(ctx, tx, dialect, indexSet)

@@ -46,7 +46,7 @@ const largeDomEvidencePath = path.join(
     evidenceDir,
     "result-metadata-large-truncation-postfix-dom.json",
 );
-const expectedVisibleKeys = ["library", "seqmeta_studyid", "study"];
+const expectedVisibleKeys = ["library", "study"];
 const largeMetadata = {
     library: "exon",
     study: "study-alpha",
@@ -59,6 +59,16 @@ const largeMetadata = {
     seqmeta_libraryid: "71046409",
     seqmeta_runid: "48522",
 };
+const expectedLargeDetailKeys = [
+    "library",
+    "study",
+    "owner",
+    "project",
+    "cohort",
+    "analysis",
+    "seqmeta_sampleid",
+    "seqmeta_runid",
+];
 
 async function measureMetadataStrip(
     strip: Locator,
@@ -281,12 +291,14 @@ test("truncates larger result metadata only when the full strip would overflow",
         expect(visibleKeys.length).toBeLessThan(
             Object.keys(largeMetadata).length,
         );
-        expect(visibleKeys.every((key) => key?.startsWith("seqmeta_"))).toBe(
-            true,
+        expect(visibleKeys).toEqual(
+            expect.arrayContaining(["seqmeta_sampleid", "seqmeta_runid"]),
         );
         expect(detailKeys).toEqual(
-            expect.arrayContaining(Object.keys(largeMetadata)),
+            expect.arrayContaining(expectedLargeDetailKeys),
         );
+        expect(detailKeys).not.toContain("seqmeta_studyid");
+        expect(detailKeys).not.toContain("seqmeta_libraryid");
         expect(evidence.hiddenKeysInAllMetadata.length).toBeGreaterThan(0);
 
         deleteResult(result.id);

@@ -11,14 +11,30 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import type { EnrichmentResult } from "@/lib/contracts";
-import { canonicalSeqmetaKey, isSeqmetaKey } from "@/lib/seqmeta-keys";
+import {
+    canonicalSeqmetaKey,
+    isSeqmetaKey,
+    isSeqmetaKeyForUserFacingMlwhMetadataKey,
+    isUserFacingMlwhMetadataKey,
+    preferredSeqmetaKeyForUserFacingMlwhMetadataKey,
+    type UserFacingMlwhMetadataKey,
+    userFacingMlwhMetadataLabel,
+} from "@/lib/seqmeta-keys";
 
 type ResultMetadataProps = {
     enrichments?: Record<string, EnrichmentResult | null>;
     errors?: Record<string, "not_found" | "upstream_impaired">;
     loading?: Record<string, boolean>;
     metadata: Record<string, string>;
+    metadataValues?: Record<string, string[]>;
     variant?: "section" | "integrated";
+};
+
+type MetadataEntry = {
+    displayKey: string;
+    key: string;
+    value: string;
+    values: string[];
 };
 
 type IntegratedMetadataLayout = {
@@ -44,16 +60,167 @@ function seqmetaLookupKey(value: string): string {
     return value.trim();
 }
 
-function displayMetadataKey(key: string): string {
+function nonEmptyMetadataValues(values: string[] | undefined): string[] {
+    return (values ?? [])
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+}
+
+function orderedMetadataKeys(
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): string[] {
+    const keys: string[] = [];
+    const seen = new Set<string>();
+
+    for (const key of Object.keys(metadata)) {
+        keys.push(key);
+        seen.add(key);
+    }
+
+    for (const key of Object.keys(metadataValues ?? {})) {
+        if (seen.has(key)) {
+            continue;
+        }
+
+        keys.push(key);
+    }
+
+    return keys;
+}
+
+function metadataValuesForKey(
+    key: string,
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): string[] {
+    const values = nonEmptyMetadataValues(metadataValues?.[key]);
+
+    if (values.length > 0) {
+        return values;
+    }
+
+    const value = metadata[key]?.trim();
+
+    return value ? [value] : [];
+}
+
+function userFacingMlwhDisplayKeys(
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): Map<UserFacingMlwhMetadataKey, string> {
+    const keysWithValues = orderedMetadataKeys(metadata, metadataValues).filter(
+        (key) => metadataValuesForKey(key, metadata, metadataValues).length > 0,
+    );
+    const displayKeys = new Map<UserFacingMlwhMetadataKey, string>();
+
+    for (const key of keysWithValues) {
+        if (!isUserFacingMlwhMetadataKey(key)) {
+            continue;
+        }
+
+        const displayKey = preferredSeqmetaKeyForUserFacingMlwhMetadataKey(
+            key,
+            keysWithValues,
+        );
+
+        if (displayKey) {
+            displayKeys.set(key, displayKey);
+        }
+    }
+
+    return displayKeys;
+}
+
+function hidesDuplicateSeqmetaEntry(
+    key: string,
+    displayKeys: Map<UserFacingMlwhMetadataKey, string>,
+): boolean {
+    if (!isSeqmetaKey(key)) {
+        return false;
+    }
+
+    for (const userFacingKey of displayKeys.keys()) {
+        if (isSeqmetaKeyForUserFacingMlwhMetadataKey(userFacingKey, key)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function displayMetadataEntries(
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): MetadataEntry[] {
+    const entries: MetadataEntry[] = [];
+    const seen = new Set<string>();
+    const displayKeys = userFacingMlwhDisplayKeys(metadata, metadataValues);
+
+    for (const [key, value] of Object.entries(metadata)) {
+        if (hidesDuplicateSeqmetaEntry(key, displayKeys)) {
+            seen.add(key);
+
+            continue;
+        }
+
+        const values = nonEmptyMetadataValues(metadataValues?.[key]);
+        entries.push({
+            displayKey:
+                displayKeys.get(key as UserFacingMlwhMetadataKey) ?? key,
+            key,
+            value: values.length > 1 ? values.join(", ") : value,
+            values,
+        });
+        seen.add(key);
+    }
+
+    for (const [key, values] of Object.entries(metadataValues ?? {})) {
+        if (seen.has(key)) {
+            continue;
+        }
+
+        if (hidesDuplicateSeqmetaEntry(key, displayKeys)) {
+            continue;
+        }
+
+        const displayValues = nonEmptyMetadataValues(values);
+        if (displayValues.length === 0) {
+            continue;
+        }
+
+        entries.push({
+            displayKey:
+                displayKeys.get(key as UserFacingMlwhMetadataKey) ?? key,
+            key,
+            value: displayValues.join(", "),
+            values: displayValues,
+        });
+    }
+
+    return entries;
+}
+
+function displayMetadataKey(key: string, displayKey = key): string {
+    if (isUserFacingMlwhMetadataKey(key) && displayKey !== key) {
+        return userFacingMlwhMetadataLabel(key);
+    }
+
     return canonicalSeqmetaKey(key);
 }
 
-function displayMetadataStripKey(key: string): string {
+function displayMetadataStripKey(key: string, entryDisplayKey = key): string {
+    if (isUserFacingMlwhMetadataKey(key) && entryDisplayKey !== key) {
+        return userFacingMlwhMetadataLabel(key);
+    }
+
     const displayKey = canonicalSeqmetaKey(key);
 
     if (
         displayKey === "seqmeta_id_study_lims" ||
-        displayKey === "seqmeta_study_accession"
+        displayKey === "seqmeta_study_accession" ||
+        displayKey === "seqmeta_uuid_study_lims" ||
+        displayKey === "seqmeta_study_name"
     ) {
         return "Study";
     }
@@ -62,7 +229,10 @@ function displayMetadataStripKey(key: string): string {
         displayKey === "seqmeta_sample_name" ||
         displayKey === "seqmeta_sanger_sample_id" ||
         displayKey === "seqmeta_supplier_name" ||
-        displayKey === "seqmeta_id_sample_lims"
+        displayKey === "seqmeta_id_sample_lims" ||
+        displayKey === "seqmeta_accession_number" ||
+        displayKey === "seqmeta_uuid_sample_lims" ||
+        displayKey === "seqmeta_donor_id"
     ) {
         return "Sample";
     }
@@ -91,12 +261,17 @@ function integratedSeqmetaPriority(key: string): number {
 
     if (
         displayKey === "seqmeta_id_study_lims" ||
-        displayKey === "seqmeta_study_accession"
+        displayKey === "seqmeta_study_accession" ||
+        displayKey === "seqmeta_uuid_study_lims" ||
+        displayKey === "seqmeta_study_name"
     ) {
         return 0;
     }
 
-    if (displayKey === "seqmeta_sample_name") {
+    if (
+        displayKey === "seqmeta_supplier_name" ||
+        displayKey === "seqmeta_sample_name"
+    ) {
         return 1;
     }
 
@@ -108,7 +283,11 @@ function integratedSeqmetaPriority(key: string): number {
         return 3;
     }
 
-    if (displayKey === "seqmeta_supplier_name") {
+    if (
+        displayKey === "seqmeta_accession_number" ||
+        displayKey === "seqmeta_uuid_sample_lims" ||
+        displayKey === "seqmeta_donor_id"
+    ) {
         return 4;
     }
 
@@ -135,17 +314,17 @@ function integratedSeqmetaPriority(key: string): number {
     return 10;
 }
 
-function prioritizedIntegratedEntries(entries: [string, string][]) {
+function prioritizedIntegratedEntries(entries: MetadataEntry[]) {
     const seqmetaEntries = entries
         .map((entry, index) => ({ entry, index }))
-        .filter(({ entry: [key] }) => isSeqmetaKey(key))
+        .filter(({ entry }) => isSeqmetaKey(entry.key))
         .sort(
             (
-                { entry: [leftKey], index: leftIndex },
-                { entry: [rightKey], index: rightIndex },
+                { entry: leftEntry, index: leftIndex },
+                { entry: rightEntry, index: rightIndex },
             ) =>
-                integratedSeqmetaPriority(leftKey) -
-                    integratedSeqmetaPriority(rightKey) ||
+                integratedSeqmetaPriority(leftEntry.key) -
+                    integratedSeqmetaPriority(rightEntry.key) ||
                 leftIndex - rightIndex,
         )
         .map(({ entry }) => entry);
@@ -154,22 +333,23 @@ function prioritizedIntegratedEntries(entries: [string, string][]) {
         return entries;
     }
 
-    const nonSeqmetaEntries = entries.filter(([key]) => !isSeqmetaKey(key));
+    const nonSeqmetaEntries = entries.filter(
+        (entry) => !isSeqmetaKey(entry.key),
+    );
 
     return [...seqmetaEntries, ...nonSeqmetaEntries];
 }
 
-function truncatedIntegratedEntries(
-    entries: [string, string][],
-    limit: number,
-) {
+function truncatedIntegratedEntries(entries: MetadataEntry[], limit: number) {
     const boundedLimit = Math.max(1, Math.min(limit, entries.length - 1));
 
     return prioritizedIntegratedEntries(entries).slice(0, boundedLimit);
 }
 
-function metadataEntriesSignature(entries: [string, string][]): string {
-    return entries.map(([key, value]) => `${key}\u0000${value}`).join("\u0001");
+function metadataEntriesSignature(entries: MetadataEntry[]): string {
+    return entries
+        .map((entry) => `${entry.key}\u0000${entry.value}`)
+        .join("\u0001");
 }
 
 function hasVerticalOverflow(element: HTMLElement): boolean {
@@ -182,27 +362,54 @@ function MetadataValue({
     errors,
     loading,
     metadataKey,
+    triggerLabel,
     value,
+    values,
 }: {
     display?: "detail" | "strip";
     enrichments: Record<string, EnrichmentResult | null>;
     errors: Record<string, "not_found" | "upstream_impaired">;
     loading: Record<string, boolean>;
     metadataKey: string;
+    triggerLabel?: string;
     value: string;
+    values: string[];
 }) {
+    const displayValue = values.length > 1 ? values.join(", ") : value;
+
     if (isSeqmetaKey(metadataKey)) {
-        const lookupKey = seqmetaLookupKey(value);
+        const seqmetaValues =
+            values.length > 0
+                ? values
+                : nonEmptyMetadataValues(displayValue ? [displayValue] : []);
 
         return (
-            <SeqmetaBadge
-                metadataKey={metadataKey}
-                rawValue={value}
-                enrichment={enrichments[lookupKey] ?? null}
-                error={errors[lookupKey]}
-                loading={Boolean(loading[lookupKey])}
-                statusPlacement={display === "strip" ? "overlay" : "inline"}
-            />
+            <span
+                className={
+                    display === "detail"
+                        ? "inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-1"
+                        : "inline-flex min-w-0 max-w-full items-center gap-1 overflow-hidden align-middle"
+                }
+            >
+                {seqmetaValues.map((rawValue, index) => {
+                    const lookupKey = seqmetaLookupKey(rawValue);
+
+                    return (
+                        <SeqmetaBadge
+                            key={`${rawValue}:${index}`}
+                            metadataKey={metadataKey}
+                            rawValue={rawValue}
+                            triggerLabel={triggerLabel}
+                            enrichment={enrichments[lookupKey] ?? null}
+                            error={errors[lookupKey]}
+                            loading={Boolean(loading[lookupKey])}
+                            statusPlacement={
+                                display === "strip" ? "overlay" : "inline"
+                            }
+                        />
+                    );
+                })}
+            </span>
         );
     }
 
@@ -214,9 +421,33 @@ function MetadataValue({
                     : "min-w-0 truncate text-xs font-medium text-foreground"
             }
         >
-            {value}
+            {displayValue}
         </span>
     );
+}
+
+function userFacingTriggerLabel(
+    key: string,
+    displayKey: string,
+): string | undefined {
+    if (!isUserFacingMlwhMetadataKey(key) || displayKey === key) {
+        return undefined;
+    }
+
+    if (key === "sample") {
+        return userFacingMlwhMetadataLabel(key);
+    }
+
+    if (
+        key === "study" &&
+        (displayKey === "seqmeta_study_accession" ||
+            displayKey === "seqmeta_uuid_study_lims" ||
+            displayKey === "seqmeta_study_name")
+    ) {
+        return userFacingMlwhMetadataLabel(key);
+    }
+
+    return undefined;
 }
 
 export function ResultMetadata({
@@ -224,9 +455,10 @@ export function ResultMetadata({
     errors = {},
     loading = {},
     metadata,
+    metadataValues,
     variant = "section",
 }: ResultMetadataProps) {
-    const entries = Object.entries(metadata);
+    const entries = displayMetadataEntries(metadata, metadataValues);
     const metadataSignature = metadataEntriesSignature(entries);
     const integratedLayoutRef = useRef<HTMLDivElement>(null);
     const metadataStripRef = useRef<HTMLDListElement>(null);
@@ -414,27 +646,44 @@ export function ResultMetadata({
                                     className="mt-3 grid max-h-[min(24rem,70vh)] gap-2 overflow-auto pr-1 sm:grid-cols-2"
                                     data-result-metadata-details-panel="true"
                                 >
-                                    {entries.map(([key, value]) => (
-                                        <div
-                                            key={key}
-                                            className="min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
-                                            data-metadata-detail-row={key}
-                                        >
-                                            <dt className="break-all font-mono text-[11px] text-muted-foreground">
-                                                {key}
-                                            </dt>
-                                            <dd className="mt-1 min-w-0">
-                                                <MetadataValue
-                                                    display="detail"
-                                                    enrichments={enrichments}
-                                                    errors={errors}
-                                                    loading={loading}
-                                                    metadataKey={key}
-                                                    value={value}
-                                                />
-                                            </dd>
-                                        </div>
-                                    ))}
+                                    {entries.map(
+                                        ({
+                                            displayKey,
+                                            key,
+                                            value,
+                                            values,
+                                        }) => (
+                                            <div
+                                                key={key}
+                                                className="min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
+                                                data-metadata-detail-row={key}
+                                            >
+                                                <dt className="break-all font-mono text-[11px] text-muted-foreground">
+                                                    {displayMetadataKey(
+                                                        key,
+                                                        displayKey,
+                                                    )}
+                                                </dt>
+                                                <dd className="mt-1 min-w-0">
+                                                    <MetadataValue
+                                                        display="detail"
+                                                        enrichments={
+                                                            enrichments
+                                                        }
+                                                        errors={errors}
+                                                        loading={loading}
+                                                        metadataKey={displayKey}
+                                                        triggerLabel={userFacingTriggerLabel(
+                                                            key,
+                                                            displayKey,
+                                                        )}
+                                                        value={value}
+                                                        values={values}
+                                                    />
+                                                </dd>
+                                            </div>
+                                        ),
+                                    )}
                                 </dl>
                             </PopoverContent>
                         </Popover>
@@ -451,26 +700,36 @@ export function ResultMetadata({
                         className="flex max-h-20 flex-wrap gap-1.5 overflow-auto pr-1"
                         data-result-metadata-strip="true"
                     >
-                        {visibleEntries.map(([key, value]) => (
-                            <div
-                                key={key}
-                                className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border border-border/65 bg-background/70 px-2 py-0.5 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
-                                data-metadata-row={key}
-                            >
-                                <dt className="min-w-0 shrink truncate font-mono text-[11px] text-muted-foreground">
-                                    {displayMetadataStripKey(key)}
-                                </dt>
-                                <dd className="min-w-0">
-                                    <MetadataValue
-                                        enrichments={enrichments}
-                                        errors={errors}
-                                        loading={loading}
-                                        metadataKey={key}
-                                        value={value}
-                                    />
-                                </dd>
-                            </div>
-                        ))}
+                        {visibleEntries.map(
+                            ({ displayKey, key, value, values }) => (
+                                <div
+                                    key={key}
+                                    className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border border-border/65 bg-background/70 px-2 py-0.5 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
+                                    data-metadata-row={key}
+                                >
+                                    <dt className="min-w-0 shrink truncate font-mono text-[11px] text-muted-foreground">
+                                        {displayMetadataStripKey(
+                                            key,
+                                            displayKey,
+                                        )}
+                                    </dt>
+                                    <dd className="min-w-0">
+                                        <MetadataValue
+                                            enrichments={enrichments}
+                                            errors={errors}
+                                            loading={loading}
+                                            metadataKey={displayKey}
+                                            triggerLabel={userFacingTriggerLabel(
+                                                key,
+                                                displayKey,
+                                            )}
+                                            value={value}
+                                            values={values}
+                                        />
+                                    </dd>
+                                </div>
+                            ),
+                        )}
                         {hasHiddenEntries ? (
                             <div className="inline-flex min-h-7 items-center rounded-full border border-border/65 bg-card/70 px-2.5 py-0.5 text-xs text-muted-foreground">
                                 +{entries.length - visibleEntries.length}
@@ -507,40 +766,33 @@ export function ResultMetadata({
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border/60 bg-card/60">
-                            {entries.map(([key, value]) => (
-                                <tr key={key} data-metadata-row={key}>
-                                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                                        {displayMetadataKey(key)}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        {isSeqmetaKey(key) ? (
-                                            <SeqmetaBadge
-                                                metadataKey={key}
-                                                rawValue={value}
-                                                enrichment={
-                                                    enrichments[
-                                                        seqmetaLookupKey(value)
-                                                    ] ?? null
-                                                }
-                                                error={
-                                                    errors[
-                                                        seqmetaLookupKey(value)
-                                                    ]
-                                                }
-                                                loading={Boolean(
-                                                    loading[
-                                                        seqmetaLookupKey(value)
-                                                    ],
+                            {entries.map(
+                                ({ displayKey, key, value, values }) => (
+                                    <tr key={key} data-metadata-row={key}>
+                                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                                            {displayMetadataKey(
+                                                key,
+                                                displayKey,
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <MetadataValue
+                                                display="detail"
+                                                enrichments={enrichments}
+                                                errors={errors}
+                                                loading={loading}
+                                                metadataKey={displayKey}
+                                                triggerLabel={userFacingTriggerLabel(
+                                                    key,
+                                                    displayKey,
                                                 )}
+                                                value={value}
+                                                values={values}
                                             />
-                                        ) : (
-                                            <span className="text-sm text-foreground">
-                                                {value}
-                                            </span>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
+                                        </td>
+                                    </tr>
+                                ),
+                            )}
                         </tbody>
                     </table>
                 </div>

@@ -5,8 +5,8 @@
 `results` package providing a REST API and CLI for registering,
 searching, and managing pipeline result sets. A result set groups
 output files from a single pipeline run with metadata: requester,
-operator, command line, pipeline identity, input files, and
-arbitrary key-value pairs.
+operator, command line, workflow identity stored as
+`pipeline_identifier`, input files, and arbitrary key-value pairs.
 
 Key behaviours:
 
@@ -220,14 +220,13 @@ var SeqmetaFieldTypes = map[string]string{
   `BuildRunKey("48522", "random_exon")` ->
   `"runid=48522&unique=random_exon"`. Empty additionalUnique
   -> `"runid=48522"`.
-- `DetectPipeline(workflowPath)`: if file is in a git
-  checkout, returns `(workflowScopedIdentifier, repoName,
- commitHash)`, where the identifier combines the git remote
-  (or repo root path when no remote exists) with the
-  workflow-relative path so multiple workflows in one repo do
-  not collide. If not in git, returns `(cleanedAbsPath,
-parentDirName, hex(SHA256(fileContents)))`. Never fails
-  unless file is unreadable.
+- `ResolveWorkflowIdentity(workflow)`: tries workflow-specific
+  resolvers before falling back to the trimmed raw workflow
+  string. The Nextflow resolver handles local `.nf` files with
+  git metadata or content hashing, plus GitHub URLs and
+  `owner/repo` shorthands. Local `.nf` files inside git repos use
+  `<remote-or-clean-repo-root>::<workflow-relative-path>` identifiers
+  so multiple workflow files in the same repo cannot collide.
 
 ### Search Query Parameters
 
@@ -339,40 +338,42 @@ alphabetically. Only includes non-empty values.
 5. Given `runID="a&b"` and `additionalUnique="c=d"`, then
    special characters are percent-encoded.
 
-### A3: DetectPipeline
+### A3: ResolveWorkflowIdentity
 
-As a developer, I want to auto-detect pipeline identity from
-a workflow file path, so that operators don't manually supply
-redundant information.
+As a developer, I want to resolve workflow identity from a
+workflow value, so that operators can supply either a generic
+identity string or a workflow-manager-specific reference.
 
 **Package:** `results/`
-**File:** `results/types.go`
+**File:** `results/workflow.go`
 **Test file:** `results/types_test.go`
 
 ```go
-func DetectPipeline(workflowPath string) (
-    identifier, name, version string, err error,
-)
+func ResolveWorkflowIdentity(workflow string) (WorkflowIdentity, error)
 ```
 
 **Acceptance tests:**
 
 1. Given a file inside a git repo with remote origin
    `https://github.com/org/nf_splicing.git` and HEAD at
-   commit `abc123`, when `DetectPipeline("/repo/main.nf")`
-   is called, then `identifier ==
-"https://github.com/org/nf_splicing.git"`,
-   `name == "nf_splicing"`, `version == "abc123"`.
+   commit `abc123`, when `ResolveWorkflowIdentity("/repo/main.nf")`
+   is called, then `identity.Identifier` is
+   `"https://github.com/org/nf_splicing.git::main.nf"`,
+   `identity.Name == "nf_splicing"`, `identity.Version == "abc123"`.
    (Test creates a real git repo in `t.TempDir()`.)
-2. Given a git repo with no remote, when called, then
-   `identifier` is the cleaned absolute repo root path,
-   `name` is the repo directory name.
+2. Given `main.nf` inside a git repo with no remote, when called, then
+   `identifier` is the cleaned absolute repo root path plus
+   `"::main.nf"`, and `name` is the repo directory name.
 3. Given a file NOT in a git repo, when called, then
    `identifier` is the cleaned absolute path of the file,
    `name` is the parent directory name, and `version` is the
    lowercase hex SHA256 of the file's content.
-4. Given an unreadable file path, then `err != nil`.
-5. Given a relative path `"./main.nf"` that exists, then
+4. Given two local `.nf` files in the same git repo, when called for
+   each file, then identifiers differ by their appended
+   `::<workflow-relative-path>` suffixes, e.g. `::main.nf` and
+   `::workflows/alt.nf`.
+5. Given an unreadable file path, then `err != nil`.
+6. Given a relative path `"./main.nf"` outside a git repo that exists, then
    `identifier` is the resolved absolute path.
 
 ---
@@ -890,7 +891,7 @@ records everything.
 wa results register \
     --server http://localhost:8080 \
     --user alice --operator bob \
-    --nextflow-workflow /path/to/main.nf \
+    --workflow /path/to/main.nf \
     --runid 48522 --additional-unique random_exon \
     --command "nextflow run ..." \
     --input-file /path/to/sample_sheet.tsv \
@@ -904,7 +905,9 @@ Flags:
 - `--server` (persistent, default `$WA_RESULTS_BACKEND_URL` or
   `http://localhost:8080`)
 - `--user`, `--operator`, `--command` (string)
-- `--nextflow-workflow` (path, triggers `DetectPipeline`)
+- `--workflow` (workflow identity string; Nextflow local files,
+  GitHub URLs, and `owner/repo` shorthands get resolver-specific
+  identity metadata)
 - `--runid`, `--additional-unique` (key-building)
 - `--input-file` (repeatable, CLI calls `os.Stat` to fill
   mtime+size)
@@ -913,8 +916,8 @@ Flags:
 - `--json` (read full Registration JSON from stdin)
 - Positional: output directory
 
-CLI flow: scan output dir -> detect pipeline -> build run
-key -> build Registration -> POST to server -> print result
+CLI flow: scan output dir -> resolve workflow identity -> build
+run key -> build Registration -> POST to server -> print result
 JSON to stdout.
 
 **Acceptance tests:**
@@ -922,7 +925,7 @@ JSON to stdout.
 1. Given an `httptest.Server` as the results server and a
    `t.TempDir()` with 2 files, when `register` is run with
    `--user alice --operator bob --runid 48522
---additional-unique exon --nextflow-workflow <path>`,
+--additional-unique exon --workflow <workflow>`,
    then stdout is valid JSON with `"id"` field and server
    received a POST with 2 output files.
 2. Given `--json` flag, when Registration JSON is piped to

@@ -75,6 +75,28 @@ func TestScanDirectory(t *testing.T) {
 		convey.So(includedEntries, convey.ShouldHaveLength, 2)
 	})
 
+	convey.Convey("ScanDirectory filters output files by output-relative glob matches", t, func() {
+		dir := t.TempDir()
+		createSizedFile(t, filepath.Join(dir, "reports", "summary.html"), 7)
+		createSizedFile(t, filepath.Join(dir, "reports", "summary.txt"), 8)
+		createSizedFile(t, filepath.Join(dir, "metrics", "qc.json"), 9)
+		createSizedFile(t, filepath.Join(dir, "metrics", "qc.tsv"), 10)
+
+		entries, warnings, err := ScanDirectory(dir, false, "reports/*.html", "metrics/*.json")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(warnings, convey.ShouldEqual, 0)
+		convey.So(entries, convey.ShouldHaveLength, 2)
+
+		entriesByRel := entriesByRelPath(dir, entries)
+		convey.So(entriesByRel[filepath.Join("reports", "summary.html")].Kind, convey.ShouldEqual, "output")
+		convey.So(entriesByRel[filepath.Join("reports", "summary.html")].Size, convey.ShouldEqual, 7)
+		convey.So(entriesByRel[filepath.Join("metrics", "qc.json")].Kind, convey.ShouldEqual, "output")
+		convey.So(entriesByRel[filepath.Join("metrics", "qc.json")].Size, convey.ShouldEqual, 9)
+		convey.So(entriesByRel[filepath.Join("reports", "summary.txt")].Path, convey.ShouldBeBlank)
+		convey.So(entriesByRel[filepath.Join("metrics", "qc.tsv")].Path, convey.ShouldBeBlank)
+	})
+
 	convey.Convey("B1.3: ScanDirectory excludes hidden directories and their contents", t, func() {
 		dir := t.TempDir()
 		createSizedFile(t, filepath.Join(dir, ".hidden_dir", "file.txt"), 5)

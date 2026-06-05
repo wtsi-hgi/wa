@@ -68,8 +68,11 @@ test("reproduces reopened result detail header layout issues", async ({
         summary.locator('[data-registration-field="Last updated"]'),
     ).toBeVisible();
     await expect(
-        metadataStrip.locator('[data-metadata-row="seqmeta_studyid"]'),
+        metadataStrip.locator('[data-metadata-row="study"]'),
     ).toContainText("Study");
+    await expect(
+        metadataStrip.locator('[data-metadata-row="seqmeta_studyid"]'),
+    ).toHaveCount(0);
     await expect(
         metadataStrip.locator('[data-metadata-row="library"]'),
     ).toContainText("exon");

@@ -47,20 +47,6 @@ import (
 	modernsqlite "modernc.org/sqlite"
 )
 
-func syncSelectedTablesForTest(ctx context.Context, client *Client, tables ...string) ([]SyncReport, error) {
-	reports := make([]SyncReport, 0, len(tables))
-	for _, table := range tables {
-		report, err := client.syncTable(ctx, table)
-		if err != nil {
-			return nil, err
-		}
-
-		reports = append(reports, report)
-	}
-
-	return reports, nil
-}
-
 var sampleSyncSourceColumns = []string{
 	"id_sample_tmp",
 	"id_lims",
@@ -133,6 +119,39 @@ var seqProductIRODSLocationsSyncSourceColumns = []string{
 	"last_updated",
 }
 
+var (
+	syncTestDriverOnce sync.Once
+	syncTestDriverMu   sync.Mutex
+	syncTestDriverSeq  int
+	syncTestDrivers    = map[string]*syncTestDriverState{}
+)
+
+var (
+	recordingSQLiteDriverOnce  sync.Once
+	recordingSQLiteObserversMu sync.Mutex
+	recordingSQLiteObservers   = map[string]*sqliteSyncSQLObserver{}
+)
+
+var (
+	syncCountingSQLiteDriverOnce sync.Once
+	syncCountingSQLiteCountersMu sync.Mutex
+	syncCountingSQLiteCounters   = map[string]*syncCommitCounter{}
+)
+
+func syncSelectedTablesForTest(ctx context.Context, client *Client, tables ...string) ([]SyncReport, error) {
+	reports := make([]SyncReport, 0, len(tables))
+	for _, table := range tables {
+		report, err := client.syncTable(ctx, table)
+		if err != nil {
+			return nil, err
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
 type syncStartRecord struct {
 	At          time.Time
 	GoroutineID int64
@@ -168,21 +187,46 @@ type syncTestDriverState struct {
 	queryCount map[string]int
 }
 
+func TestFinalizeSampleSyncStateRebuildsLargeSQLiteSecondaryIndexes(t *testing.T) {
+	convey.Convey("Given a completed large SQLite sample cold load with indexes still dropped", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { _ = db.Close() }()
+
+		highWater := time.Date(2026, time.May, 13, 11, 0, 0, 0, time.UTC)
+		cache := &sqliteCache{rwDB: db}
+
+		mock.ExpectBegin()
+		mock.ExpectExec(regexp.QuoteMeta(`PRAGMA busy_timeout = 5000`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM donor_samples`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta(`INSERT OR IGNORE INTO donor_samples(donor_id, id_sample_tmp) SELECT donor_id, id_sample_tmp FROM sample_mirror`)).WillReturnResult(sqlmock.NewResult(0, 10296551))
+		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("sqlite", sampleMirrorIndexSet.Table))).WillReturnRows(sqlmock.NewRows([]string{"name"}))
+		for _, index := range sampleMirrorSecondaryIndexes {
+			mock.ExpectExec(regexp.QuoteMeta(fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON sample_mirror(%s)`, index.Name, index.Column))).
+				WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("sqlite", "sync_state", syncStateColumns, []string{"table_name"}))).
+			WithArgs(syncTableSample, formatSyncTime(highWater), sqlmock.AnyArg(), nil, 0).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectCommit()
+
+		err = finalizeSampleSyncState(context.Background(), cache, highWater, true)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
 type syncTestDriver struct{}
+
 type syncTestConn struct{ state *syncTestDriverState }
+
 type syncTestRows struct {
 	columns []string
 	plan    syncTestQueryResult
 	index   int
 	started bool
 }
-
-var (
-	syncTestDriverOnce sync.Once
-	syncTestDriverMu   sync.Mutex
-	syncTestDriverSeq  int
-	syncTestDrivers    = map[string]*syncTestDriverState{}
-)
 
 func TestClientSyncFiveTableParallelReports(t *testing.T) {
 	convey.Convey("B1.1: Given deterministic rows for each supported table, when Client.Sync runs, then it returns five reports with the inserted counts for each table", t, func() {
@@ -1812,34 +1856,6 @@ func TestRepairDroppedProductMirrorIndexesCreatesRunAndSampleLookupIndexes(t *te
 	})
 }
 
-func TestFinalizeSampleSyncStateDefersLargeSQLiteSecondaryIndexRebuild(t *testing.T) {
-	convey.Convey("Given a completed large SQLite sample cold load with indexes still dropped", t, func() {
-		db, mock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		defer func() { _ = db.Close() }()
-
-		highWater := time.Date(2026, time.May, 13, 11, 0, 0, 0, time.UTC)
-		cache := &sqliteCache{rwDB: db}
-
-		mock.ExpectBegin()
-		mock.ExpectExec(regexp.QuoteMeta(`PRAGMA busy_timeout = 5000`)).WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM donor_samples`)).WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectExec(regexp.QuoteMeta(`INSERT OR IGNORE INTO donor_samples(donor_id, id_sample_tmp) SELECT donor_id, id_sample_tmp FROM sample_mirror`)).WillReturnResult(sqlmock.NewResult(0, 10296551))
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM sample_mirror`)).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(mysqlInlineSampleIndexRowLimit + 1))
-		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("sqlite", sampleMirrorIndexSet.Table))).WillReturnRows(sqlmock.NewRows([]string{"name"}))
-		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS sample_mirror_name_idx ON sample_mirror(name)`)).WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectExec(regexp.QuoteMeta(buildUpsertStatement("sqlite", "sync_state", syncStateColumns, []string{"table_name"}))).
-			WithArgs(syncTableSample, formatSyncTime(highWater), sqlmock.AnyArg(), nil, 1).
-			WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit()
-
-		err = finalizeSampleSyncState(context.Background(), cache, highWater, true)
-
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
-	})
-}
-
 func TestRepairDroppedProductMirrorIndexesDefersLargeSQLiteSecondaryRebuild(t *testing.T) {
 	convey.Convey("Given a completed large SQLite product mirror with cold-load indexes still dropped", t, func() {
 		db, mock, err := sqlmock.New()
@@ -3096,12 +3112,6 @@ type recordingSQLiteTx struct {
 	observer *sqliteSyncSQLObserver
 }
 
-var (
-	recordingSQLiteDriverOnce  sync.Once
-	recordingSQLiteObserversMu sync.Mutex
-	recordingSQLiteObservers   = map[string]*sqliteSyncSQLObserver{}
-)
-
 func (d *recordingSQLiteDriver) Open(name string) (driver.Conn, error) {
 	conn, err := d.base.Open(name)
 	if err != nil {
@@ -3384,12 +3394,6 @@ func (c *syncCommitCounter) Reset() {
 
 	c.commits = 0
 }
-
-var (
-	syncCountingSQLiteDriverOnce sync.Once
-	syncCountingSQLiteCountersMu sync.Mutex
-	syncCountingSQLiteCounters   = map[string]*syncCommitCounter{}
-)
 
 func openCountingSQLiteSyncTestCache(t *testing.T) (Cache, *syncCommitCounter) {
 	t.Helper()

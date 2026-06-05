@@ -42,6 +42,7 @@ import (
 	osuser "os/user"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -461,6 +462,106 @@ type resultsRegisterResolver interface {
 	Close() error
 }
 
+func resolveResultsRegisterStudyMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
+	match, err := client.ResolveStudy(ctx, value)
+	if err != nil {
+		return nil, fmt.Errorf("resolve --study %q: %w", value, err)
+	}
+
+	canonicalStudyID, err := resultsRegisterResolvedCanonical("--study", value, match.Canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := map[string]string{results.SeqmetaIDStudyLimsKey: canonicalStudyID}
+	trimmedValue := strings.TrimSpace(value)
+	if sourceKey := resultsRegisterStudySourceMetadataKey(match.Kind); sourceKey != "" && trimmedValue != "" {
+		metadata[sourceKey] = trimmedValue
+		if !strings.EqualFold(trimmedValue, canonicalStudyID) {
+			metadata["study"] = trimmedValue
+		}
+	}
+
+	return metadata, nil
+}
+
+func resultsRegisterStudySourceMetadataKey(kind mlwh.IdentifierKind) string {
+	switch kind {
+	case mlwh.KindStudyAccession:
+		return results.SeqmetaStudyAccessionKey
+	case mlwh.KindStudyUUID:
+		return results.SeqmetaStudyUUIDKey
+	case mlwh.KindStudyName:
+		return results.SeqmetaStudyNameKey
+	default:
+		return ""
+	}
+}
+
+func resolveResultsRegisterSampleMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
+	match, err := resolveResultsRegisterSample(ctx, client, value)
+	if err != nil {
+		return nil, err
+	}
+
+	canonicalSampleName, err := resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := map[string]string{results.SeqmetaSampleNameKey: canonicalSampleName}
+	trimmedValue := strings.TrimSpace(value)
+	if sourceKey := resultsRegisterSampleSourceMetadataKey(match.Kind); sourceKey != "" && trimmedValue != "" {
+		metadata[sourceKey] = trimmedValue
+	}
+	if trimmedValue != "" && !strings.EqualFold(trimmedValue, canonicalSampleName) {
+		metadata["sample"] = trimmedValue
+	}
+
+	return metadata, nil
+}
+
+func resultsRegisterSampleSourceMetadataKey(kind mlwh.IdentifierKind) string {
+	switch kind {
+	case mlwh.KindSampleLimsID:
+		return results.SeqmetaIDSampleLimsKey
+	case mlwh.KindSangerSampleID:
+		return results.SeqmetaSangerSampleIDKey
+	case mlwh.KindSupplierName:
+		return results.SeqmetaSupplierNameKey
+	case mlwh.KindSampleAccession:
+		return results.SeqmetaAccessionNumberKey
+	case mlwh.KindSampleUUID:
+		return results.SeqmetaSampleUUIDKey
+	case mlwh.KindDonorID:
+		return results.SeqmetaDonorIDKey
+	default:
+		return ""
+	}
+}
+
+func resolveResultsRegisterSample(ctx context.Context, client resultsRegisterResolver, value string) (mlwh.Match, error) {
+	if nameResolver, ok := client.(resultsRegisterSampleNameResolver); ok {
+		match, err := nameResolver.ResolveSampleName(ctx, value)
+		if err == nil {
+			return match, nil
+		}
+		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+			return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
+		}
+		if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
+		}
+	}
+
+	match, err := client.ResolveSample(ctx, value)
+	if err != nil {
+		return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
+	}
+
+	return match, nil
+}
+
 type resultsRegisterSampleNameResolver interface {
 	ResolveSampleName(context.Context, string) (mlwh.Match, error)
 }
@@ -579,6 +680,35 @@ func (r *resultsServeMLWHRuntime) Close() error {
 	return errors.Join(closeErrs...)
 }
 
+func hasResultsRegisterLookupValues(values resultsRegisterLookupValues) bool {
+	return len(nonEmptyRegisterLookupValues(values.run)) > 0 ||
+		len(nonEmptyRegisterLookupValues(values.study)) > 0 ||
+		len(nonEmptyRegisterLookupValues(values.sample)) > 0 ||
+		len(nonEmptyRegisterLookupValues(values.library)) > 0
+}
+
+func nonEmptyRegisterLookupValues(values []string) []string {
+	nonEmpty := make([]string, 0, len(values))
+
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			nonEmpty = append(nonEmpty, trimmed)
+		}
+	}
+
+	return nonEmpty
+}
+
+func appendResultsRegisterMetadataValue(metadata map[string][]string, key string, value string) {
+	for _, existingValue := range metadata[key] {
+		if existingValue == value {
+			return
+		}
+	}
+
+	metadata[key] = append(metadata[key], value)
+}
+
 func resultsPublicHTTPClient(certPath string) (*http.Client, error) {
 	trimmedCertPath := strings.TrimSpace(certPath)
 	if trimmedCertPath == "" {
@@ -624,14 +754,14 @@ func resultsPublicHTTPClient(certPath string) (*http.Client, error) {
 }
 
 type resultsRegisterLookupValues struct {
-	run     string
-	study   string
-	sample  string
-	library string
+	run     []string
+	study   []string
+	sample  []string
+	library []string
 }
 
-func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsRegisterLookupValues) (map[string]string, error) {
-	if strings.TrimSpace(values.run) == "" && strings.TrimSpace(values.study) == "" && strings.TrimSpace(values.sample) == "" && strings.TrimSpace(values.library) == "" {
+func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsRegisterLookupValues) (map[string][]string, error) {
+	if !hasResultsRegisterLookupValues(values) {
 		return nil, nil
 	}
 
@@ -641,43 +771,47 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 	}
 	defer func() { _ = client.Close() }()
 
-	metadata := make(map[string]string, 4)
+	metadata := make(map[string][]string, 4)
 
-	if trimmedRun := strings.TrimSpace(values.run); trimmedRun != "" {
+	for _, trimmedRun := range nonEmptyRegisterLookupValues(values.run) {
 		resolvedRunID, err := resolveResultsRegisterRunID(ctx, client, trimmedRun)
 		if err != nil {
 			return nil, err
 		}
 
-		metadata[results.SeqmetaIDRunKey] = resolvedRunID
+		appendResultsRegisterMetadataValue(metadata, results.SeqmetaIDRunKey, resolvedRunID)
 	}
 
-	if trimmedStudy := strings.TrimSpace(values.study); trimmedStudy != "" {
-		resolvedStudyID, err := resolveResultsRegisterStudyID(ctx, client, trimmedStudy)
+	for _, trimmedStudy := range nonEmptyRegisterLookupValues(values.study) {
+		studyMetadata, err := resolveResultsRegisterStudyMetadata(ctx, client, trimmedStudy)
 		if err != nil {
 			return nil, err
 		}
 
-		metadata[results.SeqmetaIDStudyLimsKey] = resolvedStudyID
+		for key, value := range studyMetadata {
+			appendResultsRegisterMetadataValue(metadata, key, value)
+		}
 	}
 
-	if trimmedSample := strings.TrimSpace(values.sample); trimmedSample != "" {
-		resolvedSampleID, err := resolveResultsRegisterSampleID(ctx, client, trimmedSample)
+	for _, trimmedSample := range nonEmptyRegisterLookupValues(values.sample) {
+		sampleMetadata, err := resolveResultsRegisterSampleMetadata(ctx, client, trimmedSample)
 		if err != nil {
 			return nil, err
 		}
 
-		metadata[results.SeqmetaSampleNameKey] = resolvedSampleID
+		for key, value := range sampleMetadata {
+			appendResultsRegisterMetadataValue(metadata, key, value)
+		}
 	}
 
-	if trimmedLibrary := strings.TrimSpace(values.library); trimmedLibrary != "" {
+	for _, trimmedLibrary := range nonEmptyRegisterLookupValues(values.library) {
 		libraryMetadata, err := resolveResultsRegisterLibraryMetadata(ctx, client, trimmedLibrary)
 		if err != nil {
 			return nil, err
 		}
 
 		for key, value := range libraryMetadata {
-			metadata[key] = value
+			appendResultsRegisterMetadataValue(metadata, key, value)
 		}
 	}
 
@@ -691,34 +825,6 @@ func resolveResultsRegisterRunID(ctx context.Context, client resultsRegisterReso
 	}
 
 	return resultsRegisterResolvedCanonical("--run", value, match.Canonical)
-}
-
-func resolveResultsRegisterStudyID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
-	match, err := client.ResolveStudy(ctx, value)
-	if err != nil {
-		return "", fmt.Errorf("resolve --study %q: %w", value, err)
-	}
-
-	return resultsRegisterResolvedCanonical("--study", value, match.Canonical)
-}
-
-func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
-	if nameResolver, ok := client.(resultsRegisterSampleNameResolver); ok {
-		match, err := nameResolver.ResolveSampleName(ctx, value)
-		if err == nil {
-			return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
-		}
-		if !errors.Is(err, mlwh.ErrNotFound) {
-			return "", fmt.Errorf("resolve --sample %q: %w", value, err)
-		}
-	}
-
-	match, err := client.ResolveSample(ctx, value)
-	if err != nil {
-		return "", fmt.Errorf("resolve --sample %q: %w", value, err)
-	}
-
-	return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
 }
 
 func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
@@ -816,6 +922,99 @@ func matchLibraryType(match mlwh.Match) string {
 	}
 
 	return ""
+}
+
+func resultsRegisterOperatorName(operator string) (string, error) {
+	operatorName := strings.TrimSpace(operator)
+	if operatorName != "" {
+		return operatorName, nil
+	}
+
+	currentUser, err := osuser.Current()
+	if err != nil {
+		return "", fmt.Errorf("get current user: %w", err)
+	}
+
+	return strings.TrimSpace(currentUser.Username), nil
+}
+
+func parseResultsMetadataValueFilters(metaValues []string) (map[string][]string, error) {
+	metadata := make(map[string][]string, len(metaValues))
+
+	for _, metaValue := range metaValues {
+		key, value, err := parseResultsMetadataValue(metaValue)
+		if err != nil {
+			return nil, err
+		}
+
+		appendResultsRegisterMetadataValue(metadata, key, value)
+	}
+
+	return metadata, nil
+}
+
+func parseResultsMetadataValue(metaValue string) (string, string, error) {
+	key, value, found := strings.Cut(metaValue, "=")
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if !found || key == "" || value == "" {
+		return "", "", fmt.Errorf("invalid --meta value %q: expected key=value", metaValue)
+	}
+
+	return key, value, nil
+}
+
+func sortedResultsRegisterMetadataKeys(metadata map[string][]string) []string {
+	keys := make([]string, 0, len(metadata))
+
+	for key := range metadata {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+func singleResultsRegisterMetadata(metadata map[string][]string) map[string]string {
+	single := make(map[string]string, len(metadata))
+
+	for key, values := range metadata {
+		if len(values) == 0 {
+			continue
+		}
+
+		single[key] = values[0]
+	}
+
+	return single
+}
+
+func resultsRegisterWorkflowFiles(identity results.WorkflowIdentity) ([]results.FileEntry, error) {
+	if strings.TrimSpace(identity.LocalPath) == "" {
+		return nil, nil
+	}
+
+	absPath, err := filepath.Abs(identity.LocalPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow file %q: %w", identity.LocalPath, err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("stat workflow file %q: %w", identity.LocalPath, err)
+	}
+
+	if info.IsDir() {
+		return nil, fmt.Errorf("workflow file %q: is a directory", identity.LocalPath)
+	}
+
+	return []results.FileEntry{{
+		Path:  absPath,
+		Mtime: info.ModTime(),
+		Size:  info.Size(),
+		Kind:  "pipeline",
+	}}, nil
 }
 
 func resultsAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
@@ -1181,11 +1380,12 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var requester string
 	var operator string
 	var commandLine string
-	var workflowPath string
+	var workflowReference string
 	var unique string
 	var legacyRunID string
 	var additionalUnique string
 	var inputFiles []string
+	var matchPatterns []string
 	var metaValues []string
 	var lookupValues resultsRegisterLookupValues
 	var includeHidden bool
@@ -1193,33 +1393,50 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "register [output-dir]",
-		Short: "Register a result set",
-		Long: `Register a result set.
+		Short: "Register result files",
+		Long: `Register result files from an output directory.
 
-The --run, --study, --sample and --library shorthands resolve through MLWH
-and store canonical seqmeta metadata keys.
---sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or
-donor ID.
---study accepts LIMS ID, accession, UUID, or name; --run accepts numeric run
-IDs.
---library accepts exact pipeline_id_lims, library_id, or id_library_lims values
-and requires the MLWH cache to have been synced already.
+Identity:
+  output-dir (required) is the directory to scan for output files.
+  --user (required) records the requester or owner.
+  --operator (optional) records who performed the registration.
+  --command (optional) records the command line that produced the results.
+  --workflow (required) is the workflow identity: a raw string, local Nextflow
+    file, GitHub URL, or owner/repo shorthand.
+  --unique (required) is the stable unique run key. Use the same value when
+    rerunning the same logical result so the stored registration, files and
+    metadata are refreshed.
 
-Registrations are keyed by the detected pipeline identity and the unique key.
 The server replaces an existing result set instead of adding a new one when a
-registration has the same pipeline identity and unique key.
-The pipeline identity comes from --nextflow-workflow: files inside git use
-repository/commit metadata, GitHub URLs and owner/repo shorthands use GitHub
-repository metadata, and files outside git use the workflow path and content
-hash.
-The unique key is built from --unique. Use the same value
-when rerunning the same logical result and you want the stored registration,
-files and metadata to be refreshed.
-Choose a single stable, human-readable label for --unique that describes the
+registration has the same workflow identity and unique key.
+Use a single stable, human-readable label for --unique that describes the
 output, such as a run, cohort, panel or parameter-set label, and reuse it for
 future replacements.
 Avoid a timestamp, random value, or output path unless every registration should
-create a new result set.`,
+create a new result set.
+
+Files:
+  --input-file tracks input files separately from scanned outputs.
+  --match limits scanned outputs with output-relative globs; repeat it to match
+    any glob.
+  --include-hidden includes hidden files and directories in the scan.
+  --json reads a complete registration JSON payload from stdin instead of
+    scanning output-dir.
+
+Metadata:
+  --run, --study, --sample and --library resolve through MLWH and store
+    canonical seqmeta metadata keys. They require a previously synced MLWH cache.
+  --run accepts numeric run IDs.
+  --study accepts LIMS ID, accession, UUID, or name.
+  --sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or
+    donor ID.
+  --library accepts exact pipeline_id_lims, library_id, or id_library_lims
+    values and requires a previously synced MLWH cache.
+  --meta adds literal key=value metadata; repeat it to keep multiple values.
+
+Server:
+  --server selects the results server, and --cert sets the CA/cert path used to
+  trust it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -1233,11 +1450,12 @@ create a new result set.`,
 				requester,
 				operator,
 				commandLine,
-				workflowPath,
+				workflowReference,
 				unique,
 				legacyRunID,
 				additionalUnique,
 				inputFiles,
+				matchPatterns,
 				metaValues,
 				lookupValues,
 				includeHidden,
@@ -1256,23 +1474,27 @@ create a new result set.`,
 		},
 	}
 
-	command.Flags().StringVar(&requester, "user", "", "Requester name")
-	command.Flags().StringVar(&operator, "operator", "", "Operator name")
-	command.Flags().StringVar(&commandLine, "command", "", "Pipeline command line")
-	command.Flags().StringVar(&workflowPath, "nextflow-workflow", "", "Path, GitHub URL, or owner/repo shorthand for the Nextflow workflow used for the run")
-	command.Flags().StringVar(&unique, "unique", "", "Stable unique label for this result set")
+	command.Flags().StringVar(&requester, "user", "", "Requester or owner name (required)")
+	command.Flags().StringVar(&operator, "operator", "", "Operator who performed the registration")
+	command.Flags().StringVar(&commandLine, "command", "", "Command line that produced the results")
+	command.Flags().StringVar(&workflowReference, "workflow", "", "Workflow identity (required): raw string, local Nextflow file, GitHub URL, or owner/repo")
+	command.Flags().StringVar(&unique, "unique", "", "Stable unique run key for replacement (required)")
+	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track separately from outputs; repeat as needed")
+	command.Flags().StringArrayVar(&matchPatterns, "match", nil, "Output-relative glob of files to register; repeat to match any glob")
+	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Scan hidden files and directories")
+	command.Flags().StringArrayVar(&lookupValues.run, "run", nil, "MLWH id_run lookup; repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.study, "study", nil, "MLWH study lookup (LIMS ID, accession, UUID, or name); repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.sample, "sample", nil, "MLWH sample lookup (Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID); repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.library, "library", nil, "MLWH library lookup (pipeline_id_lims, library_id, or id_library_lims); requires a previously synced MLWH cache; repeat as needed")
+	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Literal metadata as key=value; repeat to keep multiple values")
+	command.Flags().BoolVar(&useJSON, "json", false, "Read complete registration JSON from stdin instead of scanning output-dir")
+	command.Flags().StringVar(&workflowReference, "nextflow-workflow", "", "Deprecated alias for --workflow")
 	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
 	command.Flags().StringVar(&additionalUnique, "additional-unique", "", "Deprecated extra unique label kept for old commands")
-	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track; may be supplied multiple times")
-	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata value in key=value form; may be supplied multiple times")
-	command.Flags().StringVar(&lookupValues.run, "run", "", "Resolve a numeric id_run through MLWH and store it as seqmeta_id_run")
-	command.Flags().StringVar(&lookupValues.study, "study", "", "Resolve a study LIMS ID, accession, UUID, or name through MLWH and store it as seqmeta_id_study_lims")
-	command.Flags().StringVar(&lookupValues.sample, "sample", "", "Resolve a sample name, supplier name, id_sample_lims, sample UUID, or donor ID through MLWH and store it as seqmeta_name")
-	command.Flags().StringVar(&lookupValues.library, "library", "", "Resolve an exact pipeline_id_lims, library_id, or id_library_lims through MLWH and store canonical seqmeta library metadata; requires a previously synced MLWH cache")
-	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Include hidden files and directories in the output scan")
-	command.Flags().BoolVar(&useJSON, "json", false, "Read a registration JSON payload from stdin instead of scanning a directory")
 	_ = command.Flags().MarkHidden("runid")
 	_ = command.Flags().MarkHidden("additional-unique")
+	_ = command.Flags().MarkHidden("nextflow-workflow")
+	command.Flags().SortFlags = false
 
 	return command
 }
@@ -1284,11 +1506,12 @@ func buildResultsRegistrationForCommand(
 	requester string,
 	operator string,
 	commandLine string,
-	workflowPath string,
+	workflowReference string,
 	unique string,
 	legacyRunID string,
 	additionalUnique string,
 	inputFiles []string,
+	matchPatterns []string,
 	metaValues []string,
 	lookupValues resultsRegisterLookupValues,
 	includeHidden bool,
@@ -1319,8 +1542,13 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("--user is required")
 	}
 
-	if strings.TrimSpace(workflowPath) == "" {
-		return nil, errors.New("--nextflow-workflow is required")
+	operatorName, err := resultsRegisterOperatorName(operator)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(workflowReference) == "" {
+		return nil, errors.New("--workflow is required")
 	}
 
 	uniqueValue, err := resultsRegisterUniqueValue(unique, legacyRunID)
@@ -1333,16 +1561,6 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("--unique is required")
 	}
 
-	seqmetaMetadata, err := resolveResultsRegisterLookupMetadata(ctx, lookupValues)
-	if err != nil {
-		return nil, err
-	}
-
-	metadata, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
-	if err != nil {
-		return nil, err
-	}
-
 	outputDir, err := filepath.Abs(args[0])
 	if err != nil {
 		return nil, fmt.Errorf("resolve output directory: %w", err)
@@ -1352,16 +1570,29 @@ func buildResultsRegistrationForCommand(
 		return nil, err
 	}
 
-	outputFiles, scanWarnings, err := results.ScanDirectory(outputDir, includeHidden)
+	outputFiles, scanWarnings, err := results.ScanDirectory(outputDir, includeHidden, matchPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("scan output directory: %w", err)
 	}
 
 	writeResultsScanWarnings(cmd.ErrOrStderr(), scanWarnings)
+	if len(outputFiles) == 0 {
+		return nil, errors.New("no output files discovered in output directory")
+	}
 
-	pipelineIdentifier, pipelineName, pipelineVersion, err := results.DetectPipeline(workflowPath)
+	seqmetaMetadata, err := resolveResultsRegisterLookupMetadata(ctx, lookupValues)
 	if err != nil {
-		return nil, fmt.Errorf("detect pipeline: %w", err)
+		return nil, err
+	}
+
+	metadata, metadataValues, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
+	if err != nil {
+		return nil, err
+	}
+
+	workflowIdentity, err := results.ResolveWorkflowIdentity(workflowReference)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow identity: %w", err)
 	}
 
 	trackedInputs, err := resultsRegisterInputFiles(inputFiles)
@@ -1369,22 +1600,23 @@ func buildResultsRegistrationForCommand(
 		return nil, err
 	}
 
-	pipelineFiles, err := resultsRegisterPipelineFiles(workflowPath)
+	workflowFiles, err := resultsRegisterWorkflowFiles(workflowIdentity)
 	if err != nil {
 		return nil, err
 	}
 
 	return &results.Registration{
-		PipelineIdentifier: pipelineIdentifier,
+		PipelineIdentifier: workflowIdentity.Identifier,
 		RunKey:             runKey,
 		Requester:          strings.TrimSpace(requester),
-		Operator:           strings.TrimSpace(operator),
+		Operator:           operatorName,
 		Command:            strings.TrimSpace(commandLine),
-		PipelineName:       pipelineName,
-		PipelineVersion:    pipelineVersion,
+		PipelineName:       workflowIdentity.Name,
+		PipelineVersion:    workflowIdentity.Version,
 		OutputDirectory:    outputDir,
-		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, pipelineFiles...),
+		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, workflowFiles...),
 		Metadata:           metadata,
+		MetadataValues:     metadataValues,
 	}, nil
 }
 
@@ -1407,35 +1639,59 @@ func decodeResultsRegistration(input io.Reader) (*results.Registration, error) {
 	return &registration, nil
 }
 
-func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[string]string) (map[string]string, error) {
-	metadata, err := parseResultsMetadataFilters(metaValues)
+func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[string][]string) (map[string]string, map[string][]string, error) {
+	metadataValues, err := parseResultsMetadataValueFilters(metaValues)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	for key, value := range seqmetaMetadata {
-		trimmedValue := strings.TrimSpace(value)
-		if trimmedValue == "" {
+	for _, key := range sortedResultsRegisterMetadataKeys(seqmetaMetadata) {
+		values := nonEmptyRegisterLookupValues(seqmetaMetadata[key])
+		if len(values) == 0 {
 			continue
 		}
 
 		for _, equivalentKey := range resultsRegisterEquivalentSeqmetaKeys(key) {
-			if _, exists := metadata[equivalentKey]; exists {
-				return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", equivalentKey, resultsRegisterSeqmetaFlagName(key))
+			if _, exists := metadataValues[equivalentKey]; exists {
+				return nil, nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", equivalentKey, resultsRegisterSeqmetaFlagName(key))
 			}
 		}
 
-		if _, exists := metadata[key]; exists {
-			return nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", key, resultsRegisterSeqmetaFlagName(key))
+		if _, exists := metadataValues[key]; exists {
+			return nil, nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", key, resultsRegisterSeqmetaFlagName(key))
 		}
 
-		metadata[key] = trimmedValue
+		for _, value := range values {
+			appendResultsRegisterMetadataValue(metadataValues, key, value)
+		}
 	}
 
-	return metadata, nil
+	return singleResultsRegisterMetadata(metadataValues), metadataValues, nil
 }
 
 func resultsRegisterSeqmetaFlagName(metaKey string) string {
+	switch metaKey {
+	case results.SeqmetaIDStudyLimsKey,
+		results.SeqmetaStudyAccessionKey,
+		results.SeqmetaStudyUUIDKey,
+		results.SeqmetaStudyNameKey,
+		results.LegacySeqmetaStudyIDKey,
+		"study":
+		return "study"
+	case results.SeqmetaSampleNameKey,
+		results.SeqmetaSampleNameURLKey,
+		results.SeqmetaIDSampleLimsKey,
+		results.SeqmetaSangerSampleIDKey,
+		results.SeqmetaSupplierNameKey,
+		results.SeqmetaAccessionNumberKey,
+		results.SeqmetaSampleUUIDKey,
+		results.SeqmetaDonorIDKey,
+		results.LegacySeqmetaSampleIDKey,
+		results.LegacySeqmetaSampleLimsKey,
+		"sample":
+		return "sample"
+	}
+
 	switch metaKey {
 	case results.SeqmetaLibraryIDKey,
 		results.SeqmetaIDLibraryLimsKey,
@@ -1604,11 +1860,9 @@ func parseResultsMetadataFilters(metaValues []string) (map[string]string, error)
 	metadata := make(map[string]string, len(metaValues))
 
 	for _, metaValue := range metaValues {
-		key, value, found := strings.Cut(metaValue, "=")
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if !found || key == "" || value == "" {
-			return nil, fmt.Errorf("invalid --meta value %q: expected key=value", metaValue)
+		key, value, err := parseResultsMetadataValue(metaValue)
+		if err != nil {
+			return nil, err
 		}
 
 		metadata[key] = value
@@ -2163,33 +2417,6 @@ func resultsPathWithinDirectory(rootPath, candidatePath string) bool {
 	}
 
 	return relPath == "." || (relPath != ".." && !strings.HasPrefix(relPath, ".."+string(os.PathSeparator)))
-}
-
-func resultsRegisterPipelineFiles(workflowPath string) ([]results.FileEntry, error) {
-	if results.RemotePipelineReference(workflowPath) {
-		return nil, nil
-	}
-
-	absPath, err := filepath.Abs(workflowPath)
-	if err != nil {
-		return nil, fmt.Errorf("resolve workflow file %q: %w", workflowPath, err)
-	}
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("stat workflow file %q: %w", workflowPath, err)
-	}
-
-	if info.IsDir() {
-		return nil, fmt.Errorf("workflow file %q: is a directory", workflowPath)
-	}
-
-	return []results.FileEntry{{
-		Path:  absPath,
-		Mtime: info.ModTime(),
-		Size:  info.Size(),
-		Kind:  "pipeline",
-	}}, nil
 }
 
 func resultsAuthAddr(serverURL string) (string, error) {

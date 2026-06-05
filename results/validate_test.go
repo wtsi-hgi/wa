@@ -39,6 +39,19 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
+func TestSeqmetaMetadataValueKeys(t *testing.T) {
+	convey.Convey("seqmetaMetadataValueKeys returns sorted seqmeta metadata keys from the metadata map", t, func() {
+		keys := seqmetaMetadataValueKeys(map[string][]string{
+			"sample":         {"SAMPLE-1"},
+			"seqmeta_runid":  {"48522"},
+			"seqmeta_study":  {"6568"},
+			"workflow_label": {"manual"},
+		})
+
+		convey.So(keys, convey.ShouldResemble, []string{"seqmeta_runid", "seqmeta_study"})
+	})
+}
+
 type seqmetaResponseForTest struct {
 	status int
 	body   string
@@ -119,6 +132,37 @@ func TestSeqmetaValidatorValidateMetadata(t *testing.T) {
 			"seqmeta_library_id":       "71046409",
 			"seqmeta_id_library_lims":  "SQPP-47463-G:B1",
 			"seqmeta_studyid":          "legacy-study-lims",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+
+	convey.Convey("ValidateMetadata accepts source-specific sample and study seqmeta metadata keys", t, func() {
+		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
+			"Hek_R1":                               {status: http.StatusOK, body: `{"identifier":"Hek_R1","type":"supplier_name","object":{}}`},
+			"SANGER_SOURCE_3":                      {status: http.StatusOK, body: `{"identifier":"SANGER_SOURCE_3","type":"sanger_sample_id","object":{}}`},
+			"6050954":                              {status: http.StatusOK, body: `{"identifier":"6050954","type":"sample_lims_id","object":{}}`},
+			"SAMEA76070":                           {status: http.StatusOK, body: `{"identifier":"SAMEA76070","type":"sample_accession","object":{}}`},
+			"22222222-2222-3333-4444-555555557601": {status: http.StatusOK, body: `{"identifier":"22222222-2222-3333-4444-555555557601","type":"sample_uuid","object":{}}`},
+			"DONOR_HEK1":                           {status: http.StatusOK, body: `{"identifier":"DONOR_HEK1","type":"donor_id","object":{}}`},
+			"ERP7607":                              {status: http.StatusOK, body: `{"identifier":"ERP7607","type":"study_accession","object":{}}`},
+			"11111111-2222-3333-4444-555555557607": {status: http.StatusOK, body: `{"identifier":"11111111-2222-3333-4444-555555557607","type":"study_uuid","object":{}}`},
+			"Study 7609 Name":                      {status: http.StatusOK, body: `{"identifier":"Study 7609 Name","type":"study_name","object":{}}`},
+		})
+		defer server.Close()
+
+		validator := NewSeqmetaValidator(server.URL, time.Second)
+
+		err := validator.ValidateMetadata(context.Background(), map[string]string{
+			"seqmeta_supplier_name":    "Hek_R1",
+			"seqmeta_sanger_sample_id": "SANGER_SOURCE_3",
+			"seqmeta_id_sample_lims":   "6050954",
+			"seqmeta_accession_number": "SAMEA76070",
+			"seqmeta_uuid_sample_lims": "22222222-2222-3333-4444-555555557601",
+			"seqmeta_donor_id":         "DONOR_HEK1",
+			"seqmeta_study_accession":  "ERP7607",
+			"seqmeta_uuid_study_lims":  "11111111-2222-3333-4444-555555557607",
+			"seqmeta_study_name":       "Study 7609 Name",
 		})
 
 		convey.So(err, convey.ShouldBeNil)

@@ -29,6 +29,7 @@ type SeqmetaBadgeProps = {
     error?: "not_found" | "upstream_impaired";
     loading?: boolean;
     statusPlacement?: "inline" | "overlay";
+    triggerLabel?: string;
 };
 
 type SeqmetaDetailField = {
@@ -171,6 +172,18 @@ function metadataLabel(metadataKey: string): string {
         return "Study accession";
     }
 
+    if (trimmedKey === "uuid_study_lims") {
+        return "Study UUID";
+    }
+
+    if (trimmedKey === "uuid_sample_lims") {
+        return "Sample UUID";
+    }
+
+    if (trimmedKey === "donor_id") {
+        return "Donor ID";
+    }
+
     return humanizeToken(trimmedKey);
 }
 
@@ -221,12 +234,17 @@ function titleFilterSearchKey(metadataKey: string): string | null {
 
     if (
         displayKey === "seqmeta_id_study_lims" ||
-        metadataKey === "seqmeta_study_accession"
+        displayKey === "seqmeta_study_accession" ||
+        displayKey === "seqmeta_uuid_study_lims" ||
+        displayKey === "seqmeta_study_name"
     ) {
         return "study";
     }
 
-    if (displayKey === "seqmeta_sample_name") {
+    if (
+        displayKey === "seqmeta_sample_name" ||
+        displayKey === "seqmeta_supplier_name"
+    ) {
         return "sample";
     }
 
@@ -288,9 +306,12 @@ function directDetailSearchKey(
             return displayFieldKey;
         }
 
+        if (displayFieldKey === "seqmeta_supplier_name") {
+            return "sample";
+        }
+
         if (
             displayFieldKey === "seqmeta_sanger_sample_id" ||
-            displayFieldKey === "seqmeta_supplier_name" ||
             displayFieldKey === "seqmeta_id_sample_lims" ||
             displayFieldKey === "seqmeta_accession_number"
         ) {
@@ -319,9 +340,13 @@ function directDetailSearchKey(
 }
 
 function isStudyMetadataKey(metadataKey: string): boolean {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
     return (
-        seqmetaDisplayKey(metadataKey) === "seqmeta_id_study_lims" ||
-        metadataKey === "seqmeta_study_accession"
+        displayKey === "seqmeta_id_study_lims" ||
+        displayKey === "seqmeta_study_accession" ||
+        displayKey === "seqmeta_uuid_study_lims" ||
+        displayKey === "seqmeta_study_name"
     );
 }
 
@@ -334,8 +359,12 @@ function isSampleMetadataKey(metadataKey: string): boolean {
 
     return (
         displayKey === "seqmeta_sample_name" ||
+        displayKey === "seqmeta_supplier_name" ||
         displayKey === "seqmeta_sanger_sample_id" ||
-        displayKey === "seqmeta_id_sample_lims"
+        displayKey === "seqmeta_id_sample_lims" ||
+        displayKey === "seqmeta_accession_number" ||
+        displayKey === "seqmeta_uuid_sample_lims" ||
+        displayKey === "seqmeta_donor_id"
     );
 }
 
@@ -344,6 +373,69 @@ function primaryLabel(
     enrichment: EnrichmentResult | null,
 ): string {
     return rawValue;
+}
+
+function sampleRecordForTitle(
+    enrichment: EnrichmentResult | null,
+): EnrichmentSample | null {
+    return (
+        enrichment?.graph.sample ??
+        enrichment?.graph.sample_detail?.sample ??
+        null
+    );
+}
+
+function valuesMatch(left: string | null, right: string): boolean {
+    return left?.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function isSupplierBackedSampleTitle(
+    metadataKey: string,
+    rawValue: string,
+    enrichment: EnrichmentResult | null,
+): boolean {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
+    if (
+        displayKey !== "seqmeta_sample_name" &&
+        displayKey !== "seqmeta_supplier_name"
+    ) {
+        return false;
+    }
+
+    const sampleRecord = sampleRecordForTitle(enrichment);
+
+    if (!sampleRecord) {
+        return false;
+    }
+
+    const raw = rawValue.trim();
+
+    if (!raw) {
+        return false;
+    }
+
+    const supplierName = asString(sampleRecord.supplier_name);
+
+    return (
+        enrichment?.type === "supplier_name" ||
+        (valuesMatch(supplierName, raw) &&
+            !valuesMatch(asString(sampleRecord.sample_name), raw) &&
+            !valuesMatch(asString(sampleRecord.sanger_id), raw) &&
+            !valuesMatch(asString(sampleRecord.id_sample_lims), raw))
+    );
+}
+
+function titleMetadataDisplayKey(
+    metadataKey: string,
+    rawValue: string,
+    enrichment: EnrichmentResult | null,
+): string {
+    if (isSupplierBackedSampleTitle(metadataKey, rawValue, enrichment)) {
+        return "seqmeta_supplier_name";
+    }
+
+    return seqmetaDisplayKey(metadataKey);
 }
 
 function librarySampleKey(sample: EnrichmentSample, index: number): string {
@@ -920,8 +1012,8 @@ function appendDetailField(
         if (
             rawValue &&
             field.group === "direct" &&
-            field.key === seqmetaDisplayKey(metadataKey ?? "") &&
-            value.toLowerCase() === rawValue.trim().toLowerCase()
+            value.toLowerCase() === rawValue.trim().toLowerCase() &&
+            isSelectedTitleDetailField(metadataKey ?? "", field.key)
         ) {
             return;
         }
@@ -938,6 +1030,16 @@ function appendDetailField(
 
         fields.push({ ...field, searchKey, searchValue, value });
     }
+}
+
+function isSelectedTitleDetailField(metadataKey: string, fieldKey: string) {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
+    return (
+        fieldKey === displayKey ||
+        (displayKey === "seqmeta_sample_name" &&
+            fieldKey === "seqmeta_supplier_name")
+    );
 }
 
 function buildDetailFields(
@@ -1048,7 +1150,6 @@ function buildDetailFields(
                           key: "seqmeta_supplier_name",
                           label: "Sample supplier name",
                           searchKey: "sample",
-                          searchValue: sampleSearchValue,
                           value: sampleRecord.supplier_name,
                           group: sampleMetadata ? "direct" : "related",
                       }
@@ -1525,6 +1626,7 @@ export function SeqmetaBadge({
     error,
     loading = false,
     statusPlacement = "inline",
+    triggerLabel,
 }: SeqmetaBadgeProps) {
     const inlineLabel = primaryLabel(rawValue, enrichment);
     const [dialogOpen, setDialogOpen] = useState(false);
@@ -1538,9 +1640,14 @@ export function SeqmetaBadge({
     const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(
         new Set(),
     );
-    const titleMetadataKey = seqmetaDisplayKey(metadataKey);
+    const titleDisplayKey = titleMetadataDisplayKey(
+        metadataKey,
+        rawValue,
+        enrichment,
+    );
+    const triggerDisplayKey = triggerLabel ?? titleDisplayKey;
     const titleCopyKey = copiedStateKey(
-        `title:${titleMetadataKey}`,
+        `title:${titleDisplayKey}`,
         inlineLabel,
     );
     const titleHref = titleFilterHref(metadataKey, rawValue);
@@ -1731,7 +1838,7 @@ export function SeqmetaBadge({
                     type="button"
                     aria-expanded={dialogOpen}
                     aria-haspopup="dialog"
-                    aria-label={`Open ${titleMetadataKey} details`}
+                    aria-label={`Open ${triggerDisplayKey} details`}
                     data-testid="seqmeta-badge-trigger"
                     className={cn(
                         "inline-flex max-w-full cursor-pointer items-center rounded-full border border-border/80 px-3 py-1 text-left text-xs font-medium tracking-[0.16em] transition hover:border-primary/45 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
@@ -1784,7 +1891,7 @@ export function SeqmetaBadge({
                                     >
                                         <button
                                             type="button"
-                                            aria-label={`Copy ${titleMetadataKey}`}
+                                            aria-label={`Copy ${titleDisplayKey}`}
                                             className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                             onClick={() => {
                                                 void writeClipboard(
@@ -1808,7 +1915,7 @@ export function SeqmetaBadge({
                                         </button>
                                         {titleHref ? (
                                             <Link
-                                                aria-label={`Send ${titleMetadataKey} to search filter`}
+                                                aria-label={`Send ${titleDisplayKey} to search filter`}
                                                 className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                                 href={titleHref}
                                             >
@@ -1822,7 +1929,7 @@ export function SeqmetaBadge({
                                     </div>
                                 </div>
                                 <p className="font-mono text-xs text-muted-foreground">
-                                    {titleMetadataKey}
+                                    {titleDisplayKey}
                                 </p>
                             </div>
                             <button

@@ -40,6 +40,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type metadataValueRowForTest struct {
+	value   string
+	ordinal int
+}
+
 func TestNewStore(t *testing.T) {
 	convey.Convey("C1.1: Given an in-memory SQLite DB, when NewStore is called, then it returns a non-nil store and creates the schema", t, func() {
 		db, err := sql.Open("sqlite", ":memory:")
@@ -60,6 +65,7 @@ func TestNewStore(t *testing.T) {
 			convey.So(sqliteTableExists(db, tableName), convey.ShouldBeTrue)
 		}
 		convey.So(sqliteColumnExists(db, "result_sets", "output_directory_gid"), convey.ShouldBeTrue)
+		convey.So(sqliteColumnExists(db, "result_metadata", "value_ordinal"), convey.ShouldBeTrue)
 		convey.So(sqliteIndexExists(db, "idx_result_metadata_meta_key_value"), convey.ShouldBeTrue)
 	})
 
@@ -110,6 +116,7 @@ func TestNewStore(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(sqliteIndexExists(db, "idx_result_metadata_meta_key_value"), convey.ShouldBeTrue)
+		convey.So(sqliteIndexExists(db, "idx_result_metadata_result_id"), convey.ShouldBeTrue)
 
 		queryPlan := sqliteQueryPlanForTest(
 			t,
@@ -121,6 +128,138 @@ func TestNewStore(t *testing.T) {
 
 		convey.So(queryPlan, convey.ShouldContainSubstring, "USING COVERING INDEX idx_result_metadata_meta_key_value")
 		convey.So(queryPlan, convey.ShouldNotContainSubstring, "SCAN result_metadata")
+
+		queryPlan = sqliteQueryPlanForTest(
+			t,
+			db,
+			`SELECT meta_key, value FROM result_metadata WHERE result_id = ? ORDER BY meta_key, value_ordinal, value`,
+			"indexed-result",
+		)
+
+		convey.So(queryPlan, convey.ShouldContainSubstring, "USING INDEX idx_result_metadata_result_id")
+		convey.So(queryPlan, convey.ShouldNotContainSubstring, "SCAN result_metadata")
+	})
+
+	convey.Convey("Given an old results schema with one metadata row per key, when NewStore opens it, then repeated metadata rows for the same key can be stored", t, func() {
+		db, err := sql.Open("sqlite", ":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(createResultSetsTableSQL)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(createResultFilesTableSQL)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`
+			CREATE TABLE result_metadata (
+				result_id VARCHAR(64)  NOT NULL,
+				meta_key  VARCHAR(255) NOT NULL,
+				value     TEXT         NOT NULL,
+				PRIMARY KEY (result_id, meta_key),
+				FOREIGN KEY (result_id)
+					REFERENCES result_sets(id) ON DELETE CASCADE
+			);`)
+		convey.So(err, convey.ShouldBeNil)
+
+		store, err := NewStore(db)
+		convey.Reset(func() {
+			if store != nil {
+				_ = store.Close()
+			}
+		})
+		convey.So(err, convey.ShouldBeNil)
+
+		createdAt := time.Date(2026, time.June, 4, 9, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+		_, err = db.Exec(
+			`INSERT INTO result_sets (
+				id, pipeline_identifier, run_key, requester, operator, command,
+				pipeline_name, pipeline_version, output_directory, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"multi-meta-result",
+			"pipe",
+			"run",
+			"alice",
+			"bob",
+			"nextflow run pipe",
+			"nf-pipe",
+			"1.2.3",
+			"/tmp/results/run",
+			createdAt,
+			createdAt,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`INSERT INTO result_metadata(result_id, meta_key, value) VALUES (?, ?, ?)`, "multi-meta-result", "sample", "SANG1")
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`INSERT INTO result_metadata(result_id, meta_key, value) VALUES (?, ?, ?)`, "multi-meta-result", "sample", "SANG2")
+		convey.So(err, convey.ShouldBeNil)
+	})
+
+	convey.Convey("Given repeated metadata rows from a schema without ordinals, when NewStore opens it, then migration preserves row insertion order", t, func() {
+		db, err := sql.Open("sqlite", ":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(createResultSetsTableSQL)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(createResultFilesTableSQL)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`
+			CREATE TABLE result_metadata (
+				result_id VARCHAR(64)  NOT NULL,
+				meta_key  VARCHAR(255) NOT NULL,
+				value     TEXT         NOT NULL,
+				FOREIGN KEY (result_id)
+					REFERENCES result_sets(id) ON DELETE CASCADE
+			);`)
+		convey.So(err, convey.ShouldBeNil)
+
+		createdAt := time.Date(2026, time.June, 4, 9, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+		_, err = db.Exec(
+			`INSERT INTO result_sets (
+				id, pipeline_identifier, run_key, requester, operator, command,
+				pipeline_name, pipeline_version, output_directory, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"legacy-multi-meta-result",
+			"pipe",
+			"run",
+			"alice",
+			"bob",
+			"nextflow run pipe",
+			"nf-pipe",
+			"1.2.3",
+			"/tmp/results/run",
+			createdAt,
+			createdAt,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`INSERT INTO result_metadata(result_id, meta_key, value) VALUES (?, ?, ?)`, "legacy-multi-meta-result", "assay", "WGS")
+		convey.So(err, convey.ShouldBeNil)
+		_, err = db.Exec(`INSERT INTO result_metadata(result_id, meta_key, value) VALUES (?, ?, ?)`, "legacy-multi-meta-result", "assay", "RNA")
+		convey.So(err, convey.ShouldBeNil)
+
+		store, err := NewStore(db)
+		convey.Reset(func() {
+			if store != nil {
+				_ = store.Close()
+			}
+		})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sqliteColumnExists(db, "result_metadata", "value_ordinal"), convey.ShouldBeTrue)
+		convey.So(sqliteIndexExists(db, "idx_result_metadata_result_id"), convey.ShouldBeTrue)
+
+		queryPlan := sqliteQueryPlanForTest(
+			t,
+			db,
+			`SELECT meta_key, value FROM result_metadata WHERE result_id = ? ORDER BY meta_key, value_ordinal, value`,
+			"legacy-multi-meta-result",
+		)
+
+		convey.So(queryPlan, convey.ShouldContainSubstring, "USING INDEX idx_result_metadata_result_id")
+		convey.So(queryPlan, convey.ShouldNotContainSubstring, "SCAN result_metadata")
+		convey.So(metadataValueRowsForTest(t, db, "legacy-multi-meta-result", "assay"), convey.ShouldResemble, []metadataValueRowForTest{
+			{value: "WGS", ordinal: 0},
+			{value: "RNA", ordinal: 1},
+		})
+
+		result, err := store.Get(context.Background(), "legacy-multi-meta-result")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Metadata["assay"], convey.ShouldEqual, "WGS")
+		convey.So(result.MetadataValues["assay"], convey.ShouldResemble, []string{"WGS", "RNA"})
 	})
 
 	convey.Convey("C1.5: Given a MySQL results schema, when the SQLite index statement is unsupported, then NewStore can still create or tolerate the metadata value index", t, func() {
@@ -150,6 +289,44 @@ func TestNewStore(t *testing.T) {
 			WillReturnError(errors.New("Error 1061 (42000): Duplicate key name 'idx_result_metadata_meta_key_value'"))
 
 		convey.So(ensureResultMetadataMetaKeyValueIndex(db), convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("Given a MySQL results schema using the old metadata primary key for its foreign key, when metadata schema migration runs, then a result_id index exists before the primary key is dropped", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		mock.ExpectQuery("PRAGMA table_info\\(result_metadata\\)").
+			WillReturnError(errors.New("Error 1064 (42000): syntax error near 'PRAGMA table_info(result_metadata)'"))
+		mock.ExpectExec("CREATE INDEX idx_result_metadata_result_id").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec("ALTER TABLE result_metadata DROP PRIMARY KEY").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec("ALTER TABLE result_metadata ADD COLUMN value_ordinal").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		convey.So(ensureResultMetadataSchema(db), convey.ShouldBeNil)
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+
+		db, mock, err = sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		mock.ExpectQuery("PRAGMA table_info\\(result_metadata\\)").
+			WillReturnError(errors.New("Error 1064 (42000): syntax error near 'PRAGMA table_info(result_metadata)'"))
+		mock.ExpectExec("CREATE INDEX idx_result_metadata_result_id").
+			WillReturnError(errors.New("Error 1061 (42000): Duplicate key name 'idx_result_metadata_result_id'"))
+		mock.ExpectExec("ALTER TABLE result_metadata DROP PRIMARY KEY").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec("ALTER TABLE result_metadata ADD COLUMN value_ordinal").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+
+		convey.So(ensureResultMetadataSchema(db), convey.ShouldBeNil)
 		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
 
@@ -346,6 +523,34 @@ func TestStoreUpsert(t *testing.T) {
 		convey.So(result.CreatedAt.Before(after) || result.CreatedAt.Equal(after), convey.ShouldBeTrue)
 	})
 
+	convey.Convey("Given repeated metadata values in non-lexical order, then storage, Get, and Search preserve the supplied order", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+		reg := testRegistration()
+		reg.Metadata = map[string]string{"assay": "WGS"}
+		reg.MetadataValues = map[string][]string{"assay": {"WGS", "RNA"}}
+
+		result, err := store.Upsert(ctx, reg)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Metadata["assay"], convey.ShouldEqual, "WGS")
+		convey.So(result.MetadataValues["assay"], convey.ShouldResemble, []string{"WGS", "RNA"})
+		convey.So(metadataValueRowsForTest(t, store.db, result.ID, "assay"), convey.ShouldResemble, []metadataValueRowForTest{
+			{value: "WGS", ordinal: 0},
+			{value: "RNA", ordinal: 1},
+		})
+
+		loaded, err := store.Get(ctx, result.ID)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(loaded.Metadata["assay"], convey.ShouldEqual, "WGS")
+		convey.So(loaded.MetadataValues["assay"], convey.ShouldResemble, []string{"WGS", "RNA"})
+
+		searchResults, err := store.Search(ctx, SearchParams{Meta: map[string]string{"assay": "RNA"}})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(searchResults, convey.ShouldHaveLength, 1)
+		convey.So(searchResults[0].Metadata["assay"], convey.ShouldEqual, "WGS")
+		convey.So(searchResults[0].MetadataValues["assay"], convey.ShouldResemble, []string{"WGS", "RNA"})
+	})
+
 	convey.Convey("C2.2: Given an existing result set, when Upsert is called with the same key, then created_at is preserved and updated_at advances", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()
@@ -448,6 +653,37 @@ func TestStoreUpsert(t *testing.T) {
 		convey.So(searchResults[0].OutputDirectoryGID, convey.ShouldNotBeNil)
 		convey.So(*searchResults[0].OutputDirectoryGID, convey.ShouldEqual, gid)
 	})
+}
+
+func metadataValueRowsForTest(t *testing.T, db *sql.DB, resultID string, key string) []metadataValueRowForTest {
+	t.Helper()
+
+	rows, err := db.Query(
+		`SELECT value, value_ordinal FROM result_metadata WHERE result_id = ? AND meta_key = ? ORDER BY value_ordinal`,
+		resultID,
+		key,
+	)
+	if err != nil {
+		t.Fatalf("query result metadata value rows: %v", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	metadataRows := []metadataValueRowForTest{}
+	for rows.Next() {
+		var row metadataValueRowForTest
+		if err := rows.Scan(&row.value, &row.ordinal); err != nil {
+			t.Fatalf("scan result metadata value row: %v", err)
+		}
+
+		metadataRows = append(metadataRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate result metadata value rows: %v", err)
+	}
+
+	return metadataRows
 }
 
 func TestStoreSearch(t *testing.T) {

@@ -206,7 +206,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
                     '[aria-label="Send seqmeta_supplier_name to search filter"]',
                 )
                 ?.getAttribute("href"),
-        ).toBe("/?seqmeta_supplier_name=Supplier_Sample_Name");
+        ).toBe("/?sample=Supplier_Sample_Name");
 
         // Should show sample accession
         expect(

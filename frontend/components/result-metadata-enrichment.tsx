@@ -47,6 +47,7 @@ type ResultMetadataEnrichmentProps = {
     initialEnrichments?: Record<string, EnrichmentResult | null>;
     initialErrors?: Record<string, "not_found" | "upstream_impaired">;
     metadata: Record<string, string>;
+    metadataValues?: Record<string, string[]>;
     variant?: "section" | "integrated";
 };
 
@@ -54,6 +55,7 @@ export function ResultMetadataEnrichment({
     initialEnrichments = EMPTY_ENRICHMENTS,
     initialErrors = EMPTY_ERRORS,
     metadata,
+    metadataValues,
     variant = "section",
 }: ResultMetadataEnrichmentProps) {
     const liveCache = useContext(SeqmetaCacheContext);
@@ -71,10 +73,10 @@ export function ResultMetadataEnrichment({
         getMountedServer,
     );
     const cache = mounted ? liveCache : EMPTY_CACHE;
-    const values = collectSeqmetaValues(metadata);
+    const values = collectSeqmetaValues(metadata, metadataValues);
     const requestKey = values.join("\u0000");
     const baseState = mergeSeqmetaEnrichmentState(
-        buildCachedEnrichmentState(metadata, cache),
+        buildCachedEnrichmentState(metadata, cache, metadataValues),
         {
             enrichments: initialEnrichments,
             errors: initialErrors,
@@ -132,7 +134,12 @@ export function ResultMetadataEnrichment({
             inFlightValuesRef.current.add(value);
         }
 
-        void enrichSeqmetaMetadataBatch(metadata, liveCache, enrichIdentifiers)
+        void enrichSeqmetaMetadataBatch(
+            metadata,
+            liveCache,
+            enrichIdentifiers,
+            metadataValues,
+        )
             .then((nextState) => {
                 for (const value of pendingValues) {
                     inFlightValuesRef.current.delete(value);
@@ -173,6 +180,7 @@ export function ResultMetadataEnrichment({
         initialEnrichments,
         initialErrors,
         metadata,
+        metadataValues,
         requestKey,
         values,
     ]);
@@ -183,6 +191,7 @@ export function ResultMetadataEnrichment({
             errors={mergedState.errors}
             loading={loading}
             metadata={metadata}
+            metadataValues={metadataValues}
             variant={variant}
         />
     );

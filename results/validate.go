@@ -29,7 +29,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -55,10 +54,10 @@ func NewSeqmetaValidator(baseURL string, timeout time.Duration) *SeqmetaValidato
 	}
 }
 
-func seqmetaMetadataKeys(metadata map[string]string) []string {
+func seqmetaMetadataValueKeys(metadata map[string][]string) []string {
 	seqmetaKeys := make([]string, 0, len(metadata))
 
-	for key := range maps.Keys(metadata) {
+	for key := range metadata {
 		if strings.HasPrefix(key, "seqmeta_") {
 			seqmetaKeys = append(seqmetaKeys, key)
 		}
@@ -71,23 +70,7 @@ func seqmetaMetadataKeys(metadata map[string]string) []string {
 
 // ValidateMetadata checks all seqmeta_* fields in metadata.
 func (v *SeqmetaValidator) ValidateMetadata(ctx context.Context, metadata map[string]string) error {
-	if v == nil || v.baseURL == "" {
-		return nil
-	}
-
-	for _, key := range seqmetaMetadataKeys(metadata) {
-		suffix := strings.TrimPrefix(key, "seqmeta_")
-		expectedType, ok := SeqmetaFieldTypes[suffix]
-		if !ok {
-			return fmt.Errorf("%w: unknown seqmeta field %q", ErrInvalidInput, key)
-		}
-
-		if err := v.validateIdentifier(ctx, metadata[key], expectedType); err != nil {
-			return fmt.Errorf("%s=%q: %w", key, metadata[key], err)
-		}
-	}
-
-	return nil
+	return v.ValidateMetadataValues(ctx, metadataValuesFromMap(metadata))
 }
 
 // ValidateRegistration checks required registration fields and tracked files.
@@ -130,6 +113,29 @@ func ValidateRegistration(reg *Registration) error {
 
 	if err := validateOutputFilesWithinDirectory(reg.OutputDirectory, reg.Files); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// ValidateMetadataValues checks all seqmeta_* values in metadata.
+func (v *SeqmetaValidator) ValidateMetadataValues(ctx context.Context, metadata map[string][]string) error {
+	if v == nil || v.baseURL == "" {
+		return nil
+	}
+
+	for _, key := range seqmetaMetadataValueKeys(metadata) {
+		suffix := strings.TrimPrefix(key, "seqmeta_")
+		expectedType, ok := SeqmetaFieldTypes[suffix]
+		if !ok {
+			return fmt.Errorf("%w: unknown seqmeta field %q", ErrInvalidInput, key)
+		}
+
+		for _, value := range metadata[key] {
+			if err := v.validateIdentifier(ctx, value, expectedType); err != nil {
+				return fmt.Errorf("%s=%q: %w", key, value, err)
+			}
+		}
 	}
 
 	return nil
