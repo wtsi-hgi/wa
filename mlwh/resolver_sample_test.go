@@ -281,6 +281,41 @@ func TestResolveSampleWarmCacheMissReturnsNotFoundWithoutNegativeCache(t *testin
 	})
 }
 
+func TestResolveSampleFixtureShapedSupplierNameFallbackWhenIndexesAvailable(t *testing.T) {
+	convey.Convey("Given a fixture-shaped value matching supplier_name in a fully indexed cache", t, func() {
+		roDB, roMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+
+		const raw = "gallery-beta"
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleNameQuery)).
+			WithArgs(raw).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleSangerIDQuery)).
+			WithArgs(raw).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleSupplierQuery)).
+			WithArgs(raw).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).AddRow(
+				sampleResolverRow(72, "sample-uuid-72", "sample-lims-72", "7607STDY14643772", "sanger-72", raw, "accession-72", "donor-72")...,
+			))
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleAccessionQuery)).
+			WithArgs(raw).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+
+		client := &Client{cacheReader: roDB}
+
+		match, resolveErr := client.ResolveSample(context.Background(), raw)
+
+		convey.So(resolveErr, convey.ShouldBeNil)
+		convey.So(match.Kind, convey.ShouldEqual, KindSupplierName)
+		convey.So(match.Canonical, convey.ShouldEqual, "7607STDY14643772")
+
+		roMock.ExpectClose()
+		convey.So(roDB.Close(), convey.ShouldBeNil)
+		convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
 func TestResolveSampleWarmCacheMissForMySQLCacheReturnsNotFoundWithoutNegativeCache(t *testing.T) {
 	convey.Convey("Given a warm MySQL cache and a donor miss", t, func() {
 		rwDB, rwMock, err := sqlmock.New()

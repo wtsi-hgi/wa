@@ -1278,6 +1278,115 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
 	})
 
+	convey.Convey("Given --sample is a fixture-shaped alternate identifier, register falls back to the broad sample resolver", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.foo"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "gallery-beta")
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "gallery-beta")
+
+				return mlwh.Match{Canonical: "7607STDY14643771", Sample: &mlwh.Sample{Name: "7607STDY14643771"}}, nil
+			},
+		})
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "sample-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--workflow", "one-off",
+			"--unique", "test",
+			"--match", "*.foo",
+			"--sample", "gallery-beta",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So((<-registrationCh).Metadata["seqmeta_name"], convey.ShouldEqual, "7607STDY14643771")
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+	})
+
+	convey.Convey("Given --sample is an invalid fixture-like local slug, register fails before creating a result", t, func() {
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.foo"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "gallery-beta")
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "gallery-beta")
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+		})
+
+		requestCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
+		}))
+		defer server.Close()
+
+		start := time.Now()
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--workflow", "one-off",
+			"--unique", "test",
+			"--match", "*.foo",
+			"--sample", "gallery-beta",
+			"--sample", "gallery-alpha",
+			"--meta", "foo:bar",
+			"--meta", "foo:baz",
+			outputDir,
+		}, nil)
+		elapsed := time.Since(start)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, `--sample "gallery-beta"`)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "not found")
+		convey.So(elapsed, convey.ShouldBeLessThan, time.Second)
+		convey.So(requestCount, convey.ShouldEqual, 0)
+	})
+
 	convey.Convey("E1.2: Given --sample SQSCP, when ResolveSample rejects a LIMS provider constant, then the command fails before registering", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -1752,4 +1861,73 @@ func runResultsRegisterAndCaptureRegistrationForTest(t *testing.T, extraArgs ...
 	}
 
 	return registration, stderr, nil
+}
+
+func TestResultsRegisterInvalidSampleWithSparseMLWHCache(t *testing.T) {
+	installPassthroughResultsAuthClientForTest(t)
+
+	convey.Convey("Given an invalid fixture-like --sample and a legacy sparse MLWH sample cache, register returns a fast not-found error", t, func() {
+		originalResolverOpener := resultsRegisterResolverOpener
+		resultsRegisterResolverOpener = openResultsRegisterResolver
+		convey.Reset(func() { resultsRegisterResolverOpener = originalResolverOpener })
+
+		cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
+		cache, err := mlwh.OpenCache(context.Background(), mlwh.CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+
+		for _, indexName := range []string{
+			"sample_mirror_id_sample_lims_idx",
+			"sample_mirror_uuid_sample_lims_idx",
+			"sample_mirror_sanger_sample_id_idx",
+			"sample_mirror_supplier_name_idx",
+			"sample_mirror_accession_number_idx",
+			"sample_mirror_donor_id_idx",
+			"sample_mirror_last_updated_idx",
+		} {
+			_, err = cache.DB().Exec(`DROP INDEX IF EXISTS ` + indexName)
+			convey.So(err, convey.ShouldBeNil)
+		}
+		_, err = cache.DB().Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?) ON CONFLICT(table_name) DO UPDATE SET high_water = excluded.high_water, last_run = excluded.last_run, resume_cursor = excluded.resume_cursor, indexes_dropped = excluded.indexes_dropped`,
+			"sample",
+			"2026-05-13T11:24:59Z",
+			"2026-05-13T11:25:00Z",
+			nil,
+			1,
+		)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+
+		outputDir := t.TempDir()
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.foo"), "result")
+
+		requestCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
+		}))
+		defer server.Close()
+
+		start := time.Now()
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--workflow", "one-off",
+			"--unique", "test",
+			"--match", "*.foo",
+			"--sample", "gallery-beta",
+			"--sample", "gallery-alpha",
+			outputDir,
+		}, nil)
+		elapsed := time.Since(start)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, `--sample "gallery-beta"`)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "not found")
+		convey.So(elapsed, convey.ShouldBeLessThan, time.Second)
+		convey.So(requestCount, convey.ShouldEqual, 0)
+	})
 }

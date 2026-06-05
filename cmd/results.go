@@ -738,6 +738,9 @@ func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterR
 		if err == nil {
 			return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
 		}
+		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+			return "", fmt.Errorf("resolve --sample %q: %w", value, err)
+		}
 		if !errors.Is(err, mlwh.ErrNotFound) {
 			return "", fmt.Errorf("resolve --sample %q: %w", value, err)
 		}
