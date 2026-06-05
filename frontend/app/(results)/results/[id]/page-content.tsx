@@ -324,6 +324,7 @@ export async function ResultDetailPageContent({
                             <ResultMetadataEnrichment
                                 key={result.id}
                                 metadata={result.metadata}
+                                metadataValues={result.metadata_values}
                                 variant="integrated"
                             />
                         </div>

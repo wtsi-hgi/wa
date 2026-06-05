@@ -216,9 +216,7 @@ test("direct seqmeta sample metadata filter links return the originating result 
             "7607STDY14643771",
         );
         expect(
-            new URL(directSupplierEvidence.finalUrl).searchParams.get(
-                "seqmeta_supplier_name",
-            ),
+            new URL(directSupplierEvidence.finalUrl).searchParams.get("sample"),
         ).toBe("Supplier Sample 7607");
         expect(
             new URL(directLimsEvidence.finalUrl).searchParams.get(

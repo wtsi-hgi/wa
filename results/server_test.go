@@ -1222,6 +1222,47 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-sample-name-match")
 	})
 
+	convey.Convey("Bug item 4: Given GET /results?sample=Hek_R1, then supplier-name sample aliases are resolved from registered sample candidates without slow live expansion", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-alias-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "7607STDY14643771"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-alias-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "7607STDY14643772"}
+		}))
+
+		sampleNameCalls := []string{}
+		expander := &mockSearchExpander{
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				sampleNameCalls = append(sampleNameCalls, raw)
+				switch raw {
+				case "7607STDY14643771":
+					return mlwh.Match{Sample: &mlwh.Sample{Name: raw, SupplierName: "Hek_R1"}}, nil
+				case "7607STDY14643772":
+					return mlwh.Match{Sample: &mlwh.Sample{Name: raw, SupplierName: "Hek_R2"}}, nil
+				default:
+					return mlwh.Match{}, mlwh.ErrNotFound
+				}
+			},
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
+				return nil, nil, nil, errors.New("slow live expansion should not run for supplier-name sample search")
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results?sample=Hek_R1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-alias-match")
+		convey.So(mergeSearchValues(nil, sampleNameCalls), convey.ShouldResemble, []string{"7607STDY14643771", "7607STDY14643772"})
+		convey.So(expander.expandCalls, convey.ShouldEqual, 0)
+	})
+
 	convey.Convey("Bug 260519-2.2: Given GET /results?seqmeta_sample_name=SANG1001, then existing seqmeta_name metadata is matched", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-name-url-match", func(reg *Registration) {

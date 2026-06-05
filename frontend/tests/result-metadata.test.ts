@@ -156,6 +156,33 @@ describe("ResultMetadata", () => {
         ).toBeNull();
     });
 
+    it("renders repeated metadata_values as comma-separated display values", async () => {
+        const { ResultMetadata } = await import("@/components/result-metadata");
+        const { container } = render(
+            createElement(ResultMetadata, {
+                metadata: {
+                    foo: "bar",
+                    sample: "Hek_R1",
+                },
+                metadataValues: {
+                    foo: ["bar", "baz"],
+                    sample: ["Hek_R1", "Hek_R2"],
+                },
+                variant: "section",
+            }),
+        );
+
+        const fooRow = container.querySelector<HTMLElement>(
+            '[data-metadata-row="foo"]',
+        );
+        const sampleRow = container.querySelector<HTMLElement>(
+            '[data-metadata-row="sample"]',
+        );
+
+        expect(fooRow?.textContent).toContain("bar, baz");
+        expect(sampleRow?.textContent).toContain("Hek_R1, Hek_R2");
+    });
+
     it("uses seqmeta-prioritized compact rows only after measured overflow", async () => {
         const restoreOverflow = forceMetadataStripOverflowAfterThreeRows();
 

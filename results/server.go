@@ -77,7 +77,9 @@ var combinedSampleMetaKeys = []string{
 	SeqmetaSampleNameKey,
 	SeqmetaSampleNameURLKey,
 	SeqmetaSangerSampleIDKey,
+	SeqmetaSupplierNameKey,
 	SeqmetaIDSampleLimsKey,
+	SeqmetaAccessionNumberKey,
 	LegacySeqmetaSampleIDKey,
 	LegacySeqmetaSampleLimsKey,
 }
@@ -99,6 +101,14 @@ const (
 	currentUserGinContextKey      = "wa_current_user"
 	goAuthserverUserGinContextKey = "user"
 )
+
+var combinedSampleSearchKinds = []mlwh.IdentifierKind{
+	mlwh.KindSangerSampleName,
+	mlwh.KindSupplierName,
+	mlwh.KindSampleLimsID,
+	mlwh.KindSangerSampleID,
+	mlwh.KindSampleAccession,
+}
 
 type sampleMetadataSearchKey struct {
 	key  string
@@ -866,6 +876,14 @@ func combinedSearchValues(r *http.Request, key string) []string {
 	return nonEmptySearchValues(r.URL.Query()[key])
 }
 
+func appendCombinedSampleSearchExpansions(existing []sampleSearchExpansion, values []string) []sampleSearchExpansion {
+	for _, kind := range combinedSampleSearchKinds {
+		existing = appendSampleSearchExpansion(existing, kind, values)
+	}
+
+	return existing
+}
+
 func appendSampleSearchExpansion(existing []sampleSearchExpansion, kind mlwh.IdentifierKind, values []string) []sampleSearchExpansion {
 	values = nonEmptySearchValues(values)
 	if len(values) == 0 {
@@ -961,6 +979,7 @@ func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResol
 
 	resolvedSamples := []string{}
 	remaining := []sampleSearchExpansion{}
+	handledDirectRequest := false
 
 	for _, request := range requests {
 		if !directSampleSearchKind(request.kind) {
@@ -969,6 +988,7 @@ func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResol
 			continue
 		}
 
+		handledDirectRequest = true
 		for _, value := range request.values {
 			samples, err := candidateResolver.ExpandCandidateSampleSearchValues(ctx, request.kind, value, candidates)
 			if err != nil {
@@ -983,11 +1003,11 @@ func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResol
 		}
 	}
 
-	if len(remaining) == len(requests) {
+	if !handledDirectRequest {
 		return nil, nil, nil, false, nil
 	}
 
-	if len(remaining) == 0 {
+	if len(remaining) == 0 || len(resolvedSamples) > 0 {
 		return resolvedSamples, []string{}, []string{}, true, nil
 	}
 
@@ -1083,7 +1103,7 @@ func (s *Server) handleGetResults(c *gin.Context) {
 	runValues := mergeSearchValues(combinedSearchValues(r, "run"), combinedSearchValues(r, "run_id"))
 	sampleValues := combinedSearchValues(r, "sample")
 	laneValues := combinedSearchValues(r, "seqmeta_lane")
-	sampleExpansionRequests := appendSampleSearchExpansion(nil, mlwh.KindSangerSampleName, sampleValues)
+	sampleExpansionRequests := appendCombinedSampleSearchExpansions(nil, sampleValues)
 	directRunValues := append([]string{}, runValues...)
 	directSampleExactValues := map[string][]string{}
 
@@ -1099,7 +1119,7 @@ func (s *Server) handleGetResults(c *gin.Context) {
 	runValues = mergeSearchValues(runValues, params.Meta[LegacySeqmetaRunIDKey])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta["sample"])
 	sampleValues = mergeSearchValues(sampleValues, params.Meta[SeqmetaSampleNameURLKey])
-	sampleExpansionRequests = appendSampleSearchExpansion(sampleExpansionRequests, mlwh.KindSangerSampleName, params.Meta["sample"])
+	sampleExpansionRequests = appendCombinedSampleSearchExpansions(sampleExpansionRequests, params.Meta["sample"])
 	for _, searchKey := range sampleMetadataSearchKeys {
 		values := params.Meta[searchKey.key]
 		sampleExpansionRequests = appendSampleSearchExpansion(sampleExpansionRequests, searchKey.kind, values)

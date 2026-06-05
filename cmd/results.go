@@ -462,6 +462,48 @@ type resultsRegisterResolver interface {
 	Close() error
 }
 
+func resolveResultsRegisterSampleMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
+	match, err := resolveResultsRegisterSample(ctx, client, value)
+	if err != nil {
+		return nil, err
+	}
+
+	canonicalSampleName, err := resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := map[string]string{results.SeqmetaSampleNameKey: canonicalSampleName}
+	trimmedValue := strings.TrimSpace(value)
+	if trimmedValue != "" && !strings.EqualFold(trimmedValue, canonicalSampleName) {
+		metadata["sample"] = trimmedValue
+	}
+
+	return metadata, nil
+}
+
+func resolveResultsRegisterSample(ctx context.Context, client resultsRegisterResolver, value string) (mlwh.Match, error) {
+	if nameResolver, ok := client.(resultsRegisterSampleNameResolver); ok {
+		match, err := nameResolver.ResolveSampleName(ctx, value)
+		if err == nil {
+			return match, nil
+		}
+		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+			return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
+		}
+		if !errors.Is(err, mlwh.ErrNotFound) {
+			return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
+		}
+	}
+
+	match, err := client.ResolveSample(ctx, value)
+	if err != nil {
+		return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
+	}
+
+	return match, nil
+}
+
 type resultsRegisterSampleNameResolver interface {
 	ResolveSampleName(context.Context, string) (mlwh.Match, error)
 }
@@ -692,12 +734,14 @@ func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsReg
 	}
 
 	for _, trimmedSample := range nonEmptyRegisterLookupValues(values.sample) {
-		resolvedSampleID, err := resolveResultsRegisterSampleID(ctx, client, trimmedSample)
+		sampleMetadata, err := resolveResultsRegisterSampleMetadata(ctx, client, trimmedSample)
 		if err != nil {
 			return nil, err
 		}
 
-		appendResultsRegisterMetadataValue(metadata, results.SeqmetaSampleNameKey, resolvedSampleID)
+		for key, value := range sampleMetadata {
+			appendResultsRegisterMetadataValue(metadata, key, value)
+		}
 	}
 
 	for _, trimmedLibrary := range nonEmptyRegisterLookupValues(values.library) {
@@ -730,28 +774,6 @@ func resolveResultsRegisterStudyID(ctx context.Context, client resultsRegisterRe
 	}
 
 	return resultsRegisterResolvedCanonical("--study", value, match.Canonical)
-}
-
-func resolveResultsRegisterSampleID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
-	if nameResolver, ok := client.(resultsRegisterSampleNameResolver); ok {
-		match, err := nameResolver.ResolveSampleName(ctx, value)
-		if err == nil {
-			return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
-		}
-		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
-			return "", fmt.Errorf("resolve --sample %q: %w", value, err)
-		}
-		if !errors.Is(err, mlwh.ErrNotFound) {
-			return "", fmt.Errorf("resolve --sample %q: %w", value, err)
-		}
-	}
-
-	match, err := client.ResolveSample(ctx, value)
-	if err != nil {
-		return "", fmt.Errorf("resolve --sample %q: %w", value, err)
-	}
-
-	return resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
 }
 
 func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {

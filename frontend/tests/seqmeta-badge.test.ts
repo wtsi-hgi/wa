@@ -3313,6 +3313,42 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
     });
 
+    it("uses the combined Sample search key for supplier-name direct metadata filters", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sampleid",
+                rawValue: "7607STDY14643771",
+                enrichment: buildEnrichment({
+                    identifier: "7607STDY14643771",
+                    type: "sanger_sample_name",
+                    graph: {
+                        sample: buildSample({
+                            sample_name: "7607STDY14643771",
+                            supplier_name: "Hek_R1",
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const supplierRow = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-seqmeta-detail-key="seqmeta_supplier_name"]');
+        const filterLink = within(supplierRow as HTMLElement).getByLabelText(
+            "Send seqmeta_supplier_name to search filter",
+        );
+
+        expect(filterLink.getAttribute("href")).toBe("/?sample=Hek_R1");
+    });
+
     it("shows hierarchical related data for sample with library parent, study grandparent, and lanes", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 

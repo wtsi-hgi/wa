@@ -1179,6 +1179,44 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(registration.MetadataValues[results.SeqmetaSampleNameKey], convey.ShouldResemble, []string{"7607STDY14643771", "7607STDY14643772"})
 	})
 
+	convey.Convey("Bug item 4: Given repeated --sample supplier names resolve to the same canonical sample, register preserves raw sample values and canonical seqmeta metadata", t, func() {
+		sampleCalls := []string{}
+		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
+			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleFn: func(_ context.Context, raw string) (mlwh.Match, error) {
+				sampleCalls = append(sampleCalls, raw)
+
+				return mlwh.Match{
+					Kind:      mlwh.KindSupplierName,
+					Canonical: "7607STDY14643771",
+					Sample: &mlwh.Sample{
+						Name:         "7607STDY14643771",
+						SupplierName: raw,
+					},
+				}, nil
+			},
+		})
+
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--sample", "Hek_R1",
+			"--sample", "Hek_R2",
+			"--meta", "foo=bar",
+			"--meta", "foo=baz",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(sampleCalls, convey.ShouldResemble, []string{"Hek_R1", "Hek_R2"})
+		convey.So(registration.Metadata["sample"], convey.ShouldEqual, "Hek_R1")
+		convey.So(registration.MetadataValues["sample"], convey.ShouldResemble, []string{"Hek_R1", "Hek_R2"})
+		convey.So(registration.Metadata[results.SeqmetaSampleNameKey], convey.ShouldEqual, "7607STDY14643771")
+		convey.So(registration.MetadataValues[results.SeqmetaSampleNameKey], convey.ShouldResemble, []string{"7607STDY14643771"})
+		convey.So(registration.Metadata["foo"], convey.ShouldEqual, "bar")
+		convey.So(registration.MetadataValues["foo"], convey.ShouldResemble, []string{"bar", "baz"})
+	})
+
 	convey.Convey("Given repeated --run flags, register sends every resolved run metadata value", t, func() {
 		runCalls := []string{}
 		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{

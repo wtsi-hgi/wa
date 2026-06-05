@@ -288,9 +288,12 @@ function directDetailSearchKey(
             return displayFieldKey;
         }
 
+        if (displayFieldKey === "seqmeta_supplier_name") {
+            return "sample";
+        }
+
         if (
             displayFieldKey === "seqmeta_sanger_sample_id" ||
-            displayFieldKey === "seqmeta_supplier_name" ||
             displayFieldKey === "seqmeta_id_sample_lims" ||
             displayFieldKey === "seqmeta_accession_number"
         ) {
@@ -1048,7 +1051,6 @@ function buildDetailFields(
                           key: "seqmeta_supplier_name",
                           label: "Sample supplier name",
                           searchKey: "sample",
-                          searchValue: sampleSearchValue,
                           value: sampleRecord.supplier_name,
                           group: sampleMetadata ? "direct" : "related",
                       }
