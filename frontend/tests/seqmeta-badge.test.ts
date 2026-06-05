@@ -3349,6 +3349,90 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(filterLink.getAttribute("href")).toBe("/?sample=Hek_R1");
     });
 
+    it("labels supplier-backed sample dialogs as Sample and hides the duplicate supplier-name direct row", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_sample_name",
+                rawValue: "Hek_R1",
+                enrichment: buildEnrichment({
+                    identifier: "Hek_R1",
+                    type: "supplier_name",
+                    graph: {
+                        sample: buildSample({
+                            id_sample_lims: "SMP7607-0000",
+                            sanger_id: "7607STDY14643771",
+                            sample_name: "7607STDY14643771",
+                            supplier_name: "Hek_R1",
+                            accession_number: "SAMEA76070",
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        const dialogHeader = screen.getByText("Seqmeta details").closest("div");
+        const titleLabels = Array.from(
+            dialogHeader?.querySelectorAll("p") ?? [],
+        ).map((label) => label.textContent);
+
+        expect(dialogHeader?.querySelector("h3")?.textContent).toBe("Hek_R1");
+        expect(titleLabels).toContain("Sample");
+        expect(titleLabels).not.toContain("seqmeta_sample_name");
+        expect(
+            screen.getByRole("button", { name: "Open Sample details" }),
+        ).toBeTruthy();
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector('[aria-label="Copy Sample"]'),
+        ).toBeTruthy();
+        expect(
+            screen
+                .getByTestId("seqmeta-title-actions")
+                .querySelector('[aria-label="Send Sample to search filter"]')
+                ?.getAttribute("href"),
+        ).toBe("/?sample=Hek_R1");
+
+        const directMetadataSection = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector('[data-field-group="direct-metadata"]');
+
+        expect(directMetadataSection).toBeTruthy();
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_supplier_name"]',
+            ),
+        ).toBeNull();
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_sample_name"]',
+            )?.textContent,
+        ).toContain("7607STDY14643771");
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_sanger_sample_id"]',
+            )?.textContent,
+        ).toContain("7607STDY14643771");
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_id_sample_lims"]',
+            )?.textContent,
+        ).toContain("SMP7607-0000");
+        expect(
+            directMetadataSection?.querySelector(
+                '[data-seqmeta-detail-key="seqmeta_accession_number"]',
+            )?.textContent,
+        ).toContain("SAMEA76070");
+    });
+
     it("shows hierarchical related data for sample with library parent, study grandparent, and lanes", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 

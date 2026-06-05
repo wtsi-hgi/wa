@@ -278,6 +278,85 @@ describe("ResultMetadata", () => {
         ).toHaveLength(2);
     });
 
+    it("spaces repeated supplier-backed sample pills without literal comma separators", async () => {
+        const { ResultMetadata } = await import("@/components/result-metadata");
+        const { container } = render(
+            createElement(ResultMetadata, {
+                metadata: {
+                    foo: "bar",
+                    sample: "Hek_R1",
+                    seqmeta_name: "7607STDY14643771",
+                },
+                metadataValues: {
+                    foo: ["bar", "baz"],
+                    sample: ["Hek_R1", "Hek_R2"],
+                    seqmeta_name: ["7607STDY14643771", "7607STDY14643772"],
+                },
+                enrichments: {
+                    Hek_R1: {
+                        identifier: "Hek_R1",
+                        type: "supplier_name",
+                        graph: {
+                            sample: {
+                                id_study_lims: "7607",
+                                id_sample_lims: "SMP7607-0000",
+                                sanger_id: "7607STDY14643771",
+                                sample_name: "7607STDY14643771",
+                                supplier_name: "Hek_R1",
+                                taxon_id: 9606,
+                                common_name: "Human",
+                                library_type: "Custom",
+                                accession_number: "SAMEA76070",
+                            },
+                        },
+                        partial: false,
+                    },
+                    Hek_R2: {
+                        identifier: "Hek_R2",
+                        type: "supplier_name",
+                        graph: {
+                            sample: {
+                                id_study_lims: "7607",
+                                id_sample_lims: "SMP7607-0001",
+                                sanger_id: "7607STDY14643772",
+                                sample_name: "7607STDY14643772",
+                                supplier_name: "Hek_R2",
+                                taxon_id: 9606,
+                                common_name: "Human",
+                                library_type: "Custom",
+                                accession_number: "SAMEA76071",
+                            },
+                        },
+                        partial: false,
+                    },
+                },
+                variant: "section",
+            }),
+        );
+
+        const fooRow = container.querySelector<HTMLElement>(
+            '[data-metadata-row="foo"]',
+        );
+        const sampleRow = container.querySelector<HTMLElement>(
+            '[data-metadata-row="sample"]',
+        );
+
+        expect(fooRow?.textContent).toContain("bar, baz");
+        expect(sampleRow).toBeTruthy();
+        expect(
+            within(sampleRow as HTMLElement)
+                .getAllByTestId("seqmeta-badge-label")
+                .map((label) => label.textContent),
+        ).toEqual(["Hek_R1", "Hek_R2"]);
+        expect(
+            within(sampleRow as HTMLElement).getAllByRole("button", {
+                name: "Open Sample details",
+            }),
+        ).toHaveLength(2);
+        expect(within(sampleRow as HTMLElement).queryByText(",")).toBeNull();
+        expect(sampleRow?.textContent).not.toContain("Hek_R1,Hek_R2");
+    });
+
     it("applies user-facing MLWH rendering to study, library, and run metadata with canonical companions", async () => {
         const { ResultMetadata } = await import("@/components/result-metadata");
         const { container } = render(

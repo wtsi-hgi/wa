@@ -349,6 +349,69 @@ function primaryLabel(
     return rawValue;
 }
 
+function sampleRecordForTitle(
+    enrichment: EnrichmentResult | null,
+): EnrichmentSample | null {
+    return (
+        enrichment?.graph.sample ??
+        enrichment?.graph.sample_detail?.sample ??
+        null
+    );
+}
+
+function valuesMatch(left: string | null, right: string): boolean {
+    return left?.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function isSupplierBackedSampleTitle(
+    metadataKey: string,
+    rawValue: string,
+    enrichment: EnrichmentResult | null,
+): boolean {
+    const displayKey = seqmetaDisplayKey(metadataKey);
+
+    if (
+        displayKey !== "seqmeta_sample_name" &&
+        displayKey !== "seqmeta_supplier_name"
+    ) {
+        return false;
+    }
+
+    const sampleRecord = sampleRecordForTitle(enrichment);
+
+    if (!sampleRecord) {
+        return false;
+    }
+
+    const raw = rawValue.trim();
+
+    if (!raw) {
+        return false;
+    }
+
+    const supplierName = asString(sampleRecord.supplier_name);
+
+    return (
+        enrichment?.type === "supplier_name" ||
+        (valuesMatch(supplierName, raw) &&
+            !valuesMatch(asString(sampleRecord.sample_name), raw) &&
+            !valuesMatch(asString(sampleRecord.sanger_id), raw) &&
+            !valuesMatch(asString(sampleRecord.id_sample_lims), raw))
+    );
+}
+
+function titleMetadataDisplayKey(
+    metadataKey: string,
+    rawValue: string,
+    enrichment: EnrichmentResult | null,
+): string {
+    if (isSupplierBackedSampleTitle(metadataKey, rawValue, enrichment)) {
+        return "Sample";
+    }
+
+    return seqmetaDisplayKey(metadataKey);
+}
+
 function librarySampleKey(sample: EnrichmentSample, index: number): string {
     const keyParts = [
         asString(sample.sanger_id) ?? "",
@@ -923,8 +986,11 @@ function appendDetailField(
         if (
             rawValue &&
             field.group === "direct" &&
-            field.key === seqmetaDisplayKey(metadataKey ?? "") &&
-            value.toLowerCase() === rawValue.trim().toLowerCase()
+            value.toLowerCase() === rawValue.trim().toLowerCase() &&
+            (field.key === seqmetaDisplayKey(metadataKey ?? "") ||
+                (seqmetaDisplayKey(metadataKey ?? "") ===
+                    "seqmeta_sample_name" &&
+                    field.key === "seqmeta_supplier_name"))
         ) {
             return;
         }
@@ -1541,6 +1607,11 @@ export function SeqmetaBadge({
         new Set(),
     );
     const titleMetadataKey = seqmetaDisplayKey(metadataKey);
+    const titleDisplayKey = titleMetadataDisplayKey(
+        metadataKey,
+        rawValue,
+        enrichment,
+    );
     const titleCopyKey = copiedStateKey(
         `title:${titleMetadataKey}`,
         inlineLabel,
@@ -1733,7 +1804,7 @@ export function SeqmetaBadge({
                     type="button"
                     aria-expanded={dialogOpen}
                     aria-haspopup="dialog"
-                    aria-label={`Open ${titleMetadataKey} details`}
+                    aria-label={`Open ${titleDisplayKey} details`}
                     data-testid="seqmeta-badge-trigger"
                     className={cn(
                         "inline-flex max-w-full cursor-pointer items-center rounded-full border border-border/80 px-3 py-1 text-left text-xs font-medium tracking-[0.16em] transition hover:border-primary/45 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
@@ -1786,7 +1857,7 @@ export function SeqmetaBadge({
                                     >
                                         <button
                                             type="button"
-                                            aria-label={`Copy ${titleMetadataKey}`}
+                                            aria-label={`Copy ${titleDisplayKey}`}
                                             className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                             onClick={() => {
                                                 void writeClipboard(
@@ -1810,7 +1881,7 @@ export function SeqmetaBadge({
                                         </button>
                                         {titleHref ? (
                                             <Link
-                                                aria-label={`Send ${titleMetadataKey} to search filter`}
+                                                aria-label={`Send ${titleDisplayKey} to search filter`}
                                                 className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/85 px-3 py-2 text-xs font-medium text-foreground transition hover:border-primary/35 hover:bg-accent/20"
                                                 href={titleHref}
                                             >
@@ -1824,7 +1895,7 @@ export function SeqmetaBadge({
                                     </div>
                                 </div>
                                 <p className="font-mono text-xs text-muted-foreground">
-                                    {titleMetadataKey}
+                                    {titleDisplayKey}
                                 </p>
                             </div>
                             <button

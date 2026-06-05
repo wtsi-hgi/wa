@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Info } from "lucide-react";
 
@@ -379,26 +379,17 @@ function MetadataValue({
                     const lookupKey = seqmetaLookupKey(rawValue);
 
                     return (
-                        <Fragment key={`${rawValue}:${index}`}>
-                            <SeqmetaBadge
-                                metadataKey={metadataKey}
-                                rawValue={rawValue}
-                                enrichment={enrichments[lookupKey] ?? null}
-                                error={errors[lookupKey]}
-                                loading={Boolean(loading[lookupKey])}
-                                statusPlacement={
-                                    display === "strip" ? "overlay" : "inline"
-                                }
-                            />
-                            {index < seqmetaValues.length - 1 ? (
-                                <span
-                                    aria-hidden="true"
-                                    className="shrink-0 text-xs text-muted-foreground"
-                                >
-                                    ,
-                                </span>
-                            ) : null}
-                        </Fragment>
+                        <SeqmetaBadge
+                            key={`${rawValue}:${index}`}
+                            metadataKey={metadataKey}
+                            rawValue={rawValue}
+                            enrichment={enrichments[lookupKey] ?? null}
+                            error={errors[lookupKey]}
+                            loading={Boolean(loading[lookupKey])}
+                            statusPlacement={
+                                display === "strip" ? "overlay" : "inline"
+                            }
+                        />
                     );
                 })}
             </span>
