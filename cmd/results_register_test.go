@@ -35,6 +35,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -141,6 +142,57 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(registration.OutputDirectory, convey.ShouldEqual, outputDir)
 		convey.So(countRegisterCommandFilesByKind(registration.Files, "output"), convey.ShouldEqual, 2)
 		convey.So(countRegisterCommandFilesByKind(registration.Files, "pipeline"), convey.ShouldEqual, 1)
+	})
+
+	convey.Convey("Given --operator is omitted, when register is run, then the registration operator defaults to the current user", t, func() {
+		currentUser, err := osuser.Current()
+		convey.So(err, convey.ShouldBeNil)
+
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		registrationCh := make(chan results.Registration, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "default-operator-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results",
+			"--server", server.URL,
+			"register",
+			"--user", "alice",
+			"--unique", "default-operator",
+			"--workflow", workflowPath,
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.Requester, convey.ShouldEqual, "alice")
+		convey.So(registration.Operator, convey.ShouldEqual, currentUser.Username)
 	})
 
 	convey.Convey("Given --unique, when register is run, then the registration uses the stable unique key", t, func() {

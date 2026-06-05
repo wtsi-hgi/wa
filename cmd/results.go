@@ -851,6 +851,20 @@ func matchLibraryType(match mlwh.Match) string {
 	return ""
 }
 
+func resultsRegisterOperatorName(operator string) (string, error) {
+	operatorName := strings.TrimSpace(operator)
+	if operatorName != "" {
+		return operatorName, nil
+	}
+
+	currentUser, err := osuser.Current()
+	if err != nil {
+		return "", fmt.Errorf("get current user: %w", err)
+	}
+
+	return strings.TrimSpace(currentUser.Username), nil
+}
+
 func parseResultsMetadataValueFilters(metaValues []string) (map[string][]string, error) {
 	metadata := make(map[string][]string, len(metaValues))
 
@@ -1455,6 +1469,11 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("--user is required")
 	}
 
+	operatorName, err := resultsRegisterOperatorName(operator)
+	if err != nil {
+		return nil, err
+	}
+
 	if strings.TrimSpace(workflowReference) == "" {
 		return nil, errors.New("--workflow is required")
 	}
@@ -1514,7 +1533,7 @@ func buildResultsRegistrationForCommand(
 		PipelineIdentifier: workflowIdentity.Identifier,
 		RunKey:             runKey,
 		Requester:          strings.TrimSpace(requester),
-		Operator:           strings.TrimSpace(operator),
+		Operator:           operatorName,
 		Command:            strings.TrimSpace(commandLine),
 		PipelineName:       workflowIdentity.Name,
 		PipelineVersion:    workflowIdentity.Version,
