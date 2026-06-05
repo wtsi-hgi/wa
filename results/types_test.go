@@ -140,6 +140,30 @@ func TestCompositeKeyID(t *testing.T) {
 }
 
 func TestResolveWorkflowIdentityNextflow(t *testing.T) {
+	convey.Convey("readGitHubJSON sends an explicit User-Agent for GitHub REST API requests", t, func() {
+		var userAgent string
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			userAgent = request.Header.Get("User-Agent")
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"ok":true}`))
+		}))
+		defer server.Close()
+
+		oldAPIBaseURL := workflowGitHubAPIBaseURL
+		oldHTTPClient := workflowHTTPClient
+		workflowGitHubAPIBaseURL = server.URL
+		workflowHTTPClient = server.Client()
+		defer func() {
+			workflowGitHubAPIBaseURL = oldAPIBaseURL
+			workflowHTTPClient = oldHTTPClient
+		}()
+
+		err := readGitHubJSON("/rate_limit", nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(userAgent, convey.ShouldEqual, "wa-results-workflow-resolver")
+	})
+
 	convey.Convey("ResolveWorkflowIdentity resolves a GitHub repository URL as an online Nextflow workflow", t, func() {
 		restore := installGitHubWorkflowServerForTest(t, map[string]string{
 			"nf-core/sarek": "abc123",

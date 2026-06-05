@@ -45,6 +45,8 @@ var (
 	workflowHTTPClient       = &http.Client{Timeout: 10 * time.Second}
 )
 
+const workflowGitHubUserAgent = "wa-results-workflow-resolver"
+
 var (
 	errGitHubNotFound            = errors.New("not found")
 	errNextflowWorkflowUnmatched = errors.New("nextflow workflow not matched")
@@ -144,6 +146,7 @@ func readGitHubJSON(path string, target any) error {
 	}
 
 	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("User-Agent", workflowGitHubUserAgent)
 
 	response, err := workflowHTTPClient.Do(request)
 	if err != nil {
