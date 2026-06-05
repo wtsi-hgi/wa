@@ -29,7 +29,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -58,7 +57,7 @@ func NewSeqmetaValidator(baseURL string, timeout time.Duration) *SeqmetaValidato
 func seqmetaMetadataValueKeys(metadata map[string][]string) []string {
 	seqmetaKeys := make([]string, 0, len(metadata))
 
-	for key := range maps.Keys(metadata) {
+	for key := range metadata {
 		if strings.HasPrefix(key, "seqmeta_") {
 			seqmetaKeys = append(seqmetaKeys, key)
 		}

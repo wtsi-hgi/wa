@@ -39,6 +39,19 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
+func TestSeqmetaMetadataValueKeys(t *testing.T) {
+	convey.Convey("seqmetaMetadataValueKeys returns sorted seqmeta metadata keys from the metadata map", t, func() {
+		keys := seqmetaMetadataValueKeys(map[string][]string{
+			"sample":         {"SAMPLE-1"},
+			"seqmeta_runid":  {"48522"},
+			"seqmeta_study":  {"6568"},
+			"workflow_label": {"manual"},
+		})
+
+		convey.So(keys, convey.ShouldResemble, []string{"seqmeta_runid", "seqmeta_study"})
+	})
+}
+
 type seqmetaResponseForTest struct {
 	status int
 	body   string
