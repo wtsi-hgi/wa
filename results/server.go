@@ -112,6 +112,8 @@ var combinedSampleSearchKinds = []mlwh.IdentifierKind{
 	mlwh.KindSampleLimsID,
 	mlwh.KindSangerSampleID,
 	mlwh.KindSampleAccession,
+	mlwh.KindSampleUUID,
+	mlwh.KindDonorID,
 }
 
 type sampleMetadataSearchKey struct {

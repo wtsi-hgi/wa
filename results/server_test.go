@@ -1264,6 +1264,53 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-source-match")
 	})
 
+	convey.Convey("Bug PR12 review: Given GET /results?sample uses a sample UUID or donor ID, then MLWH expansion can match registered sample names", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-uuid-expanded", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "SANG-UUID"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-donor-expanded", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "SANG-DONOR"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-unrelated-sample", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "SANG-OTHER"}
+		}))
+
+		sampleExpansionCalls := map[mlwh.IdentifierKind][]string{}
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+				sampleExpansionCalls[kind] = append(sampleExpansionCalls[kind], canonical)
+				switch {
+				case kind == mlwh.KindSampleUUID && canonical == "sample-uuid-123":
+					return []string{"SANG-UUID"}, nil, nil, nil
+				case kind == mlwh.KindDonorID && canonical == "DONOR-42":
+					return []string{"SANG-DONOR"}, nil, nil, nil
+				default:
+					return nil, nil, nil, nil
+				}
+			},
+		}
+		server := NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler()
+
+		uuidResponse := performResultsRequestForTest(t, server, http.MethodGet, "/results?sample=sample-uuid-123", nil)
+		convey.So(uuidResponse.Code, convey.ShouldEqual, http.StatusOK)
+		var uuidResults []ResultSet
+		decodeJSONResponseForTest(t, uuidResponse, &uuidResults)
+		convey.So(uuidResults, convey.ShouldHaveLength, 1)
+		convey.So(uuidResults[0].RunKey, convey.ShouldEqual, "run-sample-uuid-expanded")
+		convey.So(sampleExpansionCalls[mlwh.KindSampleUUID], convey.ShouldContain, "sample-uuid-123")
+
+		donorResponse := performResultsRequestForTest(t, server, http.MethodGet, "/results?sample=DONOR-42", nil)
+		convey.So(donorResponse.Code, convey.ShouldEqual, http.StatusOK)
+		var donorResults []ResultSet
+		decodeJSONResponseForTest(t, donorResponse, &donorResults)
+		convey.So(donorResults, convey.ShouldHaveLength, 1)
+		convey.So(donorResults[0].RunKey, convey.ShouldEqual, "run-donor-expanded")
+		convey.So(sampleExpansionCalls[mlwh.KindDonorID], convey.ShouldContain, "DONOR-42")
+	})
+
 	convey.Convey("Bug item 4: Given GET /results?sample=Hek_R1, then supplier-name sample aliases are resolved from registered sample candidates without slow live expansion", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-alias-match", func(reg *Registration) {
