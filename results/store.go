@@ -214,10 +214,14 @@ func ensureResultMetadataSchema(db *sql.DB) error {
 	}
 	if inspectedSQLite {
 		if len(schema.primaryKeyColumns) == 0 && schema.hasValueOrdinal {
-			return nil
+			return ensureResultMetadataResultIDIndex(db)
 		}
 
-		return migrateSQLiteResultMetadataSchema(db, schema.hasValueOrdinal)
+		if err := migrateSQLiteResultMetadataSchema(db, schema.hasValueOrdinal); err != nil {
+			return err
+		}
+
+		return ensureResultMetadataResultIDIndex(db)
 	}
 
 	if err := ensureResultMetadataResultIDIndex(db); err != nil {

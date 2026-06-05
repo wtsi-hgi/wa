@@ -116,6 +116,7 @@ func TestNewStore(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(sqliteIndexExists(db, "idx_result_metadata_meta_key_value"), convey.ShouldBeTrue)
+		convey.So(sqliteIndexExists(db, "idx_result_metadata_result_id"), convey.ShouldBeTrue)
 
 		queryPlan := sqliteQueryPlanForTest(
 			t,
@@ -126,6 +127,16 @@ func TestNewStore(t *testing.T) {
 		)
 
 		convey.So(queryPlan, convey.ShouldContainSubstring, "USING COVERING INDEX idx_result_metadata_meta_key_value")
+		convey.So(queryPlan, convey.ShouldNotContainSubstring, "SCAN result_metadata")
+
+		queryPlan = sqliteQueryPlanForTest(
+			t,
+			db,
+			`SELECT meta_key, value FROM result_metadata WHERE result_id = ? ORDER BY meta_key, value_ordinal, value`,
+			"indexed-result",
+		)
+
+		convey.So(queryPlan, convey.ShouldContainSubstring, "USING INDEX idx_result_metadata_result_id")
 		convey.So(queryPlan, convey.ShouldNotContainSubstring, "SCAN result_metadata")
 	})
 
@@ -229,6 +240,17 @@ func TestNewStore(t *testing.T) {
 		})
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(sqliteColumnExists(db, "result_metadata", "value_ordinal"), convey.ShouldBeTrue)
+		convey.So(sqliteIndexExists(db, "idx_result_metadata_result_id"), convey.ShouldBeTrue)
+
+		queryPlan := sqliteQueryPlanForTest(
+			t,
+			db,
+			`SELECT meta_key, value FROM result_metadata WHERE result_id = ? ORDER BY meta_key, value_ordinal, value`,
+			"legacy-multi-meta-result",
+		)
+
+		convey.So(queryPlan, convey.ShouldContainSubstring, "USING INDEX idx_result_metadata_result_id")
+		convey.So(queryPlan, convey.ShouldNotContainSubstring, "SCAN result_metadata")
 		convey.So(metadataValueRowsForTest(t, db, "legacy-multi-meta-result", "assay"), convey.ShouldResemble, []metadataValueRowForTest{
 			{value: "WGS", ordinal: 0},
 			{value: "RNA", ordinal: 1},
