@@ -224,7 +224,9 @@ var SeqmetaFieldTypes = map[string]string{
   resolvers before falling back to the trimmed raw workflow
   string. The Nextflow resolver handles local `.nf` files with
   git metadata or content hashing, plus GitHub URLs and
-  `owner/repo` shorthands.
+  `owner/repo` shorthands. Local `.nf` files inside git repos use
+  `<remote-or-clean-repo-root>::<workflow-relative-path>` identifiers
+  so multiple workflow files in the same repo cannot collide.
 
 ### Search Query Parameters
 
@@ -355,19 +357,23 @@ func ResolveWorkflowIdentity(workflow string) (WorkflowIdentity, error)
 1. Given a file inside a git repo with remote origin
    `https://github.com/org/nf_splicing.git` and HEAD at
    commit `abc123`, when `ResolveWorkflowIdentity("/repo/main.nf")`
-   is called, then `identity.Identifier ==
-"https://github.com/org/nf_splicing.git"`,
+   is called, then `identity.Identifier` is
+   `"https://github.com/org/nf_splicing.git::main.nf"`,
    `identity.Name == "nf_splicing"`, `identity.Version == "abc123"`.
    (Test creates a real git repo in `t.TempDir()`.)
-2. Given a git repo with no remote, when called, then
-   `identifier` is the cleaned absolute repo root path,
-   `name` is the repo directory name.
+2. Given `main.nf` inside a git repo with no remote, when called, then
+   `identifier` is the cleaned absolute repo root path plus
+   `"::main.nf"`, and `name` is the repo directory name.
 3. Given a file NOT in a git repo, when called, then
    `identifier` is the cleaned absolute path of the file,
    `name` is the parent directory name, and `version` is the
    lowercase hex SHA256 of the file's content.
-4. Given an unreadable file path, then `err != nil`.
-5. Given a relative path `"./main.nf"` that exists, then
+4. Given two local `.nf` files in the same git repo, when called for
+   each file, then identifiers differ by their appended
+   `::<workflow-relative-path>` suffixes, e.g. `::main.nf` and
+   `::workflows/alt.nf`.
+5. Given an unreadable file path, then `err != nil`.
+6. Given a relative path `"./main.nf"` outside a git repo that exists, then
    `identifier` is the resolved absolute path.
 
 ---
