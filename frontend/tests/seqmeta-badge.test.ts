@@ -3768,6 +3768,48 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
+    it("keeps the study accession detail row when a study-accession title has the same value", async () => {
+        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+
+        render(
+            createElement(SeqmetaBadge, {
+                metadataKey: "seqmeta_study_accession",
+                rawValue: "EGAS00001005445",
+                enrichment: buildEnrichment({
+                    identifier: "EGAS00001005445",
+                    type: "study_id",
+                    graph: {
+                        study: buildStudy({
+                            accession_number: "EGAS00001005445",
+                        }),
+                    },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+
+        await waitFor(() => {
+            expect(screen.getByRole("dialog")).toBeTruthy();
+        });
+
+        expect(
+            screen
+                .getByText("Seqmeta details")
+                .parentElement?.querySelector("p.font-mono")?.textContent,
+        ).toBe("seqmeta_study_accession");
+
+        const studyAccessionRow = screen
+            .getByTestId("seqmeta-dialog-body")
+            .querySelector(
+                '[data-seqmeta-detail-key="seqmeta_accession_number"]',
+            );
+
+        expect(studyAccessionRow).toBeTruthy();
+        expect(studyAccessionRow?.textContent).toContain("Study accession");
+        expect(studyAccessionRow?.textContent).toContain("EGAS00001005445");
+    });
+
     it("does not duplicate 'Lane' label in rows within Lanes section", async () => {
         const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
 

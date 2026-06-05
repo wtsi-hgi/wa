@@ -1038,9 +1038,7 @@ function isSelectedTitleDetailField(metadataKey: string, fieldKey: string) {
     return (
         fieldKey === displayKey ||
         (displayKey === "seqmeta_sample_name" &&
-            fieldKey === "seqmeta_supplier_name") ||
-        (displayKey === "seqmeta_study_accession" &&
-            fieldKey === "seqmeta_accession_number")
+            fieldKey === "seqmeta_supplier_name")
     );
 }
 
