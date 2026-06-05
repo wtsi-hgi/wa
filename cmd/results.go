@@ -1513,6 +1513,9 @@ func buildResultsRegistrationForCommand(
 	}
 
 	writeResultsScanWarnings(cmd.ErrOrStderr(), scanWarnings)
+	if len(outputFiles) == 0 {
+		return nil, errors.New("no output files discovered in output directory")
+	}
 
 	workflowIdentity, err := results.ResolveWorkflowIdentity(workflowReference)
 	if err != nil {
