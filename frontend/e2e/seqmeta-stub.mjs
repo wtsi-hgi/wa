@@ -258,6 +258,33 @@ const multiFieldGraph = {
         libraries: [multiFieldMlwhLibrary],
     },
 };
+const hekR1Sample = {
+    ...multiFieldPrimarySample,
+    supplier_name: "Hek_R1",
+};
+const hekR2Sample = {
+    ...multiFieldSample(1),
+    sanger_id: "7607STDY14643772",
+    sample_name: "7607STDY14643772",
+    supplier_name: "Hek_R2",
+};
+
+function graphForSample(sample) {
+    return {
+        ...multiFieldGraph,
+        sample,
+        samples: [sample],
+        sample_detail: {
+            ...multiFieldGraph.sample_detail,
+            sanger_id: sample.sanger_id,
+            sample_name: sample.sample_name,
+            sample,
+        },
+    };
+}
+
+const hekR1Graph = graphForSample(hekR1Sample);
+const hekR2Graph = graphForSample(hekR2Sample);
 const multiFieldEnrichments = new Map([
     [
         "7607",
@@ -274,6 +301,33 @@ const multiFieldEnrichments = new Map([
             identifier: "7607STDY14643771",
             type: "sanger_sample_id",
             graph: multiFieldGraph,
+            partial: false,
+        },
+    ],
+    [
+        "7607STDY14643772",
+        {
+            identifier: "7607STDY14643772",
+            type: "sanger_sample_id",
+            graph: hekR2Graph,
+            partial: false,
+        },
+    ],
+    [
+        "Hek_R1",
+        {
+            identifier: "Hek_R1",
+            type: "supplier_name",
+            graph: hekR1Graph,
+            partial: false,
+        },
+    ],
+    [
+        "Hek_R2",
+        {
+            identifier: "Hek_R2",
+            type: "supplier_name",
+            graph: hekR2Graph,
             partial: false,
         },
     ],
@@ -367,6 +421,30 @@ const validations = new Map([
             identifier: "7607STDY14643771",
             type: "sanger_sample_id",
             object: multiFieldPrimarySample,
+        },
+    ],
+    [
+        "7607STDY14643772",
+        {
+            identifier: "7607STDY14643772",
+            type: "sanger_sample_id",
+            object: hekR2Sample,
+        },
+    ],
+    [
+        "Hek_R1",
+        {
+            identifier: "Hek_R1",
+            type: "supplier_name",
+            object: hekR1Sample,
+        },
+    ],
+    [
+        "Hek_R2",
+        {
+            identifier: "Hek_R2",
+            type: "supplier_name",
+            object: hekR2Sample,
         },
     ],
     [

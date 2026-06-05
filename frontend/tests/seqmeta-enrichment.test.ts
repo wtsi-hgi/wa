@@ -191,6 +191,61 @@ describe("H3 enrichment state and badge", () => {
         expect(screen.queryByText("Some details unavailable")).toBeNull();
     });
 
+    it("looks up repeated user-facing sample metadata values when canonical sample metadata is present", async () => {
+        enrichIdentifierMock.mockImplementation(async (value: string) => ({
+            identifier: value,
+            type: "sanger_sample_name",
+            graph: {},
+            partial: false,
+        }));
+        const { ResultMetadataEnrichment } =
+            await import("@/components/result-metadata-enrichment");
+
+        render(
+            createElement(ResultMetadataEnrichment, {
+                metadata: {
+                    foo: "bar",
+                    sample: "Hek_R1",
+                    seqmeta_name: "7607STDY14643771",
+                },
+                metadataValues: {
+                    foo: ["bar", "baz"],
+                    sample: ["Hek_R1", "Hek_R2"],
+                    seqmeta_name: ["7607STDY14643771"],
+                },
+            }),
+            {
+                wrapper: ({ children }) =>
+                    createElement(SeqmetaCacheProvider, null, children),
+            },
+        );
+
+        await waitFor(() => {
+            expect(enrichIdentifiersMock).toHaveBeenCalled();
+        });
+
+        const requestedValues = enrichIdentifiersMock.mock.calls[0]?.[0] ?? [];
+        expect(requestedValues).toEqual(
+            expect.arrayContaining(["Hek_R1", "Hek_R2"]),
+        );
+        expect(requestedValues).not.toContain("bar");
+
+        const sampleRow = document.querySelector<HTMLElement>(
+            '[data-metadata-row="sample"]',
+        );
+
+        expect(sampleRow).toBeTruthy();
+        await waitFor(() => {
+            expect(
+                Array.from(
+                    (sampleRow as HTMLElement).querySelectorAll(
+                        '[data-testid="seqmeta-badge-label"]',
+                    ),
+                ).map((label) => label.textContent),
+            ).toEqual(["Hek_R1", "Hek_R2"]);
+        });
+    });
+
     it("shows multi-field result metadata details within one second after enrichment resolves", async () => {
         const samples = Array.from({ length: 1000 }, (_, index) =>
             buildEnrichmentSample(index),

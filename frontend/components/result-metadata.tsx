@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Info } from "lucide-react";
 
@@ -11,7 +11,15 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import type { EnrichmentResult } from "@/lib/contracts";
-import { canonicalSeqmetaKey, isSeqmetaKey } from "@/lib/seqmeta-keys";
+import {
+    canonicalSeqmetaKey,
+    isSeqmetaKey,
+    isSeqmetaKeyForUserFacingMlwhMetadataKey,
+    isUserFacingMlwhMetadataKey,
+    preferredSeqmetaKeyForUserFacingMlwhMetadataKey,
+    type UserFacingMlwhMetadataKey,
+    userFacingMlwhMetadataLabel,
+} from "@/lib/seqmeta-keys";
 
 type ResultMetadataProps = {
     enrichments?: Record<string, EnrichmentResult | null>;
@@ -23,6 +31,7 @@ type ResultMetadataProps = {
 };
 
 type MetadataEntry = {
+    displayKey: string;
     key: string;
     value: string;
     values: string[];
@@ -57,16 +66,108 @@ function nonEmptyMetadataValues(values: string[] | undefined): string[] {
         .filter((value) => value.length > 0);
 }
 
+function orderedMetadataKeys(
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): string[] {
+    const keys: string[] = [];
+    const seen = new Set<string>();
+
+    for (const key of Object.keys(metadata)) {
+        keys.push(key);
+        seen.add(key);
+    }
+
+    for (const key of Object.keys(metadataValues ?? {})) {
+        if (seen.has(key)) {
+            continue;
+        }
+
+        keys.push(key);
+    }
+
+    return keys;
+}
+
+function metadataValuesForKey(
+    key: string,
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): string[] {
+    const values = nonEmptyMetadataValues(metadataValues?.[key]);
+
+    if (values.length > 0) {
+        return values;
+    }
+
+    const value = metadata[key]?.trim();
+
+    return value ? [value] : [];
+}
+
+function userFacingMlwhDisplayKeys(
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): Map<UserFacingMlwhMetadataKey, string> {
+    const keysWithValues = orderedMetadataKeys(metadata, metadataValues).filter(
+        (key) => metadataValuesForKey(key, metadata, metadataValues).length > 0,
+    );
+    const displayKeys = new Map<UserFacingMlwhMetadataKey, string>();
+
+    for (const key of keysWithValues) {
+        if (!isUserFacingMlwhMetadataKey(key)) {
+            continue;
+        }
+
+        const displayKey = preferredSeqmetaKeyForUserFacingMlwhMetadataKey(
+            key,
+            keysWithValues,
+        );
+
+        if (displayKey) {
+            displayKeys.set(key, displayKey);
+        }
+    }
+
+    return displayKeys;
+}
+
+function hidesDuplicateSeqmetaEntry(
+    key: string,
+    displayKeys: Map<UserFacingMlwhMetadataKey, string>,
+): boolean {
+    if (!isSeqmetaKey(key)) {
+        return false;
+    }
+
+    for (const userFacingKey of displayKeys.keys()) {
+        if (isSeqmetaKeyForUserFacingMlwhMetadataKey(userFacingKey, key)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function displayMetadataEntries(
     metadata: Record<string, string>,
     metadataValues: Record<string, string[]> | undefined,
 ): MetadataEntry[] {
     const entries: MetadataEntry[] = [];
     const seen = new Set<string>();
+    const displayKeys = userFacingMlwhDisplayKeys(metadata, metadataValues);
 
     for (const [key, value] of Object.entries(metadata)) {
+        if (hidesDuplicateSeqmetaEntry(key, displayKeys)) {
+            seen.add(key);
+
+            continue;
+        }
+
         const values = nonEmptyMetadataValues(metadataValues?.[key]);
         entries.push({
+            displayKey:
+                displayKeys.get(key as UserFacingMlwhMetadataKey) ?? key,
             key,
             value: values.length > 1 ? values.join(", ") : value,
             values,
@@ -79,12 +180,18 @@ function displayMetadataEntries(
             continue;
         }
 
+        if (hidesDuplicateSeqmetaEntry(key, displayKeys)) {
+            continue;
+        }
+
         const displayValues = nonEmptyMetadataValues(values);
         if (displayValues.length === 0) {
             continue;
         }
 
         entries.push({
+            displayKey:
+                displayKeys.get(key as UserFacingMlwhMetadataKey) ?? key,
             key,
             value: displayValues.join(", "),
             values: displayValues,
@@ -94,11 +201,19 @@ function displayMetadataEntries(
     return entries;
 }
 
-function displayMetadataKey(key: string): string {
+function displayMetadataKey(key: string, displayKey = key): string {
+    if (isUserFacingMlwhMetadataKey(key) && displayKey !== key) {
+        return userFacingMlwhMetadataLabel(key);
+    }
+
     return canonicalSeqmetaKey(key);
 }
 
-function displayMetadataStripKey(key: string): string {
+function displayMetadataStripKey(key: string, entryDisplayKey = key): string {
+    if (isUserFacingMlwhMetadataKey(key) && entryDisplayKey !== key) {
+        return userFacingMlwhMetadataLabel(key);
+    }
+
     const displayKey = canonicalSeqmetaKey(key);
 
     if (
@@ -247,31 +362,46 @@ function MetadataValue({
     const displayValue = values.length > 1 ? values.join(", ") : value;
 
     if (isSeqmetaKey(metadataKey)) {
-        if (values.length > 1) {
-            return (
-                <span
-                    className={
-                        display === "detail"
-                            ? "break-words text-sm leading-5 text-foreground"
-                            : "min-w-0 truncate text-xs font-medium text-foreground"
-                    }
-                >
-                    {displayValue}
-                </span>
-            );
-        }
-
-        const lookupKey = seqmetaLookupKey(value);
+        const seqmetaValues =
+            values.length > 0
+                ? values
+                : nonEmptyMetadataValues(displayValue ? [displayValue] : []);
 
         return (
-            <SeqmetaBadge
-                metadataKey={metadataKey}
-                rawValue={value}
-                enrichment={enrichments[lookupKey] ?? null}
-                error={errors[lookupKey]}
-                loading={Boolean(loading[lookupKey])}
-                statusPlacement={display === "strip" ? "overlay" : "inline"}
-            />
+            <span
+                className={
+                    display === "detail"
+                        ? "inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-1"
+                        : "inline-flex min-w-0 max-w-full items-center gap-1 overflow-hidden align-middle"
+                }
+            >
+                {seqmetaValues.map((rawValue, index) => {
+                    const lookupKey = seqmetaLookupKey(rawValue);
+
+                    return (
+                        <Fragment key={`${rawValue}:${index}`}>
+                            <SeqmetaBadge
+                                metadataKey={metadataKey}
+                                rawValue={rawValue}
+                                enrichment={enrichments[lookupKey] ?? null}
+                                error={errors[lookupKey]}
+                                loading={Boolean(loading[lookupKey])}
+                                statusPlacement={
+                                    display === "strip" ? "overlay" : "inline"
+                                }
+                            />
+                            {index < seqmetaValues.length - 1 ? (
+                                <span
+                                    aria-hidden="true"
+                                    className="shrink-0 text-xs text-muted-foreground"
+                                >
+                                    ,
+                                </span>
+                            ) : null}
+                        </Fragment>
+                    );
+                })}
+            </span>
         );
     }
 
@@ -484,28 +614,40 @@ export function ResultMetadata({
                                     className="mt-3 grid max-h-[min(24rem,70vh)] gap-2 overflow-auto pr-1 sm:grid-cols-2"
                                     data-result-metadata-details-panel="true"
                                 >
-                                    {entries.map(({ key, value, values }) => (
-                                        <div
-                                            key={key}
-                                            className="min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
-                                            data-metadata-detail-row={key}
-                                        >
-                                            <dt className="break-all font-mono text-[11px] text-muted-foreground">
-                                                {key}
-                                            </dt>
-                                            <dd className="mt-1 min-w-0">
-                                                <MetadataValue
-                                                    display="detail"
-                                                    enrichments={enrichments}
-                                                    errors={errors}
-                                                    loading={loading}
-                                                    metadataKey={key}
-                                                    value={value}
-                                                    values={values}
-                                                />
-                                            </dd>
-                                        </div>
-                                    ))}
+                                    {entries.map(
+                                        ({
+                                            displayKey,
+                                            key,
+                                            value,
+                                            values,
+                                        }) => (
+                                            <div
+                                                key={key}
+                                                className="min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
+                                                data-metadata-detail-row={key}
+                                            >
+                                                <dt className="break-all font-mono text-[11px] text-muted-foreground">
+                                                    {displayMetadataKey(
+                                                        key,
+                                                        displayKey,
+                                                    )}
+                                                </dt>
+                                                <dd className="mt-1 min-w-0">
+                                                    <MetadataValue
+                                                        display="detail"
+                                                        enrichments={
+                                                            enrichments
+                                                        }
+                                                        errors={errors}
+                                                        loading={loading}
+                                                        metadataKey={displayKey}
+                                                        value={value}
+                                                        values={values}
+                                                    />
+                                                </dd>
+                                            </div>
+                                        ),
+                                    )}
                                 </dl>
                             </PopoverContent>
                         </Popover>
@@ -522,27 +664,32 @@ export function ResultMetadata({
                         className="flex max-h-20 flex-wrap gap-1.5 overflow-auto pr-1"
                         data-result-metadata-strip="true"
                     >
-                        {visibleEntries.map(({ key, value, values }) => (
-                            <div
-                                key={key}
-                                className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border border-border/65 bg-background/70 px-2 py-0.5 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
-                                data-metadata-row={key}
-                            >
-                                <dt className="min-w-0 shrink truncate font-mono text-[11px] text-muted-foreground">
-                                    {displayMetadataStripKey(key)}
-                                </dt>
-                                <dd className="min-w-0">
-                                    <MetadataValue
-                                        enrichments={enrichments}
-                                        errors={errors}
-                                        loading={loading}
-                                        metadataKey={key}
-                                        value={value}
-                                        values={values}
-                                    />
-                                </dd>
-                            </div>
-                        ))}
+                        {visibleEntries.map(
+                            ({ displayKey, key, value, values }) => (
+                                <div
+                                    key={key}
+                                    className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border border-border/65 bg-background/70 px-2 py-0.5 text-xs shadow-[0_10px_28px_-26px_rgba(28,40,58,0.72)]"
+                                    data-metadata-row={key}
+                                >
+                                    <dt className="min-w-0 shrink truncate font-mono text-[11px] text-muted-foreground">
+                                        {displayMetadataStripKey(
+                                            key,
+                                            displayKey,
+                                        )}
+                                    </dt>
+                                    <dd className="min-w-0">
+                                        <MetadataValue
+                                            enrichments={enrichments}
+                                            errors={errors}
+                                            loading={loading}
+                                            metadataKey={displayKey}
+                                            value={value}
+                                            values={values}
+                                        />
+                                    </dd>
+                                </div>
+                            ),
+                        )}
                         {hasHiddenEntries ? (
                             <div className="inline-flex min-h-7 items-center rounded-full border border-border/65 bg-card/70 px-2.5 py-0.5 text-xs text-muted-foreground">
                                 +{entries.length - visibleEntries.length}
@@ -579,24 +726,29 @@ export function ResultMetadata({
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border/60 bg-card/60">
-                            {entries.map(({ key, value, values }) => (
-                                <tr key={key} data-metadata-row={key}>
-                                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                                        {displayMetadataKey(key)}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <MetadataValue
-                                            display="detail"
-                                            enrichments={enrichments}
-                                            errors={errors}
-                                            loading={loading}
-                                            metadataKey={key}
-                                            value={value}
-                                            values={values}
-                                        />
-                                    </td>
-                                </tr>
-                            ))}
+                            {entries.map(
+                                ({ displayKey, key, value, values }) => (
+                                    <tr key={key} data-metadata-row={key}>
+                                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                                            {displayMetadataKey(
+                                                key,
+                                                displayKey,
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <MetadataValue
+                                                display="detail"
+                                                enrichments={enrichments}
+                                                errors={errors}
+                                                loading={loading}
+                                                metadataKey={displayKey}
+                                                value={value}
+                                                values={values}
+                                            />
+                                        </td>
+                                    </tr>
+                                ),
+                            )}
                         </tbody>
                     </table>
                 </div>

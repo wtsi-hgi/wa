@@ -3,7 +3,11 @@ import type { EnrichmentResult } from "@/lib/contracts";
 import type { SeqmetaCacheStore } from "@/lib/seqmeta-cache-core";
 import {
     canonicalSeqmetaKey,
+    isSeqmetaKeyForUserFacingMlwhMetadataKey,
     isSeqmetaKey as isSeqmetaKeyValue,
+    isUserFacingMlwhMetadataKey,
+    preferredSeqmetaKeyForUserFacingMlwhMetadataKey,
+    type UserFacingMlwhMetadataKey,
 } from "@/lib/seqmeta-keys";
 
 export type SeqmetaEnrichmentState = {
@@ -46,14 +50,136 @@ export function hasUsableSeqmetaCacheEntry(
     return cached !== null;
 }
 
+type MetadataValueEntry = {
+    index: number;
+    key: string;
+    value: string;
+    valueIndex: number;
+};
+
+function nonEmptyMetadataValues(values: string[] | undefined): string[] {
+    return (values ?? [])
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+}
+
+function orderedMetadataKeys(
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): string[] {
+    const keys: string[] = [];
+    const seen = new Set<string>();
+
+    for (const key of Object.keys(metadata)) {
+        keys.push(key);
+        seen.add(key);
+    }
+
+    for (const key of Object.keys(metadataValues ?? {})) {
+        if (seen.has(key)) {
+            continue;
+        }
+
+        keys.push(key);
+    }
+
+    return keys;
+}
+
+function metadataValueEntries(
+    metadata: Record<string, string>,
+    metadataValues: Record<string, string[]> | undefined,
+): MetadataValueEntry[] {
+    return orderedMetadataKeys(metadata, metadataValues).flatMap(
+        (key, index) => {
+            const repeatedValues = nonEmptyMetadataValues(
+                metadataValues?.[key],
+            );
+            const values =
+                repeatedValues.length > 0
+                    ? repeatedValues
+                    : nonEmptyMetadataValues(
+                          metadata[key] === undefined ? [] : [metadata[key]],
+                      );
+
+            return values.map((value, valueIndex) => ({
+                index,
+                key,
+                value,
+                valueIndex,
+            }));
+        },
+    );
+}
+
+function pairedMlwhDisplayKeys(
+    entries: MetadataValueEntry[],
+): Map<UserFacingMlwhMetadataKey, string> {
+    const keysWithValues = Array.from(
+        new Set(entries.map((entry) => entry.key)),
+    );
+    const displayKeys = new Map<UserFacingMlwhMetadataKey, string>();
+
+    for (const key of keysWithValues) {
+        if (!isUserFacingMlwhMetadataKey(key)) {
+            continue;
+        }
+
+        const displayKey = preferredSeqmetaKeyForUserFacingMlwhMetadataKey(
+            key,
+            keysWithValues,
+        );
+
+        if (displayKey) {
+            displayKeys.set(key, displayKey);
+        }
+    }
+
+    return displayKeys;
+}
+
+function seqmetaMetadataValueEntries(
+    metadata: Record<string, string>,
+    metadataValues?: Record<string, string[]>,
+): MetadataValueEntry[] {
+    const entries = metadataValueEntries(metadata, metadataValues);
+    const displayKeys = pairedMlwhDisplayKeys(entries);
+    const seqmetaEntries: MetadataValueEntry[] = [];
+
+    for (const entry of entries) {
+        if (isSeqmetaKey(entry.key)) {
+            seqmetaEntries.push(entry);
+
+            continue;
+        }
+
+        if (!isUserFacingMlwhMetadataKey(entry.key)) {
+            continue;
+        }
+
+        const displayKey = displayKeys.get(entry.key);
+
+        if (!displayKey) {
+            continue;
+        }
+
+        if (isSeqmetaKeyForUserFacingMlwhMetadataKey(entry.key, displayKey)) {
+            seqmetaEntries.push({ ...entry, key: displayKey });
+        }
+    }
+
+    return seqmetaEntries;
+}
+
 export function collectSeqmetaValues(
     metadata: Record<string, string>,
+    metadataValues?: Record<string, string[]>,
 ): string[] {
     return Array.from(
         new Set(
-            Object.entries(metadata)
-                .filter(([key, value]) => isSeqmetaKey(key) && value.trim())
-                .map(([, value]) => value.trim()),
+            seqmetaMetadataValueEntries(metadata, metadataValues).map(
+                (entry) => entry.value,
+            ),
         ),
     );
 }
@@ -92,20 +218,18 @@ function seqmetaLookupPriority(metadataKey: string): number {
 
 function collectSeqmetaLookupValues(
     metadata: Record<string, string>,
+    metadataValues?: Record<string, string[]>,
 ): string[] {
     const plannedLookups = new Map<
         string,
-        { index: number; priority: number; value: string }
+        { index: number; priority: number; value: string; valueIndex: number }
     >();
 
-    for (const [index, [key, rawValue]] of Object.entries(metadata).entries()) {
+    for (const { index, key, value, valueIndex } of seqmetaMetadataValueEntries(
+        metadata,
+        metadataValues,
+    )) {
         if (!isSeqmetaKey(key)) {
-            continue;
-        }
-
-        const value = rawValue.trim();
-
-        if (!value) {
             continue;
         }
 
@@ -115,7 +239,10 @@ function collectSeqmetaLookupValues(
         if (
             existing &&
             (existing.priority < priority ||
-                (existing.priority === priority && existing.index <= index))
+                (existing.priority === priority &&
+                    (existing.index < index ||
+                        (existing.index === index &&
+                            existing.valueIndex <= valueIndex))))
         ) {
             continue;
         }
@@ -124,13 +251,16 @@ function collectSeqmetaLookupValues(
             index,
             priority,
             value,
+            valueIndex,
         });
     }
 
     return Array.from(plannedLookups.values())
         .sort(
             (left, right) =>
-                left.priority - right.priority || left.index - right.index,
+                left.priority - right.priority ||
+                left.index - right.index ||
+                left.valueIndex - right.valueIndex,
         )
         .map((entry) => entry.value);
 }
@@ -138,11 +268,12 @@ function collectSeqmetaLookupValues(
 export function buildCachedEnrichmentState(
     metadata: Record<string, string>,
     cache: SeqmetaCacheStore,
+    metadataValues?: Record<string, string[]>,
 ): SeqmetaEnrichmentState {
     const enrichments: Record<string, EnrichmentResult | null> = {};
     const errors: Record<string, "not_found" | "upstream_impaired"> = {};
 
-    for (const value of collectSeqmetaValues(metadata)) {
+    for (const value of collectSeqmetaValues(metadata, metadataValues)) {
         if (!hasUsableSeqmetaCacheEntry(cache, value)) {
             continue;
         }
@@ -298,11 +429,13 @@ export async function enrichSeqmetaMetadata(
     metadata: Record<string, string>,
     cache: SeqmetaCacheStore,
     enrichIdentifier: (value: string) => Promise<EnrichmentResult | null>,
+    metadataValues?: Record<string, string[]>,
 ): Promise<SeqmetaEnrichmentState> {
-    const state = buildCachedEnrichmentState(metadata, cache);
-    const pendingValues = collectSeqmetaLookupValues(metadata).filter(
-        (value) => !hasUsableSeqmetaCacheEntry(cache, value),
-    );
+    const state = buildCachedEnrichmentState(metadata, cache, metadataValues);
+    const pendingValues = collectSeqmetaLookupValues(
+        metadata,
+        metadataValues,
+    ).filter((value) => !hasUsableSeqmetaCacheEntry(cache, value));
 
     if (pendingValues.length === 0) {
         return state;
@@ -364,7 +497,7 @@ export async function enrichSeqmetaMetadata(
 
     return mergeSeqmetaEnrichmentState(
         state,
-        buildCachedEnrichmentState(metadata, cache),
+        buildCachedEnrichmentState(metadata, cache, metadataValues),
     );
 }
 
@@ -374,11 +507,13 @@ export async function enrichSeqmetaMetadataBatch(
     enrichIdentifiers: (
         values: string[],
     ) => Promise<SeqmetaEnrichmentLookupResult[]>,
+    metadataValues?: Record<string, string[]>,
 ): Promise<SeqmetaEnrichmentState> {
-    const state = buildCachedEnrichmentState(metadata, cache);
-    const pendingValues = collectSeqmetaLookupValues(metadata).filter(
-        (value) => !hasUsableSeqmetaCacheEntry(cache, value),
-    );
+    const state = buildCachedEnrichmentState(metadata, cache, metadataValues);
+    const pendingValues = collectSeqmetaLookupValues(
+        metadata,
+        metadataValues,
+    ).filter((value) => !hasUsableSeqmetaCacheEntry(cache, value));
 
     if (pendingValues.length === 0) {
         return state;
@@ -403,7 +538,7 @@ export async function enrichSeqmetaMetadataBatch(
 
     return mergeSeqmetaEnrichmentState(
         state,
-        buildCachedEnrichmentState(metadata, cache),
+        buildCachedEnrichmentState(metadata, cache, metadataValues),
     );
 }
 

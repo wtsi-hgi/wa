@@ -359,14 +359,14 @@ describe("O1 result detail hydration", () => {
         ]);
         expect(registrationLabels).not.toContain("Result ID");
         expect(registrationLabels).not.toContain("Pipeline name");
-        expect(metadataKeys).toEqual(["library", "seqmeta_studyid", "study"]);
+        expect(metadataKeys).toEqual(["library", "study"]);
         expect(detailSummary?.textContent).toContain("1001");
         expect(detailSummary?.textContent).not.toContain("runid=1001");
         expect(titleFileSummary?.textContent).toContain("1 file");
         expect(titleFileSummary?.textContent).toContain("512 B");
         expect(detailSummary?.textContent).toContain("Study");
         expect(detailSummary?.textContent).toContain("libraryexon");
-        expect(detailSummary?.textContent).toContain("6568");
+        expect(detailSummary?.textContent).not.toContain("6568");
         expect(detailSummary?.textContent).toContain("study-alpha");
         expect(container.querySelector("[data-result-id-copy]")).toBeNull();
         expect(container.querySelector("h1")?.textContent).toContain(

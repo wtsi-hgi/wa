@@ -73,10 +73,10 @@ export function ResultMetadataEnrichment({
         getMountedServer,
     );
     const cache = mounted ? liveCache : EMPTY_CACHE;
-    const values = collectSeqmetaValues(metadata);
+    const values = collectSeqmetaValues(metadata, metadataValues);
     const requestKey = values.join("\u0000");
     const baseState = mergeSeqmetaEnrichmentState(
-        buildCachedEnrichmentState(metadata, cache),
+        buildCachedEnrichmentState(metadata, cache, metadataValues),
         {
             enrichments: initialEnrichments,
             errors: initialErrors,
@@ -134,7 +134,12 @@ export function ResultMetadataEnrichment({
             inFlightValuesRef.current.add(value);
         }
 
-        void enrichSeqmetaMetadataBatch(metadata, liveCache, enrichIdentifiers)
+        void enrichSeqmetaMetadataBatch(
+            metadata,
+            liveCache,
+            enrichIdentifiers,
+            metadataValues,
+        )
             .then((nextState) => {
                 for (const value of pendingValues) {
                     inFlightValuesRef.current.delete(value);
@@ -175,6 +180,7 @@ export function ResultMetadataEnrichment({
         initialEnrichments,
         initialErrors,
         metadata,
+        metadataValues,
         requestKey,
         values,
     ]);
