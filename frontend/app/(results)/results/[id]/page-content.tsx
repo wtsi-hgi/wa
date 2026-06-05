@@ -141,11 +141,6 @@ function detailFields(
             value: formatRegistrationUnique(result.run_key),
             mono: true,
         },
-        {
-            label: "Raw run key",
-            value: result.run_key,
-            mono: true,
-        },
         { label: "Requester", value: result.requester },
         { label: "Operator", value: result.operator },
         {

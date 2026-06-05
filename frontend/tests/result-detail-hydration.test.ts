@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { act } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToStaticMarkup, renderToString } from "react-dom/server";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "@/components/app-providers";
@@ -380,6 +380,86 @@ describe("O1 result detail hydration", () => {
         ).toBeNull();
         expect(markup).not.toMatch(/>Registration</);
         expect(markup).not.toMatch(/>Result metadata</);
+    });
+
+    it("keeps the raw stored run key out of the Run details popover while preserving Unique", async () => {
+        const result = {
+            ...buildResultSet(),
+            run_key: "runid=48522&unique=exon_lib",
+            metadata: {
+                library: "exon",
+                seqmeta_studyid: "6568",
+                study: "study-alpha",
+            },
+        };
+
+        fetchFilesMock.mockResolvedValue([buildFile("/results/a/report.csv")]);
+        fetchResultMock.mockResolvedValue(result);
+        enrichSeqmetaMetadataBatchMock.mockResolvedValue({
+            enrichments: {},
+            errors: {},
+        });
+        buildCachedEnrichmentStateMock.mockReturnValue({
+            enrichments: {},
+            errors: {},
+        });
+        collectSeqmetaValuesMock.mockReturnValue(["6568"]);
+        hasUsableSeqmetaCacheEntryMock.mockReturnValue(false);
+        mergeSeqmetaEnrichmentStateMock.mockImplementation(
+            (base, override) => ({
+                enrichments: {
+                    ...base.enrichments,
+                    ...override?.enrichments,
+                },
+                errors: {
+                    ...base.errors,
+                    ...override?.errors,
+                },
+            }),
+        );
+
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
+        const Page = pageModule.ResultDetailPageContent;
+        const page = await Page({
+            id: "result-1",
+        });
+
+        vi.stubGlobal("matchMedia", matchMediaStub);
+
+        render(createElement(AppProviders, undefined, page));
+
+        await act(async () => {
+            fireEvent.click(
+                document.querySelector<HTMLElement>(
+                    '[data-registration-details-trigger="true"]',
+                )!,
+            );
+        });
+
+        await waitFor(() => {
+            expect(
+                document.querySelector(
+                    '[data-registration-details-panel="true"]',
+                ),
+            ).not.toBeNull();
+        });
+
+        const detailLabels = Array.from(
+            document.querySelectorAll<HTMLElement>(
+                "[data-registration-detail-field] dt",
+            ),
+        ).map((label) => label.textContent);
+        const uniqueDetail = document.querySelector<HTMLElement>(
+            '[data-registration-detail-field="Unique"]',
+        );
+
+        expect(detailLabels).toContain("Unique");
+        expect(detailLabels).not.toContain("Raw run key");
+        expect(uniqueDetail?.textContent).toContain("48522 / exon_lib");
+        expect(document.body.textContent).not.toContain(
+            "runid=48522&unique=exon_lib",
+        );
     });
 
     it("renders the detail page without waiting for server-side seqmeta enrichment", async () => {
