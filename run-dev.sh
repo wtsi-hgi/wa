@@ -298,8 +298,9 @@ collect_dev_origins() {
 
   if [[ -n "${WA_DEV_ALLOWED_ORIGINS:-}" ]]; then
     local entry
-    local IFS=','
-    for entry in $WA_DEV_ALLOWED_ORIGINS; do
+    local -a allowed_origins=()
+    IFS=',' read -r -a allowed_origins <<< "$WA_DEV_ALLOWED_ORIGINS"
+    for entry in "${allowed_origins[@]}"; do
       entry="${entry#"${entry%%[![:space:]]*}"}"
       entry="${entry%"${entry##*[![:space:]]}"}"
       if [[ -n "$entry" ]]; then
@@ -438,7 +439,6 @@ collect_dev_tls_san_entries() {
   local public_host
   local origin
   local entry
-  local IFS=','
 
   if fqdn="$(hostname -f 2>/dev/null)" && [[ -n "$fqdn" ]]; then
     candidates+=("$fqdn")
@@ -460,9 +460,13 @@ collect_dev_tls_san_entries() {
 
   candidates+=("$RESULTS_BIND_HOST")
 
-  for origin in $WA_DEV_ALLOWED_ORIGINS; do
-    candidates+=("$origin")
-  done
+  if [[ -n "${WA_DEV_ALLOWED_ORIGINS:-}" ]]; then
+    local -a allowed_origins=()
+    IFS=',' read -r -a allowed_origins <<< "$WA_DEV_ALLOWED_ORIGINS"
+    for origin in "${allowed_origins[@]}"; do
+      candidates+=("$origin")
+    done
+  fi
 
   for origin in "${candidates[@]}"; do
     entry="$(dev_tls_san_entry_for_host "$origin")"

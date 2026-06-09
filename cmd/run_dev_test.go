@@ -392,12 +392,13 @@ func runDevOwnerJWTForTest(t *testing.T, resultsPort int) string {
 }
 
 type runDevCertificateOptionsForTest struct {
-	certPath         string
-	keyPath          string
-	hostnameFQDN     string
-	hostnameShort    string
-	legacyBackendURL string
-	publicResultsURL string
+	certPath          string
+	keyPath           string
+	hostnameFQDN      string
+	hostnameShort     string
+	devAllowedOrigins string
+	legacyBackendURL  string
+	publicResultsURL  string
 }
 
 func TestRunDevScriptDevCertificateSubjectAltNames(t *testing.T) {
@@ -454,6 +455,28 @@ func TestRunDevScriptDevCertificateSubjectAltNames(t *testing.T) {
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
+
+	convey.Convey("run-dev.sh does not expand wildcard allowed origins into dev certificate SANs", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
+		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
+			certPath:          certPath,
+			keyPath:           keyPath,
+			hostnameFQDN:      "farm22-wrstat01.internal",
+			hostnameShort:     "farm22-wrstat01",
+			devAllowedOrigins: "*, allowed-extra.example.org",
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		cert := runDevReadCertificateForTest(t, certPath)
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "allowed-extra.example.org")
+		convey.So(cert.VerifyHostname("run-dev.sh"), convey.ShouldNotBeNil)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
 }
 
 func startRunDevForDevCertificateTest(
@@ -497,13 +520,16 @@ func startRunDevForDevCertificateTest(
 	if options.legacyBackendURL != "" {
 		env["WA_RESULTS_BACKEND_URL"] = options.legacyBackendURL
 	}
+	if options.devAllowedOrigins != "" {
+		env["WA_DEV_ALLOWED_ORIGINS"] = options.devAllowedOrigins
+	}
 
 	process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 		mode:         "dev",
 		frontendPort: frontendPort,
 		resultsPort:  resultsPort,
 		seqmetaPort:  seqmetaPort,
-		unsetEnv:     []string{"WA_DEV_RESULTS_HOST", "WA_RESULTS_SERVER_URL", "WA_RESULTS_BACKEND_URL"},
+		unsetEnv:     []string{"WA_DEV_RESULTS_HOST", "WA_RESULTS_SERVER_URL", "WA_RESULTS_BACKEND_URL", "WA_DEV_ALLOWED_ORIGINS"},
 		env:          env,
 	})
 
