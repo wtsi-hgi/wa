@@ -109,6 +109,30 @@ func (f *fakeResultsServeSyncClient) LanesForSample(context.Context, string, int
 	return nil, nil
 }
 
+func (f *fakeResultsServeSyncClient) ResolveRun(context.Context, string) (mlwh.Match, error) {
+	return mlwh.Match{}, mlwh.ErrNotFound
+}
+
+func (f *fakeResultsServeSyncClient) ResolveStudy(context.Context, string) (mlwh.Match, error) {
+	return mlwh.Match{}, mlwh.ErrNotFound
+}
+
+func (f *fakeResultsServeSyncClient) ResolveSample(context.Context, string) (mlwh.Match, error) {
+	return mlwh.Match{}, mlwh.ErrNotFound
+}
+
+func (f *fakeResultsServeSyncClient) ResolveSampleName(context.Context, string) (mlwh.Match, error) {
+	return mlwh.Match{}, mlwh.ErrNotFound
+}
+
+func (f *fakeResultsServeSyncClient) ResolveLibrary(context.Context, string) (mlwh.Match, error) {
+	return mlwh.Match{}, mlwh.ErrNotFound
+}
+
+func (f *fakeResultsServeSyncClient) ResolveLibraryIdentifier(context.Context, string) (mlwh.Match, error) {
+	return mlwh.Match{}, mlwh.ErrNotFound
+}
+
 func (f *fakeResultsServeSyncClient) Close() error {
 	return nil
 }

@@ -49,8 +49,8 @@ wa results register /path/to/output \
   --command "nextflow run pipeline" \
   --workflow nf-core/sarek \
   --unique my-run-001 \
-	--study 6568 \
-	--sample SANG123
+  --study 6568 \
+  --sample SANG123
 
 ```
 
@@ -59,8 +59,10 @@ arbitrary string; for Nextflow it also accepts a local `.nf` workflow file, a
 GitHub URL such as `https://github.com/nf-core/sarek`, or an `owner/repo`
 shorthand such as `seqeralabs/nf-hello-world`.
 
-The `--run`, `--study`, `--sample`, and `--library` flags resolve through MLWH
-and store canonical `seqmeta_*` metadata entries for search and validation.
+The `--run`, `--study`, `--sample`, and `--library` flags are resolved by the
+results server through its configured MLWH cache and store canonical
+`seqmeta_*` metadata entries for search and validation. Normal CLI users do not
+need `WA_MLWH_CACHE_PATH` or MLWH cache credentials locally.
 
 ### Search results
 
@@ -96,7 +98,8 @@ wa results register /path/to/output --user jdoe --operator jdoe --workflow nf-co
 
 If the server uses the self-signed development certificate, also pass `--cert`
 or export `WA_RESULTS_SERVER_CERT` pointing at the certificate file they should
-trust.
+trust. MLWH lookup flags on `wa results register` are resolved on the results
+server; remote CLI users do not need `WA_MLWH_CACHE_PATH`.
 
 ### Start the results API server
 

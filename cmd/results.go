@@ -42,7 +42,6 @@ import (
 	osuser "os/user"
 	"path"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -68,8 +67,6 @@ var resultsHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 var resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
 
-var resultsRegisterResolverOpener = openResultsRegisterResolver
-
 var resultsServeNewAuthServer = func(logWriter io.Writer) resultsServeAuthServer {
 	return gas.New(logWriter)
 }
@@ -90,13 +87,6 @@ var resultsNewAuthClient = newResultsAuthClient
 //nolint:unused // Overridden by results serve tests to avoid wall-clock waits.
 var resultsServeNewTicker = func(interval time.Duration) resultsServeTicker {
 	return &resultsServeRealTicker{ticker: time.NewTicker(interval)}
-}
-
-var resultsRegisterSeqmetaFlagMetaKeys = map[string]string{
-	"run":     results.SeqmetaIDRunKey,
-	"study":   results.SeqmetaIDStudyLimsKey,
-	"sample":  results.SeqmetaSampleNameKey,
-	"library": results.SeqmetaPipelineIDLimsKey,
 }
 
 type resultsServeMode int
@@ -497,151 +487,18 @@ func (c resultsServeSecurityConfig) authCallback() gas.AuthCallback {
 	}
 }
 
-type resultsRegisterResolver interface {
-	ResolveSample(context.Context, string) (mlwh.Match, error)
-	ResolveStudy(context.Context, string) (mlwh.Match, error)
-	ResolveRun(context.Context, string) (mlwh.Match, error)
-	ResolveLibrary(context.Context, string) (mlwh.Match, error)
-	Close() error
-}
-
-func resolveResultsRegisterStudyMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
-	match, err := client.ResolveStudy(ctx, value)
-	if err != nil {
-		return nil, fmt.Errorf("resolve --study %q: %w", value, err)
-	}
-
-	canonicalStudyID, err := resultsRegisterResolvedCanonical("--study", value, match.Canonical)
-	if err != nil {
-		return nil, err
-	}
-
-	metadata := map[string]string{results.SeqmetaIDStudyLimsKey: canonicalStudyID}
-	trimmedValue := strings.TrimSpace(value)
-	if sourceKey := resultsRegisterStudySourceMetadataKey(match.Kind); sourceKey != "" && trimmedValue != "" {
-		metadata[sourceKey] = trimmedValue
-		if !strings.EqualFold(trimmedValue, canonicalStudyID) {
-			metadata["study"] = trimmedValue
-		}
-	}
-
-	return metadata, nil
-}
-
-func resultsRegisterStudySourceMetadataKey(kind mlwh.IdentifierKind) string {
-	switch kind {
-	case mlwh.KindStudyAccession:
-		return results.SeqmetaStudyAccessionKey
-	case mlwh.KindStudyUUID:
-		return results.SeqmetaStudyUUIDKey
-	case mlwh.KindStudyName:
-		return results.SeqmetaStudyNameKey
-	default:
-		return ""
-	}
-}
-
-func resolveResultsRegisterSampleMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
-	match, err := resolveResultsRegisterSample(ctx, client, value)
-	if err != nil {
-		return nil, err
-	}
-
-	canonicalSampleName, err := resultsRegisterResolvedCanonical("--sample", value, match.Canonical)
-	if err != nil {
-		return nil, err
-	}
-
-	metadata := map[string]string{results.SeqmetaSampleNameKey: canonicalSampleName}
-	trimmedValue := strings.TrimSpace(value)
-	if sourceKey := resultsRegisterSampleSourceMetadataKey(match.Kind); sourceKey != "" && trimmedValue != "" {
-		metadata[sourceKey] = trimmedValue
-	}
-	if trimmedValue != "" && !strings.EqualFold(trimmedValue, canonicalSampleName) {
-		metadata["sample"] = trimmedValue
-	}
-
-	return metadata, nil
-}
-
-func resultsRegisterSampleSourceMetadataKey(kind mlwh.IdentifierKind) string {
-	switch kind {
-	case mlwh.KindSampleLimsID:
-		return results.SeqmetaIDSampleLimsKey
-	case mlwh.KindSangerSampleID:
-		return results.SeqmetaSangerSampleIDKey
-	case mlwh.KindSupplierName:
-		return results.SeqmetaSupplierNameKey
-	case mlwh.KindSampleAccession:
-		return results.SeqmetaAccessionNumberKey
-	case mlwh.KindSampleUUID:
-		return results.SeqmetaSampleUUIDKey
-	case mlwh.KindDonorID:
-		return results.SeqmetaDonorIDKey
-	default:
-		return ""
-	}
-}
-
-func resolveResultsRegisterSample(ctx context.Context, client resultsRegisterResolver, value string) (mlwh.Match, error) {
-	if nameResolver, ok := client.(resultsRegisterSampleNameResolver); ok {
-		match, err := nameResolver.ResolveSampleName(ctx, value)
-		if err == nil {
-			return match, nil
-		}
-		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
-			return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
-		}
-		if !errors.Is(err, mlwh.ErrNotFound) {
-			return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
-		}
-	}
-
-	match, err := client.ResolveSample(ctx, value)
-	if err != nil {
-		return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
-	}
-
-	return match, nil
-}
-
-type resultsRegisterSampleNameResolver interface {
-	ResolveSampleName(context.Context, string) (mlwh.Match, error)
-}
-
-type resultsRegisterLibraryIdentifierResolver interface {
-	ResolveLibraryIdentifier(context.Context, string) (mlwh.Match, error)
-}
-
-func openResultsRegisterResolver(ctx context.Context) (resultsRegisterResolver, error) {
-	cachePath := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH"))
-	if cachePath == "" {
-		return nil, errors.New("WA_MLWH_CACHE_PATH is required to resolve --run/--study/--sample/--library")
-	}
-
-	client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{Path: cachePath, Password: firstEnv("WA_MLWH_CACHE_PASSWORD")})
-	if err != nil {
-		return nil, fmt.Errorf("open mlwh resolver client: %w", err)
-	}
-
-	return client, nil
-}
-
-func resultsRegisterResolvedCanonical(flagName, value, canonical string) (string, error) {
-	trimmed := strings.TrimSpace(canonical)
-	if trimmed == "" {
-		return "", fmt.Errorf("resolve %s %q: %w", flagName, value, mlwh.ErrNotFound)
-	}
-
-	return trimmed, nil
-}
-
 type resultsServeSyncClient interface {
 	Sync(context.Context) ([]mlwh.SyncReport, error)
 	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
 	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
 	ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
+	ResolveRun(context.Context, string) (mlwh.Match, error)
+	ResolveStudy(context.Context, string) (mlwh.Match, error)
+	ResolveSample(context.Context, string) (mlwh.Match, error)
+	ResolveSampleName(context.Context, string) (mlwh.Match, error)
+	ResolveLibrary(context.Context, string) (mlwh.Match, error)
+	ResolveLibraryIdentifier(context.Context, string) (mlwh.Match, error)
 	Close() error
 }
 
@@ -703,8 +560,24 @@ func (r *resultsServeMLWHRuntime) ResolveStudy(ctx context.Context, raw string) 
 	return r.client.ResolveStudy(ctx, raw)
 }
 
+func (r *resultsServeMLWHRuntime) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
+	return r.client.ResolveRun(ctx, raw)
+}
+
+func (r *resultsServeMLWHRuntime) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
+	return r.client.ResolveSample(ctx, raw)
+}
+
 func (r *resultsServeMLWHRuntime) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
 	return r.client.ResolveSampleName(ctx, raw)
+}
+
+func (r *resultsServeMLWHRuntime) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
+	return r.client.ResolveLibrary(ctx, raw)
+}
+
+func (r *resultsServeMLWHRuntime) ResolveLibraryIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	return r.client.ResolveLibraryIdentifier(ctx, raw)
 }
 
 func (r *resultsServeMLWHRuntime) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
@@ -723,11 +596,18 @@ func (r *resultsServeMLWHRuntime) Close() error {
 	return errors.Join(closeErrs...)
 }
 
-func hasResultsRegisterLookupValues(values resultsRegisterLookupValues) bool {
-	return len(nonEmptyRegisterLookupValues(values.run)) > 0 ||
-		len(nonEmptyRegisterLookupValues(values.study)) > 0 ||
-		len(nonEmptyRegisterLookupValues(values.sample)) > 0 ||
-		len(nonEmptyRegisterLookupValues(values.library)) > 0
+func resultsRegisterLookupPayload(values results.RegistrationLookupValues) *results.RegistrationLookupValues {
+	payload := results.RegistrationLookupValues{
+		Run:     nonEmptyRegisterLookupValues(values.Run),
+		Study:   nonEmptyRegisterLookupValues(values.Study),
+		Sample:  nonEmptyRegisterLookupValues(values.Sample),
+		Library: nonEmptyRegisterLookupValues(values.Library),
+	}
+	if !payload.HasValues() {
+		return nil
+	}
+
+	return &payload
 }
 
 func nonEmptyRegisterLookupValues(values []string) []string {
@@ -796,177 +676,6 @@ func resultsPublicHTTPClient(certPath string) (*http.Client, error) {
 	return &http.Client{Timeout: timeout, Transport: transport}, nil
 }
 
-type resultsRegisterLookupValues struct {
-	run     []string
-	study   []string
-	sample  []string
-	library []string
-}
-
-func resolveResultsRegisterLookupMetadata(ctx context.Context, values resultsRegisterLookupValues) (map[string][]string, error) {
-	if !hasResultsRegisterLookupValues(values) {
-		return nil, nil
-	}
-
-	client, err := resultsRegisterResolverOpener(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = client.Close() }()
-
-	metadata := make(map[string][]string, 4)
-
-	for _, trimmedRun := range nonEmptyRegisterLookupValues(values.run) {
-		resolvedRunID, err := resolveResultsRegisterRunID(ctx, client, trimmedRun)
-		if err != nil {
-			return nil, err
-		}
-
-		appendResultsRegisterMetadataValue(metadata, results.SeqmetaIDRunKey, resolvedRunID)
-	}
-
-	for _, trimmedStudy := range nonEmptyRegisterLookupValues(values.study) {
-		studyMetadata, err := resolveResultsRegisterStudyMetadata(ctx, client, trimmedStudy)
-		if err != nil {
-			return nil, err
-		}
-
-		for key, value := range studyMetadata {
-			appendResultsRegisterMetadataValue(metadata, key, value)
-		}
-	}
-
-	for _, trimmedSample := range nonEmptyRegisterLookupValues(values.sample) {
-		sampleMetadata, err := resolveResultsRegisterSampleMetadata(ctx, client, trimmedSample)
-		if err != nil {
-			return nil, err
-		}
-
-		for key, value := range sampleMetadata {
-			appendResultsRegisterMetadataValue(metadata, key, value)
-		}
-	}
-
-	for _, trimmedLibrary := range nonEmptyRegisterLookupValues(values.library) {
-		libraryMetadata, err := resolveResultsRegisterLibraryMetadata(ctx, client, trimmedLibrary)
-		if err != nil {
-			return nil, err
-		}
-
-		for key, value := range libraryMetadata {
-			appendResultsRegisterMetadataValue(metadata, key, value)
-		}
-	}
-
-	return metadata, nil
-}
-
-func resolveResultsRegisterRunID(ctx context.Context, client resultsRegisterResolver, value string) (string, error) {
-	match, err := client.ResolveRun(ctx, value)
-	if err != nil {
-		return "", fmt.Errorf("resolve --run %q: %w", value, err)
-	}
-
-	return resultsRegisterResolvedCanonical("--run", value, match.Canonical)
-}
-
-func resolveResultsRegisterLibraryMetadata(ctx context.Context, client resultsRegisterResolver, value string) (map[string]string, error) {
-	match, err := resolveResultsRegisterLibrary(ctx, client, value)
-	if err != nil {
-		return nil, fmt.Errorf("resolve --library %q: %w", value, err)
-	}
-
-	metadata := make(map[string]string, 2)
-	if libraryType := strings.TrimSpace(matchLibraryType(match)); libraryType != "" {
-		metadata[results.SeqmetaPipelineIDLimsKey] = libraryType
-	}
-
-	switch match.Kind {
-	case mlwh.KindLibraryID:
-		libraryID, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
-		if err != nil {
-			return nil, err
-		}
-		metadata[results.SeqmetaLibraryIDKey] = libraryID
-	case mlwh.KindLibraryLimsID:
-		libraryLimsID, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
-		if err != nil {
-			return nil, err
-		}
-		metadata[results.SeqmetaIDLibraryLimsKey] = libraryLimsID
-	default:
-		if libraryID := matchingLibraryID(value, match.Library); libraryID != "" {
-			metadata[results.SeqmetaLibraryIDKey] = libraryID
-
-			return metadata, nil
-		}
-		if libraryLimsID := matchingLibraryLimsID(value, match.Library); libraryLimsID != "" {
-			metadata[results.SeqmetaIDLibraryLimsKey] = libraryLimsID
-
-			return metadata, nil
-		}
-
-		libraryType, err := resultsRegisterResolvedCanonical("--library", value, match.Canonical)
-		if err != nil {
-			return nil, err
-		}
-		metadata[results.SeqmetaPipelineIDLimsKey] = libraryType
-	}
-
-	return metadata, nil
-}
-
-func resolveResultsRegisterLibrary(ctx context.Context, client resultsRegisterResolver, value string) (mlwh.Match, error) {
-	if identifierResolver, ok := client.(resultsRegisterLibraryIdentifierResolver); ok {
-		match, err := identifierResolver.ResolveLibraryIdentifier(ctx, value)
-		if err == nil {
-			return match, nil
-		}
-		if !errors.Is(err, mlwh.ErrNotFound) {
-			return mlwh.Match{}, err
-		}
-	}
-
-	return client.ResolveLibrary(ctx, value)
-}
-
-func matchingLibraryID(value string, library *mlwh.Library) string {
-	if library == nil {
-		return ""
-	}
-
-	trimmed := strings.TrimSpace(library.LibraryID)
-	if strings.EqualFold(strings.TrimSpace(value), trimmed) {
-		return trimmed
-	}
-
-	return ""
-}
-
-func matchingLibraryLimsID(value string, library *mlwh.Library) string {
-	if library == nil {
-		return ""
-	}
-
-	trimmed := strings.TrimSpace(library.IDLibraryLims)
-	if strings.EqualFold(strings.TrimSpace(value), trimmed) {
-		return trimmed
-	}
-
-	return ""
-}
-
-func matchLibraryType(match mlwh.Match) string {
-	if match.Library != nil {
-		return strings.TrimSpace(match.Library.PipelineIDLims)
-	}
-	if match.Kind == mlwh.KindLibraryType {
-		return strings.TrimSpace(match.Canonical)
-	}
-
-	return ""
-}
-
 func resultsRegisterOperatorName(operator string) (string, error) {
 	operatorName := strings.TrimSpace(operator)
 	if operatorName != "" {
@@ -1005,18 +714,6 @@ func parseResultsMetadataValue(metaValue string) (string, string, error) {
 	}
 
 	return key, value, nil
-}
-
-func sortedResultsRegisterMetadataKeys(metadata map[string][]string) []string {
-	keys := make([]string, 0, len(metadata))
-
-	for key := range metadata {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	return keys
 }
 
 func singleResultsRegisterMetadata(metadata map[string][]string) map[string]string {
@@ -1101,25 +798,6 @@ func resultsRegisterUniqueValue(unique, legacyRunID string) (string, error) {
 	}
 
 	return trimmedLegacyRunID, nil
-}
-
-func resultsRegisterEquivalentSeqmetaKeys(metaKey string) []string {
-	switch metaKey {
-	case results.SeqmetaIDRunKey:
-		return []string{results.LegacySeqmetaRunIDKey}
-	case results.SeqmetaIDStudyLimsKey:
-		return []string{results.LegacySeqmetaStudyIDKey}
-	case results.SeqmetaSampleNameKey:
-		return []string{results.LegacySeqmetaSampleIDKey}
-	case results.SeqmetaPipelineIDLimsKey:
-		return []string{results.LegacySeqmetaLibraryKey, results.LegacySeqmetaLibraryTypeKey}
-	case results.SeqmetaLibraryIDKey:
-		return []string{results.LegacySeqmetaLibraryIDKey}
-	case results.SeqmetaIDLibraryLimsKey:
-		return []string{results.LegacySeqmetaLibraryLimsKey}
-	default:
-		return nil
-	}
 }
 
 type resultSetWithFiles struct {
@@ -1430,7 +1108,7 @@ func newResultsRegisterCommand(options *resultsCommandOptions) *cobra.Command {
 	var inputFiles []string
 	var matchPatterns []string
 	var metaValues []string
-	var lookupValues resultsRegisterLookupValues
+	var lookupValues results.RegistrationLookupValues
 	var includeHidden bool
 	var useJSON bool
 
@@ -1467,14 +1145,15 @@ Files:
     scanning output-dir.
 
 Metadata:
-  --run, --study, --sample and --library resolve through MLWH and store
-    canonical seqmeta metadata keys. They require a previously synced MLWH cache.
+  --run, --study, --sample and --library are sent to the results server, which
+    resolves them through its configured MLWH cache and stores canonical seqmeta
+    metadata keys. Normal CLI users do not need WA_MLWH_CACHE_PATH.
   --run accepts numeric run IDs.
   --study accepts LIMS ID, accession, UUID, or name.
   --sample accepts Sanger name, supplier name, id_sample_lims, sample UUID, or
     donor ID.
   --library accepts exact pipeline_id_lims, library_id, or id_library_lims
-    values and requires a previously synced MLWH cache.
+    values.
   --meta adds literal key=value metadata; repeat it to keep multiple values.
 
 Server:
@@ -1525,10 +1204,10 @@ Server:
 	command.Flags().StringArrayVar(&inputFiles, "input-file", nil, "Input file to track separately from outputs; repeat as needed")
 	command.Flags().StringArrayVar(&matchPatterns, "match", nil, "Output-relative glob of files to register; repeat to match any glob")
 	command.Flags().BoolVar(&includeHidden, "include-hidden", false, "Scan hidden files and directories")
-	command.Flags().StringArrayVar(&lookupValues.run, "run", nil, "MLWH id_run lookup; repeat as needed")
-	command.Flags().StringArrayVar(&lookupValues.study, "study", nil, "MLWH study lookup (LIMS ID, accession, UUID, or name); repeat as needed")
-	command.Flags().StringArrayVar(&lookupValues.sample, "sample", nil, "MLWH sample lookup (Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID); repeat as needed")
-	command.Flags().StringArrayVar(&lookupValues.library, "library", nil, "MLWH library lookup (pipeline_id_lims, library_id, or id_library_lims); requires a previously synced MLWH cache; repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.Run, "run", nil, "MLWH id_run lookup; repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.Study, "study", nil, "MLWH study lookup (LIMS ID, accession, UUID, or name); repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.Sample, "sample", nil, "MLWH sample lookup (Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID); repeat as needed")
+	command.Flags().StringArrayVar(&lookupValues.Library, "library", nil, "MLWH library lookup (pipeline_id_lims, library_id, or id_library_lims); repeat as needed")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Literal metadata as key=value; repeat to keep multiple values")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read complete registration JSON from stdin instead of scanning output-dir")
 	command.Flags().StringVar(&workflowReference, "nextflow-workflow", "", "Deprecated alias for --workflow")
@@ -1556,7 +1235,7 @@ func buildResultsRegistrationForCommand(
 	inputFiles []string,
 	matchPatterns []string,
 	metaValues []string,
-	lookupValues resultsRegisterLookupValues,
+	lookupValues results.RegistrationLookupValues,
 	includeHidden bool,
 	useJSON bool,
 ) (*results.Registration, error) {
@@ -1623,12 +1302,7 @@ func buildResultsRegistrationForCommand(
 		return nil, errors.New("no output files discovered in output directory")
 	}
 
-	seqmetaMetadata, err := resolveResultsRegisterLookupMetadata(ctx, lookupValues)
-	if err != nil {
-		return nil, err
-	}
-
-	metadata, metadataValues, err := parseResultsRegisterMetadata(metaValues, seqmetaMetadata)
+	metadata, metadataValues, err := parseResultsRegisterMetadata(metaValues)
 	if err != nil {
 		return nil, err
 	}
@@ -1660,6 +1334,7 @@ func buildResultsRegistrationForCommand(
 		Files:              deduplicateResultsTrackedFiles(outputFiles, trackedInputs, workflowFiles...),
 		Metadata:           metadata,
 		MetadataValues:     metadataValues,
+		LookupValues:       resultsRegisterLookupPayload(lookupValues),
 	}, nil
 }
 
@@ -1682,76 +1357,13 @@ func decodeResultsRegistration(input io.Reader) (*results.Registration, error) {
 	return &registration, nil
 }
 
-func parseResultsRegisterMetadata(metaValues []string, seqmetaMetadata map[string][]string) (map[string]string, map[string][]string, error) {
+func parseResultsRegisterMetadata(metaValues []string) (map[string]string, map[string][]string, error) {
 	metadataValues, err := parseResultsMetadataValueFilters(metaValues)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	for _, key := range sortedResultsRegisterMetadataKeys(seqmetaMetadata) {
-		values := nonEmptyRegisterLookupValues(seqmetaMetadata[key])
-		if len(values) == 0 {
-			continue
-		}
-
-		for _, equivalentKey := range resultsRegisterEquivalentSeqmetaKeys(key) {
-			if _, exists := metadataValues[equivalentKey]; exists {
-				return nil, nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", equivalentKey, resultsRegisterSeqmetaFlagName(key))
-			}
-		}
-
-		if _, exists := metadataValues[key]; exists {
-			return nil, nil, fmt.Errorf("metadata key %q was supplied via both --meta and --%s", key, resultsRegisterSeqmetaFlagName(key))
-		}
-
-		for _, value := range values {
-			appendResultsRegisterMetadataValue(metadataValues, key, value)
-		}
-	}
-
 	return singleResultsRegisterMetadata(metadataValues), metadataValues, nil
-}
-
-func resultsRegisterSeqmetaFlagName(metaKey string) string {
-	switch metaKey {
-	case results.SeqmetaIDStudyLimsKey,
-		results.SeqmetaStudyAccessionKey,
-		results.SeqmetaStudyUUIDKey,
-		results.SeqmetaStudyNameKey,
-		results.LegacySeqmetaStudyIDKey,
-		"study":
-		return "study"
-	case results.SeqmetaSampleNameKey,
-		results.SeqmetaSampleNameURLKey,
-		results.SeqmetaIDSampleLimsKey,
-		results.SeqmetaSangerSampleIDKey,
-		results.SeqmetaSupplierNameKey,
-		results.SeqmetaAccessionNumberKey,
-		results.SeqmetaSampleUUIDKey,
-		results.SeqmetaDonorIDKey,
-		results.LegacySeqmetaSampleIDKey,
-		results.LegacySeqmetaSampleLimsKey,
-		"sample":
-		return "sample"
-	}
-
-	switch metaKey {
-	case results.SeqmetaLibraryIDKey,
-		results.SeqmetaIDLibraryLimsKey,
-		results.SeqmetaPipelineIDLimsKey,
-		results.LegacySeqmetaLibraryIDKey,
-		results.LegacySeqmetaLibraryLimsKey,
-		results.LegacySeqmetaLibraryTypeKey:
-		return "library"
-	}
-
-	for flagName, key := range resultsRegisterSeqmetaFlagMetaKeys {
-		if key == metaKey {
-			return flagName
-		}
-	}
-
-	return metaKey
 }
 
 func registerResults(ctx context.Context, serverURL string, certPath string, registration *results.Registration) ([]byte, error) {

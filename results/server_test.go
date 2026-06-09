@@ -298,12 +298,16 @@ func assertLockedResponseForTest(t *testing.T, response *httptest.ResponseRecord
 }
 
 type mockSearchExpander struct {
-	expandCalls      int
-	sampleOnlyCalls  int
-	searchValuesFunc func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
-	sampleNamesFunc  func(context.Context, mlwh.IdentifierKind, string) ([]string, error)
-	sampleNameFunc   func(context.Context, string) (mlwh.Match, error)
-	resolveStudyFunc func(context.Context, string) (mlwh.Match, error)
+	expandCalls           int
+	sampleOnlyCalls       int
+	searchValuesFunc      func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	sampleNamesFunc       func(context.Context, mlwh.IdentifierKind, string) ([]string, error)
+	sampleNameFunc        func(context.Context, string) (mlwh.Match, error)
+	sampleFunc            func(context.Context, string) (mlwh.Match, error)
+	resolveStudyFunc      func(context.Context, string) (mlwh.Match, error)
+	resolveRunFunc        func(context.Context, string) (mlwh.Match, error)
+	libraryFunc           func(context.Context, string) (mlwh.Match, error)
+	libraryIdentifierFunc func(context.Context, string) (mlwh.Match, error)
 }
 
 func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
@@ -338,6 +342,62 @@ func (m *mockSearchExpander) ResolveSampleName(ctx context.Context, raw string) 
 	}
 
 	return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
+}
+
+func (m *mockSearchExpander) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m.sampleFunc != nil {
+		return m.sampleFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
+}
+
+func (m *mockSearchExpander) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m.resolveRunFunc != nil {
+		return m.resolveRunFunc(ctx, raw)
+	}
+
+	return mlwh.Match{Kind: mlwh.KindRunID, Canonical: raw}, nil
+}
+
+func (m *mockSearchExpander) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m.libraryFunc != nil {
+		return m.libraryFunc(ctx, raw)
+	}
+
+	return mlwh.Match{Kind: mlwh.KindLibraryType, Canonical: raw}, nil
+}
+
+func (m *mockSearchExpander) ResolveLibraryIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	if m.libraryIdentifierFunc != nil {
+		return m.libraryIdentifierFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, mlwh.ErrNotFound
+}
+
+func mustRegistrationLookupBodyForTest(t *testing.T, reg *Registration, lookupValues map[string][]string) []byte {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal(mustJSONBodyForTest(t, reg), &payload); err != nil {
+		t.Fatalf("decode registration JSON body: %v", err)
+	}
+
+	payload["lookup_values"] = lookupValues
+
+	return mustJSONBodyForTest(t, payload)
+}
+
+func resultSetCountForTest(t *testing.T, store *Store) int {
+	t.Helper()
+
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM result_sets`).Scan(&count); err != nil {
+		t.Fatalf("count result sets: %v", err)
+	}
+
+	return count
 }
 
 func TestServerProtectDetailAndFileListC1(t *testing.T) {
@@ -980,6 +1040,161 @@ func TestServerPostResults(t *testing.T) {
 			convey.So(results, convey.ShouldHaveLength, 1)
 			convey.So(results[0].ID, convey.ShouldEqual, result.ID)
 		}
+	})
+
+	convey.Convey("Bug 260609-2: Given registration lookup values, the server resolves them with its configured MLWH resolver and stores repeated source metadata", t, func() {
+		store := newSQLiteStoreForTest(t)
+		sampleNameCalls := []string{}
+		broadSampleCalls := []string{}
+		expander := &mockSearchExpander{
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				sampleNameCalls = append(sampleNameCalls, raw)
+				if raw == "7607STDY14643771" {
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: raw,
+						Sample:    &mlwh.Sample{Name: raw},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				broadSampleCalls = append(broadSampleCalls, raw)
+
+				return mlwh.Match{
+					Kind:      mlwh.KindSupplierName,
+					Canonical: "7607STDY14643771",
+					Sample: &mlwh.Sample{
+						Name:         "7607STDY14643771",
+						SupplierName: raw,
+					},
+				}, nil
+			},
+		}
+		reg := testServerRegistration(t)
+		reg.RunKey = "server-lookup-samples"
+		reg.Metadata = map[string]string{"assay": "RNA"}
+		reg.MetadataValues = map[string][]string{"assay": {"RNA", "WGS"}}
+
+		body := mustRegistrationLookupBodyForTest(t, reg, map[string][]string{
+			"sample": {"7607STDY14643771", "Hek_R1", "Hek_R2"},
+		})
+		response := performOwnerResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)), http.MethodPost, "/results", body)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
+		convey.So(sampleNameCalls, convey.ShouldResemble, []string{"7607STDY14643771", "Hek_R1", "Hek_R2"})
+		convey.So(broadSampleCalls, convey.ShouldResemble, []string{"Hek_R1", "Hek_R2"})
+
+		var result ResultSet
+		decodeJSONResponseForTest(t, response, &result)
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, SeqmetaSampleNameKey), convey.ShouldResemble, []string{"7607STDY14643771"})
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, SeqmetaSupplierNameKey), convey.ShouldResemble, []string{"Hek_R1", "Hek_R2"})
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, "sample"), convey.ShouldResemble, []string{"Hek_R1", "Hek_R2"})
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, "assay"), convey.ShouldResemble, []string{"RNA", "WGS"})
+	})
+
+	convey.Convey("Bug 260609-2: Given an invalid MLWH lookup value, the server returns an error before storing a result", t, func() {
+		store := newSQLiteStoreForTest(t)
+		expander := &mockSearchExpander{
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "missing-id")
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "missing-id")
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+		}
+		reg := testServerRegistration(t)
+
+		response := performOwnerResultsRequestForTest(
+			t,
+			NewServer(store, nil, NewMLWHSearchResolver(expander)),
+			http.MethodPost,
+			"/results",
+			mustRegistrationLookupBodyForTest(t, reg, map[string][]string{"sample": {"missing-id"}}),
+		)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, `--sample "missing-id"`)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "not found")
+		convey.So(resultSetCountForTest(t, store), convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("Bug 260609-2: Given a library ID lookup, the server uses the exact library identifier fast path", t, func() {
+		store := newSQLiteStoreForTest(t)
+		libraryIdentifierCalls := []string{}
+		broadLibraryCalls := 0
+		expander := &mockSearchExpander{
+			libraryIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				libraryIdentifierCalls = append(libraryIdentifierCalls, raw)
+
+				return mlwh.Match{
+					Kind:      mlwh.KindLibraryID,
+					Canonical: "71046409",
+					Library: &mlwh.Library{
+						PipelineIDLims: "Custom",
+						LibraryID:      "71046409",
+					},
+				}, nil
+			},
+			libraryFunc: func(context.Context, string) (mlwh.Match, error) {
+				broadLibraryCalls++
+
+				return mlwh.Match{}, errors.New("broad library resolver should not run for library IDs")
+			},
+		}
+		reg := testServerRegistration(t)
+		reg.RunKey = "server-library-fast-path"
+
+		response := performOwnerResultsRequestForTest(
+			t,
+			NewServer(store, nil, NewMLWHSearchResolver(expander)),
+			http.MethodPost,
+			"/results",
+			mustRegistrationLookupBodyForTest(t, reg, map[string][]string{"library": {"71046409"}}),
+		)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusCreated)
+		convey.So(libraryIdentifierCalls, convey.ShouldResemble, []string{"71046409"})
+		convey.So(broadLibraryCalls, convey.ShouldEqual, 0)
+
+		var result ResultSet
+		decodeJSONResponseForTest(t, response, &result)
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, SeqmetaLibraryIDKey), convey.ShouldResemble, []string{"71046409"})
+		convey.So(metadataValuesForResultForTest(t, store, result.ID, SeqmetaPipelineIDLimsKey), convey.ShouldResemble, []string{"Custom"})
+	})
+
+	convey.Convey("Bug 260609-2: Given literal seqmeta metadata conflicts with lookup metadata, the server rejects it before storing", t, func() {
+		store := newSQLiteStoreForTest(t)
+		expander := &mockSearchExpander{
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindSangerSampleName,
+					Canonical: raw,
+					Sample:    &mlwh.Sample{Name: raw},
+				}, nil
+			},
+		}
+		reg := testServerRegistration(t)
+		reg.Metadata = map[string]string{SeqmetaSampleNameKey: "literal-sample"}
+		reg.MetadataValues = map[string][]string{SeqmetaSampleNameKey: {"literal-sample"}}
+
+		response := performOwnerResultsRequestForTest(
+			t,
+			NewServer(store, nil, NewMLWHSearchResolver(expander)),
+			http.MethodPost,
+			"/results",
+			mustRegistrationLookupBodyForTest(t, reg, map[string][]string{"sample": {"7607STDY14643771"}}),
+		)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, `metadata key "seqmeta_name"`)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "--sample")
+		convey.So(resultSetCountForTest(t, store), convey.ShouldEqual, 0)
 	})
 
 	convey.Convey("E1.4: Given seqmeta returns the wrong type, then status is 422 with an error body", t, func() {

@@ -154,20 +154,30 @@ type FileEntry struct {
 	Kind  string    `json:"kind"`
 }
 
+// RegistrationLookupValues carries raw MLWH lookup flag values for server-side
+// resolution during results registration.
+type RegistrationLookupValues struct {
+	Run     []string `json:"run,omitempty"`
+	Study   []string `json:"study,omitempty"`
+	Sample  []string `json:"sample,omitempty"`
+	Library []string `json:"library,omitempty"`
+}
+
 // Registration is the POST /results request body.
 type Registration struct {
-	PipelineIdentifier string              `json:"pipeline_identifier"`
-	RunKey             string              `json:"run_key"`
-	Requester          string              `json:"requester"`
-	Operator           string              `json:"operator"`
-	Command            string              `json:"command"`
-	PipelineName       string              `json:"pipeline_name"`
-	PipelineVersion    string              `json:"pipeline_version"`
-	OutputDirectory    string              `json:"output_directory"`
-	OutputDirectoryGID *int64              `json:"-"`
-	Files              []FileEntry         `json:"files"`
-	Metadata           map[string]string   `json:"metadata"`
-	MetadataValues     map[string][]string `json:"metadata_values,omitempty"`
+	PipelineIdentifier string                    `json:"pipeline_identifier"`
+	RunKey             string                    `json:"run_key"`
+	Requester          string                    `json:"requester"`
+	Operator           string                    `json:"operator"`
+	Command            string                    `json:"command"`
+	PipelineName       string                    `json:"pipeline_name"`
+	PipelineVersion    string                    `json:"pipeline_version"`
+	OutputDirectory    string                    `json:"output_directory"`
+	OutputDirectoryGID *int64                    `json:"-"`
+	Files              []FileEntry               `json:"files"`
+	Metadata           map[string]string         `json:"metadata"`
+	MetadataValues     map[string][]string       `json:"metadata_values,omitempty"`
+	LookupValues       *RegistrationLookupValues `json:"lookup_values,omitempty"`
 }
 
 // SearchParams holds parsed query parameters for filtering.
