@@ -30,6 +30,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -74,6 +75,39 @@ type runDevEnvSnapshot struct {
 
 func runDevUnsetSeqmetaEnvForTest() []string {
 	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL"}
+}
+
+func TestRunDevHelpDocumentsProdRefusedEnvironment(t *testing.T) {
+	convey.Convey("run-dev.sh --help documents the prod-mode refused environment variables", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		command := exec.Command("bash", filepath.Join(repoRoot, "run-dev.sh"), "--help") //nolint:gosec
+		command.Dir = repoRoot
+		command.Env = runDevEnvForTest(nil)
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		command.Stdout = stdout
+		command.Stderr = stderr
+
+		err := command.Run()
+		output := stdout.String()
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldEqual, "")
+		convey.So(output, convey.ShouldContainSubstring, "Refuses these inherited environment variables")
+
+		for _, variable := range []string{
+			"WA_TEST_FRONTEND_PORT",
+			"WA_TEST_RESULTS_PORT",
+			"WA_TEST_SEQMETA_PORT",
+			"WA_TEST_RESULTS_HOST",
+			"WA_DEV_FRONTEND_PORT",
+			"WA_DEV_RESULTS_PORT",
+			"WA_DEV_SEQMETA_PORT",
+			"WA_DEV_RESULTS_HOST",
+		} {
+			convey.So(output, convey.ShouldContainSubstring, variable)
+		}
+	})
 }
 
 func TestRunDevSnapshotWaitAllowsSlowFrontendStartup(t *testing.T) {
@@ -121,32 +155,9 @@ func runDevEnsureTLSCertificateForTest(t *testing.T, repoRoot string) (string, s
 	t.Helper()
 
 	certPath, keyPath := runDevTLSCertPathsForTest(repoRoot)
-	convey.So(os.MkdirAll(filepath.Dir(certPath), 0o755), convey.ShouldBeNil)
-
-	command := exec.Command(
-		"openssl",
-		"req",
-		"-x509",
-		"-newkey",
-		"rsa:2048",
-		"-nodes",
-		"-days",
-		"7",
-		"-keyout",
-		keyPath,
-		"-out",
-		certPath,
-		"-subj",
-		"/CN=localhost",
-		"-addext",
-		"subjectAltName=DNS:localhost,IP:127.0.0.1",
-	)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("generate run-dev TLS certificate: %v\n%s", err, output)
-	}
-
-	convey.So(os.Chmod(keyPath, 0o600), convey.ShouldBeNil)
-	convey.So(os.Chmod(certPath, 0o644), convey.ShouldBeNil)
+	hosts := []string{"localhost", "127.0.0.1", "::1"}
+	hosts = append(hosts, runDevHostnameForTest(t, "-f"), runDevHostnameForTest(t, "-s"))
+	runDevWriteTLSCertificateForHostnamesForTest(t, certPath, keyPath, hosts)
 
 	return certPath, keyPath
 }
@@ -267,6 +278,79 @@ func runDevSeqmetaStubCommandForTest() string {
 	return `node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(Number(process.env.WA_TEST_SEQMETA_PORT), '127.0.0.1')"`
 }
 
+func runDevWriteTLSCertificateForHostnamesForTest(t *testing.T, certPath string, keyPath string, hosts []string) {
+	t.Helper()
+
+	convey.So(os.MkdirAll(filepath.Dir(certPath), 0o755), convey.ShouldBeNil)
+	convey.So(os.MkdirAll(filepath.Dir(keyPath), 0o755), convey.ShouldBeNil)
+
+	configPath := filepath.Join(t.TempDir(), "openssl.cnf")
+	convey.So(os.WriteFile(configPath, []byte(runDevOpenSSLConfigForHostnamesForTest(hosts)), 0o600), convey.ShouldBeNil)
+
+	command := exec.Command(
+		"openssl",
+		"req",
+		"-x509",
+		"-newkey",
+		"rsa:2048",
+		"-nodes",
+		"-days",
+		"7",
+		"-keyout",
+		keyPath,
+		"-out",
+		certPath,
+		"-config",
+		configPath,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generate TLS certificate: %v\n%s", err, output)
+	}
+
+	convey.So(os.Chmod(keyPath, 0o600), convey.ShouldBeNil)
+	convey.So(os.Chmod(certPath, 0o644), convey.ShouldBeNil)
+}
+
+func runDevOpenSSLConfigForHostnamesForTest(hosts []string) string {
+	var builder strings.Builder
+	seen := make(map[string]struct{}, len(hosts))
+	dnsCount := 0
+	ipCount := 0
+
+	builder.WriteString("[req]\n")
+	builder.WriteString("distinguished_name = req_distinguished_name\n")
+	builder.WriteString("x509_extensions = v3_req\n")
+	builder.WriteString("prompt = no\n")
+	builder.WriteString("[req_distinguished_name]\n")
+	builder.WriteString("CN = localhost\n")
+	builder.WriteString("[v3_req]\n")
+	builder.WriteString("subjectAltName = @alt_names\n")
+	builder.WriteString("[alt_names]\n")
+
+	for _, host := range hosts {
+		host = strings.TrimSpace(strings.Trim(strings.TrimSuffix(host, "."), "[]"))
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			continue
+		}
+
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+
+		if net.ParseIP(host) != nil {
+			ipCount++
+			fmt.Fprintf(&builder, "IP.%d = %s\n", ipCount, host)
+			continue
+		}
+
+		dnsCount++
+		fmt.Fprintf(&builder, "DNS.%d = %s\n", dnsCount, host)
+	}
+
+	return builder.String()
+}
+
 func runDevHTTPSClientForTest(t *testing.T) *http.Client {
 	t.Helper()
 
@@ -338,6 +422,389 @@ func runDevOwnerJWTForTest(t *testing.T, resultsPort int) string {
 	}
 
 	return jwt
+}
+
+type runDevCertificateOptionsForTest struct {
+	certPath          string
+	keyPath           string
+	hostnameFQDN      string
+	hostnameShort     string
+	devAllowedOrigins string
+	legacyBackendURL  string
+	publicResultsURL  string
+}
+
+func TestRunDevScriptDevCertificateSubjectAltNames(t *testing.T) {
+	convey.Convey("Bug 2: run-dev.sh generates a dev certificate trusted for local and public hostnames", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
+		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
+			certPath:         certPath,
+			keyPath:          keyPath,
+			hostnameFQDN:     "farm22-wrstat01.internal",
+			hostnameShort:    "farm22-wrstat01",
+			legacyBackendURL: "https://legacy-results.example.org:3671",
+			publicResultsURL: "https://results-dev.example.org:3672",
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		cert := runDevReadCertificateForTest(t, certPath)
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "localhost")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "127.0.0.1")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "farm22-wrstat01.internal")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "farm22-wrstat01")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "legacy-results.example.org")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "results-dev.example.org")
+		convey.So(cert.VerifyHostname("0.0.0.0"), convey.ShouldNotBeNil)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("Bug 2: run-dev.sh regenerates an existing localhost-only dev certificate when remote SANs are missing", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
+		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		runDevWriteLocalhostOnlyTLSCertificateForTest(t, certPath, keyPath)
+		oldCert := runDevReadCertificateForTest(t, certPath)
+		convey.So(oldCert.VerifyHostname("farm22-wrstat01"), convey.ShouldNotBeNil)
+
+		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
+			certPath:      certPath,
+			keyPath:       keyPath,
+			hostnameFQDN:  "farm22-wrstat01.internal",
+			hostnameShort: "farm22-wrstat01",
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		regeneratedCert := runDevReadCertificateForTest(t, certPath)
+		convey.So(bytes.Equal(regeneratedCert.Raw, oldCert.Raw), convey.ShouldBeFalse)
+		runDevAssertCertificateVerifiesHostnameForTest(t, regeneratedCert, "farm22-wrstat01")
+		runDevAssertCertificateVerifiesHostnameForTest(t, regeneratedCert, "farm22-wrstat01.internal")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh does not expand wildcard allowed origins into dev certificate SANs", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
+		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
+			certPath:          certPath,
+			keyPath:           keyPath,
+			hostnameFQDN:      "farm22-wrstat01.internal",
+			hostnameShort:     "farm22-wrstat01",
+			devAllowedOrigins: "*, allowed-extra.example.org",
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		cert := runDevReadCertificateForTest(t, certPath)
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "allowed-extra.example.org")
+		convey.So(cert.VerifyHostname("run-dev.sh"), convey.ShouldNotBeNil)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh strips allowed-origin ports before creating dev certificate SANs", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
+		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
+			certPath:      certPath,
+			keyPath:       keyPath,
+			hostnameFQDN:  "farm22-wrstat01.internal",
+			hostnameShort: "farm22-wrstat01",
+			devAllowedOrigins: strings.Join([]string{
+				"dev-host.example.org:3672",
+				"2001:db8::42",
+				"[2001:db8::43]:3673",
+				"bad-origin.example.org/path",
+				"*.wildcard.example.org",
+			}, ", "),
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		cert := runDevReadCertificateForTest(t, certPath)
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "dev-host.example.org")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "2001:db8::42")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "2001:db8::43")
+		convey.So(slices.Contains(cert.DNSNames, "dev-host.example.org"), convey.ShouldBeTrue)
+		convey.So(slices.Contains(cert.DNSNames, "dev-host.example.org:3672"), convey.ShouldBeFalse)
+		convey.So(slices.Contains(cert.DNSNames, "bad-origin.example.org"), convey.ShouldBeFalse)
+		convey.So(cert.VerifyHostname("bad-origin.example.org"), convey.ShouldNotBeNil)
+		convey.So(cert.VerifyHostname("leaf.wildcard.example.org"), convey.ShouldNotBeNil)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+}
+
+func startRunDevForDevCertificateTest(
+	t *testing.T,
+	repoRoot string,
+	options runDevCertificateOptionsForTest,
+) (*runDevProcess, string) {
+	t.Helper()
+
+	frontendPort := runDevFreePortForTest(t)
+	resultsPort := runDevFreePortForTest(t)
+	seqmetaPort := runDevFreePortForTest(t)
+	snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+	binDir := t.TempDir()
+
+	writeRunDevHostnameStubForTest(t, binDir, options.hostnameFQDN, options.hostnameShort)
+
+	env := map[string]string{
+		"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"WA_ENV":                                "development",
+		"WA_DEV_RESULTS_HOST":                   "0.0.0.0",
+		"WA_RESULTS_SERVER_CERT":                options.certPath,
+		"WA_RESULTS_SERVER_KEY":                 options.keyPath,
+		"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+		"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+		"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+		"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+		"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+		"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+		"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+		"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+		"WA_RUN_DEV_SEQMETA_CMD":                fmt.Sprintf(`node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(%d, '127.0.0.1')"`, seqmetaPort),
+		"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort),
+	}
+	if options.publicResultsURL != "" {
+		env["WA_RESULTS_SERVER_URL"] = options.publicResultsURL
+	}
+	if options.legacyBackendURL != "" {
+		env["WA_RESULTS_BACKEND_URL"] = options.legacyBackendURL
+	}
+	if options.devAllowedOrigins != "" {
+		env["WA_DEV_ALLOWED_ORIGINS"] = options.devAllowedOrigins
+	}
+
+	process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		mode:         "dev",
+		frontendPort: frontendPort,
+		resultsPort:  resultsPort,
+		seqmetaPort:  seqmetaPort,
+		unsetEnv:     []string{"WA_DEV_RESULTS_HOST", "WA_RESULTS_SERVER_URL", "WA_RESULTS_BACKEND_URL", "WA_DEV_ALLOWED_ORIGINS"},
+		env:          env,
+	})
+
+	return process, snapshotPath
+}
+
+func writeRunDevHostnameStubForTest(t *testing.T, binDir string, fqdn string, short string) {
+	t.Helper()
+
+	realHostname, err := exec.LookPath("hostname")
+	convey.So(err, convey.ShouldBeNil)
+
+	stub := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  -f) printf '%%s\n' %q ;;
+  -s) printf '%%s\n' %q ;;
+  *) exec %q "$@" ;;
+esac
+`, fqdn, short, realHostname)
+
+	convey.So(os.WriteFile(filepath.Join(binDir, "hostname"), []byte(stub), 0o755), convey.ShouldBeNil)
+}
+
+func runDevReadCertificateForTest(t *testing.T, certPath string) *x509.Certificate {
+	t.Helper()
+
+	body, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read certificate %s: %v", certPath, err)
+	}
+
+	block, _ := pem.Decode(body)
+	if block == nil {
+		t.Fatalf("parse PEM certificate %s", certPath)
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse certificate %s: %v", certPath, err)
+	}
+
+	return cert
+}
+
+func runDevAssertCertificateVerifiesHostnameForTest(t *testing.T, cert *x509.Certificate, hostname string) {
+	t.Helper()
+
+	convey.So(cert.VerifyHostname(hostname), convey.ShouldBeNil)
+}
+
+func runDevWriteLocalhostOnlyTLSCertificateForTest(t *testing.T, certPath string, keyPath string) {
+	t.Helper()
+
+	runDevWriteTLSCertificateForHostnamesForTest(t, certPath, keyPath, []string{"localhost", "127.0.0.1"})
+}
+
+func startRunDevForResultsBindOutputTest(t *testing.T, bindHost string) (*runDevProcess, int, int) {
+	t.Helper()
+
+	return startRunDevForScenarioResultsBindOutputTest(t, "dev", bindHost)
+}
+
+func startRunDevForScenarioResultsBindOutputTest(
+	t *testing.T,
+	mode string,
+	bindHost string,
+) (*runDevProcess, int, int) {
+	t.Helper()
+
+	repoRoot := runDevRepoRootForTest(t)
+	frontendPort := runDevFreePortForTest(t)
+	resultsPort := runDevFreePortForTest(t)
+	seqmetaPort := runDevFreePortForTest(t)
+	snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+	env := map[string]string{
+		"WA_ENV":                                "development",
+		"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), fmt.Sprintf("results-%s.sqlite", mode)),
+		"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+		"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+		"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+		"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+		"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+		"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+		"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+	}
+
+	bindHostEnv := "WA_DEV_RESULTS_HOST"
+	switch mode {
+	case "prod":
+		env["WA_ENV"] = "production"
+		bindHostEnv = "WA_PROD_RESULTS_HOST"
+	case "dev":
+		env["WA_MLWH_DSN"] = "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test"
+		env["WA_RUN_DEV_SEQMETA_CMD"] = fmt.Sprintf(`node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(%d, '127.0.0.1')"`, seqmetaPort)
+		env["WA_RUN_DEV_SEQMETA_HEALTH_URL"] = fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort)
+	default:
+		t.Fatalf("unsupported run-dev bind output test mode %q", mode)
+	}
+
+	if bindHost != "" {
+		env[bindHostEnv] = bindHost
+	}
+
+	process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+		mode:         mode,
+		frontendPort: frontendPort,
+		resultsPort:  resultsPort,
+		seqmetaPort:  seqmetaPort,
+		unsetEnv: []string{
+			"WA_TEST_FRONTEND_PORT",
+			"WA_TEST_RESULTS_PORT",
+			"WA_TEST_SEQMETA_PORT",
+			"WA_TEST_RESULTS_HOST",
+			"WA_DEV_FRONTEND_PORT",
+			"WA_DEV_RESULTS_PORT",
+			"WA_DEV_SEQMETA_PORT",
+			"WA_DEV_RESULTS_HOST",
+			"WA_PROD_RESULTS_HOST",
+			"WA_RESULTS_SERVER_URL",
+		},
+		env: env,
+	})
+
+	return process, frontendPort, resultsPort
+}
+
+func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
+	convey.Convey("run-dev.sh --mode dev reports wildcard results bind separately from local client URLs", t, func() {
+		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, "0.0.0.0")
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=0.0.0.0:%d)", resultsPort, resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results: https://127.0.0.1:%d", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results bind: 0.0.0.0:%d (listening beyond loopback)", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, "Results public: not configured")
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
+		convey.So(stdout, convey.ShouldNotContainSubstring, "Frontend bind:")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh --mode dev trims the configured results bind host before reporting it", t, func() {
+		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, " \t0.0.0.0 \t")
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=0.0.0.0:%d)", resultsPort, resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results: https://127.0.0.1:%d", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results bind: 0.0.0.0:%d (listening beyond loopback)", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh --mode prod trims the configured results bind host before reporting it", t, func() {
+		process, frontendPort, resultsPort := startRunDevForScenarioResultsBindOutputTest(t, "prod", " \t0.0.0.0 \t")
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=prod; bind=0.0.0.0:%d)", resultsPort, resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results: https://127.0.0.1:%d", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results bind: 0.0.0.0:%d (listening beyond loopback)", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh --mode dev falls back to loopback when the configured bind host trims blank", t, func() {
+		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, " \t ")
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=127.0.0.1:%d)", resultsPort, resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results: https://127.0.0.1:%d", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results bind: 127.0.0.1:%d (loopback only)", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh --mode dev reports loopback-only results bind when no bind host is configured", t, func() {
+		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, "")
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=127.0.0.1:%d)", resultsPort, resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results: https://127.0.0.1:%d", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results bind: 127.0.0.1:%d (loopback only)", resultsPort))
+		convey.So(stdout, convey.ShouldNotContainSubstring, "Results public:")
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
 }
 
 func runRunDevExpectingFailureWithinForTest(

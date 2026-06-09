@@ -47,6 +47,8 @@ import (
 	"github.com/wtsi-hgi/wa/results"
 )
 
+var resultsRegisterServerResolverForTest results.RegistrationResolver
+
 func TestResultsRegisterWorkflowFiles(t *testing.T) {
 	convey.Convey("register does not stat non-local workflow identities as local pipeline files", t, func() {
 		for _, identity := range []results.WorkflowIdentity{
@@ -158,6 +160,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var registration results.Registration
 			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
 				handlerErrCh <- err
 
 				return
@@ -350,6 +357,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 				return
 			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
 
 			registrationCh <- registration
 			w.WriteHeader(http.StatusCreated)
@@ -424,15 +436,6 @@ func TestResultsRegisterCommand(t *testing.T) {
 		workflowPath := filepath.Join(t.TempDir(), "missing.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "reports", "summary.html"), "html")
 
-		originalResolverOpener := resultsRegisterResolverOpener
-		resolverOpenCount := 0
-		resultsRegisterResolverOpener = func(context.Context) (resultsRegisterResolver, error) {
-			resolverOpenCount++
-
-			return nil, errors.New("MLWH resolver opened before scanning outputs")
-		}
-		convey.Reset(func() { resultsRegisterResolverOpener = originalResolverOpener })
-
 		requestCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
@@ -455,8 +458,64 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "no output files")
-		convey.So(resolverOpenCount, convey.ShouldEqual, 0)
 		convey.So(requestCount, convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("Bug 260609-2: Given remote register with --sample and no local MLWH cache, the CLI sends raw lookup values without opening a local resolver", t, func() {
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+		outputDir := t.TempDir()
+		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
+		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
+
+		type lookupPayload struct {
+			Sample []string `json:"sample"`
+		}
+		type registrationPayload struct {
+			Metadata     map[string]string `json:"metadata"`
+			LookupValues lookupPayload     `json:"lookup_values"`
+		}
+
+		registrationCh := make(chan registrationPayload, 1)
+		handlerErrCh := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var registration registrationPayload
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			registrationCh <- registration
+			w.WriteHeader(http.StatusCreated)
+
+			if err := json.NewEncoder(w).Encode(results.ResultSet{ID: "server-resolved-result"}); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+
+			handlerErrCh <- nil
+		}))
+		defer server.Close()
+
+		_, stderr, err := executeRootCommandWithInputForRegisterTest(t, []string{
+			"results", "register",
+			"--server", server.URL,
+			"--user", "alice",
+			"--unique", "remote-sample",
+			"--workflow", workflowPath,
+			"--sample", "7607STDY14643771",
+			outputDir,
+		}, nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+
+		registration := <-registrationCh
+		convey.So(<-handlerErrCh, convey.ShouldBeNil)
+		convey.So(registration.LookupValues.Sample, convey.ShouldResemble, []string{"7607STDY14643771"})
+		convey.So(registration.Metadata[results.SeqmetaSampleNameKey], convey.ShouldBeBlank)
 	})
 
 	convey.Convey("Given an empty output directory, register fails locally without sending a request", t, func() {
@@ -854,16 +913,13 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(result.ID, convey.ShouldEqual, "updated-result")
 	})
 
-	convey.Convey("Given --run and a warm MLWH cache, register resolves from the cache without opening the upstream source DSN", t, func() {
+	convey.Convey("Given --run and no local MLWH cache, register sends raw run lookup values to the server", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
 		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
-
-		cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
-		seedResultsRegisterRunCacheForTest(t, cachePath, 48522)
-		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
-		t.Setenv("WA_MLWH_DSN", "mlwh_humgen:secret@tcp(127.0.0.1:1)/mlwarehouse")
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+		t.Setenv("WA_MLWH_DSN", "")
 
 		registrationCh := make(chan results.Registration, 1)
 		handlerErrCh := make(chan error, 1)
@@ -903,9 +959,8 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		registration := <-registrationCh
 		convey.So(<-handlerErrCh, convey.ShouldBeNil)
-		convey.So(registration.Metadata, convey.ShouldResemble, map[string]string{
-			"seqmeta_id_run": "48522",
-		})
+		convey.So(registration.LookupValues.Run, convey.ShouldResemble, []string{"48522"})
+		convey.So(registration.Metadata[results.SeqmetaIDRunKey], convey.ShouldBeBlank)
 	})
 
 	convey.Convey("E1.4: Given --study/--run/--library/--sample together, when all mlwh resolvers succeed, then register stores MLWH-named seqmeta metadata entries", t, func() {
@@ -934,6 +989,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var registration results.Registration
 			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
 				handlerErrCh <- err
 
 				return
@@ -986,7 +1046,9 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
 			libraryFn: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "71046409")
+				if raw != "71046409" {
+					return mlwh.Match{}, fmt.Errorf("unexpected library lookup %q", raw)
+				}
 
 				return mlwh.Match{
 					Kind:      mlwh.KindLibraryType,
@@ -1006,6 +1068,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var registration results.Registration
 			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
 				handlerErrCh <- err
 
 				return
@@ -1063,7 +1130,9 @@ func TestResultsRegisterCommand(t *testing.T) {
 				return mlwh.Match{Kind: mlwh.KindSangerSampleName, Canonical: raw, Sample: &mlwh.Sample{Name: raw}}, nil
 			},
 			libraryIdentifierFn: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "71046409")
+				if raw != "71046409" {
+					return mlwh.Match{}, fmt.Errorf("unexpected library identifier lookup %q", raw)
+				}
 
 				return mlwh.Match{
 					Kind:      mlwh.KindLibraryID,
@@ -1088,6 +1157,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var registration results.Registration
 			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
 				handlerErrCh <- err
 
 				return
@@ -1154,6 +1228,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 				return
 			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
 			registrationCh <- registration
 			w.WriteHeader(http.StatusCreated)
 
@@ -1198,16 +1277,16 @@ func TestResultsRegisterCommand(t *testing.T) {
 			},
 		})
 
-		type registrationPayload struct {
-			Metadata       map[string]string   `json:"metadata"`
-			MetadataValues map[string][]string `json:"metadata_values"`
-		}
-
-		registrationCh := make(chan registrationPayload, 1)
+		registrationCh := make(chan results.Registration, 1)
 		handlerErrCh := make(chan error, 1)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var registration registrationPayload
+			var registration results.Registration
 			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
 				handlerErrCh <- err
 
 				return
@@ -1582,7 +1661,9 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
 			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "7607STDY14643771")
+				if raw != "7607STDY14643771" {
+					return mlwh.Match{}, fmt.Errorf("unexpected sample name lookup %q", raw)
+				}
 
 				return mlwh.Match{Canonical: raw, Sample: &mlwh.Sample{Name: raw}}, nil
 			},
@@ -1596,6 +1677,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var registration results.Registration
 			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
 				handlerErrCh <- err
 
 				return
@@ -1637,12 +1723,16 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
 			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "gallery-beta")
+				if raw != "gallery-beta" {
+					return mlwh.Match{}, fmt.Errorf("unexpected sample name lookup %q", raw)
+				}
 
 				return mlwh.Match{}, mlwh.ErrNotFound
 			},
 			sampleFn: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "gallery-beta")
+				if raw != "gallery-beta" {
+					return mlwh.Match{}, fmt.Errorf("unexpected sample lookup %q", raw)
+				}
 
 				return mlwh.Match{Canonical: "7607STDY14643771", Sample: &mlwh.Sample{Name: "7607STDY14643771"}}, nil
 			},
@@ -1653,6 +1743,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var registration results.Registration
 			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				handlerErrCh <- err
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
 				handlerErrCh <- err
 
 				return
@@ -1696,12 +1791,16 @@ func TestResultsRegisterCommand(t *testing.T) {
 
 		stubResultsRegisterResolverOpener(t, &fakeResultsRegisterResolver{
 			sampleNameFn: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "gallery-beta")
+				if raw != "gallery-beta" {
+					return mlwh.Match{}, fmt.Errorf("unexpected sample name lookup %q", raw)
+				}
 
 				return mlwh.Match{}, mlwh.ErrNotFound
 			},
 			sampleFn: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "gallery-beta")
+				if raw != "gallery-beta" {
+					return mlwh.Match{}, fmt.Errorf("unexpected sample lookup %q", raw)
+				}
 
 				return mlwh.Match{}, mlwh.ErrNotFound
 			},
@@ -1710,6 +1809,18 @@ func TestResultsRegisterCommand(t *testing.T) {
 		requestCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				writeResultsRegisterServerErrorForTest(t, w, err)
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
+				writeResultsRegisterServerErrorForTest(t, w, err)
+
+				return
+			}
+
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
 		}))
@@ -1725,8 +1836,6 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--match", "*.foo",
 			"--sample", "gallery-beta",
 			"--sample", "gallery-alpha",
-			"--meta", "foo:bar",
-			"--meta", "foo:baz",
 			outputDir,
 		}, nil)
 		elapsed := time.Since(start)
@@ -1735,7 +1844,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(stderr.String(), convey.ShouldContainSubstring, `--sample "gallery-beta"`)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "not found")
 		convey.So(elapsed, convey.ShouldBeLessThan, time.Second)
-		convey.So(requestCount, convey.ShouldEqual, 0)
+		convey.So(requestCount, convey.ShouldEqual, 1)
 	})
 
 	convey.Convey("E1.2: Given --sample SQSCP, when ResolveSample rejects a LIMS provider constant, then the command fails before registering", t, func() {
@@ -1753,6 +1862,18 @@ func TestResultsRegisterCommand(t *testing.T) {
 		requestCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				writeResultsRegisterServerErrorForTest(t, w, err)
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
+				writeResultsRegisterServerErrorForTest(t, w, err)
+
+				return
+			}
+
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
 		}))
@@ -1772,7 +1893,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "--sample")
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "SQSCP")
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "LIMS provider constant")
-		convey.So(requestCount, convey.ShouldEqual, 0)
+		convey.So(requestCount, convey.ShouldEqual, 1)
 	})
 
 	convey.Convey("E1.3: Given --sample missing-id, when ResolveSample returns ErrNotFound, then stderr names the flag, value, and not found", t, func() {
@@ -1790,6 +1911,18 @@ func TestResultsRegisterCommand(t *testing.T) {
 		requestCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
+			var registration results.Registration
+			if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
+				writeResultsRegisterServerErrorForTest(t, w, err)
+
+				return
+			}
+			if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
+				writeResultsRegisterServerErrorForTest(t, w, err)
+
+				return
+			}
+
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
 		}))
@@ -1808,7 +1941,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, `--sample "missing-id"`)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "not found")
-		convey.So(requestCount, convey.ShouldEqual, 0)
+		convey.So(requestCount, convey.ShouldEqual, 1)
 	})
 
 	convey.Convey("E1.5: Given register help, when printed, then it lists the mlwh input forms", t, func() {
@@ -1828,11 +1961,13 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "exact")
 	})
 
-	convey.Convey("E1.6: Given register help, when printed, then --library states that the MLWH cache must already be synced", t, func() {
+	convey.Convey("E1.6: Given register help, when printed, then it says MLWH lookup happens on the results server", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"results", "register", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "requires a previously synced MLWH cache")
+		convey.So(output, convey.ShouldContainSubstring, "sent to the results server")
+		convey.So(output, convey.ShouldContainSubstring, "Normal CLI users do not need WA_MLWH_CACHE_PATH")
+		convey.So(output, convey.ShouldNotContainSubstring, "requires a previously synced MLWH cache")
 	})
 
 	convey.Convey("Given register help, when printed, then it explains when a registration replaces an existing result set", t, func() {
@@ -1918,6 +2053,12 @@ func TestResultsRegisterCommand(t *testing.T) {
 	})
 }
 
+func applyResultsRegisterLookupsForTest(t *testing.T, r *http.Request, registration *results.Registration) error {
+	t.Helper()
+
+	return results.ApplyRegistrationLookups(r.Context(), registration, resultsRegisterServerResolverForTest)
+}
+
 func registerCommandFileRelPathsByKind(t *testing.T, root string, files []results.FileEntry, kind string) map[string]bool {
 	t.Helper()
 
@@ -1992,6 +2133,20 @@ func writeRegisterCommandTestFile(t *testing.T, path, content string) {
 	}
 }
 
+func writeResultsRegisterServerErrorForTest(t *testing.T, w http.ResponseWriter, err error) {
+	t.Helper()
+
+	status := http.StatusBadRequest
+	if errors.Is(err, results.ErrSeqmetaFailed) {
+		status = http.StatusBadGateway
+	}
+
+	w.WriteHeader(status)
+	if encodeErr := json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}); encodeErr != nil {
+		t.Fatalf("encode register error response: %v", encodeErr)
+	}
+}
+
 func assertHelpMarkersInOrder(output string, markers ...string) {
 	previousIndex := -1
 
@@ -2002,38 +2157,6 @@ func assertHelpMarkersInOrder(output string, markers ...string) {
 		convey.So(index, convey.ShouldBeGreaterThan, previousIndex)
 
 		previousIndex = index
-	}
-}
-
-func seedResultsRegisterRunCacheForTest(t *testing.T, cachePath string, runID int) {
-	t.Helper()
-
-	cache, err := mlwh.OpenCache(context.Background(), mlwh.CacheConfig{Path: cachePath})
-	if err != nil {
-		t.Fatalf("open mlwh cache: %v", err)
-	}
-	defer func() {
-		if err := cache.Close(); err != nil {
-			t.Fatalf("close mlwh cache: %v", err)
-		}
-	}()
-
-	_, err = cache.DB().Exec(
-		`INSERT INTO iseq_product_metrics_mirror(id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index, id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		1001,
-		1,
-		runID,
-		1,
-		0,
-		1,
-		"7607",
-		1,
-		1,
-		1,
-		"2026-05-14T12:00:00Z",
-	)
-	if err != nil {
-		t.Fatalf("seed run cache: %v", err)
 	}
 }
 
@@ -2139,13 +2262,11 @@ func (f *fakeResultsRegisterResolver) Close() error {
 func stubResultsRegisterResolverOpener(t *testing.T, resolver *fakeResultsRegisterResolver) {
 	t.Helper()
 
-	original := resultsRegisterResolverOpener
-	resultsRegisterResolverOpener = func(context.Context) (resultsRegisterResolver, error) {
-		return resolver, nil
-	}
+	original := resultsRegisterServerResolverForTest
+	resultsRegisterServerResolverForTest = resolver
 
 	t.Cleanup(func() {
-		resultsRegisterResolverOpener = original
+		resultsRegisterServerResolverForTest = original
 	})
 }
 
@@ -2163,6 +2284,12 @@ func runResultsRegisterAndCaptureRegistrationForTest(t *testing.T, extraArgs ...
 		var registration results.Registration
 		if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
 			handlerErrCh <- err
+
+			return
+		}
+		if err := applyResultsRegisterLookupsForTest(t, r, &registration); err != nil {
+			writeResultsRegisterServerErrorForTest(t, w, err)
+			handlerErrCh <- nil
 
 			return
 		}
@@ -2218,10 +2345,6 @@ func TestResultsRegisterInvalidSampleWithSparseMLWHCache(t *testing.T) {
 	installPassthroughResultsAuthClientForTest(t)
 
 	convey.Convey("Given an invalid fixture-like --sample and a legacy sparse MLWH sample cache, register returns a fast not-found error", t, func() {
-		originalResolverOpener := resultsRegisterResolverOpener
-		resultsRegisterResolverOpener = openResultsRegisterResolver
-		convey.Reset(func() { resultsRegisterResolverOpener = originalResolverOpener })
-
 		cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
 		cache, err := mlwh.OpenCache(context.Background(), mlwh.CacheConfig{Path: cachePath})
 		convey.So(err, convey.ShouldBeNil)
@@ -2248,7 +2371,14 @@ func TestResultsRegisterInvalidSampleWithSparseMLWHCache(t *testing.T) {
 		)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(cache.Close(), convey.ShouldBeNil)
-		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+
+		cacheClient, err := mlwh.OpenCacheOnly(context.Background(), mlwh.CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			convey.So(cacheClient.Close(), convey.ShouldBeNil)
+		}()
+		resolver := results.NewMLWHSearchResolver(cacheClient)
 
 		outputDir := t.TempDir()
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.foo"), "result")
@@ -2256,6 +2386,19 @@ func TestResultsRegisterInvalidSampleWithSparseMLWHCache(t *testing.T) {
 		requestCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
+			var registration results.Registration
+			if decodeErr := json.NewDecoder(r.Body).Decode(&registration); decodeErr != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": decodeErr.Error()})
+
+				return
+			}
+			if lookupErr := results.ApplyRegistrationLookups(r.Context(), &registration, resolver); lookupErr != nil {
+				writeResultsRegisterServerErrorForTest(t, w, lookupErr)
+
+				return
+			}
+
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
 		}))
@@ -2279,6 +2422,6 @@ func TestResultsRegisterInvalidSampleWithSparseMLWHCache(t *testing.T) {
 		convey.So(stderr.String(), convey.ShouldContainSubstring, `--sample "gallery-beta"`)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "not found")
 		convey.So(elapsed, convey.ShouldBeLessThan, time.Second)
-		convey.So(requestCount, convey.ShouldEqual, 0)
+		convey.So(requestCount, convey.ShouldEqual, 1)
 	})
 }

@@ -87,21 +87,28 @@ Defaults applied when an env file does not pin a port:
 | Results API | 8090 | `WA_DEV_RESULTS_PORT`            | `WA_PROD_RESULTS_PORT`         |
 | Seqmeta API | 8091 | `WA_DEV_SEQMETA_PORT`            | `WA_PROD_SEQMETA_PORT`         |
 
+Results API bind hosts are separate from client URLs. Development and
+production can set `WA_DEV_RESULTS_HOST` or `WA_PROD_RESULTS_HOST` when
+`results serve` should listen beyond loopback, for example `0.0.0.0`. Normal
+remote CLI users should export one full `WA_RESULTS_SERVER_URL` instead, using
+the Results API port rather than the frontend port.
+
 ## Environment files
 
 Each scenario keeps `WA_ENV` pinned to the canonical value for that runtime.
 `WA_TEST_*` ports are exported only in test mode; `WA_DEV_*` only in
 development mode; and `WA_PROD_*` only in production mode. `wa results ...`
-derives its default `--server` URL from the active scenario's results port,
-while `run-dev.sh` derives the frontend backend URLs from those same ports.
+derives its default `--server` URL from `WA_RESULTS_SERVER_URL`,
+`WA_RESULTS_BACKEND_URL`, or the active scenario's results port on loopback,
+while `run-dev.sh` derives the frontend backend URLs from the scenario ports.
 
 | File                     | Tracked? | Loaded by                               | Holds                                                                                        |
 | ------------------------ | -------- | --------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `.env.test`              | yes      | `make test` / `wa --env test ...`       | Test ports + `WA_ENV=test`. No DB path. No committed MLWH credentials.                       |
 | `.env.test.local`        | no       | optional test override                  | Personal test-only overrides.                                                                |
-| `.env.development`       | yes      | `make dev` / `wa --env development ...` | Development ports, dev DB path, blank MLWH settings, `WA_ENV=development`.                   |
+| `.env.development`       | yes      | `make dev` / `wa --env development ...` | Development ports/host placeholders, dev DB path, blank MLWH settings, `WA_ENV=development`. |
 | `.env.development.local` | no       | local development override              | Your local development secrets and machine-specific overrides, including real MLWH settings. |
-| `.env.production`        | yes      | `make prod` / `wa --env production ...` | Production ports, blank DB settings, `WA_ENV=production`.                                    |
+| `.env.production`        | yes      | `make prod` / `wa --env production ...` | Production ports/host placeholders, blank DB settings, `WA_ENV=production`.                  |
 | `.env.production.local`  | no       | local production override               | Deployment-specific production secrets and DB settings.                                      |
 
 ### Safety guarantees
@@ -113,9 +120,9 @@ The `make` recipes, `wa` startup path, and `run-dev.sh` enforce the following:
 - `make test` refuses to start if `WA_RESULTS_DB_PATH` is set in the
   environment, so a stray export cannot point tests at a configured dev or
   prod database.
-- `make prod` refuses inherited `WA_TEST_*` or `WA_DEV_*` ports, and
-  `run-dev.sh --mode prod` still requires `WA_ENV=production` plus a real
-  `WA_RESULTS_DB_PATH` after loading.
+- `make prod` refuses inherited `WA_TEST_*` or `WA_DEV_*` ports and results
+  host variables, and `run-dev.sh --mode prod` still requires
+  `WA_ENV=production` plus a real `WA_RESULTS_DB_PATH` after loading.
 - `run-dev.sh --mode test` always uses an ephemeral `mktemp` SQLite DB
   beneath `.tmp/` and removes it on shutdown.
 - `run-dev.sh --mode dev` and `--mode prod` use the persistent
@@ -139,10 +146,68 @@ The scenario `.env*` files supply `WA_RESULTS_DB_PATH`,
 `WA_MLWH_CACHE_PASSWORD`, `WA_STUDIES_CACHE_TTL_SECONDS`,
 `WA_DEV_ALLOWED_ORIGINS`, and the relevant
 `WA_*_RESULTS_PORT` / `WA_*_SEQMETA_PORT` / `WA_*_FRONTEND_PORT` variables.
-`wa results ...` uses `WA_ENV` plus the active `WA_*_RESULTS_PORT` to choose
-its default `--server` URL, and `wa results --cert` / `wa results serve --key`
-default from the TLS env vars. `run-dev.sh` uses those same ports to export
-`WA_RESULTS_BACKEND_URL` and `WA_SEQMETA_BACKEND_URL` for the frontend.
+`wa results ...` chooses its default `--server` in this order: explicit
+`--server`, `WA_RESULTS_SERVER_URL` as a full client URL,
+`WA_RESULTS_BACKEND_URL` as a lower-precedence compatibility URL, then
+`WA_ENV` plus the active `WA_*_RESULTS_PORT` on `127.0.0.1`. If no active port
+is set, it falls back to `https://localhost:8080`.
+`WA_DEV_RESULTS_HOST` and `WA_PROD_RESULTS_HOST` are server bind hosts used by
+`results serve` when `--url` is unset; they are not client dial hosts.
+`wa results --cert` / `wa results serve --key` default from the TLS env vars.
+`run-dev.sh` uses the scenario ports to export `WA_RESULTS_BACKEND_URL` and
+`WA_SEQMETA_BACKEND_URL` for the frontend.
+The MLWH lookup flags on `wa results register` are resolved by the results
+server. Remote CLI users do not need `WA_MLWH_CACHE_PATH`,
+`WA_MLWH_CACHE_PASSWORD`, or MLWH cache credentials on their machine.
+
+### Using the results CLI from another machine
+
+Normal users only need the full API URL:
+
+```bash
+export WA_RESULTS_SERVER_URL=https://dev-host.example.org:3672
+wa results search --pipeline nf-pipe
+wa results register /shared/results/run42 --user alice --workflow nf-pipe --unique run42 --sample SANG001
+```
+
+Use the `Results` / `Results public` line printed by `make dev` for this URL.
+The frontend URL is for the browser UI and is not a results CLI endpoint.
+With the default development ports, that means remote CLI users should use
+`https://<dev-host>:3672`, not `https://<dev-host>:3671`.
+
+If a remote user can log in to the web UI but `wa results register` prompts for
+`Password:` and then returns `authentication failed`, first check the CLI target:
+
+```bash
+env | grep '^WA_RESULTS'
+```
+
+Unset any stale `WA_RESULTS_BACKEND_URL` pointing at the frontend and use
+`WA_RESULTS_SERVER_URL` for the Results API instead. The frontend can log in
+successfully through `/api/auth/login` even when the CLI is pointed at the wrong
+service, because the CLI posts directly to `/rest/v1/jwt`.
+
+If the results API uses the self-signed development certificate created by
+`run-dev.sh`, the user also needs to trust that certificate with `--cert` or
+`WA_RESULTS_SERVER_CERT=/path/to/wa-dev-cert.pem`. The generated certificate is
+valid for loopback, the machine's `hostname -f` and `hostname -s`, and the
+hostname from `WA_RESULTS_SERVER_URL`; `run-dev.sh` regenerates stale
+localhost-only certs when these SANs are missing.
+
+For operators, scenario host vars are bind hosts for `results serve`. To let
+another machine connect to a development API without duplicating the port,
+set the development environment, bind host, and port once:
+
+```bash
+export WA_ENV=development
+export WA_DEV_RESULTS_HOST=0.0.0.0
+export WA_DEV_RESULTS_PORT=3672
+make dev
+```
+
+The equivalent production vars are `WA_ENV=production`,
+`WA_PROD_RESULTS_HOST=0.0.0.0`, and `WA_PROD_RESULTS_PORT=8090`. An explicit
+`results serve --url host:port` still overrides the bind host and port.
 
 ### Accessing `make dev` from a remote host
 
@@ -175,6 +240,21 @@ If you prefer to run services individually:
 # Build
 go build -o wa .
 
+# Security defaults for manual `results serve` examples below. `--cert`,
+# `--key`, `--ldap_server`, and `--ldap_dn` default from these env vars.
+# `--server-token` defaults to .wa-results-server.token in the auth token dir.
+mkdir -p .tmp
+openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+  -keyout .tmp/wa-dev-key.pem \
+  -out .tmp/wa-dev-cert.pem \
+  -subj '/CN=localhost' \
+  -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+chmod 600 .tmp/wa-dev-key.pem
+export WA_RESULTS_SERVER_CERT=.tmp/wa-dev-cert.pem
+export WA_RESULTS_SERVER_KEY=.tmp/wa-dev-key.pem
+export WA_RESULTS_LDAP_SERVER=ldap.example.org
+export WA_RESULTS_LDAP_DN='uid=%s,ou=people,dc=example,dc=org'
+
 # Start results server (SQLite for dev)
 ./wa results serve --port 8090 --db dev.db
 
@@ -197,7 +277,9 @@ export WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite
 ```bash
 cd frontend
 pnpm install
-WA_RESULTS_BACKEND_URL=http://localhost:8090 pnpm dev   # Starts on http://localhost:3000
+WA_RESULTS_BACKEND_URL=https://localhost:8090 \
+WA_RESULTS_BACKEND_CA_CERT=../.tmp/wa-dev-cert.pem \
+  pnpm dev   # Starts on http://localhost:3000
 ```
 
 Normally you do not need to run the frontend by hand — `make dev` / `make prod`
@@ -205,14 +287,19 @@ start it for you with the matching env files already loaded. Use the manual comm
 when you are debugging the frontend in isolation against an already-running Go
 backend.
 
+If the results backend certificate is not trusted by the system, also export
+`WA_RESULTS_BACKEND_CA_CERT=/path/to/results-ca-or-cert.pem` before starting the
+frontend.
+
 Frontend environment variables (read from the process environment):
 
-| Variable                       | Default                 | Description                                                                                                                                            |
-| ------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `WA_RESULTS_BACKEND_URL`       | `http://localhost:8090` | Results API base URL                                                                                                                                   |
-| `WA_SEQMETA_BACKEND_URL`       | _(empty)_               | Seqmeta API base URL (omit to disable)                                                                                                                 |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | `300`                   | Study list cache lifetime                                                                                                                              |
-| `WA_DEV_ALLOWED_ORIGINS`       | _(empty)_               | Dev-only; extra hostnames merged into Next.js `allowedDevOrigins` (see "Accessing `make dev` from a remote host" above). Ignored in production builds. |
+| Variable                       | Default                  | Description                                                                                                                                            |
+| ------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WA_RESULTS_BACKEND_URL`       | `https://localhost:8090` | Results API base URL                                                                                                                                   |
+| `WA_RESULTS_BACKEND_CA_CERT`   | _(empty)_                | Optional PEM certificate or CA bundle for non-system-trusted results backend TLS                                                                       |
+| `WA_SEQMETA_BACKEND_URL`       | _(empty)_                | Seqmeta API base URL (omit to disable)                                                                                                                 |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | `300`                    | Study list cache lifetime                                                                                                                              |
+| `WA_DEV_ALLOWED_ORIGINS`       | _(empty)_                | Dev-only; extra hostnames merged into Next.js `allowedDevOrigins` (see "Accessing `make dev` from a remote host" above). Ignored in production builds. |
 
 ## Testing
 
@@ -320,6 +407,11 @@ Use either an env-supplied full DSN or a passwordless `--db` value plus
 `WA_RESULTS_DB_PASSWORD`:
 
 ```bash
+export WA_RESULTS_SERVER_CERT=.tmp/wa-dev-cert.pem
+export WA_RESULTS_SERVER_KEY=.tmp/wa-dev-key.pem
+export WA_RESULTS_LDAP_SERVER=ldap.example.org
+export WA_RESULTS_LDAP_DN='uid=%s,ou=people,dc=example,dc=org'
+
 export WA_RESULTS_DB_PATH='user:pass@tcp(db-host:3306)/wa_results'
 wa results serve --port 8090
 
@@ -381,11 +473,17 @@ manager (systemd, supervisor, etc.) to keep them running.
 
 ```bash
 # Results API (MySQL for production)
+export WA_ENV=production
+export WA_PROD_RESULTS_HOST=0.0.0.0
+export WA_PROD_RESULTS_PORT=8090
 export WA_RESULTS_DB_PATH='user@tcp(db-host:3306)/wa_results'
 export WA_RESULTS_DB_PASSWORD='super-secret'
+export WA_RESULTS_SERVER_CERT=/etc/wa/results.crt
+export WA_RESULTS_SERVER_KEY=/etc/wa/results.key
+export WA_RESULTS_LDAP_SERVER=ldap.example.org
+export WA_RESULTS_LDAP_DN='uid=%s,ou=people,dc=example,dc=org'
 wa results serve \
-  --port 8090 \
-  --db 'user@tcp(db-host:3306)/wa_results' \
+  --port "$WA_PROD_RESULTS_PORT" \
   --seqmeta-url http://localhost:8091
 
 # Seqmeta API
@@ -398,24 +496,33 @@ wa seqmeta serve \
 
 # Frontend
 cd frontend
-WA_RESULTS_BACKEND_URL=http://localhost:8090 \
+WA_RESULTS_BACKEND_URL=https://localhost:8090 \
 WA_SEQMETA_BACKEND_URL=http://localhost:8091 \
   node .next/standalone/server.js
 ```
 
+Set `WA_RESULTS_BACKEND_CA_CERT=/path/to/results-ca-or-cert.pem` for the
+frontend when the results API certificate is self-signed or otherwise not
+trusted by the system.
+
 ### Environment variables for production
 
-| Variable                       | Required     | Description                                                                                          |
-| ------------------------------ | ------------ | ---------------------------------------------------------------------------------------------------- |
-| `WA_RESULTS_DB_PATH`           | For results  | SQLite path, full DSN, or passwordless MySQL DSN                                                     |
-| `WA_RESULTS_DB_PASSWORD`       | Optional     | MySQL password paired with a passwordless DSN                                                        |
-| `WA_MLWH_DSN`                  | For seqmeta  | Passwordless MLWH DSN                                                                                |
-| `WA_MLWH_PASSWORD`             | Optional     | MLWH password paired with a passwordless DSN                                                         |
-| `WA_MLWH_CACHE_PATH`           | For seqmeta  | SQLite path or passwordless MySQL cache DSN                                                          |
-| `WA_MLWH_CACHE_PASSWORD`       | Optional     | MLWH cache MySQL password                                                                            |
-| `WA_RESULTS_SERVER_CERT`       | For results  | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root     |
-| `WA_RESULTS_SERVER_KEY`        | For results  | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root |
-| `WA_RESULTS_BACKEND_URL`       | For frontend | Results API URL (server-side only)                                                                   |
-| `WA_SEQMETA_BACKEND_URL`       | For frontend | Seqmeta API URL (server-side only)                                                                   |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | No           | Study list cache TTL (default: 300)                                                                  |
-| `PORT`                         | No           | Frontend listen port (default: 3000)                                                                 |
+| Variable                       | Required                   | Description                                                                                          |
+| ------------------------------ | -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `WA_ENV`                       | For scenario CLI           | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                    |
+| `WA_PROD_RESULTS_PORT`         | For server/CLI             | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults      |
+| `WA_PROD_RESULTS_HOST`         | For server                 | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections        |
+| `WA_RESULTS_SERVER_URL`        | For remote CLI             | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`        |
+| `WA_RESULTS_DB_PATH`           | For results                | SQLite path, full DSN, or passwordless MySQL DSN                                                     |
+| `WA_RESULTS_DB_PASSWORD`       | Optional                   | MySQL password paired with a passwordless DSN                                                        |
+| `WA_MLWH_DSN`                  | For seqmeta                | Passwordless MLWH DSN                                                                                |
+| `WA_MLWH_PASSWORD`             | Optional                   | MLWH password paired with a passwordless DSN                                                         |
+| `WA_MLWH_CACHE_PATH`           | For seqmeta/results server | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                         |
+| `WA_MLWH_CACHE_PASSWORD`       | Optional                   | MLWH cache MySQL password                                                                            |
+| `WA_RESULTS_SERVER_CERT`       | For results                | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root     |
+| `WA_RESULTS_SERVER_KEY`        | For results                | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root |
+| `WA_RESULTS_BACKEND_URL`       | For frontend               | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility           |
+| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                   | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted       |
+| `WA_SEQMETA_BACKEND_URL`       | For frontend               | Seqmeta API URL (server-side only)                                                                   |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | No                         | Study list cache TTL (default: 300)                                                                  |
+| `PORT`                         | No                         | Frontend listen port (default: 3000)                                                                 |

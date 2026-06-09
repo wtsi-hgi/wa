@@ -9,6 +9,40 @@ seqmeta_port=""
 scenario="test"
 fixtures_requested=0
 
+PROD_REFUSED_INHERITED_ENV_VARS=(
+  WA_TEST_FRONTEND_PORT
+  WA_TEST_RESULTS_PORT
+  WA_TEST_SEQMETA_PORT
+  WA_TEST_RESULTS_HOST
+  WA_DEV_FRONTEND_PORT
+  WA_DEV_RESULTS_PORT
+  WA_DEV_SEQMETA_PORT
+  WA_DEV_RESULTS_HOST
+)
+
+print_prod_refused_env_help() {
+  local indent="        "
+  local max_width=78
+  local line="$indent"
+  local var
+
+  for var in "${PROD_REFUSED_INHERITED_ENV_VARS[@]}"; do
+    if [[ "$line" == "$indent" ]]; then
+      line+="$var"
+      continue
+    fi
+
+    if (( ${#line} + 2 + ${#var} > max_width )); then
+      printf '%s,\n' "$line"
+      line="$indent$var"
+    else
+      line+=", $var"
+    fi
+  done
+
+  printf '%s.\n' "$line"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -f|--frontend-port)
@@ -65,7 +99,15 @@ Scenario behaviour:
         deleted). Refuses to start if WA_ENV=production. Pass --fixtures to
         also seed demo data.
   prod  Persistent DB at WA_RESULTS_DB_PATH. Requires WA_ENV=production.
-        Refuses --fixtures. Refuses if any WA_TEST_*_PORT is set.
+        Refuses --fixtures. Refuses these inherited environment variables:
+EOF
+      print_prod_refused_env_help
+      cat <<'EOF'
+
+Remote CLI users should use the Results API URL/port from the output
+(`Results` or `Results public`), not the frontend URL/port. The self-signed
+dev TLS certificate is created or regenerated with SANs for loopback, this
+machine's hostnames, and WA_RESULTS_SERVER_URL/WA_RESULTS_BACKEND_URL hosts.
 EOF
       exit 0
       ;;
@@ -127,7 +169,7 @@ if [[ "$scenario" == "prod" ]]; then
     exit 1
   fi
 
-  for var in WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT WA_DEV_FRONTEND_PORT WA_DEV_RESULTS_PORT WA_DEV_SEQMETA_PORT; do
+  for var in "${PROD_REFUSED_INHERITED_ENV_VARS[@]}"; do
     if [[ -n "${!var:-}" ]]; then
       printf 'run-dev.sh: refusing to run --mode prod with %s set.\n' "$var" >&2
       exit 1
@@ -271,6 +313,14 @@ else
   unset WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT
 fi
 
+trim_value() {
+  local value="${1:-}"
+
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
 # Assemble the Next.js dev server's allowedDevOrigins so developers hitting the
 # dev server from a non-localhost host (e.g. a remote workstation or laptop
 # over SSH forwarding) are not blocked from fetching /_next/* chunks, HMR, or
@@ -293,10 +343,10 @@ collect_dev_origins() {
 
   if [[ -n "${WA_DEV_ALLOWED_ORIGINS:-}" ]]; then
     local entry
-    local IFS=','
-    for entry in $WA_DEV_ALLOWED_ORIGINS; do
-      entry="${entry#"${entry%%[![:space:]]*}"}"
-      entry="${entry%"${entry##*[![:space:]]}"}"
+    local -a allowed_origins=()
+    IFS=',' read -r -a allowed_origins <<< "$WA_DEV_ALLOWED_ORIGINS"
+    for entry in "${allowed_origins[@]}"; do
+      entry="$(trim_value "$entry")"
       if [[ -n "$entry" ]]; then
         origins+=("$entry")
       fi
@@ -339,6 +389,178 @@ RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-https://127.0.0.1:$results_
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-https://127.0.0.1:$frontend_port/api/health}"
 SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$seqmeta_port/studies}"
 
+results_bind_host_for_scenario() {
+  local host=""
+
+  case "$scenario" in
+    dev) host="${WA_DEV_RESULTS_HOST:-}" ;;
+    prod) host="${WA_PROD_RESULTS_HOST:-}" ;;
+  esac
+
+  host="$(trim_value "$host")"
+  if [[ -z "$host" ]]; then
+    host="127.0.0.1"
+  fi
+
+  printf '%s' "$host"
+}
+
+format_host_port() {
+  local host="$1"
+  local port="$2"
+
+  if [[ "$host" == *:* && "$host" != \[* ]]; then
+    printf '[%s]:%s' "$host" "$port"
+  else
+    printf '%s:%s' "$host" "$port"
+  fi
+}
+
+results_bind_scope() {
+  case "$1" in
+    127.0.0.1|localhost|::1) printf 'loopback only' ;;
+    *) printf 'listening beyond loopback' ;;
+  esac
+}
+
+url_host_for_dev_tls_san() {
+  local value
+  local authority
+  local host
+
+  value="$(trim_value "${1:-}")"
+  if [[ -z "$value" ]]; then
+    return
+  fi
+
+  if [[ "$value" == *"://"* ]]; then
+    value="${value#*://}"
+  fi
+
+  authority="${value%%[/?#]*}"
+  authority="${authority##*@}"
+  if [[ "$authority" == \[* ]]; then
+    host="${authority#\[}"
+    host="${host%%\]*}"
+  else
+    host="${authority%%:*}"
+  fi
+
+  printf '%s' "$host"
+}
+
+dev_tls_san_entry_for_host() {
+  local host
+  local lower_host
+  local colon_markers
+  local san_type="DNS"
+
+  host="$(dev_tls_normalize_san_host_candidate "${1:-}")"
+  lower_host="${host,,}"
+
+  if [[ -z "$host" || "$lower_host" == "0.0.0.0" || "$lower_host" == "::" ]]; then
+    return
+  fi
+
+  if [[ "$host" == *[[:space:],/?#]* || "$host" == *"*"* || "$host" == *"["* || "$host" == *"]"* ]]; then
+    return
+  fi
+
+  if [[ "$host" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    san_type="IP"
+  elif [[ "$host" == *:* ]]; then
+    colon_markers="${host//[^:]}"
+    if (( ${#colon_markers} < 2 )); then
+      return
+    fi
+    san_type="IP"
+  fi
+
+  printf '%s:%s' "$san_type" "$host"
+}
+
+dev_tls_normalize_san_host_candidate() {
+  local host
+  local bracket_host
+  local bracket_suffix
+
+  host="$(trim_value "${1:-}")"
+  host="${host%.}"
+
+  if [[ "$host" == \[* ]]; then
+    bracket_host="${host#\[}"
+    if [[ "$bracket_host" != *"]"* ]]; then
+      return
+    fi
+
+    bracket_suffix="${bracket_host#*\]}"
+    bracket_host="${bracket_host%%\]*}"
+    if [[ -n "$bracket_suffix" && ! "$bracket_suffix" =~ ^:[0-9]+$ ]]; then
+      return
+    fi
+
+    host="$bracket_host"
+  elif [[ "$host" =~ ^([^:]+):[0-9]+$ ]]; then
+    host="${BASH_REMATCH[1]}"
+  else
+    host="${host#[}"
+    host="${host%]}"
+  fi
+
+  host="${host%.}"
+  printf '%s' "$host"
+}
+
+collect_dev_tls_san_entries() {
+  local -a candidates=(localhost 127.0.0.1 ::1)
+  local -A seen=()
+  local fqdn
+  local short
+  local public_host
+  local origin
+  local entry
+
+  if fqdn="$(hostname -f 2>/dev/null)" && [[ -n "$fqdn" ]]; then
+    candidates+=("$fqdn")
+  fi
+
+  if short="$(hostname -s 2>/dev/null)" && [[ -n "$short" ]]; then
+    candidates+=("$short")
+  fi
+
+  public_host="$(url_host_for_dev_tls_san "${WA_RESULTS_SERVER_URL:-}")"
+  if [[ -n "$public_host" ]]; then
+    candidates+=("$public_host")
+  fi
+
+  public_host="$(url_host_for_dev_tls_san "${WA_RESULTS_BACKEND_URL:-}")"
+  if [[ -n "$public_host" ]]; then
+    candidates+=("$public_host")
+  fi
+
+  candidates+=("$RESULTS_BIND_HOST")
+
+  if [[ -n "${WA_DEV_ALLOWED_ORIGINS:-}" ]]; then
+    local -a allowed_origins=()
+    IFS=',' read -r -a allowed_origins <<< "$WA_DEV_ALLOWED_ORIGINS"
+    for origin in "${allowed_origins[@]}"; do
+      candidates+=("$origin")
+    done
+  fi
+
+  for origin in "${candidates[@]}"; do
+    entry="$(dev_tls_san_entry_for_host "$origin")"
+    if [[ -n "$entry" && -z "${seen[$entry]:-}" ]]; then
+      seen[$entry]=1
+      printf '%s\n' "$entry"
+    fi
+  done
+}
+
+RESULTS_BIND_HOST="$(results_bind_host_for_scenario)"
+RESULTS_BIND_ADDR="$(format_host_port "$RESULTS_BIND_HOST" "$results_port")"
+RESULTS_BIND_SCOPE="$(results_bind_scope "$RESULTS_BIND_HOST")"
+
 repo_absolute_path() {
   local value="$1"
 
@@ -351,6 +573,7 @@ repo_absolute_path() {
 
 DEV_TLS_CERT="$(repo_absolute_path "${WA_RESULTS_SERVER_CERT:-$DEFAULT_DEV_TLS_CERT}")"
 DEV_TLS_KEY="$(repo_absolute_path "${WA_RESULTS_SERVER_KEY:-$DEFAULT_DEV_TLS_KEY}")"
+mapfile -t DEV_TLS_SAN_ENTRIES < <(collect_dev_tls_san_entries)
 
 if [[ ! "$FRONTEND_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
   printf 'frontend health max attempts must be an integer\n' >&2
@@ -373,32 +596,126 @@ if (( SEQMETA_HEALTH_MAX_ATTEMPTS < 1 )); then
 fi
 
 ensure_dev_tls_certificate() {
-  if [[ -s "$DEV_TLS_CERT" && -s "$DEV_TLS_KEY" ]]; then
-    chmod 0600 "$DEV_TLS_KEY"
-    chmod 0644 "$DEV_TLS_CERT"
-
-    return
-  fi
-
   if ! command -v openssl >/dev/null 2>&1; then
-    printf 'run-dev.sh: openssl is required to create dev TLS certificates.\n' >&2
+    printf 'run-dev.sh: openssl is required to inspect or create dev TLS certificates.\n' >&2
     exit 1
   fi
 
-  printf 'Creating self-signed dev TLS certificate at %s\n' "$DEV_TLS_CERT"
-  openssl req \
+  if dev_tls_certificate_has_required_sans; then
+    chmod 0600 "$DEV_TLS_KEY"
+    chmod 0644 "$DEV_TLS_CERT"
+    return
+  fi
+
+  if [[ -s "$DEV_TLS_CERT" && -s "$DEV_TLS_KEY" ]]; then
+    printf 'Regenerating self-signed dev TLS certificate at %s with current hostnames\n' "$DEV_TLS_CERT"
+  else
+    printf 'Creating self-signed dev TLS certificate at %s\n' "$DEV_TLS_CERT"
+  fi
+
+  local openssl_config
+  openssl_config="$(mktemp "$TMP_DIR/wa-dev-cert.XXXXXX.cnf")"
+  write_dev_tls_openssl_config "$openssl_config"
+
+  if ! openssl req \
     -x509 \
     -newkey rsa:2048 \
     -nodes \
     -days 365 \
     -keyout "$DEV_TLS_KEY" \
     -out "$DEV_TLS_CERT" \
-    -subj "/CN=localhost" \
-    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
-    >/dev/null 2>&1
+    -config "$openssl_config" \
+    >/dev/null 2>&1; then
+    rm -f "$openssl_config"
+    printf 'run-dev.sh: failed to create dev TLS certificate at %s.\n' "$DEV_TLS_CERT" >&2
+    exit 1
+  fi
+  rm -f "$openssl_config"
 
   chmod 0600 "$DEV_TLS_KEY"
   chmod 0644 "$DEV_TLS_CERT"
+}
+
+dev_tls_certificate_has_required_sans() {
+  local entry
+  local san_type
+  local san_value
+
+  if [[ ! -s "$DEV_TLS_CERT" || ! -s "$DEV_TLS_KEY" ]]; then
+    return 1
+  fi
+
+  for entry in "${DEV_TLS_SAN_ENTRIES[@]}"; do
+    san_type="${entry%%:*}"
+    san_value="${entry#*:}"
+
+    case "$san_type" in
+      DNS)
+        openssl verify -CAfile "$DEV_TLS_CERT" -verify_hostname "$san_value" "$DEV_TLS_CERT" >/dev/null 2>&1 || return 1
+        ;;
+      IP)
+        openssl verify -CAfile "$DEV_TLS_CERT" -verify_ip "$san_value" "$DEV_TLS_CERT" >/dev/null 2>&1 || return 1
+        ;;
+    esac
+  done
+
+  return 0
+}
+
+write_dev_tls_openssl_config() {
+  local config_path="$1"
+  local entry
+  local san_type
+  local san_value
+  local dns_count=0
+  local ip_count=0
+
+  {
+    printf '[req]\n'
+    printf 'distinguished_name = req_distinguished_name\n'
+    printf 'x509_extensions = v3_req\n'
+    printf 'prompt = no\n'
+    printf '[req_distinguished_name]\n'
+    printf 'CN = localhost\n'
+    printf '[v3_req]\n'
+    printf 'subjectAltName = @alt_names\n'
+    printf '[alt_names]\n'
+
+    for entry in "${DEV_TLS_SAN_ENTRIES[@]}"; do
+      san_type="${entry%%:*}"
+      san_value="${entry#*:}"
+
+      case "$san_type" in
+        DNS)
+          dns_count=$((dns_count + 1))
+          printf 'DNS.%s = %s\n' "$dns_count" "$san_value"
+          ;;
+        IP)
+          ip_count=$((ip_count + 1))
+          printf 'IP.%s = %s\n' "$ip_count" "$san_value"
+          ;;
+      esac
+    done
+  } >"$config_path"
+
+  chmod 0600 "$config_path"
+}
+
+dev_tls_san_display() {
+  local joined=""
+  local entry
+  local san_value
+
+  for entry in "${DEV_TLS_SAN_ENTRIES[@]}"; do
+    san_value="${entry#*:}"
+    if [[ -z "$joined" ]]; then
+      joined="$san_value"
+    else
+      joined="$joined, $san_value"
+    fi
+  done
+
+  printf '%s' "$joined"
 }
 
 cd "$REPO_ROOT"
@@ -799,10 +1116,10 @@ FRONTEND_STARTED=0
 : >"$FRONTEND_LOG"
 
 if [[ "$scenario" == "dev" ]] && http_is_healthy "$RESULTS_HEALTH_URL" "strict" "$WA_RESULTS_BACKEND_CA_CERT"; then
-  printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL"
-  printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL" >"$RESULTS_LOG"
+  printf 'Reusing existing results server on %s (configured bind=%s)\n' "$WA_RESULTS_BACKEND_URL" "$RESULTS_BIND_ADDR"
+  printf 'Reusing existing results server on %s (configured bind=%s)\n' "$WA_RESULTS_BACKEND_URL" "$RESULTS_BIND_ADDR" >"$RESULTS_LOG"
 else
-  printf 'Starting results server on %s (mode=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario"
+  printf 'Starting results server on %s (mode=%s; bind=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario" "$RESULTS_BIND_ADDR"
   results_serve_args=(results serve --port "$results_port")
 
   if [[ "$scenario" == "test" ]]; then
@@ -903,6 +1220,13 @@ fi
 
 printf 'Development environment is ready.\n'
 printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
+printf 'Results bind: %s (%s)\n' "$RESULTS_BIND_ADDR" "$RESULTS_BIND_SCOPE"
+printf 'Dev TLS cert: %s (valid for %s)\n' "$DEV_TLS_CERT" "$(dev_tls_san_display)"
+if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
+  printf 'Results public: %s\n' "$WA_RESULTS_SERVER_URL"
+elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
+  printf 'Results public: not configured (set WA_RESULTS_SERVER_URL to the reachable HTTPS URL for remote CLI users)\n'
+fi
 if [[ -n "${WA_SEQMETA_BACKEND_URL:-}" ]]; then
   printf 'Seqmeta: %s\n' "$WA_SEQMETA_BACKEND_URL"
 fi

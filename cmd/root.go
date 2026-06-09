@@ -96,6 +96,12 @@ func validateTestScenarioEnvironment() error {
 }
 
 func validateProductionScenarioEnvironment() error {
+	for _, envVar := range []string{"WA_TEST_RESULTS_HOST", "WA_DEV_RESULTS_HOST"} {
+		if strings.TrimSpace(firstEnv(envVar)) != "" {
+			return fmt.Errorf("%s is not permitted when WA_ENV=production", envVar)
+		}
+	}
+
 	if mlwhPasswordLooksNonProduction(strings.TrimSpace(firstEnv("WA_MLWH_PASSWORD"))) {
 		return fmt.Errorf("WA_MLWH_PASSWORD matches a development or test literal and is not permitted when WA_ENV=production")
 	}

@@ -702,6 +702,13 @@ func (s *Server) handlePostResults(c *gin.Context) {
 		return
 	}
 
+	registrationResolver, _ := s.resolver.(RegistrationResolver)
+	if err := ApplyRegistrationLookups(c.Request.Context(), registration, registrationResolver); err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
 	outputDirectoryGID, err := OutputDirectoryGID(registration.OutputDirectory)
 	if err != nil {
 		writeDomainError(c, fmt.Errorf("%w: %v", ErrInvalidInput, err))

@@ -114,6 +114,100 @@ func (r *MLWHSearchResolver) CanonicalStudySearchValue(ctx context.Context, raw 
 	return trimmed, nil
 }
 
+// ResolveRun delegates registration run lookups to the configured MLWH client.
+func (r *MLWHSearchResolver) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
+	resolver, err := r.registrationResolver()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return resolver.ResolveRun(ctx, raw)
+}
+
+// ResolveStudy delegates registration study lookups to the configured MLWH client.
+func (r *MLWHSearchResolver) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
+	resolver, err := r.registrationResolver()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return resolver.ResolveStudy(ctx, raw)
+}
+
+// ResolveSample delegates registration sample lookups to the configured MLWH client.
+func (r *MLWHSearchResolver) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
+	resolver, err := r.registrationResolver()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return resolver.ResolveSample(ctx, raw)
+}
+
+// ResolveSampleName delegates exact registration sample-name lookups to the configured MLWH client.
+func (r *MLWHSearchResolver) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
+	resolver, ok := r.sampleNameResolver()
+	if !ok {
+		return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
+	}
+
+	return resolver.ResolveSampleName(ctx, raw)
+}
+
+// ResolveLibrary delegates registration library lookups to the configured MLWH client.
+func (r *MLWHSearchResolver) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
+	resolver, err := r.registrationResolver()
+	if err != nil {
+		return mlwh.Match{}, err
+	}
+
+	return resolver.ResolveLibrary(ctx, raw)
+}
+
+// ResolveLibraryIdentifier delegates exact registration library identifier
+// lookups to the configured MLWH client when available.
+func (r *MLWHSearchResolver) ResolveLibraryIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	resolver, ok := r.libraryIdentifierResolver()
+	if !ok {
+		return mlwh.Match{}, mlwh.ErrNotFound
+	}
+
+	return resolver.ResolveLibraryIdentifier(ctx, raw)
+}
+
+func (r *MLWHSearchResolver) registrationResolver() (RegistrationResolver, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("%w: MLWH resolver is not configured", ErrSeqmetaFailed)
+	}
+
+	resolver, ok := r.client.(RegistrationResolver)
+	if !ok {
+		return nil, fmt.Errorf("%w: MLWH registration resolver is not configured", ErrSeqmetaFailed)
+	}
+
+	return resolver, nil
+}
+
+func (r *MLWHSearchResolver) sampleNameResolver() (registrationSampleNameResolver, bool) {
+	if r == nil || r.client == nil {
+		return nil, false
+	}
+
+	resolver, ok := r.client.(registrationSampleNameResolver)
+
+	return resolver, ok
+}
+
+func (r *MLWHSearchResolver) libraryIdentifierResolver() (registrationLibraryIdentifierResolver, bool) {
+	if r == nil || r.client == nil {
+		return nil, false
+	}
+
+	resolver, ok := r.client.(registrationLibraryIdentifierResolver)
+
+	return resolver, ok
+}
+
 // Expand resolves related search values for a canonical identifier.
 func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 	if r == nil || r.client == nil {
