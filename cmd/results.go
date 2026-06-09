@@ -671,15 +671,15 @@ func resultsRegisterAuthenticatedRequest(serverURL, certPath string) (*resty.Req
 	return authClient.AuthenticatedRequest()
 }
 
-func defaultResultsBackendServerURL() string {
-	backendURL := strings.TrimSpace(firstEnv("WA_RESULTS_BACKEND_URL"))
-	if backendURL == "" {
+func defaultResultsEnvServerURL(envName string) string {
+	envURL := strings.TrimSpace(firstEnv(envName))
+	if envURL == "" {
 		return ""
 	}
 
-	// WA_RESULTS_BACKEND_URL is for the frontend and may include a path prefix,
-	// but CLI auth defaults must be an origin accepted by go-authserver.
-	return resultsServerURLOrigin(backendURL)
+	// Env-derived CLI defaults may come from frontend/backend URLs with path
+	// prefixes, but auth commands need an origin accepted by go-authserver.
+	return resultsServerURLOrigin(envURL)
 }
 
 func resultsServerURLOrigin(rawURL string) string {
@@ -1807,11 +1807,11 @@ func rescanResults(ctx context.Context, serverURL, certPath, resultID string, fi
 }
 
 func defaultResultsServerURL() string {
-	if serverURL := strings.TrimSpace(firstEnv("WA_RESULTS_SERVER_URL")); serverURL != "" {
+	if serverURL := defaultResultsEnvServerURL("WA_RESULTS_SERVER_URL"); serverURL != "" {
 		return serverURL
 	}
 
-	if backendURL := defaultResultsBackendServerURL(); backendURL != "" {
+	if backendURL := defaultResultsEnvServerURL("WA_RESULTS_BACKEND_URL"); backendURL != "" {
 		return backendURL
 	}
 

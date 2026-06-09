@@ -56,14 +56,49 @@ func TestResultsGetCommand(t *testing.T) {
 		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://127.0.0.1:3672")
 	})
 
-	convey.Convey("defaultResultsServerURL uses WA_RESULTS_SERVER_URL as the full client URL override", t, func() {
+	convey.Convey("defaultResultsServerURL uses an origin-only WA_RESULTS_SERVER_URL before backend and active-port fallbacks", t, func() {
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+		t.Setenv("WA_RESULTS_SERVER_URL", "https://dev-host.example.org:3672")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "https://frontend-backend.example.org:9443/ignored")
+
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://dev-host.example.org:3672")
+	})
+
+	convey.Convey("defaultResultsServerURL normalises a path-prefixed WA_RESULTS_SERVER_URL to an auth-safe origin", t, func() {
 		t.Setenv("WA_ENV", "development")
 		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
 		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
 		t.Setenv("WA_RESULTS_SERVER_URL", "https://dev-host.example.org:3672/wa-api")
 		t.Setenv("WA_RESULTS_BACKEND_URL", "https://frontend-backend.example.org:9443/ignored")
 
-		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://dev-host.example.org:3672/wa-api")
+		serverURL := defaultResultsServerURL()
+		authAddr, err := resultsAuthAddr(serverURL)
+
+		convey.So(serverURL, convey.ShouldEqual, "https://dev-host.example.org:3672")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(authAddr, convey.ShouldEqual, "dev-host.example.org:3672")
+	})
+
+	convey.Convey("defaultResultsServerURL ignores malformed WA_RESULTS_SERVER_URL values before falling back to WA_RESULTS_BACKEND_URL", t, func() {
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+		t.Setenv("WA_RESULTS_SERVER_URL", "://missing-scheme")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "https://frontend-backend.example.org:9443/wa-api")
+
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://frontend-backend.example.org:9443")
+	})
+
+	convey.Convey("defaultResultsServerURL ignores non-HTTPS WA_RESULTS_SERVER_URL values before falling back to the active port", t, func() {
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+		t.Setenv("WA_RESULTS_SERVER_URL", "http://dev-host.example.org:3672/wa-api")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "")
+
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://127.0.0.1:3672")
 	})
 
 	convey.Convey("defaultResultsServerURL keeps an origin-only WA_RESULTS_BACKEND_URL as a lower-precedence compatibility default", t, func() {
