@@ -408,27 +408,63 @@ url_host_for_dev_tls_san() {
 dev_tls_san_entry_for_host() {
   local host
   local lower_host
+  local colon_markers
   local san_type="DNS"
 
-  host="$(trim_value "${1:-}")"
-  host="${host#[}"
-  host="${host%]}"
-  host="${host%.}"
+  host="$(dev_tls_normalize_san_host_candidate "${1:-}")"
   lower_host="${host,,}"
 
   if [[ -z "$host" || "$lower_host" == "0.0.0.0" || "$lower_host" == "::" ]]; then
     return
   fi
 
-  if [[ "$host" == *[[:space:],/]* || "$host" == *"*"* ]]; then
+  if [[ "$host" == *[[:space:],/?#]* || "$host" == *"*"* || "$host" == *"["* || "$host" == *"]"* ]]; then
     return
   fi
 
-  if [[ "$host" == *:* || "$host" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+  if [[ "$host" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    san_type="IP"
+  elif [[ "$host" == *:* ]]; then
+    colon_markers="${host//[^:]}"
+    if (( ${#colon_markers} < 2 )); then
+      return
+    fi
     san_type="IP"
   fi
 
   printf '%s:%s' "$san_type" "$host"
+}
+
+dev_tls_normalize_san_host_candidate() {
+  local host
+  local bracket_host
+  local bracket_suffix
+
+  host="$(trim_value "${1:-}")"
+  host="${host%.}"
+
+  if [[ "$host" == \[* ]]; then
+    bracket_host="${host#\[}"
+    if [[ "$bracket_host" != *"]"* ]]; then
+      return
+    fi
+
+    bracket_suffix="${bracket_host#*\]}"
+    bracket_host="${bracket_host%%\]*}"
+    if [[ -n "$bracket_suffix" && ! "$bracket_suffix" =~ ^:[0-9]+$ ]]; then
+      return
+    fi
+
+    host="$bracket_host"
+  elif [[ "$host" =~ ^([^:]+):[0-9]+$ ]]; then
+    host="${BASH_REMATCH[1]}"
+  else
+    host="${host#[}"
+    host="${host%]}"
+  fi
+
+  host="${host%.}"
+  printf '%s' "$host"
 }
 
 collect_dev_tls_san_entries() {

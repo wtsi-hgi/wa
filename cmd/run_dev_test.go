@@ -477,6 +477,40 @@ func TestRunDevScriptDevCertificateSubjectAltNames(t *testing.T) {
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
+
+	convey.Convey("run-dev.sh strips allowed-origin ports before creating dev certificate SANs", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		certPath := filepath.Join(t.TempDir(), "wa-dev-cert.pem")
+		keyPath := filepath.Join(t.TempDir(), "wa-dev-key.pem")
+		process, _ := startRunDevForDevCertificateTest(t, repoRoot, runDevCertificateOptionsForTest{
+			certPath:      certPath,
+			keyPath:       keyPath,
+			hostnameFQDN:  "farm22-wrstat01.internal",
+			hostnameShort: "farm22-wrstat01",
+			devAllowedOrigins: strings.Join([]string{
+				"dev-host.example.org:3672",
+				"2001:db8::42",
+				"[2001:db8::43]:3673",
+				"bad-origin.example.org/path",
+				"*.wildcard.example.org",
+			}, ", "),
+		})
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		cert := runDevReadCertificateForTest(t, certPath)
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "dev-host.example.org")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "2001:db8::42")
+		runDevAssertCertificateVerifiesHostnameForTest(t, cert, "2001:db8::43")
+		convey.So(slices.Contains(cert.DNSNames, "dev-host.example.org"), convey.ShouldBeTrue)
+		convey.So(slices.Contains(cert.DNSNames, "dev-host.example.org:3672"), convey.ShouldBeFalse)
+		convey.So(slices.Contains(cert.DNSNames, "bad-origin.example.org"), convey.ShouldBeFalse)
+		convey.So(cert.VerifyHostname("bad-origin.example.org"), convey.ShouldNotBeNil)
+		convey.So(cert.VerifyHostname("leaf.wildcard.example.org"), convey.ShouldNotBeNil)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
 }
 
 func startRunDevForDevCertificateTest(
