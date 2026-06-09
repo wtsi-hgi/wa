@@ -62,10 +62,12 @@ func installResultsHTTPClientForTest(t *testing.T, client *http.Client) {
 
 type resultsAuthTestServer struct {
 	*httptest.Server
-	authHeaderCh chan string
-	certPath     string
-	passwordCh   chan string
-	refreshCh    chan string
+	authHeaderCh    chan string
+	certPath        string
+	expectedLoginAs string
+	passwordCh      chan string
+	refreshCh       chan string
+	usernameCh      chan string
 }
 
 func newResultsAuthTestServer(t *testing.T, password, jwt string) *resultsAuthTestServer {
@@ -75,10 +77,20 @@ func newResultsAuthTestServer(t *testing.T, password, jwt string) *resultsAuthTe
 		authHeaderCh: make(chan string, 1),
 		passwordCh:   make(chan string, 1),
 		refreshCh:    make(chan string, 1),
+		usernameCh:   make(chan string, 1),
 	}
 
 	server.Server = httptest.NewTLSServer(resultsAuthTestHandler(server, password, jwt))
 	server.certPath = writeResultsAuthServerCertForTest(t, server.Certificate())
+
+	return server
+}
+
+func newResultsAuthUsernameTestServer(t *testing.T, username, password, jwt string) *resultsAuthTestServer {
+	t.Helper()
+
+	server := newResultsAuthTestServer(t, password, jwt)
+	server.expectedLoginAs = username
 
 	return server
 }
@@ -173,6 +185,27 @@ func TestResultsAuthClient(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(string(responseBody), convey.ShouldContainSubstring, "result-123")
 		convey.So(passwordHandler.readCalled, convey.ShouldBeTrue)
+		convey.So(receiveResultsAuthValueForTest(t, server.passwordCh, "login password"), convey.ShouldEqual, resultsAuthTestPassword)
+		convey.So(receiveResultsAuthValueForTest(t, server.authHeaderCh, "auth header"), convey.ShouldEqual, "Bearer jwt-password")
+	})
+
+	convey.Convey("D1.2c: Given CLI register --user matches a web LDAP login, password JWT auth uses that username", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		passwordHandler := &resultsAuthPasswordHandler{password: resultsAuthTestPassword, terminal: true}
+		installGasResultsClientCLIForTest(t, passwordHandler)
+
+		server := newResultsAuthUsernameTestServer(t, "alice", resultsAuthTestPassword, "jwt-password")
+		defer server.Close()
+
+		stdout, stderr, err := executeRootCommandWithInputForRegisterTest(t, resultsAuthRegisterArgs(t, server), nil)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stdout.String(), convey.ShouldContainSubstring, "result-123")
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(passwordHandler.readCalled, convey.ShouldBeTrue)
+		convey.So(receiveResultsAuthValueForTest(t, server.usernameCh, "login username"), convey.ShouldEqual, "alice")
 		convey.So(receiveResultsAuthValueForTest(t, server.passwordCh, "login password"), convey.ShouldEqual, resultsAuthTestPassword)
 		convey.So(receiveResultsAuthValueForTest(t, server.authHeaderCh, "auth header"), convey.ShouldEqual, "Bearer jwt-password")
 	})
@@ -392,6 +425,14 @@ func resultsAuthTestHandler(server *resultsAuthTestServer, password, jwt string)
 		case r.Method == http.MethodPost && r.URL.Path == gas.EndPointJWT:
 			if err := r.ParseForm(); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
+
+				return
+			}
+
+			username := r.Form.Get("username")
+			server.usernameCh <- username
+			if server.expectedLoginAs != "" && username != server.expectedLoginAs {
+				http.Error(w, "authentication failed", http.StatusUnauthorized)
 
 				return
 			}

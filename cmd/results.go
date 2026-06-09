@@ -596,6 +596,33 @@ func (r *resultsServeMLWHRuntime) Close() error {
 	return errors.Join(closeErrs...)
 }
 
+func resultsRegisterAuthenticatedRequest(serverURL, certPath, requester string) (*resty.Request, error) {
+	authClient, err := resultsNewAuthClient(serverURL, certPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if authClient.CanReadServerToken() {
+		if ownerClient, ok := authClient.(resultsOwnerAuthClient); ok {
+			return ownerClient.OwnerAuthenticatedRequest()
+		}
+
+		return authClient.AuthenticatedRequest()
+	}
+
+	loginUsername := strings.TrimSpace(requester)
+	if loginUsername == "" {
+		return authClient.AuthenticatedRequest()
+	}
+
+	authClient, err = resultsNewAuthClient(serverURL, certPath, loginUsername)
+	if err != nil {
+		return nil, err
+	}
+
+	return authClient.AuthenticatedRequest()
+}
+
 func resultsRegisterLookupPayload(values results.RegistrationLookupValues) *results.RegistrationLookupValues {
 	payload := results.RegistrationLookupValues{
 		Run:     nonEmptyRegisterLookupValues(values.Run),
@@ -1380,7 +1407,7 @@ func registerResults(ctx context.Context, serverURL string, certPath string, reg
 		return nil, fmt.Errorf("marshal registration request: %w", err)
 	}
 
-	request, err := resultsOwnerAuthenticatedRequest(serverURL, certPath)
+	request, err := resultsRegisterAuthenticatedRequest(serverURL, certPath, registration.Requester)
 	if err != nil {
 		return nil, err
 	}
