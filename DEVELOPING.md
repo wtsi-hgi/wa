@@ -90,7 +90,8 @@ Defaults applied when an env file does not pin a port:
 Results API bind hosts are separate from client URLs. Development and
 production can set `WA_DEV_RESULTS_HOST` or `WA_PROD_RESULTS_HOST` when
 `results serve` should listen beyond loopback, for example `0.0.0.0`. Normal
-remote CLI users should export one full `WA_RESULTS_SERVER_URL` instead.
+remote CLI users should export one full `WA_RESULTS_SERVER_URL` instead, using
+the Results API port rather than the frontend port.
 
 ## Environment files
 
@@ -169,9 +170,15 @@ wa results search --pipeline nf-pipe
 wa results register /shared/results/run42 --user alice --workflow nf-pipe --unique run42 --sample SANG001
 ```
 
+Use the `Results` / `Results public` line printed by `make dev` for this URL.
+The frontend URL is for the browser UI and is not a results CLI endpoint.
+
 If the results API uses the self-signed development certificate created by
 `run-dev.sh`, the user also needs to trust that certificate with `--cert` or
-`WA_RESULTS_SERVER_CERT=/path/to/wa-dev-cert.pem`.
+`WA_RESULTS_SERVER_CERT=/path/to/wa-dev-cert.pem`. The generated certificate is
+valid for loopback, the machine's `hostname -f` and `hostname -s`, and the
+hostname from `WA_RESULTS_SERVER_URL`; `run-dev.sh` regenerates stale
+localhost-only certs when these SANs are missing.
 
 For operators, scenario host vars are bind hosts for `results serve`. To let
 another machine connect to a development API without duplicating the port,

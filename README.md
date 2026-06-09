@@ -89,7 +89,8 @@ wa --env production results register /path/to/output --user jdoe
 ```
 
 For a beta tester using a development server from another machine, give them
-the full URL:
+the full Results API URL. Use the `Results` / `Results public` URL printed by
+`make dev`, not the frontend URL:
 
 ```bash
 export WA_RESULTS_SERVER_URL=https://dev-host.example.org:3672
@@ -98,8 +99,10 @@ wa results register /path/to/output --user jdoe --operator jdoe --workflow nf-co
 
 If the server uses the self-signed development certificate, also pass `--cert`
 or export `WA_RESULTS_SERVER_CERT` pointing at the certificate file they should
-trust. MLWH lookup flags on `wa results register` are resolved on the results
-server; remote CLI users do not need `WA_MLWH_CACHE_PATH`.
+trust. `run-dev.sh` creates that certificate for loopback, the hostnames of the
+machine running `make dev`, and any `WA_RESULTS_SERVER_URL` hostname it prints.
+MLWH lookup flags on `wa results register` are resolved on the results server;
+remote CLI users do not need `WA_MLWH_CACHE_PATH`.
 
 ### Start the results API server
 
@@ -174,7 +177,10 @@ make prod
 the `WA_RESULTS_SERVER_CERT` and `WA_RESULTS_SERVER_KEY` paths from the active
 env file, defaulting to `.tmp/wa-dev-cert.pem` and `.tmp/wa-dev-key.pem`.
 Relative paths are resolved from the repo root before child processes are
-started. It exports `WA_RESULTS_BACKEND_URL=https://127.0.0.1:<port>` and
+started. If an existing certificate is missing a required hostname, it is
+regenerated with SANs for loopback, the current machine's `hostname -f` and
+`hostname -s`, and any configured public results hostname. It exports
+`WA_RESULTS_BACKEND_URL=https://127.0.0.1:<port>` and
 `WA_RESULTS_BACKEND_CA_CERT` pointing at the same certificate for the Next.js
 server, and starts `next dev` with matching experimental HTTPS key/cert flags. Development
 mode still requires real `WA_RESULTS_LDAP_SERVER` and `WA_RESULTS_LDAP_DN`
@@ -182,10 +188,11 @@ values, usually in `.env.development.local`; only test mode uses the committed
 test LDAP placeholders.
 For remote CLI users, put the public development URL in
 `WA_RESULTS_SERVER_URL`, for example
-`WA_RESULTS_SERVER_URL=https://dev-host.example.org:3672`. To make the
-development server listen beyond loopback, set `WA_DEV_RESULTS_HOST=0.0.0.0`
-in `.env.development.local`; keep `WA_DEV_RESULTS_PORT` as the single source of
-the port.
+`WA_RESULTS_SERVER_URL=https://dev-host.example.org:3672`. This must be the
+Results API port, not the frontend port. To make the development server listen
+beyond loopback, set `WA_DEV_RESULTS_HOST=0.0.0.0` in
+`.env.development.local`; keep `WA_DEV_RESULTS_PORT` as the single source of the
+port.
 
 `make test` skips live MLWH integration tests by default. Set
 `WA_LIVE_MLWH_TESTS=1` explicitly to run live MLWH checks; real cold-sync
