@@ -127,7 +127,7 @@ if [[ "$scenario" == "prod" ]]; then
     exit 1
   fi
 
-  for var in WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT WA_DEV_FRONTEND_PORT WA_DEV_RESULTS_PORT WA_DEV_SEQMETA_PORT; do
+  for var in WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT WA_TEST_RESULTS_HOST WA_DEV_FRONTEND_PORT WA_DEV_RESULTS_PORT WA_DEV_SEQMETA_PORT WA_DEV_RESULTS_HOST; do
     if [[ -n "${!var:-}" ]]; then
       printf 'run-dev.sh: refusing to run --mode prod with %s set.\n' "$var" >&2
       exit 1

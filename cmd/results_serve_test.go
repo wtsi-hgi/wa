@@ -606,6 +606,10 @@ func TestResultsServeCommandA2(t *testing.T) {
 	convey.Convey("A2.5: Given legacy --port with cert/key/LDAP flags, when validation runs, then HTTPS bind addr uses localhost port", t, func() {
 		fakeAuth := newFakeResultsServeAuthServer()
 		installFakeResultsServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "")
+		t.Setenv("WA_DEV_RESULTS_HOST", "")
+		t.Setenv("WA_PROD_RESULTS_HOST", "")
+		t.Setenv("WA_RESULTS_SERVER_URL", "")
 
 		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "9443"))
 
@@ -613,6 +617,87 @@ func TestResultsServeCommandA2(t *testing.T) {
 		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
 		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "start")
 		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "127.0.0.1:9443")
+	})
+
+	convey.Convey("Given development bind host and port envs, results serve binds that host and port without --port or WA_RESULTS_SERVER_URL", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+		t.Setenv("WA_RESULTS_SERVER_URL", "https://dev-host.example.org:3672")
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "start")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "0.0.0.0:3672")
+	})
+
+	convey.Convey("Given production bind host and port envs, results serve binds that host and port without --port or WA_RESULTS_SERVER_URL", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "production")
+		t.Setenv("WA_PROD_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_PROD_RESULTS_PORT", "8090")
+		t.Setenv("WA_RESULTS_SERVER_URL", "https://prod-host.example.org:8090")
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "start")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "0.0.0.0:8090")
+	})
+
+	convey.Convey("Given active bind envs and explicit --port, results serve keeps the port override", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "9443"))
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "start")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "0.0.0.0:9443")
+	})
+
+	convey.Convey("Given active bind envs and explicit --url, results serve keeps the URL override", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--url", "127.0.0.1:9443"))
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "start")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "127.0.0.1:9443")
+	})
+
+	convey.Convey("Given no active scenario port, results serve falls back to localhost 8080 and ignores WA_RESULTS_SERVER_URL", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "")
+		t.Setenv("WA_TEST_RESULTS_PORT", "")
+		t.Setenv("WA_DEV_RESULTS_PORT", "")
+		t.Setenv("WA_PROD_RESULTS_PORT", "")
+		t.Setenv("WA_DEV_RESULTS_HOST", "")
+		t.Setenv("WA_PROD_RESULTS_HOST", "")
+		t.Setenv("WA_RESULTS_SERVER_URL", "https://public.example.org:3672")
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "start")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "127.0.0.1:8080")
 	})
 }
 

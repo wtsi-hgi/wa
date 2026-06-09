@@ -46,17 +46,41 @@ type resultSetWithFilesForTest struct {
 func TestResultsGetCommand(t *testing.T) {
 	installPassthroughResultsAuthClientForTest(t)
 
-	convey.Convey("defaultResultsServerURL derives the results server URL from the active dev port", t, func() {
+	convey.Convey("defaultResultsServerURL derives the results server URL from the active dev port and ignores bind hosts", t, func() {
 		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
 		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+		t.Setenv("WA_RESULTS_SERVER_URL", "")
 		t.Setenv("WA_RESULTS_BACKEND_URL", "")
 
 		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://127.0.0.1:3672")
 	})
 
+	convey.Convey("defaultResultsServerURL uses WA_RESULTS_SERVER_URL as the full client URL override", t, func() {
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+		t.Setenv("WA_RESULTS_SERVER_URL", "https://dev-host.example.org:3672")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "https://frontend-backend.example.org:9443")
+
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://dev-host.example.org:3672")
+	})
+
+	convey.Convey("defaultResultsServerURL keeps WA_RESULTS_BACKEND_URL as a lower-precedence compatibility default", t, func() {
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_RESULTS_PORT", "3672")
+		t.Setenv("WA_RESULTS_SERVER_URL", "")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "https://frontend-backend.example.org:9443/wa-api")
+
+		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://frontend-backend.example.org:9443/wa-api")
+	})
+
 	convey.Convey("defaultResultsServerURL derives the results server URL from the active prod port", t, func() {
 		t.Setenv("WA_ENV", "production")
+		t.Setenv("WA_PROD_RESULTS_HOST", "0.0.0.0")
 		t.Setenv("WA_PROD_RESULTS_PORT", "8090")
+		t.Setenv("WA_RESULTS_SERVER_URL", "")
 		t.Setenv("WA_RESULTS_BACKEND_URL", "")
 
 		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://127.0.0.1:8090")
@@ -69,6 +93,8 @@ func TestResultsGetCommand(t *testing.T) {
 		t.Setenv("WA_TEST_RESULTS_PORT", "")
 		t.Setenv("WA_DEV_RESULTS_PORT", "")
 		t.Setenv("WA_PROD_RESULTS_PORT", "")
+		t.Setenv("WA_RESULTS_SERVER_URL", "")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "")
 
 		convey.So(defaultResultsServerURL(), convey.ShouldEqual, "https://localhost:8080")
 	})
@@ -84,8 +110,28 @@ func TestResultsGetCommand(t *testing.T) {
 
 		t.Setenv("WA_ENV", "test")
 		t.Setenv("WA_TEST_RESULTS_PORT", serverURL.Port())
+		t.Setenv("WA_RESULTS_SERVER_URL", "")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "")
 
 		output, err := executeRootCommandForTest(t, []string{"results", "get", result.ID})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		var got results.ResultSet
+		err = json.Unmarshal([]byte(output), &got)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(got, convey.ShouldResemble, result)
+	})
+
+	convey.Convey("results get keeps explicit --server ahead of WA_RESULTS_SERVER_URL", t, func() {
+		result := testResultSetForCommand()
+		server := newResultsGetServerForTest(result, nil)
+		defer server.Close()
+
+		t.Setenv("WA_RESULTS_SERVER_URL", "https://unreachable.example.invalid:9443")
+		t.Setenv("WA_RESULTS_BACKEND_URL", "")
+
+		output, err := executeRootCommandForTest(t, []string{"results", "get", "--server", server.URL, result.ID})
 
 		convey.So(err, convey.ShouldBeNil)
 

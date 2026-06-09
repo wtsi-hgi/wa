@@ -43,6 +43,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -167,6 +168,7 @@ func resolveResultsServeMLWHConfig(flagValue string, flagChanged bool) (resultsS
 func resolveResultsServeSecurityConfig(
 	rawURL string,
 	port int,
+	portChanged bool,
 	cert string,
 	key string,
 	acme string,
@@ -175,7 +177,7 @@ func resolveResultsServeSecurityConfig(
 	ldapDN string,
 	serverToken string,
 ) (resultsServeSecurityConfig, error) {
-	addr, err := resolveResultsServeBindAddr(rawURL, port)
+	addr, err := resolveResultsServeBindAddr(rawURL, port, portChanged)
 	if err != nil {
 		return resultsServeSecurityConfig{}, err
 	}
@@ -214,14 +216,20 @@ func resolveResultsServeSecurityConfig(
 	return config, nil
 }
 
-func resolveResultsServeBindAddr(rawURL string, port int) (string, error) {
+func resolveResultsServeBindAddr(rawURL string, port int, portChanged bool) (string, error) {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
-		if port < 0 || port > 65535 {
-			return "", fmt.Errorf("invalid --port %d", port)
+		bindPort, err := resolveResultsServeBindPort(port, portChanged)
+		if err != nil {
+			return "", err
 		}
 
-		return fmt.Sprintf("127.0.0.1:%d", port), nil
+		host := strings.TrimSpace(activeResultsBindHost())
+		if host == "" {
+			host = "127.0.0.1"
+		}
+
+		return net.JoinHostPort(host, strconv.Itoa(bindPort)), nil
 	}
 
 	if strings.Contains(trimmed, "://") {
@@ -250,6 +258,41 @@ func resolveResultsServeBindAddr(rawURL string, port int) (string, error) {
 	}
 
 	return trimmed, nil
+}
+
+func resolveResultsServeBindPort(flagValue int, flagChanged bool) (int, error) {
+	port := flagValue
+	source := "--port"
+
+	if !flagChanged {
+		envPort := strings.TrimSpace(activeResultsPort())
+		if envPort != "" {
+			parsedPort, err := strconv.Atoi(envPort)
+			if err != nil {
+				return 0, fmt.Errorf("invalid active WA_*_RESULTS_PORT %q", envPort)
+			}
+
+			port = parsedPort
+			source = "active WA_*_RESULTS_PORT"
+		}
+	}
+
+	if port < 0 || port > 65535 {
+		return 0, fmt.Errorf("invalid %s %d", source, port)
+	}
+
+	return port, nil
+}
+
+func activeResultsBindHost() string {
+	switch firstEnv("WA_ENV") {
+	case "development":
+		return firstEnv("WA_DEV_RESULTS_HOST")
+	case "production":
+		return firstEnv("WA_PROD_RESULTS_HOST")
+	default:
+		return ""
+	}
 }
 
 func validateResultsServeLDAP(ldapServer, ldapDN string) error {
@@ -1278,7 +1321,7 @@ func newResultsCommand() *cobra.Command {
 		},
 	}
 
-	command.PersistentFlags().StringVar(&options.serverURL, "server", defaultResultsServerURL(), "Results server base URL (defaults to the active WA_*_RESULTS_PORT)")
+	command.PersistentFlags().StringVar(&options.serverURL, "server", defaultResultsServerURL(), "Results server base URL (defaults to WA_RESULTS_SERVER_URL, WA_RESULTS_BACKEND_URL, or the active WA_*_RESULTS_PORT)")
 	command.PersistentFlags().StringVar(&options.certPath, "cert", firstEnv("WA_RESULTS_SERVER_CERT"), "CA/cert path to trust for the results server")
 
 	command.AddCommand(newResultsRegisterCommand(options))
@@ -2065,7 +2108,16 @@ func rescanResults(ctx context.Context, serverURL, certPath, resultID string, fi
 }
 
 func defaultResultsServerURL() string {
-	if port := activeResultsPort(); port != "" {
+	if serverURL := strings.TrimSpace(firstEnv("WA_RESULTS_SERVER_URL")); serverURL != "" {
+		return serverURL
+	}
+
+	if backendURL := strings.TrimSpace(firstEnv("WA_RESULTS_BACKEND_URL")); backendURL != "" {
+		return backendURL
+	}
+
+	port := strings.TrimSpace(activeResultsPort())
+	if port != "" {
 		return "https://127.0.0.1:" + port
 	}
 
@@ -2107,6 +2159,7 @@ func newResultsServeCommand() *cobra.Command {
 			securityConfig, err := resolveResultsServeSecurityConfig(
 				bindURL,
 				port,
+				cmd.Flags().Changed("port"),
 				cert,
 				key,
 				acme,
@@ -2189,7 +2242,7 @@ func newResultsServeCommand() *cobra.Command {
 		},
 	}
 
-	command.Flags().StringVar(&bindURL, "url", firstEnv("WA_RESULTS_SERVER_URL"), "HTTPS bind address (defaults to WA_RESULTS_SERVER_URL or 127.0.0.1:<port>)")
+	command.Flags().StringVar(&bindURL, "url", "", "HTTPS bind address (defaults to active WA_*_RESULTS_HOST/PORT or 127.0.0.1:<port>)")
 	command.Flags().IntVar(&port, "port", 8080, "Deprecated HTTPS port alias used only when --url is unset")
 	command.Flags().StringVar(&cert, "cert", firstEnv("WA_RESULTS_SERVER_CERT"), "TLS certificate path")
 	command.Flags().StringVarP(&key, "key", "k", firstEnv("WA_RESULTS_SERVER_KEY"), "TLS private key path")

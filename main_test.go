@@ -115,6 +115,20 @@ func TestRunLoadsSelectedEnv(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_PASSWORD")
 	})
+
+	convey.Convey("run rejects inherited development results host in production mode", t, func() {
+		t.Setenv("WA_ENV", "production")
+		t.Setenv("WA_MLWH_PASSWORD", "")
+		t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
+		t.Setenv("WA_MLWH_DSN", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+		t.Setenv("WA_DEV_RESULTS_HOST", "0.0.0.0")
+
+		err := run(nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_DEV_RESULTS_HOST")
+	})
 }
 
 func writeEnvFileForTest(t *testing.T, path string, contents string) {
