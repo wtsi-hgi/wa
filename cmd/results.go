@@ -757,6 +757,14 @@ func resultsRegisterWorkflowFiles(identity results.WorkflowIdentity) ([]results.
 	}}, nil
 }
 
+func effectiveResultsCertPath(certPath string) string {
+	if trimmedCertPath := strings.TrimSpace(certPath); trimmedCertPath != "" {
+		return trimmedCertPath
+	}
+
+	return strings.TrimSpace(firstEnv("WA_RESULTS_SERVER_CERT"))
+}
+
 func resultsAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
 	return resultsAuthenticatedRequestWithOwnerLogin(serverURL, certPath, false)
 }
@@ -893,7 +901,7 @@ func newResultsAuthClient(serverURL string, certPath string, username ...string)
 		resultsJWTBasename,
 		resultsServerTokenBasename,
 		addr,
-		strings.TrimSpace(certPath),
+		effectiveResultsCertPath(certPath),
 		false,
 		username...,
 	)

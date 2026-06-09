@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -76,39 +77,7 @@ func newResultsAuthTestServer(t *testing.T, password, jwt string) *resultsAuthTe
 		refreshCh:    make(chan string, 1),
 	}
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == gas.EndPointJWT:
-			if err := r.ParseForm(); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-
-				return
-			}
-
-			server.passwordCh <- r.Form.Get("password")
-			if r.Form.Get("password") != password {
-				http.Error(w, "authentication failed", http.StatusUnauthorized)
-
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintf(w, "%q", jwt)
-		case r.Method == http.MethodGet && r.URL.Path == gas.EndPointJWT:
-			server.refreshCh <- r.Header.Get("Authorization")
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintf(w, "%q", "jwt-refreshed")
-		case r.Method == http.MethodPost && r.URL.Path == gas.EndPointAuth+"/results":
-			server.authHeaderCh <- r.Header.Get("Authorization")
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "result-123"})
-		default:
-			http.NotFound(w, r)
-		}
-	})
-
-	server.Server = httptest.NewTLSServer(handler)
+	server.Server = httptest.NewTLSServer(resultsAuthTestHandler(server, password, jwt))
 	server.certPath = writeResultsAuthServerCertForTest(t, server.Certificate())
 
 	return server
@@ -186,6 +155,26 @@ func TestResultsAuthClient(t *testing.T) {
 		convey.So(statErr, convey.ShouldBeNil)
 		convey.So(stat.Mode(), convey.ShouldEqual, os.FileMode(0o600))
 		convey.So(string(mustReadResultsAuthFileForTest(t, jwtPath)), convey.ShouldEqual, "jwt-password")
+	})
+
+	convey.Convey("D1.2b: Given WA_RESULTS_SERVER_CERT and a blank cert argument, register auth uses the env cert for JWT login", t, func() {
+		stateDir := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", stateDir)
+
+		passwordHandler := &resultsAuthPasswordHandler{password: resultsAuthTestPassword, terminal: true}
+		installGasResultsClientCLIForTest(t, passwordHandler)
+
+		server := newResultsAuthTestServer(t, resultsAuthTestPassword, "jwt-password")
+		defer server.Close()
+		t.Setenv("WA_RESULTS_SERVER_CERT", server.certPath)
+
+		responseBody, err := registerResults(context.Background(), server.URL, "", registerCommandRegistrationForTest())
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(responseBody), convey.ShouldContainSubstring, "result-123")
+		convey.So(passwordHandler.readCalled, convey.ShouldBeTrue)
+		convey.So(receiveResultsAuthValueForTest(t, server.passwordCh, "login password"), convey.ShouldEqual, resultsAuthTestPassword)
+		convey.So(receiveResultsAuthValueForTest(t, server.authHeaderCh, "auth header"), convey.ShouldEqual, "Bearer jwt-password")
 	})
 
 	convey.Convey("D1.3: Given loose JWT permissions, register returns the go-authserver permissions error without prompting", t, func() {
@@ -395,6 +384,40 @@ func resultsAuthRegisterArgs(t *testing.T, server *resultsAuthTestServer) []stri
 		"--workflow", workflowPath,
 		outputDir,
 	}
+}
+
+func resultsAuthTestHandler(server *resultsAuthTestServer, password, jwt string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == gas.EndPointJWT:
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+
+				return
+			}
+
+			server.passwordCh <- r.Form.Get("password")
+			if r.Form.Get("password") != password {
+				http.Error(w, "authentication failed", http.StatusUnauthorized)
+
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, "%q", jwt)
+		case r.Method == http.MethodGet && r.URL.Path == gas.EndPointJWT:
+			server.refreshCh <- r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, "%q", "jwt-refreshed")
+		case r.Method == http.MethodPost && r.URL.Path == gas.EndPointAuth+"/results":
+			server.authHeaderCh <- r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "result-123"})
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
 
 type resultsAuthPasswordHandler struct {
