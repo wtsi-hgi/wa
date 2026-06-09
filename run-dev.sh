@@ -339,6 +339,36 @@ RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-https://127.0.0.1:$results_
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-https://127.0.0.1:$frontend_port/api/health}"
 SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$seqmeta_port/studies}"
 
+results_bind_host_for_scenario() {
+  case "$scenario" in
+    dev) printf '%s' "${WA_DEV_RESULTS_HOST:-127.0.0.1}" ;;
+    prod) printf '%s' "${WA_PROD_RESULTS_HOST:-127.0.0.1}" ;;
+    *) printf '127.0.0.1' ;;
+  esac
+}
+
+format_host_port() {
+  local host="$1"
+  local port="$2"
+
+  if [[ "$host" == *:* && "$host" != \[* ]]; then
+    printf '[%s]:%s' "$host" "$port"
+  else
+    printf '%s:%s' "$host" "$port"
+  fi
+}
+
+results_bind_scope() {
+  case "$1" in
+    127.0.0.1|localhost|::1) printf 'loopback only' ;;
+    *) printf 'listening beyond loopback' ;;
+  esac
+}
+
+RESULTS_BIND_HOST="$(results_bind_host_for_scenario)"
+RESULTS_BIND_ADDR="$(format_host_port "$RESULTS_BIND_HOST" "$results_port")"
+RESULTS_BIND_SCOPE="$(results_bind_scope "$RESULTS_BIND_HOST")"
+
 repo_absolute_path() {
   local value="$1"
 
@@ -799,10 +829,10 @@ FRONTEND_STARTED=0
 : >"$FRONTEND_LOG"
 
 if [[ "$scenario" == "dev" ]] && http_is_healthy "$RESULTS_HEALTH_URL" "strict" "$WA_RESULTS_BACKEND_CA_CERT"; then
-  printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL"
-  printf 'Reusing existing results server on %s\n' "$WA_RESULTS_BACKEND_URL" >"$RESULTS_LOG"
+  printf 'Reusing existing results server on %s (configured bind=%s)\n' "$WA_RESULTS_BACKEND_URL" "$RESULTS_BIND_ADDR"
+  printf 'Reusing existing results server on %s (configured bind=%s)\n' "$WA_RESULTS_BACKEND_URL" "$RESULTS_BIND_ADDR" >"$RESULTS_LOG"
 else
-  printf 'Starting results server on %s (mode=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario"
+  printf 'Starting results server on %s (mode=%s; bind=%s)\n' "$WA_RESULTS_BACKEND_URL" "$scenario" "$RESULTS_BIND_ADDR"
   results_serve_args=(results serve --port "$results_port")
 
   if [[ "$scenario" == "test" ]]; then
@@ -903,6 +933,12 @@ fi
 
 printf 'Development environment is ready.\n'
 printf 'Results: %s\n' "$WA_RESULTS_BACKEND_URL"
+printf 'Results bind: %s (%s)\n' "$RESULTS_BIND_ADDR" "$RESULTS_BIND_SCOPE"
+if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
+  printf 'Results public: %s\n' "$WA_RESULTS_SERVER_URL"
+elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
+  printf 'Results public: not configured (set WA_RESULTS_SERVER_URL to the reachable HTTPS URL for remote CLI users)\n'
+fi
 if [[ -n "${WA_SEQMETA_BACKEND_URL:-}" ]]; then
   printf 'Seqmeta: %s\n' "$WA_SEQMETA_BACKEND_URL"
 fi
