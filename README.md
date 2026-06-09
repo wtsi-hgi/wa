@@ -59,10 +59,10 @@ arbitrary string; for Nextflow it also accepts a local `.nf` workflow file, a
 GitHub URL such as `https://github.com/nf-core/sarek`, or an `owner/repo`
 shorthand such as `seqeralabs/nf-hello-world`.
 
-The `--run`, `--study`, `--sample`, and `--library` flags are resolved by the
-results server through its configured MLWH cache and store canonical
-`seqmeta_*` metadata entries for search and validation. Normal CLI users do not
-need `WA_MLWH_CACHE_PATH` or MLWH cache credentials locally.
+The results server resolves the `--run`, `--study`, `--sample`, and `--library`
+flags through its configured MLWH cache and stores canonical `seqmeta_*`
+metadata entries for search and validation. Normal CLI users do not need
+`WA_MLWH_CACHE_PATH` or MLWH cache credentials locally.
 
 ### Search results
 
