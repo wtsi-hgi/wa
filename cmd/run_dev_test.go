@@ -77,6 +77,39 @@ func runDevUnsetSeqmetaEnvForTest() []string {
 	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL"}
 }
 
+func TestRunDevHelpDocumentsProdRefusedEnvironment(t *testing.T) {
+	convey.Convey("run-dev.sh --help documents the prod-mode refused environment variables", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		command := exec.Command("bash", filepath.Join(repoRoot, "run-dev.sh"), "--help") //nolint:gosec
+		command.Dir = repoRoot
+		command.Env = runDevEnvForTest(nil)
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		command.Stdout = stdout
+		command.Stderr = stderr
+
+		err := command.Run()
+		output := stdout.String()
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldEqual, "")
+		convey.So(output, convey.ShouldContainSubstring, "Refuses these inherited environment variables")
+
+		for _, variable := range []string{
+			"WA_TEST_FRONTEND_PORT",
+			"WA_TEST_RESULTS_PORT",
+			"WA_TEST_SEQMETA_PORT",
+			"WA_TEST_RESULTS_HOST",
+			"WA_DEV_FRONTEND_PORT",
+			"WA_DEV_RESULTS_PORT",
+			"WA_DEV_SEQMETA_PORT",
+			"WA_DEV_RESULTS_HOST",
+		} {
+			convey.So(output, convey.ShouldContainSubstring, variable)
+		}
+	})
+}
+
 func TestRunDevSnapshotWaitAllowsSlowFrontendStartup(t *testing.T) {
 	convey.Convey("run-dev.sh test harness waits for a frontend snapshot after slow startup prerequisites", t, func() {
 		repoRoot := runDevRepoRootForTest(t)

@@ -9,6 +9,40 @@ seqmeta_port=""
 scenario="test"
 fixtures_requested=0
 
+PROD_REFUSED_INHERITED_ENV_VARS=(
+  WA_TEST_FRONTEND_PORT
+  WA_TEST_RESULTS_PORT
+  WA_TEST_SEQMETA_PORT
+  WA_TEST_RESULTS_HOST
+  WA_DEV_FRONTEND_PORT
+  WA_DEV_RESULTS_PORT
+  WA_DEV_SEQMETA_PORT
+  WA_DEV_RESULTS_HOST
+)
+
+print_prod_refused_env_help() {
+  local indent="        "
+  local max_width=78
+  local line="$indent"
+  local var
+
+  for var in "${PROD_REFUSED_INHERITED_ENV_VARS[@]}"; do
+    if [[ "$line" == "$indent" ]]; then
+      line+="$var"
+      continue
+    fi
+
+    if (( ${#line} + 2 + ${#var} > max_width )); then
+      printf '%s,\n' "$line"
+      line="$indent$var"
+    else
+      line+=", $var"
+    fi
+  done
+
+  printf '%s.\n' "$line"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -f|--frontend-port)
@@ -65,7 +99,10 @@ Scenario behaviour:
         deleted). Refuses to start if WA_ENV=production. Pass --fixtures to
         also seed demo data.
   prod  Persistent DB at WA_RESULTS_DB_PATH. Requires WA_ENV=production.
-        Refuses --fixtures. Refuses if any WA_TEST_*_PORT is set.
+        Refuses --fixtures. Refuses these inherited environment variables:
+EOF
+      print_prod_refused_env_help
+      cat <<'EOF'
 
 Remote CLI users should use the Results API URL/port from the output
 (`Results` or `Results public`), not the frontend URL/port. The self-signed
@@ -132,7 +169,7 @@ if [[ "$scenario" == "prod" ]]; then
     exit 1
   fi
 
-  for var in WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT WA_TEST_RESULTS_HOST WA_DEV_FRONTEND_PORT WA_DEV_RESULTS_PORT WA_DEV_SEQMETA_PORT WA_DEV_RESULTS_HOST; do
+  for var in "${PROD_REFUSED_INHERITED_ENV_VARS[@]}"; do
     if [[ -n "${!var:-}" ]]; then
       printf 'run-dev.sh: refusing to run --mode prod with %s set.\n' "$var" >&2
       exit 1
