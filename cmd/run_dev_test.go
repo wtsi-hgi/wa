@@ -625,6 +625,16 @@ func runDevWriteLocalhostOnlyTLSCertificateForTest(t *testing.T, certPath string
 func startRunDevForResultsBindOutputTest(t *testing.T, bindHost string) (*runDevProcess, int, int) {
 	t.Helper()
 
+	return startRunDevForScenarioResultsBindOutputTest(t, "dev", bindHost)
+}
+
+func startRunDevForScenarioResultsBindOutputTest(
+	t *testing.T,
+	mode string,
+	bindHost string,
+) (*runDevProcess, int, int) {
+	t.Helper()
+
 	repoRoot := runDevRepoRootForTest(t)
 	frontendPort := runDevFreePortForTest(t)
 	resultsPort := runDevFreePortForTest(t)
@@ -632,8 +642,7 @@ func startRunDevForResultsBindOutputTest(t *testing.T, bindHost string) (*runDev
 	snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 	env := map[string]string{
 		"WA_ENV":                                "development",
-		"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
-		"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+		"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), fmt.Sprintf("results-%s.sqlite", mode)),
 		"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
 		"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
 		"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
@@ -643,21 +652,43 @@ func startRunDevForResultsBindOutputTest(t *testing.T, bindHost string) (*runDev
 		"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
 		"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
 		"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
-		"WA_RUN_DEV_SEQMETA_CMD":                fmt.Sprintf(`node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(%d, '127.0.0.1')"`, seqmetaPort),
-		"WA_RUN_DEV_SEQMETA_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort),
+	}
+
+	bindHostEnv := "WA_DEV_RESULTS_HOST"
+	switch mode {
+	case "prod":
+		env["WA_ENV"] = "production"
+		bindHostEnv = "WA_PROD_RESULTS_HOST"
+	case "dev":
+		env["WA_MLWH_DSN"] = "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test"
+		env["WA_RUN_DEV_SEQMETA_CMD"] = fmt.Sprintf(`node -e "require('node:http').createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); }).listen(%d, '127.0.0.1')"`, seqmetaPort)
+		env["WA_RUN_DEV_SEQMETA_HEALTH_URL"] = fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort)
+	default:
+		t.Fatalf("unsupported run-dev bind output test mode %q", mode)
 	}
 
 	if bindHost != "" {
-		env["WA_DEV_RESULTS_HOST"] = bindHost
+		env[bindHostEnv] = bindHost
 	}
 
 	process := startRunDevForTest(t, repoRoot, runDevStartOptions{
-		mode:         "dev",
+		mode:         mode,
 		frontendPort: frontendPort,
 		resultsPort:  resultsPort,
 		seqmetaPort:  seqmetaPort,
-		unsetEnv:     []string{"WA_DEV_RESULTS_HOST", "WA_RESULTS_SERVER_URL"},
-		env:          env,
+		unsetEnv: []string{
+			"WA_TEST_FRONTEND_PORT",
+			"WA_TEST_RESULTS_PORT",
+			"WA_TEST_SEQMETA_PORT",
+			"WA_TEST_RESULTS_HOST",
+			"WA_DEV_FRONTEND_PORT",
+			"WA_DEV_RESULTS_PORT",
+			"WA_DEV_SEQMETA_PORT",
+			"WA_DEV_RESULTS_HOST",
+			"WA_PROD_RESULTS_HOST",
+			"WA_RESULTS_SERVER_URL",
+		},
+		env: env,
 	})
 
 	return process, frontendPort, resultsPort
@@ -676,6 +707,51 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 		convey.So(stdout, convey.ShouldContainSubstring, "Results public: not configured")
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
 		convey.So(stdout, convey.ShouldNotContainSubstring, "Frontend bind:")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh --mode dev trims the configured results bind host before reporting it", t, func() {
+		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, " \t0.0.0.0 \t")
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=0.0.0.0:%d)", resultsPort, resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results: https://127.0.0.1:%d", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results bind: 0.0.0.0:%d (listening beyond loopback)", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh --mode prod trims the configured results bind host before reporting it", t, func() {
+		process, frontendPort, resultsPort := startRunDevForScenarioResultsBindOutputTest(t, "prod", " \t0.0.0.0 \t")
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=prod; bind=0.0.0.0:%d)", resultsPort, resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results: https://127.0.0.1:%d", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results bind: 0.0.0.0:%d (listening beyond loopback)", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh --mode dev falls back to loopback when the configured bind host trims blank", t, func() {
+		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, " \t ")
+
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		stdout := process.stdout.String()
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=127.0.0.1:%d)", resultsPort, resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results: https://127.0.0.1:%d", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Results bind: 127.0.0.1:%d (loopback only)", resultsPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort))
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)

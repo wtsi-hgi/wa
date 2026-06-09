@@ -276,6 +276,14 @@ else
   unset WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT
 fi
 
+trim_value() {
+  local value="${1:-}"
+
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
 # Assemble the Next.js dev server's allowedDevOrigins so developers hitting the
 # dev server from a non-localhost host (e.g. a remote workstation or laptop
 # over SSH forwarding) are not blocked from fetching /_next/* chunks, HMR, or
@@ -301,8 +309,7 @@ collect_dev_origins() {
     local -a allowed_origins=()
     IFS=',' read -r -a allowed_origins <<< "$WA_DEV_ALLOWED_ORIGINS"
     for entry in "${allowed_origins[@]}"; do
-      entry="${entry#"${entry%%[![:space:]]*}"}"
-      entry="${entry%"${entry##*[![:space:]]}"}"
+      entry="$(trim_value "$entry")"
       if [[ -n "$entry" ]]; then
         origins+=("$entry")
       fi
@@ -346,11 +353,19 @@ FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-https://127.0.0.1:$fronte
 SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$seqmeta_port/studies}"
 
 results_bind_host_for_scenario() {
+  local host=""
+
   case "$scenario" in
-    dev) printf '%s' "${WA_DEV_RESULTS_HOST:-127.0.0.1}" ;;
-    prod) printf '%s' "${WA_PROD_RESULTS_HOST:-127.0.0.1}" ;;
-    *) printf '127.0.0.1' ;;
+    dev) host="${WA_DEV_RESULTS_HOST:-}" ;;
+    prod) host="${WA_PROD_RESULTS_HOST:-}" ;;
   esac
+
+  host="$(trim_value "$host")"
+  if [[ -z "$host" ]]; then
+    host="127.0.0.1"
+  fi
+
+  printf '%s' "$host"
 }
 
 format_host_port() {
@@ -369,14 +384,6 @@ results_bind_scope() {
     127.0.0.1|localhost|::1) printf 'loopback only' ;;
     *) printf 'listening beyond loopback' ;;
   esac
-}
-
-trim_value() {
-  local value="${1:-}"
-
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  printf '%s' "$value"
 }
 
 url_host_for_dev_tls_san() {
