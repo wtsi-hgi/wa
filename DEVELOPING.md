@@ -172,6 +172,20 @@ wa results register /shared/results/run42 --user alice --workflow nf-pipe --uniq
 
 Use the `Results` / `Results public` line printed by `make dev` for this URL.
 The frontend URL is for the browser UI and is not a results CLI endpoint.
+With the default development ports, that means remote CLI users should use
+`https://<dev-host>:3672`, not `https://<dev-host>:3671`.
+
+If a remote user can log in to the web UI but `wa results register` prompts for
+`Password:` and then returns `authentication failed`, first check the CLI target:
+
+```bash
+env | grep '^WA_RESULTS'
+```
+
+Unset any stale `WA_RESULTS_BACKEND_URL` pointing at the frontend and use
+`WA_RESULTS_SERVER_URL` for the Results API instead. The frontend can log in
+successfully through `/api/auth/login` even when the CLI is pointed at the wrong
+service, because the CLI posts directly to `/rest/v1/jwt`.
 
 If the results API uses the self-signed development certificate created by
 `run-dev.sh`, the user also needs to trust that certificate with `--cert` or

@@ -97,6 +97,14 @@ export WA_RESULTS_SERVER_URL=https://dev-host.example.org:3672
 wa results register /path/to/output --user jdoe --operator jdoe --workflow nf-core/sarek --unique run-001
 ```
 
+Do not point the CLI at the frontend URL or port, even if browser login works
+there. The web UI logs in through its own `/api/auth/login` route, while the CLI
+posts directly to the Results API `/rest/v1/jwt` endpoint. If
+`wa results register` prompts for `Password:` and then reports
+`authentication failed`, check that `WA_RESULTS_SERVER_URL` / `--server` is the
+Results API URL, not the frontend URL. In the default development stack this is
+usually port `3672` for Results, not port `3671` for the frontend.
+
 If the server uses the self-signed development certificate, also pass `--cert`
 or export `WA_RESULTS_SERVER_CERT` pointing at the certificate file they should
 trust. `run-dev.sh` creates that certificate for loopback, the hostnames of the
