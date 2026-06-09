@@ -596,7 +596,60 @@ func (r *resultsServeMLWHRuntime) Close() error {
 	return errors.Join(closeErrs...)
 }
 
-func resultsRegisterAuthenticatedRequest(serverURL, certPath, requester string) (*resty.Request, error) {
+func newResultsAuthClientWithServerToken(
+	serverURL string,
+	certPath string,
+	serverTokenBasename string,
+	username ...string,
+) (resultsAuthClient, error) {
+	addr, err := resultsAuthAddr(serverURL)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := resultsNewClientCLI(
+		resultsJWTBasename,
+		serverTokenBasename,
+		addr,
+		effectiveResultsCertPath(certPath),
+		false,
+		username...,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &permissionCheckingResultsAuthClient{
+		client:              client,
+		jwtBasename:         resultsJWTBasename,
+		serverTokenBasename: serverTokenBasename,
+	}, nil
+}
+
+func resultsRegisterPasswordAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
+	serverTokenPath, err := unavailableResultsServerTokenPath()
+	if err != nil {
+		return nil, err
+	}
+
+	authClient, err := newResultsAuthClientWithServerToken(serverURL, certPath, serverTokenPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return authClient.AuthenticatedRequest()
+}
+
+func unavailableResultsServerTokenPath() (string, error) {
+	tokenDir, err := gas.TokenDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(tokenDir, fmt.Sprintf("%s.disabled.%d", resultsServerTokenBasename, time.Now().UnixNano())), nil
+}
+
+func resultsRegisterAuthenticatedRequest(serverURL, certPath string) (*resty.Request, error) {
 	authClient, err := resultsNewAuthClient(serverURL, certPath)
 	if err != nil {
 		return nil, err
@@ -604,20 +657,15 @@ func resultsRegisterAuthenticatedRequest(serverURL, certPath, requester string) 
 
 	if authClient.CanReadServerToken() {
 		if ownerClient, ok := authClient.(resultsOwnerAuthClient); ok {
-			return ownerClient.OwnerAuthenticatedRequest()
+			request, err := ownerClient.OwnerAuthenticatedRequest()
+			if err == nil || !errors.Is(err, gas.ErrNoAuth) {
+				return request, err
+			}
+
+			return resultsRegisterPasswordAuthenticatedRequest(serverURL, certPath)
 		}
 
 		return authClient.AuthenticatedRequest()
-	}
-
-	loginUsername := strings.TrimSpace(requester)
-	if loginUsername == "" {
-		return authClient.AuthenticatedRequest()
-	}
-
-	authClient, err = resultsNewAuthClient(serverURL, certPath, loginUsername)
-	if err != nil {
-		return nil, err
 	}
 
 	return authClient.AuthenticatedRequest()
@@ -919,28 +967,7 @@ type resultsOwnerAuthClient interface {
 }
 
 func newResultsAuthClient(serverURL string, certPath string, username ...string) (resultsAuthClient, error) {
-	addr, err := resultsAuthAddr(serverURL)
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := resultsNewClientCLI(
-		resultsJWTBasename,
-		resultsServerTokenBasename,
-		addr,
-		effectiveResultsCertPath(certPath),
-		false,
-		username...,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return &permissionCheckingResultsAuthClient{
-		client:              client,
-		jwtBasename:         resultsJWTBasename,
-		serverTokenBasename: resultsServerTokenBasename,
-	}, nil
+	return newResultsAuthClientWithServerToken(serverURL, certPath, resultsServerTokenBasename, username...)
 }
 
 type permissionCheckingResultsAuthClient struct {
@@ -1407,7 +1434,7 @@ func registerResults(ctx context.Context, serverURL string, certPath string, reg
 		return nil, fmt.Errorf("marshal registration request: %w", err)
 	}
 
-	request, err := resultsRegisterAuthenticatedRequest(serverURL, certPath, registration.Requester)
+	request, err := resultsRegisterAuthenticatedRequest(serverURL, certPath)
 	if err != nil {
 		return nil, err
 	}
