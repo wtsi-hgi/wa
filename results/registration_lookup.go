@@ -360,7 +360,7 @@ func resolveRegistrationSample(ctx context.Context, resolver RegistrationResolve
 		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
 			return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
 		}
-		if !errors.Is(err, mlwh.ErrNotFound) {
+		if !errors.Is(err, mlwh.ErrNotFound) && !errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
 			return mlwh.Match{}, fmt.Errorf("resolve --sample %q: %w", value, err)
 		}
 	}

@@ -376,6 +376,60 @@ func (m *mockSearchExpander) ResolveLibraryIdentifier(ctx context.Context, raw s
 	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
+func TestResolveRegistrationSample(t *testing.T) {
+	convey.Convey("Given the sample-name fast path is unsupported, resolveRegistrationSample falls back to broad sample resolution", t, func() {
+		sampleNameCalls := []string{}
+		broadSampleCalls := []string{}
+		resolver := &mockSearchExpander{
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				sampleNameCalls = append(sampleNameCalls, raw)
+
+				return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
+			},
+			sampleFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				broadSampleCalls = append(broadSampleCalls, raw)
+
+				return mlwh.Match{
+					Kind:      mlwh.KindSupplierName,
+					Canonical: "7607STDY14643771",
+					Sample: &mlwh.Sample{
+						Name:         "7607STDY14643771",
+						SupplierName: raw,
+					},
+				}, nil
+			},
+		}
+
+		match, err := resolveRegistrationSample(context.Background(), resolver, "Hek_R1")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(match.Kind, convey.ShouldEqual, mlwh.KindSupplierName)
+		convey.So(match.Canonical, convey.ShouldEqual, "7607STDY14643771")
+		convey.So(sampleNameCalls, convey.ShouldResemble, []string{"Hek_R1"})
+		convey.So(broadSampleCalls, convey.ShouldResemble, []string{"Hek_R1"})
+	})
+
+	convey.Convey("Given the sample-name fast path reports an unsynced cache, resolveRegistrationSample keeps it as a hard error", t, func() {
+		broadSampleCalls := 0
+		resolver := &mockSearchExpander{
+			sampleNameFunc: func(context.Context, string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrCacheNeverSynced
+			},
+			sampleFunc: func(context.Context, string) (mlwh.Match, error) {
+				broadSampleCalls++
+
+				return mlwh.Match{}, errors.New("broad sample resolver should not run")
+			},
+		}
+
+		_, err := resolveRegistrationSample(context.Background(), resolver, "Hek_R1")
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, mlwh.ErrCacheNeverSynced), convey.ShouldBeTrue)
+		convey.So(broadSampleCalls, convey.ShouldEqual, 0)
+	})
+}
+
 func mustRegistrationLookupBodyForTest(t *testing.T, reg *Registration, lookupValues map[string][]string) []byte {
 	t.Helper()
 
