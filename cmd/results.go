@@ -671,6 +671,31 @@ func resultsRegisterAuthenticatedRequest(serverURL, certPath string) (*resty.Req
 	return authClient.AuthenticatedRequest()
 }
 
+func defaultResultsBackendServerURL() string {
+	backendURL := strings.TrimSpace(firstEnv("WA_RESULTS_BACKEND_URL"))
+	if backendURL == "" {
+		return ""
+	}
+
+	// WA_RESULTS_BACKEND_URL is for the frontend and may include a path prefix,
+	// but CLI auth defaults must be an origin accepted by go-authserver.
+	return resultsServerURLOrigin(backendURL)
+}
+
+func resultsServerURLOrigin(rawURL string) string {
+	endpoint, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
+		return ""
+	}
+
+	origin := (&url.URL{Scheme: endpoint.Scheme, Host: endpoint.Host}).String()
+	if _, err := resultsAuthAddr(origin); err != nil {
+		return ""
+	}
+
+	return origin
+}
+
 func resultsRegisterLookupPayload(values results.RegistrationLookupValues) *results.RegistrationLookupValues {
 	payload := results.RegistrationLookupValues{
 		Run:     nonEmptyRegisterLookupValues(values.Run),
@@ -1786,7 +1811,7 @@ func defaultResultsServerURL() string {
 		return serverURL
 	}
 
-	if backendURL := strings.TrimSpace(firstEnv("WA_RESULTS_BACKEND_URL")); backendURL != "" {
+	if backendURL := defaultResultsBackendServerURL(); backendURL != "" {
 		return backendURL
 	}
 
