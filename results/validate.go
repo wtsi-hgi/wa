@@ -186,7 +186,6 @@ func (v *SeqmetaValidator) validateIdentifier(ctx context.Context, identifier, e
 
 func validateTrackedFiles(files []FileEntry) error {
 	seenPaths := make(map[string]struct{}, len(files))
-	seenResolvedPaths := make(map[string]string, len(files))
 
 	for _, file := range files {
 		trimmedPath := strings.TrimSpace(file.Path)
@@ -203,14 +202,6 @@ func validateTrackedFiles(files []FileEntry) error {
 			return fmt.Errorf("%w: duplicate file path %q", ErrInvalidInput, file.Path)
 		}
 		seenPaths[cleanPath] = struct{}{}
-
-		if resolvedPath, resolved := resolveExistingPath(cleanPath); resolved {
-			if existingPath, seen := seenResolvedPaths[resolvedPath]; seen {
-				return fmt.Errorf("%w: duplicate file target %q via %q", ErrInvalidInput, file.Path, existingPath)
-			}
-
-			seenResolvedPaths[resolvedPath] = cleanPath
-		}
 
 		if _, ok := validFileKinds[file.Kind]; !ok {
 			return fmt.Errorf("%w: invalid file kind %q", ErrInvalidInput, file.Kind)
@@ -255,10 +246,7 @@ func validateOutputFilesWithinDirectory(outputDirectory string, files []FileEntr
 
 		resolvedParentPath, parentResolved := resolveExistingPath(filepath.Dir(absPath))
 		if !baseResolved || !parentResolved || pathWithinDirectory(resolvedBasePath, resolvedParentPath) {
-			resolvedFilePath, fileResolved := resolveExistingPath(absPath)
-			if !baseResolved || !fileResolved || pathWithinDirectory(resolvedBasePath, resolvedFilePath) {
-				continue
-			}
+			continue
 		}
 
 		return fmt.Errorf("%w: output file %q is outside output directory %q", ErrInvalidInput, file.Path, outputDirectory)

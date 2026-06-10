@@ -52,6 +52,38 @@ func TestSeqmetaMetadataValueKeys(t *testing.T) {
 	})
 }
 
+func TestValidateRegistrationAcceptsFileSymlinkPathsUnderOutputDirectory(t *testing.T) {
+	convey.Convey("ValidateRegistration accepts output file symlinks whose registered paths are under the output directory", t, func() {
+		outputDir := t.TempDir()
+		externalDir := t.TempDir()
+		externalFile := filepath.Join(externalDir, "external.txt")
+		linkPath := filepath.Join(outputDir, "cnmf", "k_10", "params.yaml")
+
+		convey.So(os.WriteFile(externalFile, []byte("data"), 0o644), convey.ShouldBeNil)
+		convey.So(os.MkdirAll(filepath.Dir(linkPath), 0o755), convey.ShouldBeNil)
+		convey.So(os.Symlink(externalFile, linkPath), convey.ShouldBeNil)
+
+		reg := &Registration{
+			PipelineIdentifier: "pipe",
+			RunKey:             "runid=48522",
+			Requester:          "alice",
+			PipelineName:       "nf-pipe",
+			PipelineVersion:    "1.2.3",
+			OutputDirectory:    outputDir,
+			Files: []FileEntry{{
+				Path:  linkPath,
+				Mtime: time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC),
+				Size:  4,
+				Kind:  "output",
+			}},
+		}
+
+		err := ValidateRegistration(reg)
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
 type seqmetaResponseForTest struct {
 	status int
 	body   string
@@ -232,38 +264,6 @@ func TestValidateRegistrationRejectsDirectorySymlinkEscapes(t *testing.T) {
 			OutputDirectory:    outputDir,
 			Files: []FileEntry{{
 				Path:  filepath.Join(outputDir, "escape", "external.txt"),
-				Mtime: time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC),
-				Size:  4,
-				Kind:  "output",
-			}},
-		}
-
-		err := ValidateRegistration(reg)
-
-		convey.So(errors.Is(err, ErrInvalidInput), convey.ShouldBeTrue)
-		convey.So(err.Error(), convey.ShouldContainSubstring, "outside output directory")
-	})
-}
-
-func TestValidateRegistrationRejectsFileSymlinkEscapes(t *testing.T) {
-	convey.Convey("ValidateRegistration rejects output file symlinks whose resolved targets are outside the output directory", t, func() {
-		outputDir := t.TempDir()
-		externalDir := t.TempDir()
-		externalFile := filepath.Join(externalDir, "external.txt")
-		linkPath := filepath.Join(outputDir, "link.txt")
-
-		convey.So(os.WriteFile(externalFile, []byte("data"), 0o644), convey.ShouldBeNil)
-		convey.So(os.Symlink(externalFile, linkPath), convey.ShouldBeNil)
-
-		reg := &Registration{
-			PipelineIdentifier: "pipe",
-			RunKey:             "runid=48522",
-			Requester:          "alice",
-			PipelineName:       "nf-pipe",
-			PipelineVersion:    "1.2.3",
-			OutputDirectory:    outputDir,
-			Files: []FileEntry{{
-				Path:  linkPath,
 				Mtime: time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC),
 				Size:  4,
 				Kind:  "output",

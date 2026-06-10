@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -652,6 +653,39 @@ func TestStoreUpsert(t *testing.T) {
 		convey.So(searchResults, convey.ShouldHaveLength, 1)
 		convey.So(searchResults[0].OutputDirectoryGID, convey.ShouldNotBeNil)
 		convey.So(*searchResults[0].OutputDirectoryGID, convey.ShouldEqual, gid)
+	})
+
+	convey.Convey("Given symlinked output files under the result root, Upsert stores each registered path without target deduplication", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+		outputDir := t.TempDir()
+		targetDir := t.TempDir()
+		targetPath := filepath.Join(targetDir, "params.yaml")
+		firstLinkPath := filepath.Join(outputDir, "cnmf", "k_10", "cnmf_tmp", "params.yaml")
+		secondLinkPath := filepath.Join(outputDir, "cnmf", "k_11", "cnmf_tmp", "params.yaml")
+
+		convey.So(os.WriteFile(targetPath, []byte("alpha: beta\n"), 0o644), convey.ShouldBeNil)
+		convey.So(os.MkdirAll(filepath.Dir(firstLinkPath), 0o755), convey.ShouldBeNil)
+		convey.So(os.MkdirAll(filepath.Dir(secondLinkPath), 0o755), convey.ShouldBeNil)
+		convey.So(os.Symlink(targetPath, firstLinkPath), convey.ShouldBeNil)
+		convey.So(os.Symlink(targetPath, secondLinkPath), convey.ShouldBeNil)
+
+		reg := testRegistration()
+		reg.OutputDirectory = outputDir
+		reg.Files = []FileEntry{
+			{Path: firstLinkPath, Mtime: time.Date(2026, time.June, 10, 10, 0, 0, 0, time.UTC), Size: 12, Kind: "output"},
+			{Path: secondLinkPath, Mtime: time.Date(2026, time.June, 10, 10, 1, 0, 0, time.UTC), Size: 12, Kind: "output"},
+		}
+
+		result, err := store.Upsert(ctx, reg)
+		convey.So(err, convey.ShouldBeNil)
+
+		files, err := store.GetFiles(ctx, result.ID)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(files, convey.ShouldResemble, []FileEntry{
+			{Path: firstLinkPath, Mtime: time.Date(2026, time.June, 10, 10, 0, 0, 0, time.UTC), Size: 12, Kind: "output"},
+			{Path: secondLinkPath, Mtime: time.Date(2026, time.June, 10, 10, 1, 0, 0, time.UTC), Size: 12, Kind: "output"},
+		})
 	})
 }
 
