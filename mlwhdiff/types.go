@@ -23,10 +23,36 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package seqmeta
+package mlwhdiff
 
-import "testing"
+import (
+	"database/sql"
+	"errors"
+	"sync"
+	"time"
+)
 
-func TestSeqmetaLiveIntegrationPlaceholder(t *testing.T) {
-	t.Skip("live seqmeta integration coverage is not part of D1 and will be restored against mlwh later in Phase 4")
+var (
+	ErrStoreOpen      = errors.New("mlwhdiff: failed to open store")
+	errStoreOperation = errors.New("mlwhdiff: store operation failed")
+)
+
+// Store persists mlwhdiff watermark state in SQLite.
+type Store struct {
+	db *sql.DB
+	mu sync.Mutex
+}
+
+// StoredEntry is one row in the watermarks table.
+type StoredEntry struct {
+	EntryHash string
+	Tombstone bool
+	UpdatedAt time.Time
+}
+
+// DiffResult holds the result of a diff poll.
+type DiffResult[T any] struct {
+	Added    []T      `json:"added"`
+	Modified []T      `json:"modified"`
+	Removed  []string `json:"removed"`
 }

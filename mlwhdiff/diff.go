@@ -23,7 +23,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package seqmeta
+package mlwhdiff
 
 import (
 	"context"
@@ -106,10 +106,10 @@ func Diff[T any](
 // DiffStudies fetches and diffs the full study list.
 func DiffStudies(
 	ctx context.Context,
-	provider Provider,
+	source DiffSource,
 	store *Store,
 ) (*DiffResult[mlwh.Study], error) {
-	studies, err := listAllStudies(ctx, provider)
+	studies, err := listAllStudies(ctx, source)
 	if err != nil {
 		return nil, err
 	}
@@ -140,10 +140,10 @@ func DiffStudies(
 // PrepareDiffStudies fetches and computes a deferred diff for the full study list.
 func PrepareDiffStudies(
 	ctx context.Context,
-	provider Provider,
+	source DiffSource,
 	store *Store,
 ) (*PreparedDiff[mlwh.Study], error) {
-	studies, err := listAllStudies(ctx, provider)
+	studies, err := listAllStudies(ctx, source)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +158,249 @@ func prepareDiffStudies(
 	return PrepareDiff(store, "studies:all", studies, func(study mlwh.Study) string {
 		return study.IDStudyLims
 	})
+}
+
+// DiffStudySamples fetches and diffs the samples for one study.
+func DiffStudySamples(
+	ctx context.Context,
+	source DiffSource,
+	store *Store,
+	studyID string,
+) (*DiffResult[mlwh.Sample], error) {
+	samples, err := listStudySamples(ctx, source, studyID)
+	if err != nil {
+		return nil, err
+	}
+
+	var result *DiffResult[mlwh.Sample]
+
+	err = store.WithLock(func() error {
+		prepared, err := prepareDiffStudySamples(store, studyID, samples)
+		if err != nil {
+			return err
+		}
+
+		if err := prepared.Commit(); err != nil {
+			return err
+		}
+
+		result = prepared.Result
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// PrepareDiffStudySamples fetches and computes a deferred diff for one study.
+func PrepareDiffStudySamples(
+	ctx context.Context,
+	source DiffSource,
+	store *Store,
+	studyID string,
+) (*PreparedDiff[mlwh.Sample], error) {
+	samples, err := listStudySamples(ctx, source, studyID)
+	if err != nil {
+		return nil, err
+	}
+
+	return prepareDiffStudySamples(store, studyID, samples)
+}
+
+func prepareDiffStudySamples(
+	store *Store,
+	studyID string,
+	samples []mlwh.Sample,
+) (*PreparedDiff[mlwh.Sample], error) {
+	filtered := make([]mlwh.Sample, 0, len(samples))
+	for _, sample := range samples {
+		filtered = append(filtered, sampleForStudyDiff(sample, studyID))
+	}
+
+	return PrepareDiff(store, "study_samples:"+studyID, filtered, func(sample mlwh.Sample) string {
+		return sample.Name
+	})
+}
+
+func sampleForStudyDiff(sample mlwh.Sample, studyID string) mlwh.Sample {
+	filtered := sample
+	filtered.Studies = filterSampleStudiesForStudy(sample.Studies, studyID)
+	filtered.Libraries = filterSampleLibrariesForStudy(sample.Libraries, studyID)
+
+	return filtered
+}
+
+func filterSampleStudiesForStudy(studies []mlwh.Study, studyID string) []mlwh.Study {
+	if len(studies) == 0 {
+		return nil
+	}
+
+	filtered := make([]mlwh.Study, 0, len(studies))
+	for _, study := range studies {
+		if study.IDStudyLims != studyID {
+			continue
+		}
+
+		filtered = append(filtered, study)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return filtered
+}
+
+func filterSampleLibrariesForStudy(libraries []mlwh.Library, studyID string) []mlwh.Library {
+	if len(libraries) == 0 {
+		return nil
+	}
+
+	filtered := make([]mlwh.Library, 0, len(libraries))
+	for _, library := range libraries {
+		if library.IDStudyLims != studyID {
+			continue
+		}
+
+		filtered = append(filtered, library)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return filtered
+}
+
+// DiffSampleFiles fetches and diffs the files for one sample.
+func DiffSampleFiles(
+	ctx context.Context,
+	source DiffSource,
+	store *Store,
+	sangerID string,
+) (*DiffResult[mlwh.IRODSPath], error) {
+	files, err := listSampleFiles(ctx, source, sangerID)
+	if err != nil {
+		return nil, err
+	}
+
+	var result *DiffResult[mlwh.IRODSPath]
+
+	err = store.WithLock(func() error {
+		prepared, err := prepareDiffSampleFiles(store, sangerID, files)
+		if err != nil {
+			return err
+		}
+
+		if err := prepared.Commit(); err != nil {
+			return err
+		}
+
+		result = prepared.Result
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// PrepareDiffSampleFiles fetches and computes a deferred diff for one sample.
+func PrepareDiffSampleFiles(
+	ctx context.Context,
+	source DiffSource,
+	store *Store,
+	sangerID string,
+) (*PreparedDiff[mlwh.IRODSPath], error) {
+	files, err := listSampleFiles(ctx, source, sangerID)
+	if err != nil {
+		return nil, err
+	}
+
+	return PrepareDiffSampleFilesForList(store, sangerID, files)
+}
+
+// PrepareDiffSampleFilesForList computes a deferred diff from a pre-fetched file list.
+func PrepareDiffSampleFilesForList(
+	store *Store,
+	sangerID string,
+	files []mlwh.IRODSPath,
+) (*PreparedDiff[mlwh.IRODSPath], error) {
+	return prepareDiffSampleFiles(store, sangerID, files)
+}
+
+func prepareDiffSampleFiles(
+	store *Store,
+	sangerID string,
+	files []mlwh.IRODSPath,
+) (*PreparedDiff[mlwh.IRODSPath], error) {
+	queryKey := "sample_files:" + sangerID
+
+	type sampleFileDiffItem struct {
+		Key  string
+		File mlwh.IRODSPath
+	}
+
+	current := make([]sampleFileDiffItem, 0, len(files))
+	for _, file := range files {
+		current = append(current, sampleFileDiffItem{Key: sampleFilePreferredKey(file), File: file})
+	}
+
+	prepared, err := PrepareDiff(store, queryKey, current, func(item sampleFileDiffItem) string {
+		return item.Key
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := &DiffResult[mlwh.IRODSPath]{
+		Added:    make([]mlwh.IRODSPath, 0, len(prepared.Result.Added)),
+		Modified: make([]mlwh.IRODSPath, 0, len(prepared.Result.Modified)),
+		Removed:  make([]string, len(prepared.Result.Removed)),
+	}
+
+	for _, item := range prepared.Result.Added {
+		result.Added = append(result.Added, item.File)
+	}
+
+	for _, item := range prepared.Result.Modified {
+		result.Modified = append(result.Modified, item.File)
+	}
+
+	for index, removed := range prepared.Result.Removed {
+		result.Removed[index] = sampleFileIdentityValue(removed)
+	}
+
+	return &PreparedDiff[mlwh.IRODSPath]{
+		Result:          result,
+		store:           prepared.store,
+		queryKey:        prepared.queryKey,
+		previousEntries: prepared.previousEntries,
+		nextEntries:     prepared.nextEntries,
+	}, nil
+}
+
+func sampleFilePreferredKey(file mlwh.IRODSPath) string {
+	if file.IDProduct != "" {
+		return "id_product:" + file.IDProduct
+	}
+
+	if file.IRODSPath != "" {
+		return "irods_path:" + file.IRODSPath
+	}
+
+	return "irods_path:" + file.Collection + "/" + file.DataObject
+}
+
+func sampleFileIdentityValue(key string) string {
+	if strings.HasPrefix(key, "id_product:") {
+		return strings.TrimPrefix(key, "id_product:")
+	}
+
+	return strings.TrimPrefix(key, "irods_path:")
 }
 
 // PrepareDiff computes a diff and returns a deferred commit step.
@@ -261,255 +504,12 @@ func PrepareDiff[T any](
 	}, nil
 }
 
-// DiffStudySamples fetches and diffs the samples for one study.
-func DiffStudySamples(
-	ctx context.Context,
-	provider Provider,
-	store *Store,
-	studyID string,
-) (*DiffResult[mlwh.Sample], error) {
-	samples, err := listStudySamples(ctx, provider, studyID)
-	if err != nil {
-		return nil, err
-	}
-
-	var result *DiffResult[mlwh.Sample]
-
-	err = store.WithLock(func() error {
-		prepared, err := prepareDiffStudySamples(store, studyID, samples)
-		if err != nil {
-			return err
-		}
-
-		if err := prepared.Commit(); err != nil {
-			return err
-		}
-
-		result = prepared.Result
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-// PrepareDiffStudySamples fetches and computes a deferred diff for one study.
-func PrepareDiffStudySamples(
-	ctx context.Context,
-	provider Provider,
-	store *Store,
-	studyID string,
-) (*PreparedDiff[mlwh.Sample], error) {
-	samples, err := listStudySamples(ctx, provider, studyID)
-	if err != nil {
-		return nil, err
-	}
-
-	return prepareDiffStudySamples(store, studyID, samples)
-}
-
-func prepareDiffStudySamples(
-	store *Store,
-	studyID string,
-	samples []mlwh.Sample,
-) (*PreparedDiff[mlwh.Sample], error) {
-	filtered := make([]mlwh.Sample, 0, len(samples))
-	for _, sample := range samples {
-		filtered = append(filtered, sampleForStudyDiff(sample, studyID))
-	}
-
-	return PrepareDiff(store, "study_samples:"+studyID, filtered, func(sample mlwh.Sample) string {
-		return sample.Name
-	})
-}
-
-func sampleForStudyDiff(sample mlwh.Sample, studyID string) mlwh.Sample {
-	filtered := sample
-	filtered.Studies = filterSampleStudiesForStudy(sample.Studies, studyID)
-	filtered.Libraries = filterSampleLibrariesForStudy(sample.Libraries, studyID)
-
-	return filtered
-}
-
-func filterSampleStudiesForStudy(studies []mlwh.Study, studyID string) []mlwh.Study {
-	if len(studies) == 0 {
-		return nil
-	}
-
-	filtered := make([]mlwh.Study, 0, len(studies))
-	for _, study := range studies {
-		if study.IDStudyLims != studyID {
-			continue
-		}
-
-		filtered = append(filtered, study)
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-
-	return filtered
-}
-
-func filterSampleLibrariesForStudy(libraries []mlwh.Library, studyID string) []mlwh.Library {
-	if len(libraries) == 0 {
-		return nil
-	}
-
-	filtered := make([]mlwh.Library, 0, len(libraries))
-	for _, library := range libraries {
-		if library.IDStudyLims != studyID {
-			continue
-		}
-
-		filtered = append(filtered, library)
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-
-	return filtered
-}
-
-// DiffSampleFiles fetches and diffs the files for one sample.
-func DiffSampleFiles(
-	ctx context.Context,
-	provider Provider,
-	store *Store,
-	sangerID string,
-) (*DiffResult[mlwh.IRODSPath], error) {
-	files, err := listSampleFiles(ctx, provider, sangerID)
-	if err != nil {
-		return nil, err
-	}
-
-	var result *DiffResult[mlwh.IRODSPath]
-
-	err = store.WithLock(func() error {
-		prepared, err := prepareDiffSampleFiles(store, sangerID, files)
-		if err != nil {
-			return err
-		}
-
-		if err := prepared.Commit(); err != nil {
-			return err
-		}
-
-		result = prepared.Result
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-// PrepareDiffSampleFiles fetches and computes a deferred diff for one sample.
-func PrepareDiffSampleFiles(
-	ctx context.Context,
-	provider Provider,
-	store *Store,
-	sangerID string,
-) (*PreparedDiff[mlwh.IRODSPath], error) {
-	files, err := listSampleFiles(ctx, provider, sangerID)
-	if err != nil {
-		return nil, err
-	}
-
-	return PrepareDiffSampleFilesForList(store, sangerID, files)
-}
-
-// PrepareDiffSampleFilesForList computes a deferred diff from a pre-fetched file list.
-func PrepareDiffSampleFilesForList(
-	store *Store,
-	sangerID string,
-	files []mlwh.IRODSPath,
-) (*PreparedDiff[mlwh.IRODSPath], error) {
-	return prepareDiffSampleFiles(store, sangerID, files)
-}
-
-func prepareDiffSampleFiles(
-	store *Store,
-	sangerID string,
-	files []mlwh.IRODSPath,
-) (*PreparedDiff[mlwh.IRODSPath], error) {
-	queryKey := "sample_files:" + sangerID
-
-	type sampleFileDiffItem struct {
-		Key  string
-		File mlwh.IRODSPath
-	}
-
-	current := make([]sampleFileDiffItem, 0, len(files))
-	for _, file := range files {
-		current = append(current, sampleFileDiffItem{Key: sampleFilePreferredKey(file), File: file})
-	}
-
-	prepared, err := PrepareDiff(store, queryKey, current, func(item sampleFileDiffItem) string {
-		return item.Key
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	result := &DiffResult[mlwh.IRODSPath]{
-		Added:    make([]mlwh.IRODSPath, 0, len(prepared.Result.Added)),
-		Modified: make([]mlwh.IRODSPath, 0, len(prepared.Result.Modified)),
-		Removed:  make([]string, len(prepared.Result.Removed)),
-	}
-
-	for _, item := range prepared.Result.Added {
-		result.Added = append(result.Added, item.File)
-	}
-
-	for _, item := range prepared.Result.Modified {
-		result.Modified = append(result.Modified, item.File)
-	}
-
-	for index, removed := range prepared.Result.Removed {
-		result.Removed[index] = sampleFileIdentityValue(removed)
-	}
-
-	return &PreparedDiff[mlwh.IRODSPath]{
-		Result:          result,
-		store:           prepared.store,
-		queryKey:        prepared.queryKey,
-		previousEntries: prepared.previousEntries,
-		nextEntries:     prepared.nextEntries,
-	}, nil
-}
-
-func sampleFileIdentityValue(key string) string {
-	if strings.HasPrefix(key, "id_product:") {
-		return strings.TrimPrefix(key, "id_product:")
-	}
-
-	return strings.TrimPrefix(key, "irods_path:")
-}
-
-func sampleFilePreferredKey(file mlwh.IRODSPath) string {
-	if file.IDProduct != "" {
-		return "id_product:" + file.IDProduct
-	}
-
-	if file.IRODSPath != "" {
-		return "irods_path:" + file.IRODSPath
-	}
-
-	return "irods_path:" + file.Collection + "/" + file.DataObject
-}
-
 func hashItems[T any](items []T) (string, error) {
 	serialized := make([]string, 0, len(items))
 	for _, item := range items {
 		body, err := json.Marshal(item)
 		if err != nil {
-			return "", fmt.Errorf("seqmeta: marshal hash item: %w", err)
+			return "", fmt.Errorf("mlwhdiff: marshal hash item: %w", err)
 		}
 
 		serialized = append(serialized, string(body))

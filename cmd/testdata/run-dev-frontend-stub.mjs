@@ -20,7 +20,7 @@ fs.writeFileSync(
                 process.env.WA_RESULTS_BACKEND_CA_CERT ?? "",
             WA_RESULTS_SERVER_CERT: process.env.WA_RESULTS_SERVER_CERT ?? "",
             WA_RESULTS_SERVER_KEY: process.env.WA_RESULTS_SERVER_KEY ?? "",
-            WA_SEQMETA_BACKEND_URL: process.env.WA_SEQMETA_BACKEND_URL ?? "",
+            WA_MLWH_BACKEND_URL: process.env.WA_MLWH_BACKEND_URL ?? "",
             WA_RESULTS_DB_PATH: process.env.WA_RESULTS_DB_PATH ?? "",
             WA_MLWH_CACHE_PATH: process.env.WA_MLWH_CACHE_PATH ?? "",
             WA_DEV_ALLOWED_ORIGINS: process.env.WA_DEV_ALLOWED_ORIGINS ?? "",

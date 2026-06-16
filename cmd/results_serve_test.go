@@ -49,7 +49,7 @@ import (
 )
 
 func TestResultsServeCommandNoSeqmetaFlags(t *testing.T) {
-	t.Setenv("WA_SEQMETA_BACKEND_URL", "http://seqmeta.example")
+	t.Setenv("WA_MLWH_BACKEND_URL", "http://seqmeta.example")
 
 	command := newResultsServeCommand()
 

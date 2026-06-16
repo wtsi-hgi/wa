@@ -23,57 +23,27 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package seqmeta
+package mlwhdiff
 
 import (
 	"context"
-	"errors"
 
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-// Validate classifies a sequencing identifier via the MLWH resolver surface.
-func Validate(ctx context.Context, provider Provider, identifier string) (*IdentifierResult, error) {
-	if identifier == "" {
-		return nil, ErrUnknownIdentifier
-	}
+const providerFetchLimit = 1_000_000
 
-	match, err := provider.ClassifyIdentifier(ctx, identifier)
-	if err != nil {
-		switch {
-		case errors.Is(err, mlwh.ErrCacheNeverSynced):
-			return nil, errors.Join(fmtUnknownIdentifier(identifier), err)
-		case errors.Is(err, mlwh.ErrNotFound):
-			return nil, fmtUnknownIdentifier(identifier)
-		case errors.Is(err, mlwh.ErrUnsupportedIdentifier):
-			return nil, err
-		default:
-			return nil, err
-		}
-	}
+// DiffSource is the MLWH query surface used by mlwhdiff.
+type DiffSource = mlwh.Queryer
 
-	return &IdentifierResult{
-		Identifier: match.Canonical,
-		Type:       IdentifierType(match.Kind),
-		Object:     matchObject(match),
-	}, nil
+func listAllStudies(ctx context.Context, source DiffSource) ([]mlwh.Study, error) {
+	return source.AllStudies(ctx, providerFetchLimit, 0)
 }
 
-func fmtUnknownIdentifier(identifier string) error {
-	return errors.Join(ErrUnknownIdentifier, errors.New(identifier))
+func listStudySamples(ctx context.Context, source DiffSource, studyID string) ([]mlwh.Sample, error) {
+	return source.SamplesForStudy(ctx, studyID, providerFetchLimit, 0)
 }
 
-func matchObject(match mlwh.Match) any {
-	switch {
-	case match.Sample != nil:
-		return match.Sample
-	case match.Study != nil:
-		return *match.Study
-	case match.Run != nil:
-		return match.Run
-	case match.Library != nil:
-		return match.Library
-	default:
-		return nil
-	}
+func listSampleFiles(ctx context.Context, source DiffSource, sangerName string) ([]mlwh.IRODSPath, error) {
+	return source.IRODSPathsForSample(ctx, sangerName, providerFetchLimit, 0)
 }

@@ -311,7 +311,7 @@ func newMLWHCommand() *cobra.Command {
 			"wa keeps a mirrored local cache of five MLWH tables (study, sample,",
 			"iseq_flowcell, iseq_product_metrics and",
 			"seq_product_irods_locations) so commands such as 'wa results register' and 'wa",
-			"seqmeta serve' can resolve sample, study, run and library lookups",
+			"mlwhdiff serve' can resolve sample, study, run and library lookups",
 			"without re-querying the upstream MySQL warehouse on every call.",
 			"Use these subcommands to populate and refresh that cache.",
 			"",

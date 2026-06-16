@@ -74,7 +74,7 @@ describe("H1 dual backend client", () => {
     afterEach(() => {
         delete process.env.WA_RESULTS_BACKEND_CA_CERT;
         delete process.env.WA_RESULTS_BACKEND_URL;
-        delete process.env.WA_SEQMETA_BACKEND_URL;
+        delete process.env.WA_MLWH_BACKEND_URL;
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
     });
@@ -192,7 +192,7 @@ describe("H1 dual backend client", () => {
 
         const address = server.address() as AddressInfo;
         process.env.WA_RESULTS_BACKEND_URL = `https://127.0.0.1:${address.port}`;
-        process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
+        process.env.WA_MLWH_BACKEND_URL = "https://seqmeta.example";
         const caPath = path.join(tempDir, "wa-results-ca.pem");
         await writeFile(caPath, testServerCert);
         process.env.WA_RESULTS_BACKEND_CA_CERT = caPath;
@@ -233,7 +233,7 @@ describe("H1 dual backend client", () => {
     });
 
     it("returns validated seqmeta JSON from the configured seqmeta backend", async () => {
-        process.env.WA_SEQMETA_BACKEND_URL = "http://localhost:8091";
+        process.env.WA_MLWH_BACKEND_URL = "http://localhost:8091";
 
         const fetchMock = vi
             .fn()
@@ -251,7 +251,7 @@ describe("H1 dual backend client", () => {
     });
 
     it("preserves a path prefix in the configured seqmeta backend URL", async () => {
-        process.env.WA_SEQMETA_BACKEND_URL = "https://host/seqmeta-api";
+        process.env.WA_MLWH_BACKEND_URL = "https://host/seqmeta-api";
 
         const fetchMock = vi
             .fn()

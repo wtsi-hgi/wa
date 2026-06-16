@@ -11,7 +11,7 @@ describe("integration setup environment", () => {
             HOME: "/tmp/home",
             PATH: "/usr/bin",
             WA_RESULTS_BACKEND_URL: "http://127.0.0.1:9999",
-            WA_SEQMETA_BACKEND_URL: "http://127.0.0.1:3673",
+            WA_MLWH_BACKEND_URL: "http://127.0.0.1:3673",
         });
 
         expect(env).toMatchObject({
@@ -19,7 +19,7 @@ describe("integration setup environment", () => {
             PATH: "/usr/bin",
             WA_RESULTS_BACKEND_URL: "http://127.0.0.1:9999",
         });
-        expect(env.WA_SEQMETA_BACKEND_URL).toBeUndefined();
+        expect(env.WA_MLWH_BACKEND_URL).toBeUndefined();
     });
 
     it("stops the spawned results server process group so child listeners do not leak", async () => {

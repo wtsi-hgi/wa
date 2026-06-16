@@ -26,8 +26,8 @@ rename the persisted `seqmeta_*` metadata-key prefix in `results`/
 `frontend`. Rename existing tests. Covering all 5 acceptance tests from
 D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.2: D2 - narrowed provider and deleted current-state code
 
@@ -46,8 +46,8 @@ acceptance tests from D2.
 
 Depends on Item 5.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.3: D3 - mlwhdiff server on gin, diff routes only
 
@@ -61,8 +61,8 @@ acceptance tests from D3.
 
 Depends on Item 5.2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.4: E3 - mlwhdiff serve and CLI wiring selects local or remote mlwh
 
@@ -75,5 +75,5 @@ Tests in `cmd/mlwhdiff_test.go`. Covering all 3 acceptance tests from E3.
 
 Depends on Items 5.1-5.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

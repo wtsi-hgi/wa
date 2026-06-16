@@ -143,7 +143,7 @@ async function renderDashboard(
 describe("J1 dashboard with search builder and recent results", () => {
     afterEach(() => {
         document.body.innerHTML = "";
-        delete process.env.WA_SEQMETA_BACKEND_URL;
+        delete process.env.WA_MLWH_BACKEND_URL;
         vi.clearAllMocks();
         fetchFilesMock.mockResolvedValue([]);
         vi.resetModules();
@@ -278,7 +278,7 @@ describe("J1 dashboard with search builder and recent results", () => {
     it("starts loading filter metadata before stats resolves without live study lookup", async () => {
         const statsPending = deferred<StatsResult>();
 
-        process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
+        process.env.WA_MLWH_BACKEND_URL = "https://seqmeta.example";
         fetchStatsMock.mockReturnValue(statsPending.promise);
         fetchMetaKeysMock.mockResolvedValue([]);
         fetchStudiesMock.mockResolvedValue([]);
@@ -296,11 +296,11 @@ describe("J1 dashboard with search builder and recent results", () => {
         statsPending.resolve(buildStats());
         await pagePromise;
 
-        delete process.env.WA_SEQMETA_BACKEND_URL;
+        delete process.env.WA_MLWH_BACKEND_URL;
     });
 
     it("does not block the landing page on slow live study suggestions", async () => {
-        process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
+        process.env.WA_MLWH_BACKEND_URL = "https://seqmeta.example";
         fetchStatsMock.mockResolvedValue(buildStats());
         fetchMetaKeysMock.mockResolvedValue([]);
         fetchStudiesMock.mockReturnValue(deferred().promise);
@@ -320,7 +320,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(markup).toContain("Latest result sets");
         expect(markup).not.toContain("Recent registrations");
 
-        delete process.env.WA_SEQMETA_BACKEND_URL;
+        delete process.env.WA_MLWH_BACKEND_URL;
     });
 
     it("derives non-study filter suggestions from loaded result data", async () => {
@@ -452,7 +452,7 @@ describe("J1 dashboard with search builder and recent results", () => {
     });
 
     it("keeps study filters usable without loading live study suggestions", async () => {
-        process.env.WA_SEQMETA_BACKEND_URL = "https://seqmeta.example";
+        process.env.WA_MLWH_BACKEND_URL = "https://seqmeta.example";
         fetchStatsMock.mockResolvedValue(buildStats());
         fetchStudiesMock.mockResolvedValue([
             { id_study_lims: "6568", name: "RNA Seq" },

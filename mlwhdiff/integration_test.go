@@ -23,51 +23,10 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package seqmeta
+package mlwhdiff
 
-import (
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
-	"testing"
+import "testing"
 
-	"github.com/smartystreets/goconvey/convey"
-)
-
-func TestSeqmetaSourceHasNoRemovedImports(t *testing.T) {
-	convey.Convey("D1: seqmeta source carries no removed upstream imports after the provider swap", t, func() {
-		_, thisFile, _, ok := runtime.Caller(0)
-		convey.So(ok, convey.ShouldBeTrue)
-
-		dir := filepath.Dir(thisFile)
-		entries, err := os.ReadDir(dir)
-		convey.So(err, convey.ShouldBeNil)
-
-		fset := token.NewFileSet()
-		offenders := make([]string, 0)
-		targetImport := "\"github.com/wtsi-hgi/wa/" + "s" + "aga\""
-
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
-				continue
-			}
-
-			path := filepath.Join(dir, entry.Name())
-			file, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-			convey.So(parseErr, convey.ShouldBeNil)
-
-			for _, imported := range file.Imports {
-				if imported.Path == nil || imported.Path.Value != targetImport {
-					continue
-				}
-
-				offenders = append(offenders, filepath.Base(path))
-			}
-		}
-
-		convey.So(offenders, convey.ShouldBeEmpty)
-	})
+func TestMLWHDiffLiveIntegrationPlaceholder(t *testing.T) {
+	t.Skip("live mlwhdiff integration coverage is not part of D1 and will be restored against mlwh later in Phase 4")
 }

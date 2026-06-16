@@ -38,7 +38,7 @@ const seedPath = path.join(
 export function buildResultsServerEnv(env: EnvLike): EnvLike {
     const serverEnv = { ...env };
 
-    delete serverEnv.WA_SEQMETA_BACKEND_URL;
+    delete serverEnv.WA_MLWH_BACKEND_URL;
 
     return serverEnv;
 }

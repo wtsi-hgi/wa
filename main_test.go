@@ -19,7 +19,7 @@ func TestRewriteLegacyInspectArgs(t *testing.T) {
 	convey.Convey("explicit subcommands and flags are left unchanged", t, func() {
 		convey.So(rewriteLegacyInspectArgs([]string{"results", "search"}), convey.ShouldResemble, []string{"results", "search"})
 		convey.So(rewriteLegacyInspectArgs([]string{"--help"}), convey.ShouldResemble, []string{"--help"})
-		convey.So(rewriteLegacyInspectArgs([]string{"seqmeta"}), convey.ShouldResemble, []string{"seqmeta"})
+		convey.So(rewriteLegacyInspectArgs([]string{"mlwhdiff"}), convey.ShouldResemble, []string{"mlwhdiff"})
 		convey.So(rewriteLegacyInspectArgs([]string{"delete"}), convey.ShouldResemble, []string{"delete"})
 	})
 }

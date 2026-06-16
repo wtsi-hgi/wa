@@ -1106,7 +1106,7 @@ else
 fi
 
 export WA_RESULTS_BACKEND_URL="https://127.0.0.1:$results_port"
-unset WA_SEQMETA_BACKEND_URL
+unset WA_MLWH_BACKEND_URL
 
 RESULTS_STARTED=0
 SEQMETA_STARTED=0
@@ -1157,13 +1157,13 @@ else
 fi
 
 if [[ -n "$SEQMETA_CMD" ]]; then
-  export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
+  export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
-    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL" >"$SEQMETA_LOG"
+    printf 'Reusing existing seqmeta server on %s\n' "$WA_MLWH_BACKEND_URL"
+    printf 'Reusing existing seqmeta server on %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
   else
-    printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
+    printf 'Starting seqmeta server on %s\n' "$WA_MLWH_BACKEND_URL"
     WA_RUN_DEV_SEQMETA_CMD="$SEQMETA_CMD" \
       bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"' \
       >>"$SEQMETA_LOG" 2>&1 &
@@ -1177,14 +1177,14 @@ if [[ -n "$SEQMETA_CMD" ]]; then
     wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
 elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
-  export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
+  export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
-    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL" >"$SEQMETA_LOG"
+    printf 'Reusing existing seqmeta server on %s\n' "$WA_MLWH_BACKEND_URL"
+    printf 'Reusing existing seqmeta server on %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
   else
-    printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-    seqmeta_args=(seqmeta serve --port "$seqmeta_port")
+    printf 'Starting seqmeta server on %s\n' "$WA_MLWH_BACKEND_URL"
+    seqmeta_args=(mlwh serve --port "$seqmeta_port")
     "${BIN_PATH}" "${seqmeta_args[@]}" >"$SEQMETA_LOG" 2>&1 &
     PIDS+=("$!")
     SEQMETA_STARTED=1
@@ -1227,8 +1227,8 @@ if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
 elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
   printf 'Results public: not configured (set WA_RESULTS_SERVER_URL to the reachable HTTPS URL for remote CLI users)\n'
 fi
-if [[ -n "${WA_SEQMETA_BACKEND_URL:-}" ]]; then
-  printf 'Seqmeta: %s\n' "$WA_SEQMETA_BACKEND_URL"
+if [[ -n "${WA_MLWH_BACKEND_URL:-}" ]]; then
+  printf 'Seqmeta: %s\n' "$WA_MLWH_BACKEND_URL"
 fi
 printf 'Frontend: https://127.0.0.1:%s\n' "$frontend_port"
 printf 'Logs: %s\n' "$LOG_DIR"

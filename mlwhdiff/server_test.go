@@ -23,14 +23,14 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package seqmeta
+package mlwhdiff
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
@@ -38,103 +38,45 @@ import (
 )
 
 func TestServerEndpoints(t *testing.T) {
-	store, err := OpenStore(":memory:")
-	if err != nil {
-		t.Fatalf("OpenStore: %v", err)
-	}
-	defer func() { _ = store.Close() }()
+	convey.Convey("D3: current-state routes are absent", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
 
-	convey.Convey("list studies endpoint uses the mlwh-backed provider surface", t, func() {
-		provider := &MockProvider{
-			AllStudiesFunc: func(_ context.Context, limit, offset int) ([]mlwh.Study, error) {
-				convey.So(limit, convey.ShouldBeGreaterThan, 0)
-				convey.So(offset, convey.ShouldEqual, 0)
-				return []mlwh.Study{{IDStudyLims: "6568", Name: "Study 6568"}}, nil
-			},
+		server := NewServer(&MockProvider{}, store)
+		noGraphPath := "/en" + "rich/x"
+		requests := []*http.Request{
+			httptest.NewRequest(http.MethodGet, "/studies", nil),
+			httptest.NewRequest(http.MethodGet, "/study/6568/samples", nil),
+			httptest.NewRequest(http.MethodGet, "/validate/x", nil),
+			httptest.NewRequest(http.MethodGet, noGraphPath, nil),
+			httptest.NewRequest(http.MethodDelete, noGraphPath, nil),
 		}
-		server := NewServer(provider, store)
 
-		request := httptest.NewRequest(http.MethodGet, "/studies", nil)
-		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
-
-		var studies []mlwh.Study
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &studies), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(studies, convey.ShouldHaveLength, 1)
-		convey.So(studies[0].IDStudyLims, convey.ShouldEqual, "6568")
-	})
-
-	convey.Convey("study samples endpoint can filter by library_type", t, func() {
-		provider := &MockProvider{
-			AllSamplesForStudyFunc: func(_ context.Context, studyID string) ([]mlwh.Sample, error) {
-				convey.So(studyID, convey.ShouldEqual, "6568")
-				return []mlwh.Sample{
-					serverStudySample("6568", "S1", "RNA PolyA"),
-					serverStudySample("6568", "S2", "PCR free"),
-				}, nil
-			},
+		notFoundCount := 0
+		for _, request := range requests {
+			recorder := httptest.NewRecorder()
+			server.Handler().ServeHTTP(recorder, request)
+			if recorder.Code == http.StatusNotFound {
+				notFoundCount++
+			}
 		}
-		server := NewServer(provider, store)
 
-		request := httptest.NewRequest(http.MethodGet, "/study/6568/samples?library_type=RNA+PolyA", nil)
-		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
-
-		var samples []mlwh.Sample
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &samples), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].Libraries, convey.ShouldResemble, []mlwh.Library{{PipelineIDLims: "RNA PolyA", IDStudyLims: "6568"}})
-	})
-
-	convey.Convey("Bug 1: study samples endpoint filters library_type within the requested study", t, func() {
-		provider := &MockProvider{
-			AllSamplesForStudyFunc: func(_ context.Context, studyID string) ([]mlwh.Sample, error) {
-				convey.So(studyID, convey.ShouldEqual, "6568")
-				return []mlwh.Sample{
-					{
-						Name:    "cross-study-library",
-						Studies: []mlwh.Study{{IDStudyLims: "6568"}},
-						Libraries: []mlwh.Library{{
-							PipelineIDLims: "RNA PolyA",
-							IDStudyLims:    "9999",
-						}},
-					},
-					{
-						Name:    "in-study-library",
-						Studies: []mlwh.Study{{IDStudyLims: "6568"}},
-						Libraries: []mlwh.Library{{
-							PipelineIDLims: "RNA PolyA",
-							IDStudyLims:    "6568",
-						}},
-					},
-				}, nil
-			},
-		}
-		server := NewServer(provider, store)
-
-		request := httptest.NewRequest(http.MethodGet, "/study/6568/samples?library_type=RNA+PolyA", nil)
-		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
-
-		var samples []mlwh.Sample
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &samples), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].Name, convey.ShouldEqual, "in-study-library")
+		convey.So(notFoundCount, convey.ShouldEqual, len(requests))
 	})
 
 	convey.Convey("study diff endpoint returns added samples", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
 		provider := &MockProvider{
 			SamplesForStudyFunc: func(_ context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
 				convey.So(studyLimsID, convey.ShouldEqual, "6568")
 				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
 				convey.So(offset, convey.ShouldEqual, 0)
+
 				return []mlwh.Sample{{Name: "S1"}, {Name: "S2"}}, nil
-			},
-			AllSamplesForStudyFunc: func(_ context.Context, _ string) ([]mlwh.Sample, error) {
-				return nil, mlwh.ErrUpstreamImpaired
 			},
 		}
 		server := NewServer(provider, store)
@@ -150,7 +92,11 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(diff.Removed, convey.ShouldBeEmpty)
 	})
 
-	convey.Convey("D4/C1-C3: study diff all routes through AllStudies and preserves tombstones", t, func() {
+	convey.Convey("D3: study diff all routes through AllStudies and preserves tombstones", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
 		poll := 0
 		provider := &MockProvider{
 			AllStudiesFunc: func(_ context.Context, limit, offset int) ([]mlwh.Study, error) {
@@ -166,9 +112,6 @@ func TestServerEndpoints(t *testing.T) {
 				default:
 					return []mlwh.Study{{IDStudyLims: "7777", Name: "Study Two"}}, nil
 				}
-			},
-			SamplesForStudyFunc: func(_ context.Context, _ string, _ int, _ int) ([]mlwh.Sample, error) {
-				return nil, mlwh.ErrUpstreamImpaired
 			},
 		}
 		server := NewServer(provider, store)
@@ -207,16 +150,18 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(entries["6568"].Tombstone, convey.ShouldBeTrue)
 	})
 
-	convey.Convey("sample diff endpoint returns added irods paths", t, func() {
+	convey.Convey("sample diff endpoint returns added paths", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
 		provider := &MockProvider{
 			IRODSPathsForSampleFunc: func(_ context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
 				convey.So(sangerName, convey.ShouldEqual, "S1")
 				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
 				convey.So(offset, convey.ShouldEqual, 0)
+
 				return []mlwh.IRODSPath{{IDProduct: "product-1", Collection: "/a", DataObject: "a.cram", IRODSPath: "/a/a.cram"}}, nil
-			},
-			GetSampleFilesFunc: func(_ context.Context, _ string) ([]mlwh.IRODSPath, error) {
-				return nil, mlwh.ErrUpstreamImpaired
 			},
 		}
 		server := NewServer(provider, store)
@@ -236,12 +181,17 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(recorder.Body.String(), convey.ShouldNotContainSubstring, "size")
 	})
 
-	convey.Convey("D4/C7: sample diff returns 404 when the sample is missing", t, func() {
+	convey.Convey("sample diff returns 404 when the sample is missing", t, func() {
+		store, err := OpenStore(":memory:")
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { _ = store.Close() })
+
 		provider := &MockProvider{
 			IRODSPathsForSampleFunc: func(_ context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
 				convey.So(sangerName, convey.ShouldEqual, "missing")
 				convey.So(limit, convey.ShouldEqual, providerFetchLimit)
 				convey.So(offset, convey.ShouldEqual, 0)
+
 				return nil, mlwh.ErrNotFound
 			},
 		}
@@ -257,69 +207,12 @@ func TestServerEndpoints(t *testing.T) {
 		convey.So(body["error"], convey.ShouldContainSubstring, "missing")
 	})
 
-	convey.Convey("validate endpoint uses ClassifyIdentifier", t, func() {
-		provider := &MockProvider{
-			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "6568")
-				study := &mlwh.Study{IDStudyLims: "6568"}
-				return mlwh.Match{Kind: mlwh.KindStudyLimsID, Canonical: "6568", Study: study}, nil
-			},
-		}
-		server := NewServer(provider, store)
+	convey.Convey("D3: server source imports gin and not chi", t, func() {
+		source, err := os.ReadFile("server.go")
+		convey.So(err, convey.ShouldBeNil)
 
-		request := httptest.NewRequest(http.MethodGet, "/validate/6568", nil)
-		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
-
-		var body map[string]any
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(body["type"], convey.ShouldEqual, string(IdentifierStudyLimsID))
-		convey.So(body["identifier"], convey.ShouldEqual, "6568")
+		body := string(source)
+		convey.So(body, convey.ShouldContainSubstring, `"github.com/gin-gonic/gin"`)
+		convey.So(body, convey.ShouldNotContainSubstring, `"github.com/go-chi/chi/v5"`)
 	})
-
-	convey.Convey("validate endpoint maps upstream impairment to bad gateway", t, func() {
-		provider := &MockProvider{
-			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "6568")
-				return mlwh.Match{}, mlwh.ErrUpstreamImpaired
-			},
-		}
-		server := NewServer(provider, store)
-
-		request := httptest.NewRequest(http.MethodGet, "/validate/6568", nil)
-		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
-
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusBadGateway)
-		convey.So(recorder.Body.String(), convey.ShouldContainSubstring, mlwh.ErrUpstreamImpaired.Error())
-	})
-
-	convey.Convey("validate endpoint returns 404 with the never-synced cache hint", t, func() {
-		provider := &MockProvider{
-			ClassifyIdentifierFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
-				convey.So(raw, convey.ShouldEqual, "6568")
-
-				return mlwh.Match{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
-			},
-		}
-		server := NewServer(provider, store)
-
-		request := httptest.NewRequest(http.MethodGet, "/validate/6568", nil)
-		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, request)
-
-		var body map[string]string
-		convey.So(json.Unmarshal(recorder.Body.Bytes(), &body), convey.ShouldBeNil)
-		convey.So(recorder.Code, convey.ShouldEqual, http.StatusNotFound)
-		convey.So(body["error"], convey.ShouldContainSubstring, mlwh.ErrCacheNeverSynced.Error())
-	})
-}
-
-func serverStudySample(studyID, name, libraryType string) mlwh.Sample {
-	return mlwh.Sample{
-		Name:      name,
-		Studies:   []mlwh.Study{{IDStudyLims: studyID}},
-		Libraries: []mlwh.Library{{PipelineIDLims: libraryType, IDStudyLims: studyID}},
-	}
 }
