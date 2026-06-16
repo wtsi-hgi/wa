@@ -384,6 +384,31 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Header().Get("Content-Disposition"), convey.ShouldContainSubstring, "attachment;")
 		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "")
 	})
+
+	convey.Convey("Given a registered symlinked output file, preview and download follow the symlink target", t, func() {
+		payload := []byte("target-content\n")
+		targetPath := writeTestFileForServer(t, filepath.Join(t.TempDir(), "target.txt"), payload)
+		server, resultID, linkPath := newFileServerScenarioForTest(t, func(root string) []FileEntry {
+			linkPath := filepath.Join(root, "reports", "linked.txt")
+			convey.So(os.MkdirAll(filepath.Dir(linkPath), 0o755), convey.ShouldBeNil)
+			convey.So(os.Symlink(targetPath, linkPath), convey.ShouldBeNil)
+
+			return []FileEntry{{
+				Path:  linkPath,
+				Mtime: time.Date(2026, time.June, 10, 11, 0, 0, 0, time.UTC),
+				Size:  int64(len(payload)),
+				Kind:  "output",
+			}}
+		})
+
+		previewResponse := performResultsRequestForTest(t, fileServerHandlerForTest(t, server), http.MethodGet, gas.EndPointAuth+"/results/"+resultID+"/file?path="+url.QueryEscape(linkPath), nil)
+		downloadResponse := performResultsRequestForTest(t, fileServerHandlerForTest(t, server), http.MethodGet, gas.EndPointAuth+"/results/"+resultID+"/file?path="+url.QueryEscape(linkPath)+"&download=true", nil)
+
+		convey.So(previewResponse.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(previewResponse.Body.Bytes(), convey.ShouldResemble, payload)
+		convey.So(downloadResponse.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(downloadResponse.Body.Bytes(), convey.ShouldResemble, payload)
+	})
 }
 
 func newFileServerScenarioForTest(t *testing.T, files func(root string) []FileEntry) (*Server, string, string) {
