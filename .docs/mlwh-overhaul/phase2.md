@@ -27,8 +27,8 @@ Tests in `mlwh/registry_test.go`. Covering all 5 acceptance tests from
 B1 (including `TestRegistryCoversQueryer` enforcing 33-entry/method-set
 parity via reflection).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.2: F1 - add-a-query checklist [parallel with B1]
 
@@ -42,8 +42,8 @@ the handler and `RemoteClient` derive. Tests reuse
 `mlwh/registry_test.go` and the existing `mlwh/cache_schema_test.go`
 parity test. Covering all 4 acceptance tests from F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -66,8 +66,8 @@ extracts unescaped path params and `limit`/`offset`+filters, calls the
 `mlwh/errors_http.go`. Tests in `mlwh/server_test.go`. Covering all 8
 acceptance tests from B2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.4: B3 - RemoteClient round-trips Queryer [parallel with B2]
 
@@ -82,8 +82,8 @@ error envelope on non-2xx (reconstructing sentinels via `code`, joining
 Bearer token / CA cert). Shares the `errors_http.go` mapping with B2.
 Tests in `mlwh/remote_test.go`. Covering all 9 acceptance tests from B3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -101,5 +101,5 @@ sentinel round-tripping. Covering all 4 acceptance tests from B4.
 
 Depends on Batch 2 (B2 and B3 reviewed).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

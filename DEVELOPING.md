@@ -13,6 +13,17 @@
 MLWH settings (`WA_MLWH_DSN`, `WA_MLWH_PASSWORD`, and cache settings) are only
 required when you want to run seqmeta locally.
 
+## Add a new MLWH query
+
+1. Add any required schema column and index in both `mlwh/cache_schema/sqlite/` and `mlwh/cache_schema/mysql/`.
+2. Add one `Client` method.
+3. Add one `Queryer` member.
+4. Add one `Registry` entry.
+
+Use the read-path audit in `.docs/mlwh-sync/spec.md` for every served column:
+it must be traceable to an indexed read path. Keep `TestParseSchemaShapeParity`
+passing so SQLite and MySQL table, column, and index sets stay aligned.
+
 ## Repository Layout
 
 ```

@@ -1,0 +1,471 @@
+/*******************************************************************************
+ * Copyright (c) 2026 Genome Research Ltd.
+ *
+ * Author: Sendu Bala <sb10@sanger.ac.uk>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+package mlwh
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const remoteClientDefaultTimeout = 30 * time.Second
+
+var _ Queryer = (*RemoteClient)(nil)
+
+// RemoteClient queries an mlwh REST server through the Queryer interface.
+type RemoteClient struct {
+	baseURL    string
+	httpClient *http.Client
+	token      string
+	endpoints  map[string]Endpoint
+}
+
+// NewRemoteClient builds a RemoteClient for an mlwh REST server.
+func NewRemoteClient(cfg RemoteConfig) (*RemoteClient, error) {
+	baseURL, err := normalizeRemoteBaseURL(cfg.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = remoteClientDefaultTimeout
+	}
+
+	httpClient, err := newRemoteHTTPClient(timeout, cfg.CACert)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RemoteClient{
+		baseURL:    baseURL,
+		httpClient: httpClient,
+		token:      cfg.Token,
+		endpoints:  remoteEndpointMap(),
+	}, nil
+}
+
+// Close releases idle transport resources held by the RemoteClient.
+func (rc *RemoteClient) Close() error {
+	if rc == nil || rc.httpClient == nil {
+		return nil
+	}
+
+	rc.httpClient.CloseIdleConnections()
+
+	return nil
+}
+
+// ClassifyIdentifier classifies a raw identifier through the remote server.
+func (rc *RemoteClient) ClassifyIdentifier(ctx context.Context, raw string) (Match, error) {
+	return remoteCall[Match](rc, ctx, "ClassifyIdentifier", []string{raw}, nil)
+}
+
+// ResolveSample resolves a sample identifier through the remote server.
+func (rc *RemoteClient) ResolveSample(ctx context.Context, raw string) (Match, error) {
+	return remoteCall[Match](rc, ctx, "ResolveSample", []string{raw}, nil)
+}
+
+// ResolveSampleName resolves a Sanger sample name through the remote server.
+func (rc *RemoteClient) ResolveSampleName(ctx context.Context, raw string) (Match, error) {
+	return remoteCall[Match](rc, ctx, "ResolveSampleName", []string{raw}, nil)
+}
+
+// ResolveStudy resolves a study identifier through the remote server.
+func (rc *RemoteClient) ResolveStudy(ctx context.Context, raw string) (Match, error) {
+	return remoteCall[Match](rc, ctx, "ResolveStudy", []string{raw}, nil)
+}
+
+// ResolveRun resolves a run identifier through the remote server.
+func (rc *RemoteClient) ResolveRun(ctx context.Context, raw string) (Match, error) {
+	return remoteCall[Match](rc, ctx, "ResolveRun", []string{raw}, nil)
+}
+
+// ResolveLibrary resolves a library identifier through the remote server.
+func (rc *RemoteClient) ResolveLibrary(ctx context.Context, raw string) (Match, error) {
+	return remoteCall[Match](rc, ctx, "ResolveLibrary", []string{raw}, nil)
+}
+
+// ResolveLibraryIdentifier resolves a library ID or LIMS ID through the remote server.
+func (rc *RemoteClient) ResolveLibraryIdentifier(ctx context.Context, raw string) (Match, error) {
+	return remoteCall[Match](rc, ctx, "ResolveLibraryIdentifier", []string{raw}, nil)
+}
+
+// AllStudies lists studies through the remote server.
+func (rc *RemoteClient) AllStudies(ctx context.Context, limit, offset int) ([]Study, error) {
+	return remoteCall[[]Study](rc, ctx, "AllStudies", nil, remotePagination(limit, offset))
+}
+
+func remotePagination(limit, offset int) url.Values {
+	values := url.Values{}
+	values.Set("limit", strconv.Itoa(limit))
+	values.Set("offset", strconv.Itoa(offset))
+
+	return values
+}
+
+// SamplesForStudy lists samples for a study through the remote server.
+func (rc *RemoteClient) SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SamplesForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// SamplesForRun lists samples for a run through the remote server.
+func (rc *RemoteClient) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SamplesForRun", []string{idRun}, remotePagination(limit, offset))
+}
+
+// SamplesForLibrary lists samples for a library type and study through the remote server.
+func (rc *RemoteClient) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SamplesForLibrary", []string{pipelineIDLims, studyLimsID}, remotePagination(limit, offset))
+}
+
+// SamplesForLibraryID lists samples for a library ID through the remote server.
+func (rc *RemoteClient) SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SamplesForLibraryID", []string{libraryID}, remotePagination(limit, offset))
+}
+
+// SamplesForLibraryLimsID lists samples for a library LIMS ID through the remote server.
+func (rc *RemoteClient) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SamplesForLibraryLimsID", []string{idLibraryLims}, remotePagination(limit, offset))
+}
+
+// SamplesForLibraryType lists samples for a library type through the remote server.
+func (rc *RemoteClient) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SamplesForLibraryType", []string{pipelineIDLims}, remotePagination(limit, offset))
+}
+
+// LibrariesForStudy lists libraries for a study through the remote server.
+func (rc *RemoteClient) LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Library, error) {
+	return remoteCall[[]Library](rc, ctx, "LibrariesForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// RunsForStudy lists runs for a study through the remote server.
+func (rc *RemoteClient) RunsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Run, error) {
+	return remoteCall[[]Run](rc, ctx, "RunsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// LanesForSample lists lanes for a sample through the remote server.
+func (rc *RemoteClient) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]Lane, error) {
+	return remoteCall[[]Lane](rc, ctx, "LanesForSample", []string{sangerName}, remotePagination(limit, offset))
+}
+
+// IRODSPathsForSample lists iRODS paths for a sample through the remote server.
+func (rc *RemoteClient) IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForSample", []string{sangerName}, remotePagination(limit, offset))
+}
+
+// IRODSPathsForStudy lists iRODS paths for a study through the remote server.
+func (rc *RemoteClient) IRODSPathsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]IRODSPath, error) {
+	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// StudiesForSample lists studies for a sample through the remote server.
+func (rc *RemoteClient) StudiesForSample(ctx context.Context, sangerName string) ([]Study, error) {
+	return remoteCall[[]Study](rc, ctx, "StudiesForSample", []string{sangerName}, nil)
+}
+
+// FindSamplesBySangerID finds samples by Sanger sample ID through the remote server.
+func (rc *RemoteClient) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesBySangerID", []string{sangerID}, nil)
+}
+
+// FindSamplesByIDSampleLims finds samples by LIMS sample ID through the remote server.
+func (rc *RemoteClient) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesByIDSampleLims", []string{idSampleLims}, nil)
+}
+
+// FindSamplesByAccessionNumber finds samples by accession number through the remote server.
+func (rc *RemoteClient) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesByAccessionNumber", []string{accessionNumber}, nil)
+}
+
+// FindSamplesBySupplierName finds samples by supplier name through the remote server.
+func (rc *RemoteClient) FindSamplesBySupplierName(ctx context.Context, supplierName string) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesBySupplierName", []string{supplierName}, nil)
+}
+
+// FindSamplesByLibraryType finds samples by library type through the remote server.
+func (rc *RemoteClient) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "FindSamplesByLibraryType", []string{libraryType}, nil)
+}
+
+// ExpandIdentifier expands an identifier through the remote server.
+func (rc *RemoteClient) ExpandIdentifier(ctx context.Context, kind IdentifierKind, canonical string) ([]TaggedID, error) {
+	return remoteCall[[]TaggedID](rc, ctx, "ExpandIdentifier", []string{string(kind), canonical}, nil)
+}
+
+// ExpandSearchValues expands search values through the remote server.
+func (rc *RemoteClient) ExpandSearchValues(ctx context.Context, kind IdentifierKind, canonical string) (SearchValues, error) {
+	return remoteCall[SearchValues](rc, ctx, "ExpandSearchValues", []string{string(kind), canonical}, nil)
+}
+
+// ExpandSampleSearchValues expands sample search values through the remote server.
+func (rc *RemoteClient) ExpandSampleSearchValues(ctx context.Context, kind IdentifierKind, canonical string) ([]string, error) {
+	return remoteCall[[]string](rc, ctx, "ExpandSampleSearchValues", []string{string(kind), canonical}, nil)
+}
+
+// Enrich returns an enrichment graph through the remote server.
+func (rc *RemoteClient) Enrich(ctx context.Context, identifier string) (EnrichmentResult, error) {
+	return remoteCall[EnrichmentResult](rc, ctx, "Enrich", []string{identifier}, nil)
+}
+
+// SampleDetail returns sample detail through the remote server.
+func (rc *RemoteClient) SampleDetail(ctx context.Context, sangerName string) (SampleDetail, error) {
+	return remoteCall[SampleDetail](rc, ctx, "SampleDetail", []string{sangerName}, nil)
+}
+
+// StudyDetail returns study detail through the remote server.
+func (rc *RemoteClient) StudyDetail(ctx context.Context, studyLimsID string) (StudyDetail, error) {
+	return remoteCall[StudyDetail](rc, ctx, "StudyDetail", []string{studyLimsID}, nil)
+}
+
+// RunDetail returns run detail through the remote server.
+func (rc *RemoteClient) RunDetail(ctx context.Context, idRun string) (RunDetail, error) {
+	return remoteCall[RunDetail](rc, ctx, "RunDetail", []string{idRun}, nil)
+}
+
+// LibraryDetail returns library detail through the remote server.
+func (rc *RemoteClient) LibraryDetail(ctx context.Context, pipelineIDLims, studyLimsID string) (LibraryDetail, error) {
+	return remoteCall[LibraryDetail](rc, ctx, "LibraryDetail", []string{pipelineIDLims, studyLimsID}, nil)
+}
+
+func (rc *RemoteClient) do(ctx context.Context, method string, pathParams []string, query url.Values) (any, error) {
+	if rc == nil || rc.httpClient == nil {
+		return nil, fmt.Errorf("%w: nil remote client", ErrUpstreamImpaired)
+	}
+
+	entry, ok := rc.endpoints[method]
+	if !ok {
+		return nil, fmt.Errorf("%w: registry entry missing for %s", ErrUpstreamImpaired, method)
+	}
+
+	requestURL, err := rc.requestURL(entry, pathParams, query)
+	if err != nil {
+		return nil, err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, entry.Verb, requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: build %s request: %w", ErrUpstreamImpaired, method, err)
+	}
+
+	if rc.token != "" {
+		request.Header.Set("Authorization", "Bearer "+rc.token)
+	}
+
+	response, err := rc.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s request failed: %w", ErrUpstreamImpaired, method, err)
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+		return decodeRemoteResult(response, entry)
+	}
+
+	return nil, decodeRemoteError(response, entry)
+}
+
+func decodeRemoteResult(response *http.Response, entry Endpoint) (any, error) {
+	result := entry.NewResult()
+	if err := json.NewDecoder(response.Body).Decode(result); err != nil {
+		return nil, fmt.Errorf("%w: decode %s response: %w", ErrUpstreamImpaired, entry.Method, err)
+	}
+
+	return result, nil
+}
+
+func decodeRemoteError(response *http.Response, entry Endpoint) error {
+	var envelope httpErrorEnvelope
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		return fmt.Errorf("%w: remote %s returned %d without a valid error envelope", ErrUpstreamImpaired, entry.Method, response.StatusCode)
+	}
+
+	sentinel := sentinelForHTTPErrorCode(envelope.Code)
+	if sentinel == nil {
+		sentinel = ErrUpstreamImpaired
+	}
+
+	if errors.Is(sentinel, ErrCacheNeverSynced) && endpointResultIsSlice(entry) {
+		sentinel = errors.Join(ErrCacheNeverSynced, ErrNotFound)
+	}
+
+	message := envelope.Message
+	if message == "" {
+		message = http.StatusText(response.StatusCode)
+	}
+	if message == "" {
+		message = fmt.Sprintf("remote %s returned %d", entry.Method, response.StatusCode)
+	}
+
+	return fmt.Errorf("%s: %w", message, sentinel)
+}
+
+func (rc *RemoteClient) requestURL(entry Endpoint, pathParams []string, query url.Values) (string, error) {
+	remotePath, err := remoteEndpointPath(entry, pathParams)
+	if err != nil {
+		return "", err
+	}
+
+	requestURL := rc.baseURL + remotePath
+	if encodedQuery := query.Encode(); encodedQuery != "" {
+		requestURL += "?" + encodedQuery
+	}
+
+	return requestURL, nil
+}
+
+func remoteEndpointPath(entry Endpoint, pathParams []string) (string, error) {
+	if len(pathParams) != len(entry.PathParams) {
+		return "", fmt.Errorf("%w: %s expects %d path params, got %d", ErrUpstreamImpaired, entry.Method, len(entry.PathParams), len(pathParams))
+	}
+
+	remotePath := entry.Path
+	for i, name := range entry.PathParams {
+		marker := ":" + name
+		if !strings.Contains(remotePath, marker) {
+			return "", fmt.Errorf("%w: %s path is missing %s", ErrUpstreamImpaired, entry.Method, marker)
+		}
+		remotePath = strings.ReplaceAll(remotePath, marker, url.PathEscape(pathParams[i]))
+	}
+
+	return remotePath, nil
+}
+
+func remoteCall[T any](rc *RemoteClient, ctx context.Context, method string, pathParams []string, query url.Values) (T, error) {
+	var zero T
+
+	result, err := rc.do(ctx, method, pathParams, query)
+	if err != nil {
+		return zero, err
+	}
+
+	typed, ok := result.(*T)
+	if !ok {
+		return zero, fmt.Errorf("%w: registry result for %s has type %T", ErrUpstreamImpaired, method, result)
+	}
+
+	return *typed, nil
+}
+
+// RemoteConfig configures a RemoteClient.
+type RemoteConfig struct {
+	BaseURL  string
+	Timeout  time.Duration
+	Token    string
+	CACert   string
+	CacheTTL time.Duration
+}
+
+func remoteEndpointMap() map[string]Endpoint {
+	endpoints := make(map[string]Endpoint, len(Registry))
+	for _, entry := range Registry {
+		endpoints[entry.Method] = entry
+	}
+
+	return endpoints
+}
+
+func normalizeRemoteBaseURL(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", fmt.Errorf("%w: remote base URL is required", ErrUpstreamImpaired)
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("%w: parse remote base URL: %w", ErrUpstreamImpaired, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("%w: remote base URL must include scheme and host", ErrUpstreamImpaired)
+	}
+
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func newRemoteHTTPClient(timeout time.Duration, caPath string) (*http.Client, error) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		transport = &http.Transport{}
+	} else {
+		transport = transport.Clone()
+	}
+
+	if caPath != "" {
+		tlsConfig, err := remoteTLSConfig(caPath)
+		if err != nil {
+			return nil, err
+		}
+
+		transport.TLSClientConfig = tlsConfig
+	}
+
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+	}, nil
+}
+
+func remoteTLSConfig(caPath string) (*tls.Config, error) {
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil || rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read CA cert: %w", ErrUpstreamImpaired, err)
+	}
+	if !rootCAs.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("%w: parse CA cert %s", ErrUpstreamImpaired, caPath)
+	}
+
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+	}, nil
+}
+
+func endpointResultIsSlice(entry Endpoint) bool {
+	result := entry.NewResult()
+	resultType := reflect.TypeOf(result)
+
+	return resultType != nil && resultType.Kind() == reflect.Pointer && resultType.Elem().Kind() == reflect.Slice
+}
