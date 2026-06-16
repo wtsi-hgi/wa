@@ -1341,13 +1341,17 @@ func (c *Client) ExpandIdentifier(ctx context.Context, kind IdentifierKind, cano
 }
 
 // ExpandSearchValues expands a canonical identifier into sample, run, and lane search values.
-func (c *Client) ExpandSearchValues(ctx context.Context, kind IdentifierKind, canonical string) ([]string, []string, []string, error) {
+func (c *Client) ExpandSearchValues(ctx context.Context, kind IdentifierKind, canonical string) (SearchValues, error) {
 	values, err := c.expandIdentifierValues(ctx, kind, canonical)
 	if err != nil {
-		return nil, nil, nil, err
+		return SearchValues{}, err
 	}
 
-	return values.Samples, values.Runs, values.Lanes, nil
+	return SearchValues{
+		Samples: values.Samples,
+		Runs:    values.Runs,
+		Lanes:   values.Lanes,
+	}, nil
 }
 
 func (c *Client) expandIdentifierValues(ctx context.Context, kind IdentifierKind, canonical string) (expandedSearchValues, error) {

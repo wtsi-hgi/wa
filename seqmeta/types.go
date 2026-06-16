@@ -42,17 +42,17 @@ var (
 )
 
 const (
-	HopClassify  = "classify"
-	HopStudy     = "study"
-	HopSamples   = "samples"
-	HopLibraries = "libraries"
-	HopStudies   = "studies"
+	HopClassify  = mlwh.HopClassify
+	HopStudy     = mlwh.HopStudy
+	HopSamples   = mlwh.HopSamples
+	HopLibraries = mlwh.HopLibraries
+	HopStudies   = mlwh.HopStudies
 )
 
 const (
-	ReasonUpstreamError    = "upstream_error"
-	ReasonNotFound         = "not_found"
-	ReasonSamplesTruncated = "samples_truncated"
+	ReasonUpstreamError    = mlwh.ReasonUpstreamError
+	ReasonNotFound         = mlwh.ReasonNotFound
+	ReasonSamplesTruncated = mlwh.ReasonSamplesTruncated
 )
 
 const MaxLibrarySamples = mlwh.MaxSamplesPerHop
@@ -60,7 +60,7 @@ const MaxLibrarySamples = mlwh.MaxSamplesPerHop
 // MaxLibraryTypeSamples limits the total samples returned for library type
 // enrichment across all studies to prevent browser-freezing payloads. This is
 // lower than MaxLibrarySamples to account for library types spanning many studies.
-const MaxLibraryTypeSamples = 200
+const MaxLibraryTypeSamples = mlwh.MaxLibraryTypeSamples
 
 // IdentifierType classifies a sequencing identifier.
 type IdentifierType = mlwh.IdentifierKind
@@ -124,43 +124,16 @@ type IdentifierResult struct {
 }
 
 // Library is a (library_type, id_study_lims) tuple scoped to a study.
-type Library struct {
-	LibraryType   string `json:"library_type"`
-	IDStudyLims   string `json:"id_study_lims"`
-	LibraryID     string `json:"library_id,omitempty"`
-	IDLibraryLims string `json:"id_library_lims,omitempty"`
-}
+type Library = mlwh.LibraryLink
 
 // EnrichmentGraph is the flat graph envelope returned under "graph".
-type EnrichmentGraph struct {
-	Study     *mlwh.Study   `json:"study,omitempty"`
-	Studies   []mlwh.Study  `json:"studies,omitempty"`
-	Sample    *mlwh.Sample  `json:"sample,omitempty"`
-	Samples   []mlwh.Sample `json:"samples,omitempty"`
-	Library   *Library      `json:"library,omitempty"`
-	Libraries []Library     `json:"libraries,omitempty"`
-
-	// Hierarchical structures
-	StudyDetail  *mlwh.StudyDetail  `json:"study_detail,omitempty"`
-	StudyDetails []mlwh.StudyDetail `json:"study_details,omitempty"`
-	SampleDetail *mlwh.SampleDetail `json:"sample_detail,omitempty"`
-}
+type EnrichmentGraph = mlwh.EnrichmentGraph
 
 // MissingHop records a hop that failed or was truncated.
-type MissingHop struct {
-	Hop    string `json:"hop"`
-	Reason string `json:"reason"`
-	Status int    `json:"status"`
-}
+type MissingHop = mlwh.MissingHop
 
 // EnrichmentResult is the /enrich/{identifier} response body.
-type EnrichmentResult struct {
-	Identifier string          `json:"identifier"`
-	Type       IdentifierType  `json:"type"`
-	Graph      EnrichmentGraph `json:"graph"`
-	Partial    bool            `json:"partial"`
-	Missing    []MissingHop    `json:"missing,omitempty"`
-}
+type EnrichmentResult = mlwh.EnrichmentResult
 
 type enrichError struct {
 	err     error

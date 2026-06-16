@@ -27,8 +27,8 @@ instead of three slices. `ExpandIdentifier` (`[]TaggedID`) and
 This item should be done before Item 1.3 if any detail/Enrich builder
 uses search values; otherwise it may run in parallel.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: C1 - detail-builder methods on Client
 
@@ -41,8 +41,8 @@ compose existing hierarchy reads (`SamplesForStudy`,
 `StudiesForSample`, `SamplesForRun`). No new columns. Tests in
 `mlwh/enrich_test.go`. Covering all 5 acceptance tests from C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.3: C2 - Enrich composite method preserves the contract
 
@@ -60,5 +60,5 @@ Covering all 5 acceptance tests from C2.
 Depends on Item 1.2 (uses the detail builders) and, if applicable, Item
 1.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

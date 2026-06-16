@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -149,6 +150,22 @@ func TestSamplesForStudyWarmCacheReturnsEmptySliceWhenStudyHasNoChildren(t *test
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(samples, convey.ShouldHaveLength, 0)
+	})
+}
+
+func TestSearchValuesAPIShape(t *testing.T) {
+	convey.Convey("Given the ExpandSearchValues API", t, func() {
+		var expand = (*Client).ExpandSearchValues
+
+		encoded, err := json.Marshal(SearchValues{
+			Samples: []string{"sample"},
+			Runs:    []string{"100"},
+			Lanes:   []string{"100_1#1"},
+		})
+
+		convey.So(expand, convey.ShouldNotBeNil)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(encoded), convey.ShouldEqual, `{"samples":["sample"],"runs":["100"],"lanes":["100_1#1"]}`)
 	})
 }
 
@@ -1153,6 +1170,37 @@ func TestExpandIdentifierStudyReturnsSortedTaggedIDs(t *testing.T) {
 	})
 }
 
+func TestExpandSearchValuesStudyReturnsNamedSearchValues(t *testing.T) {
+	convey.Convey("Given a warm cache for a study with two samples and three distinct lanes", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedHierarchyStudy(t, client.cache.DB(), 1, "6568")
+		seedHierarchySample(t, client.cache.DB(), 11, "6568", "B")
+		seedHierarchySample(t, client.cache.DB(), 12, "6568", "A")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 11, "6568")
+		seedLibrarySample(t, client.cache.DB(), "Standard", 12, "6568")
+
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 6201, 12, 101, 1, 1, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 6202, 12, 100, 2, 1, "6568")
+		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 6203, 11, 100, 1, 2, "6568")
+
+		values, err := client.ExpandSearchValues(context.Background(), KindStudyLimsID, "6568")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(values.Samples, convey.ShouldHaveLength, 2)
+		convey.So(values.Samples, convey.ShouldContain, "A")
+		convey.So(values.Samples, convey.ShouldContain, "B")
+		convey.So(values.Runs, convey.ShouldHaveLength, 2)
+		convey.So(values.Runs, convey.ShouldContain, "100")
+		convey.So(values.Runs, convey.ShouldContain, "101")
+		convey.So(values.Lanes, convey.ShouldHaveLength, 3)
+		convey.So(values.Lanes, convey.ShouldContain, "100_1#2")
+		convey.So(values.Lanes, convey.ShouldContain, "100_2#1")
+		convey.So(values.Lanes, convey.ShouldContain, "101_1#1")
+	})
+}
+
 func TestExpandIdentifierStudyExcludesSiblingStudyRunsForSharedSample(t *testing.T) {
 	convey.Convey("Given a shared sample sequenced in two studies", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)
@@ -1272,12 +1320,14 @@ func TestExpandIdentifierLibraryIDUsesExactIdentifierIndex(t *testing.T) {
 		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 7201, 31, 100, 1, 0, "7607")
 		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 7202, 32, 200, 1, 0, "7607")
 
-		samples, runs, lanes, err := client.ExpandSearchValues(context.Background(), KindLibraryID, "71046409")
+		values, err := client.ExpandSearchValues(context.Background(), KindLibraryID, "71046409")
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldResemble, []string{"MATCH"})
-		convey.So(runs, convey.ShouldResemble, []string{"100"})
-		convey.So(lanes, convey.ShouldResemble, []string{})
+		convey.So(values, convey.ShouldResemble, SearchValues{
+			Samples: []string{"MATCH"},
+			Runs:    []string{"100"},
+			Lanes:   []string{},
+		})
 	})
 }
 
@@ -1339,19 +1389,23 @@ func TestExpandSearchValuesDirectSampleMetadataResolvesCanonicalSample(t *testin
 		seedSampleMirrorRow(t, client.cache.DB(), 41, "SANG-DIRECT", "Supplier Direct", "donor-41", time.Date(2026, time.May, 6, 12, 5, 0, 0, time.UTC))
 		seedIseqProductMetricsMirrorRow(t, client.cache.DB(), 8801, 41, 555, 1, 9, "6568")
 
-		samples, runs, lanes, err := client.ExpandSearchValues(context.Background(), KindSampleLimsID, "141")
+		values, err := client.ExpandSearchValues(context.Background(), KindSampleLimsID, "141")
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldResemble, []string{"SANG-DIRECT"})
-		convey.So(runs, convey.ShouldResemble, []string{"555"})
-		convey.So(lanes, convey.ShouldResemble, []string{"555_1#9"})
+		convey.So(values, convey.ShouldResemble, SearchValues{
+			Samples: []string{"SANG-DIRECT"},
+			Runs:    []string{"555"},
+			Lanes:   []string{"555_1#9"},
+		})
 
-		samples, runs, lanes, err = client.ExpandSearchValues(context.Background(), KindSupplierName, "Supplier Direct")
+		values, err = client.ExpandSearchValues(context.Background(), KindSupplierName, "Supplier Direct")
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldResemble, []string{"SANG-DIRECT"})
-		convey.So(runs, convey.ShouldResemble, []string{"555"})
-		convey.So(lanes, convey.ShouldResemble, []string{"555_1#9"})
+		convey.So(values, convey.ShouldResemble, SearchValues{
+			Samples: []string{"SANG-DIRECT"},
+			Runs:    []string{"555"},
+			Lanes:   []string{"555_1#9"},
+		})
 	})
 }
 
