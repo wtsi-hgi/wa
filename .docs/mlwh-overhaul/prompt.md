@@ -279,3 +279,130 @@ comment) that an LLM can follow start to finish.
   `frontend/components/seqmeta-*`.
 - Prior specs: `.docs/proposal.md`, `.docs/mlwh/spec.md`,
   `.docs/mlwh/prompt.md`, `.docs/mlwh-sync/spec.md`.
+
+## Notes
+
+These notes resolve clarifications and override looser wording above where
+they conflict.
+
+### Server framework and auth/transport
+
+- `wa mlwh serve` is built on **gin**, for consistency with
+  `wa results serve` (which uses gin + go-authserver "gas"). For the same
+  consistency, the renamed `wa mlwhdiff serve` server is also migrated from
+  bare chi to gin as part of this work; the project standardises on one HTTP
+  server stack (gin + gas). Drop the earlier "chi" wording.
+- The `mlwh` server is **unauthenticated by default**: the contents of the
+  source MLWH are fine for any internal user to see, so same-cluster /
+  internal deployments run with no auth.
+- Authentication and TLS are **supported but optional/bypassable**, provided
+  by go-authserver (gas) JWT/Bearer + TLS (mirroring `wa results serve`).
+  They are off by default and enabled via flags/config. They **must** be
+  enabled whenever the service is exposed across the HPC↔OpenStack cluster
+  boundary, because institutional policy requires any service reachable on a
+  port opened between those clusters to be password-secured. Same-cluster
+  use needs no auth; cross-cluster use requires the secured (gas JWT + TLS)
+  mode.
+
+### Scope of `mlwh.Queryer` and the method↔endpoint registry
+
+- `mlwh.Queryer` covers the full read/query surface and nothing else. It
+  **includes**: `ClassifyIdentifier`, `ResolveSample`, `ResolveSampleName`,
+  `ResolveStudy`, `ResolveRun`, `ResolveLibrary`, `ResolveLibraryIdentifier`,
+  `AllStudies`, `SamplesForStudy`, `SamplesForRun`, `SamplesForLibrary`,
+  `SamplesForLibraryID`, `SamplesForLibraryLimsID`, `SamplesForLibraryType`,
+  `LibrariesForStudy`, `RunsForStudy`, `LanesForSample`,
+  `IRODSPathsForSample`, `IRODSPathsForStudy`, `StudiesForSample`,
+  `FindSamplesBySangerID`, `FindSamplesByIDSampleLims`,
+  `FindSamplesByAccessionNumber`, `FindSamplesBySupplierName`,
+  `FindSamplesByLibraryType`, `ExpandIdentifier`, `ExpandSearchValues`,
+  `ExpandSampleSearchValues`, and the enrich-graph detail aggregates
+  (`SampleDetail` / `StudyDetail` / `RunDetail` / `LibraryDetail`, exposed
+  through whatever detail-builder method the enrich endpoint needs).
+- It **excludes** lifecycle/admin/internal helpers: `Open`, `OpenCacheOnly`,
+  `Close`, `Sync`, `ReadDB`, `SetSyncReportWriter`, and the in-process cache
+  internals.
+- The spec must enumerate the exact interface member list. Every member maps
+  1:1 to exactly one REST endpoint via the declarative registry.
+
+### Request encoding, route shape, and pagination
+
+- Endpoints are **GET** with the identifier(s) in the path and `limit` /
+  `offset` plus filters (e.g. `library_type`, `library_id`,
+  `id_library_lims`) as query params; responses are JSON bodies. This keeps
+  the API simple for external clients, HTTP-cacheable, and matches the
+  existing seqmeta `GET /study/{id}/samples` shape so the frontend move is
+  smooth.
+- The declarative registry maps each `Queryer` method to
+  `{verb, path template, query-param names, response type}`. The gin route
+  handler and the `RemoteClient` method are both derived from this single
+  registry entry so per-endpoint marshalling is not hand-written twice.
+
+### Error envelope and sentinel round-tripping
+
+- Each sentinel maps to an HTTP status: `ErrNotFound`→404,
+  `ErrAmbiguous`→409, `ErrUnsupportedIdentifier`→422,
+  `ErrCacheNeverSynced`→503, `ErrUpstreamImpaired`→502. Every error response
+  also carries a JSON envelope `{code, message}` where `code` is a stable
+  string the `RemoteClient` maps back to the exact sentinel.
+- `ErrCacheNeverSynced` keeps its own distinct code/status (503) while the
+  reconstructed client-side error still satisfies
+  `errors.Is(err, mlwh.ErrNotFound)`, preserving today's wrapping.
+
+### Local vs remote client selection and config surface
+
+- A new `WA_MLWH_SERVER_URL` env var plus a matching `--mlwh-server-url`
+  flag selects the transport: when set, `wa results serve`,
+  `wa mlwhdiff serve`, and the CLI construct a `RemoteClient`; when unset,
+  they `OpenCacheOnly` a local `Client`. `WA_MLWH_CACHE_PATH` is only
+  required in local mode.
+- The frontend talks to the `mlwh` server via a new `WA_MLWH_BACKEND_URL`,
+  which replaces `WA_SEQMETA_BACKEND_URL` (dropped). Any surviving
+  change-tracking calls the frontend makes to `mlwhdiff` use a separately
+  named var if needed.
+
+### Enrich endpoint and the detail builders
+
+- The enrich graph logic moves wholesale from `seqmeta` into `mlwh`. Add a
+  single composite `Queryer` member `Enrich(ctx, identifier) (EnrichmentResult, error)`
+  that owns the classifier cascade currently in `seqmeta/enrich.go` and
+  assembles the graph; it maps 1:1 to `GET /enrich/{id}` and preserves the
+  frontend's existing enrich contract field-for-field. The `seqmeta`
+  (now `mlwhdiff`) enrich code and its `enrichDetailProvider` fallback are
+  deleted.
+- Promote the detail builders into real `mlwh.Client` / `Queryer` methods —
+  `SampleDetail`, `StudyDetail`, `RunDetail`, `LibraryDetail` — each backed
+  by indexed cache queries and each with its own 1:1 endpoint. `Enrich`
+  composes these internally. The `buildStudyDetailFromProvider`-style
+  builders in `seqmeta` are removed. (`SampleDetail` etc. remain the result
+  struct types in `mlwh/types.go`; the new methods return them.)
+
+### Splitting the multiplexed `/study/{id}/samples` route
+
+- The current single `GET /study/{id}/samples?library_type=…&library_id=…&id_library_lims=…`
+  route is split so each `Queryer` member gets its own canonical 1:1
+  endpoint: `SamplesForStudy`, `SamplesForLibrary`, `SamplesForLibraryID`,
+  `SamplesForLibraryLimsID` (and `SamplesForLibraryType`) each map to a
+  distinct path. The frontend Server Action (`fetchStudyLibrarySamples` /
+  `fetchStudySamples`) chooses the endpoint by which filter is set. No
+  query-param multiplexing of multiple methods behind one route.
+
+### Enrich cache and the DELETE route
+
+- The persisted `enrich_cache` TTL layer in `seqmeta/store.go`, the
+  `WithEnrichTTL` option, and the `DELETE /enrich/{id}` invalidation route
+  are dropped outright (no compatibility shim). `mlwh` serves enrich
+  straight from the indexed synced cache. The frontend's client-side
+  enrichment caching may remain, but there is no server-side persisted
+  enrich cache and no invalidation endpoint.
+
+### Multi-value query results over the wire
+
+- Methods that currently return multiple positional slices are reshaped to
+  return a single named struct so the `Queryer` interface, the gin handler,
+  and the `RemoteClient` all share one response shape with no positional
+  re-splitting. Specifically, `ExpandSearchValues` returns a named struct
+  (fields for samples / runs / lanes) instead of three `[]string` returns;
+  its `results` caller(s) are updated accordingly. Methods already returning
+  a single slice (e.g. `ExpandIdentifier` → `[]TaggedID`) are unchanged. The
+  declarative registry stores that one response type per endpoint.
