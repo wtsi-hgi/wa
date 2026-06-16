@@ -55,15 +55,16 @@ func TestNewRootCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "serve")
 	})
 
-	convey.Convey("F1.4: Given results serve help, then help output lists the phase 5 serve flags", t, func() {
+	convey.Convey("F1.4: Given results serve help, then help output lists the MLWH serve wiring flags", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"results", "serve", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "--port")
 		convey.So(output, convey.ShouldContainSubstring, "--db")
-		convey.So(output, convey.ShouldContainSubstring, "--seqmeta-url")
-		convey.So(output, convey.ShouldContainSubstring, "WA_SEQMETA_BACKEND_URL")
-		convey.So(output, convey.ShouldContainSubstring, "--seqmeta-timeout")
+		convey.So(output, convey.ShouldContainSubstring, "--mlwh-server-url")
+		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(output, convey.ShouldNotContainSubstring, "--seqmeta-url")
+		convey.So(output, convey.ShouldNotContainSubstring, "--seqmeta-timeout")
 	})
 
 	convey.Convey("E4.4: Given wa with no subcommand, then help lists the surviving top-level subcommand trees", t, func() {

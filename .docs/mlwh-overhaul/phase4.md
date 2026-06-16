@@ -29,8 +29,8 @@ and `ErrUpstreamImpaired`/`ErrCacheNeverSynced` -> failed
 `NewMLWHValidator(q mlwh.Queryer)`. Files `results/validate.go`,
 `results/validate_test.go`. Covering all 6 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.2: A2 - sample resolver calls mlwh directly [parallel with A1]
 
@@ -46,8 +46,8 @@ sample resolution through `SamplesForStudy`/`SamplesForLibrary*`/
 `results/mlwh_search_resolver.go` and their tests. Covering all 4
 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -68,5 +68,5 @@ is set, build a `RemoteClient` (no `--mlwh-cache`, no `Sync`); else
 
 Depends on Items 4.1 and 4.2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

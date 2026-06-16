@@ -122,37 +122,24 @@ func resolveResultsServeMode(cert, key, acme, cache string) (resultsServeMode, e
 }
 
 type resultsServeMLWHConfig struct {
-	DSN       string
+	ServerURL string
 	CachePath string
 }
 
-func resolveResultsServeMLWHConfig(flagValue string, flagChanged bool) (resultsServeMLWHConfig, bool, error) {
-	cachePath, hasCachePath, err := resolveResultsServeMLWHCachePath(flagValue, flagChanged)
+func resolveResultsServeMLWHConfig(serverURL string, cacheFlagValue string, cacheFlagChanged bool) (resultsServeMLWHConfig, error) {
+	if trimmedServerURL := strings.TrimSpace(serverURL); trimmedServerURL != "" {
+		return resultsServeMLWHConfig{ServerURL: trimmedServerURL}, nil
+	}
+
+	cachePath, hasCachePath, err := resolveResultsServeMLWHCachePath(cacheFlagValue, cacheFlagChanged)
 	if err != nil {
-		return resultsServeMLWHConfig{}, false, err
+		return resultsServeMLWHConfig{}, err
+	}
+	if hasCachePath {
+		return resultsServeMLWHConfig{CachePath: cachePath}, nil
 	}
 
-	dsn := strings.TrimSpace(firstEnv("WA_MLWH_DSN"))
-	if dsn == "" && !hasCachePath {
-		return resultsServeMLWHConfig{}, false, nil
-	}
-
-	if !hasCachePath {
-		return resultsServeMLWHConfig{}, false, errors.New("WA_MLWH_CACHE_PATH or --mlwh-cache must be set")
-	}
-	if dsn == "" {
-		return resultsServeMLWHConfig{CachePath: cachePath}, true, nil
-	}
-
-	resolvedDSN, err := mlwh.ResolveDSN(dsn, firstEnv("WA_MLWH_PASSWORD"))
-	if err != nil {
-		return resultsServeMLWHConfig{}, false, fmt.Errorf("WA_MLWH_DSN: %w", err)
-	}
-
-	return resultsServeMLWHConfig{
-		DSN:       resolvedDSN,
-		CachePath: cachePath,
-	}, true, nil
+	return resultsServeMLWHConfig{}, errors.New("WA_MLWH_SERVER_URL or WA_MLWH_CACHE_PATH must be set; pass --mlwh-server-url or --mlwh-cache")
 }
 
 func resolveResultsServeSecurityConfig(
@@ -487,22 +474,16 @@ func (c resultsServeSecurityConfig) authCallback() gas.AuthCallback {
 	}
 }
 
-type resultsServeSyncClient interface {
-	Sync(context.Context) ([]mlwh.SyncReport, error)
-	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
-	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
-	ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error)
-	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
-	ResolveRun(context.Context, string) (mlwh.Match, error)
-	ResolveStudy(context.Context, string) (mlwh.Match, error)
-	ResolveSample(context.Context, string) (mlwh.Match, error)
-	ResolveSampleName(context.Context, string) (mlwh.Match, error)
-	ResolveLibrary(context.Context, string) (mlwh.Match, error)
-	ResolveLibraryIdentifier(context.Context, string) (mlwh.Match, error)
+type resultsServeMLWHHandle interface {
+	mlwh.Queryer
 	Close() error
 }
 
-func openResultsServeMLWHClientWithConfig(ctx context.Context, cfg resultsServeMLWHConfig) (resultsServeSyncClient, error) {
+func openResultsServeMLWHClientWithConfig(ctx context.Context, cfg resultsServeMLWHConfig) (resultsServeMLWHHandle, error) {
+	if strings.TrimSpace(cfg.ServerURL) != "" {
+		return mlwh.NewRemoteClient(mlwh.RemoteConfig{BaseURL: cfg.ServerURL})
+	}
+
 	client, err := mlwh.OpenCacheOnly(ctx, mlwh.CacheConfig{
 		Path:     cfg.CachePath,
 		Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
@@ -511,7 +492,7 @@ func openResultsServeMLWHClientWithConfig(ctx context.Context, cfg resultsServeM
 		return nil, err
 	}
 
-	return &resultsServeMLWHRuntime{client: client}, nil
+	return client, nil
 }
 
 //nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
@@ -533,67 +514,6 @@ func (t *resultsServeRealTicker) Chan() <-chan time.Time {
 //nolint:unused // Kept with resultsServeNewTicker for the results serve test hook.
 func (t *resultsServeRealTicker) Stop() {
 	t.ticker.Stop()
-}
-
-type resultsServeMLWHRuntime struct {
-	client   *mlwh.Client
-	sourceDB *sql.DB
-}
-
-func (r *resultsServeMLWHRuntime) Sync(ctx context.Context) ([]mlwh.SyncReport, error) {
-	return r.client.Sync(ctx)
-}
-
-func (r *resultsServeMLWHRuntime) ExpandIdentifier(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]mlwh.TaggedID, error) {
-	return r.client.ExpandIdentifier(ctx, kind, canonical)
-}
-
-func (r *resultsServeMLWHRuntime) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
-	return r.client.ExpandSearchValues(ctx, kind, canonical)
-}
-
-func (r *resultsServeMLWHRuntime) ExpandSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
-	return r.client.ExpandSampleSearchValues(ctx, kind, canonical)
-}
-
-func (r *resultsServeMLWHRuntime) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
-	return r.client.ResolveStudy(ctx, raw)
-}
-
-func (r *resultsServeMLWHRuntime) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
-	return r.client.ResolveRun(ctx, raw)
-}
-
-func (r *resultsServeMLWHRuntime) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
-	return r.client.ResolveSample(ctx, raw)
-}
-
-func (r *resultsServeMLWHRuntime) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
-	return r.client.ResolveSampleName(ctx, raw)
-}
-
-func (r *resultsServeMLWHRuntime) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
-	return r.client.ResolveLibrary(ctx, raw)
-}
-
-func (r *resultsServeMLWHRuntime) ResolveLibraryIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
-	return r.client.ResolveLibraryIdentifier(ctx, raw)
-}
-
-func (r *resultsServeMLWHRuntime) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
-	return r.client.LanesForSample(ctx, sangerName, limit, offset)
-}
-
-func (r *resultsServeMLWHRuntime) Close() error {
-	var closeErrs []error
-	if r.client != nil {
-		closeErrs = append(closeErrs, r.client.Close())
-	}
-	if r.sourceDB != nil {
-		closeErrs = append(closeErrs, r.sourceDB.Close())
-	}
-
-	return errors.Join(closeErrs...)
 }
 
 func newResultsAuthClientWithServerToken(
@@ -1845,9 +1765,8 @@ func newResultsServeCommand() *cobra.Command {
 	var ldapDN string
 	var serverToken string
 	var dbPath string
+	var mlwhServerURL string
 	var mlwhCache string
-	var seqmetaURL string
-	var seqmetaTimeout time.Duration
 
 	command := &cobra.Command{
 		Use:   "serve",
@@ -1876,7 +1795,7 @@ func newResultsServeCommand() *cobra.Command {
 				return err
 			}
 
-			mlwhConfig, enableMLWH, err := resolveResultsServeMLWHConfig(mlwhCache, cmd.Flags().Changed("mlwh-cache"))
+			mlwhConfig, err := resolveResultsServeMLWHConfig(mlwhServerURL, mlwhCache, cmd.Flags().Changed("mlwh-cache"))
 			if err != nil {
 				return err
 			}
@@ -1894,23 +1813,14 @@ func newResultsServeCommand() *cobra.Command {
 			}
 			defer func() { _ = store.Close() }()
 
-			var mlwhClient resultsServeSyncClient
-			if enableMLWH {
-				mlwhClient, err = resultsServeOpenMLWHClient(ctx, mlwhConfig)
-				if err != nil {
-					return fmt.Errorf("open mlwh client: %w", err)
-				}
-				defer func() { _ = mlwhClient.Close() }()
+			mlwhClient, err := resultsServeOpenMLWHClient(ctx, mlwhConfig)
+			if err != nil {
+				return fmt.Errorf("open mlwh client: %w", err)
 			}
+			defer func() { _ = mlwhClient.Close() }()
 
-			var validator *results.SeqmetaValidator
-			var resolver results.SearchResolver
-			if strings.TrimSpace(seqmetaURL) != "" {
-				validator = results.NewSeqmetaValidator(seqmetaURL, seqmetaTimeout)
-			}
-			if mlwhClient != nil {
-				resolver = results.NewMLWHSearchResolver(mlwhClient)
-			}
+			validator := results.NewMLWHValidator(mlwhClient)
+			resolver := results.NewMLWHSearchResolver(mlwhClient)
 
 			authServer := resultsServeNewAuthServer(cmd.ErrOrStderr())
 			ownerStore := results.NewOwnerSessionStore()
@@ -1951,9 +1861,8 @@ func newResultsServeCommand() *cobra.Command {
 	command.Flags().StringVarP(&ldapDN, "ldap_dn", "l", firstEnv("WA_RESULTS_LDAP_DN"), "LDAP bind DN template containing %s")
 	command.Flags().StringVar(&serverToken, "server-token", resultsServerTokenBasename, "Server token basename or absolute path")
 	command.Flags().StringVar(&dbPath, "db", "results.db", "SQLite database path or MySQL DSN without a password; defaults to WA_RESULTS_DB_PATH when unset")
+	command.Flags().StringVar(&mlwhServerURL, "mlwh-server-url", firstEnv("WA_MLWH_SERVER_URL"), "Base URL for a remote MLWH server; defaults to WA_MLWH_SERVER_URL")
 	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
-	command.Flags().StringVar(&seqmetaURL, "seqmeta-url", firstEnv("WA_SEQMETA_BACKEND_URL"), "Base URL for seqmeta validation (defaults to WA_SEQMETA_BACKEND_URL)")
-	command.Flags().DurationVar(&seqmetaTimeout, "seqmeta-timeout", 30*time.Second, "Timeout for seqmeta validation requests")
 
 	return command
 }

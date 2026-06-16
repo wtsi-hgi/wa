@@ -27,15 +27,14 @@ package results
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
+
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 var validFileKinds = map[string]struct{}{
@@ -44,14 +43,9 @@ var validFileKinds = map[string]struct{}{
 	"pipeline": {},
 }
 
-// NewSeqmetaValidator constructs a seqmeta validator for the given service URL.
-func NewSeqmetaValidator(baseURL string, timeout time.Duration) *SeqmetaValidator {
-	return &SeqmetaValidator{
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		client: &http.Client{
-			Timeout: timeout,
-		},
-	}
+// NewMLWHValidator constructs a validator backed by an MLWH queryer.
+func NewMLWHValidator(q mlwh.Queryer) *MLWHValidator {
+	return &MLWHValidator{q: q}
 }
 
 func seqmetaMetadataValueKeys(metadata map[string][]string) []string {
@@ -66,11 +60,6 @@ func seqmetaMetadataValueKeys(metadata map[string][]string) []string {
 	slices.Sort(seqmetaKeys)
 
 	return seqmetaKeys
-}
-
-// ValidateMetadata checks all seqmeta_* fields in metadata.
-func (v *SeqmetaValidator) ValidateMetadata(ctx context.Context, metadata map[string]string) error {
-	return v.ValidateMetadataValues(ctx, metadataValuesFromMap(metadata))
 }
 
 // ValidateRegistration checks required registration fields and tracked files.
@@ -113,72 +102,6 @@ func ValidateRegistration(reg *Registration) error {
 
 	if err := validateOutputFilesWithinDirectory(reg.OutputDirectory, reg.Files); err != nil {
 		return err
-	}
-
-	return nil
-}
-
-// ValidateMetadataValues checks all seqmeta_* values in metadata.
-func (v *SeqmetaValidator) ValidateMetadataValues(ctx context.Context, metadata map[string][]string) error {
-	if v == nil || v.baseURL == "" {
-		return nil
-	}
-
-	for _, key := range seqmetaMetadataValueKeys(metadata) {
-		suffix := strings.TrimPrefix(key, "seqmeta_")
-		expectedType, ok := SeqmetaFieldTypes[suffix]
-		if !ok {
-			return fmt.Errorf("%w: unknown seqmeta field %q", ErrInvalidInput, key)
-		}
-
-		for _, value := range metadata[key] {
-			if err := v.validateIdentifier(ctx, value, expectedType); err != nil {
-				return fmt.Errorf("%s=%q: %w", key, value, err)
-			}
-		}
-	}
-
-	return nil
-}
-
-type seqmetaValidationResponse struct {
-	Type string `json:"type"`
-}
-
-func (v *SeqmetaValidator) validateIdentifier(ctx context.Context, identifier, expectedType string) error {
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		v.baseURL+"/validate/"+url.PathEscape(identifier),
-		nil,
-	)
-	if err != nil {
-		return fmt.Errorf("%w: build request: %w", ErrSeqmetaFailed, err)
-	}
-
-	response, err := v.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("%w: request seqmeta: %w", ErrSeqmetaFailed, err)
-	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
-
-	if response.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("%w: identifier not found", ErrSeqmetaRejected)
-	}
-
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: unexpected status %d", ErrSeqmetaFailed, response.StatusCode)
-	}
-
-	var payload seqmetaValidationResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return fmt.Errorf("%w: decode response: %w", ErrSeqmetaFailed, err)
-	}
-
-	if payload.Type != expectedType {
-		return fmt.Errorf("%w: expected %q, got %q", ErrSeqmetaRejected, expectedType, payload.Type)
 	}
 
 	return nil
@@ -271,4 +194,59 @@ func resolveExistingPath(path string) (string, bool) {
 	}
 
 	return resolvedPath, true
+}
+
+func mlwhValidationError(err error) error {
+	switch {
+	case errors.Is(err, mlwh.ErrUpstreamImpaired), errors.Is(err, mlwh.ErrCacheNeverSynced):
+		return fmt.Errorf("%w: classify identifier: %w", ErrMLWHFailed, err)
+	case errors.Is(err, mlwh.ErrNotFound):
+		return fmt.Errorf("%w: identifier not found", ErrMLWHRejected)
+	case errors.Is(err, mlwh.ErrUnsupportedIdentifier):
+		return fmt.Errorf("%w: %w", ErrMLWHRejected, err)
+	default:
+		return fmt.Errorf("%w: classify identifier: %w", ErrMLWHFailed, err)
+	}
+}
+
+// ValidateMetadata checks all seqmeta_* fields in metadata.
+func (v *MLWHValidator) ValidateMetadata(ctx context.Context, metadata map[string]string) error {
+	return v.ValidateMetadataValues(ctx, metadataValuesFromMap(metadata))
+}
+
+// ValidateMetadataValues checks all seqmeta_* values in metadata.
+func (v *MLWHValidator) ValidateMetadataValues(ctx context.Context, metadata map[string][]string) error {
+	if v == nil || v.q == nil {
+		return nil
+	}
+
+	for _, key := range seqmetaMetadataValueKeys(metadata) {
+		suffix := strings.TrimPrefix(key, "seqmeta_")
+		expectedType, ok := SeqmetaFieldTypes[suffix]
+		if !ok {
+			return fmt.Errorf("%w: unknown seqmeta field %q", ErrInvalidInput, key)
+		}
+
+		for _, value := range metadata[key] {
+			if err := v.validateIdentifier(ctx, value, expectedType); err != nil {
+				return fmt.Errorf("%s=%q: %w", key, value, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (v *MLWHValidator) validateIdentifier(ctx context.Context, identifier, expectedType string) error {
+	match, err := v.q.ClassifyIdentifier(ctx, identifier)
+	if err != nil {
+		return mlwhValidationError(err)
+	}
+
+	actualType := string(match.Kind)
+	if actualType != expectedType {
+		return fmt.Errorf("%w: expected %q, got %q", ErrMLWHRejected, expectedType, actualType)
+	}
+
+	return nil
 }

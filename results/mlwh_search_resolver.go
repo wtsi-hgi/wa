@@ -36,12 +36,10 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+const defaultMLWHSearchResolverCacheTTL = 5 * time.Minute
+
 type mlwhSearchExpander interface {
 	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
-}
-
-type mlwhSampleSearchExpander interface {
-	ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 }
 
 type mlwhStudyResolver interface {
@@ -73,7 +71,7 @@ type MLWHSearchResolver struct {
 func NewMLWHSearchResolver(client mlwhSearchExpander) *MLWHSearchResolver {
 	resolver := &MLWHSearchResolver{
 		client:   client,
-		cacheTTL: defaultSeqmetaResolverCacheTTL,
+		cacheTTL: defaultMLWHSearchResolverCacheTTL,
 		cache:    map[string]mlwhSearchResolvedValues{},
 	}
 	if studyResolver, ok := client.(mlwhStudyResolver); ok {
@@ -224,18 +222,6 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 		return cached.samples, cached.runs, cached.lanes, nil
 	}
 
-	if directSampleSearchKind(kind) {
-		samples, err := r.expandDirectSampleSearchValues(ctx, kind, trimmed)
-		if err == nil {
-			r.cachePut(cacheKey, samples, nil, nil)
-
-			return samples, nil, nil, nil
-		}
-		if !errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
-			return nil, nil, nil, err
-		}
-	}
-
 	values, err := r.client.ExpandSearchValues(ctx, kind, trimmed)
 	if err != nil {
 		switch {
@@ -249,31 +235,9 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 	}
 
 	samples, runs, lanes := values.Samples, values.Runs, values.Lanes
-	runs = mergeSearchValues(runs, runIDsFromLaneValues(lanes))
 	r.cachePut(cacheKey, samples, runs, lanes)
 
 	return samples, runs, lanes, nil
-}
-
-func (r *MLWHSearchResolver) expandDirectSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
-	expander, ok := r.client.(mlwhSampleSearchExpander)
-	if !ok {
-		return nil, mlwh.ErrUnsupportedIdentifier
-	}
-
-	samples, err := expander.ExpandSampleSearchValues(ctx, kind, canonical)
-	if err != nil {
-		switch {
-		case errors.Is(err, mlwh.ErrNotFound):
-			return []string{}, nil
-		case errors.Is(err, mlwh.ErrUnsupportedIdentifier):
-			return nil, err
-		default:
-			return nil, fmt.Errorf("%w: expand sample metadata: %w", ErrSeqmetaFailed, err)
-		}
-	}
-
-	return samples, nil
 }
 
 // ExpandCandidateSampleSearchValues resolves a direct sample metadata value by

@@ -31,10 +31,11 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 var (
@@ -48,7 +49,9 @@ var (
 
 	ErrSeqmetaFailed = errors.New("results: seqmeta unavailable")
 
-	ErrSeqmetaRejected = errors.New("results: seqmeta validation failed")
+	ErrMLWHFailed = errors.New("results: mlwh unavailable")
+
+	ErrMLWHRejected = errors.New("results: mlwh validation failed")
 )
 
 const (
@@ -237,10 +240,9 @@ type SearchResult struct {
 // Store persists result sets in SQL.
 type Store struct{ db *sql.DB }
 
-// SeqmetaValidator validates seqmeta_* metadata fields against a remote seqmeta service.
-type SeqmetaValidator struct {
-	baseURL string
-	client  *http.Client
+// MLWHValidator validates seqmeta_* metadata fields against MLWH.
+type MLWHValidator struct {
+	q mlwh.Queryer
 }
 
 // CompositeKeyID returns the deterministic ID for a pipeline identifier and run key.
