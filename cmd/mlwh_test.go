@@ -28,17 +28,25 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/cobra"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
@@ -289,4 +297,305 @@ func TestMLWHSyncCommandEmitsLinesInFinishOrder(t *testing.T) {
 			convey.So(output, convey.ShouldContainSubstring, table+" inserted=")
 		}
 	})
+}
+
+func prepareMLWHServeCacheForTest(t *testing.T, synced bool) string {
+	t.Helper()
+
+	cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
+	cache, err := mlwh.OpenCache(context.Background(), mlwh.CacheConfig{Path: cachePath})
+	if err != nil {
+		t.Fatalf("open mlwh cache: %v", err)
+	}
+	defer func() {
+		if err = cache.Close(); err != nil {
+			t.Fatalf("close mlwh cache: %v", err)
+		}
+	}()
+
+	if synced {
+		seedMLWHServeStudyForTest(t, cache.DB())
+	}
+
+	return cachePath
+}
+
+func seedMLWHServeStudyForTest(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		1,
+		"SQSCP",
+		"6568",
+		"study-uuid-6568",
+		"Study 6568",
+		"EGAS00001006568",
+		"Study title 6568",
+		"Faculty sponsor 6568",
+		"active",
+		"strategy",
+		"group",
+		"programme",
+		"GRCh38",
+		true,
+		"study-type",
+		false,
+		false,
+		"public",
+		"EGAD0001",
+		"EGAP0001",
+		"immediate",
+		"2026-05-11T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insert study_mirror: %v", err)
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?)`,
+		"study",
+		"2026-05-11T00:00:00Z",
+		"2026-05-11T00:00:00Z",
+		nil,
+		0,
+	)
+	if err != nil {
+		t.Fatalf("insert sync_state: %v", err)
+	}
+}
+
+type fakeMLWHServeAuthEnableCall struct {
+	certFile      string
+	keyFile       string
+	tokenBasename string
+}
+
+type fakeMLWHServeAuthStartCall struct {
+	kind     string
+	addr     string
+	certFile string
+	keyFile  string
+}
+
+type fakeMLWHServeAuthServer struct {
+	router      *gin.Engine
+	auth        *gin.RouterGroup
+	enableCalls []fakeMLWHServeAuthEnableCall
+	startCalls  []fakeMLWHServeAuthStartCall
+	onStart     func(*fakeMLWHServeAuthServer) error
+}
+
+func newFakeMLWHServeAuthServer() *fakeMLWHServeAuthServer {
+	gin.SetMode(gin.TestMode)
+
+	return &fakeMLWHServeAuthServer{router: gin.New()}
+}
+
+func (f *fakeMLWHServeAuthServer) Router() *gin.Engine {
+	return f.router
+}
+
+func (f *fakeMLWHServeAuthServer) AuthRouter() *gin.RouterGroup {
+	return f.auth
+}
+
+func (f *fakeMLWHServeAuthServer) EnableAuthWithServerToken(certFile, keyFile, tokenBasename string, _ gas.AuthCallback) error {
+	f.enableCalls = append(f.enableCalls, fakeMLWHServeAuthEnableCall{
+		certFile:      certFile,
+		keyFile:       keyFile,
+		tokenBasename: tokenBasename,
+	})
+	f.auth = f.router.Group(gas.EndPointAuth)
+	f.auth.Use(func(c *gin.Context) {
+		if !strings.HasPrefix(c.GetHeader("Authorization"), "Bearer ") {
+			c.AbortWithStatus(http.StatusUnauthorized)
+
+			return
+		}
+
+		c.Next()
+	})
+
+	return nil
+}
+
+func (f *fakeMLWHServeAuthServer) StartHTTP(_ context.Context, addr string) error {
+	f.startCalls = append(f.startCalls, fakeMLWHServeAuthStartCall{kind: "http", addr: addr})
+
+	if f.onStart != nil {
+		return f.onStart(f)
+	}
+
+	return nil
+}
+
+func (f *fakeMLWHServeAuthServer) Start(addr, certFile, keyFile string) error {
+	f.startCalls = append(f.startCalls, fakeMLWHServeAuthStartCall{
+		kind:     "tls",
+		addr:     addr,
+		certFile: certFile,
+		keyFile:  keyFile,
+	})
+
+	if f.onStart != nil {
+		return f.onStart(f)
+	}
+
+	return nil
+}
+
+func (f *fakeMLWHServeAuthServer) Stop() {}
+
+func TestMLWHServeColdCacheReturnsNeverSynced(t *testing.T) {
+	convey.Convey("E4.1: Given wa mlwh serve with WA_MLWH_CACHE_PATH set to a never-synced cache, when GET /studies is requested, then status is 503 with code cache_never_synced", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, false)
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			response := performMLWHServeRequestForTest(server.router, http.MethodGet, "/studies")
+			convey.So(response.Code, convey.ShouldEqual, http.StatusServiceUnavailable)
+			convey.So(mlwhServeErrorCodeForTest(t, response), convey.ShouldEqual, "cache_never_synced")
+			convey.So(server.startCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.startCalls[0].kind, convey.ShouldEqual, "http")
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve", "--port", "0"})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
+func performMLWHServeRequestForTest(handler http.Handler, method, target string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, target, nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	return response
+}
+
+func mlwhServeErrorCodeForTest(t *testing.T, response *httptest.ResponseRecorder) string {
+	t.Helper()
+
+	var payload struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode mlwh error envelope: %v", err)
+	}
+
+	return payload.Code
+}
+
+func TestMLWHServeWarmCacheUnauthenticatedByDefault(t *testing.T) {
+	convey.Convey("E4.2: Given a synced cache, when GET /studies is requested with no auth configured, then status is 200", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			response := performMLWHServeRequestForTest(server.router, http.MethodGet, "/studies")
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(server.enableCalls, convey.ShouldHaveLength, 0)
+			convey.So(server.startCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.startCalls[0].kind, convey.ShouldEqual, "http")
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve", "--port", "0"})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
+func TestMLWHServeSecuredModeRequiresBearerToken(t *testing.T) {
+	convey.Convey("E4.3: Given wa mlwh serve with a server token and cert configured, when an endpoint is requested without a Bearer token, then status is 401", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			response := performMLWHServeRequestForTest(server.router, http.MethodGet, gas.EndPointAuth+"/studies")
+			convey.So(response.Code, convey.ShouldEqual, http.StatusUnauthorized)
+			convey.So(server.enableCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.enableCalls[0].certFile, convey.ShouldEqual, "cert.pem")
+			convey.So(server.enableCalls[0].keyFile, convey.ShouldEqual, "key.pem")
+			convey.So(server.enableCalls[0].tokenBasename, convey.ShouldEqual, "mlwh-server.token")
+			convey.So(server.startCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.startCalls[0].kind, convey.ShouldEqual, "tls")
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{
+			"mlwh", "serve",
+			"--port", "0",
+			"--mlwh-cache", cachePath,
+			"--cert", "cert.pem",
+			"--key", "key.pem",
+			"--server-token", "mlwh-server.token",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
+func TestMLWHServeRequiresCacheConfiguration(t *testing.T) {
+	convey.Convey("E4.4: Given wa mlwh serve with no WA_MLWH_CACHE_PATH and no --mlwh-cache, then it errors naming the missing cache configuration", t, func() {
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+		fakeAuth := newFakeMLWHServeAuthServer()
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve", "--port", "0"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "--mlwh-cache")
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 0)
+	})
+}
+
+func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer) {
+	t.Helper()
+
+	originalNewAuthServer := mlwhServeNewAuthServer
+	mlwhServeNewAuthServer = func(io.Writer) mlwhServeAuthServer {
+		return fake
+	}
+	t.Cleanup(func() {
+		mlwhServeNewAuthServer = originalNewAuthServer
+	})
+}
+
+func TestMLWHServeDoesNotSyncOrExposeSyncInterval(t *testing.T) {
+	convey.Convey("E4.5: Given the serve command source, when audited, then it never calls client.Sync and never exposes --mlwh-sync-interval", t, func() {
+		source, err := os.ReadFile("mlwh.go")
+		convey.So(err, convey.ShouldBeNil)
+
+		serveSource := mlwhServeCommandSourceForTest(string(source))
+		convey.So(serveSource, convey.ShouldContainSubstring, "newMLWHServeCommand")
+		convey.So(serveSource, convey.ShouldNotContainSubstring, ".Sync(")
+
+		command := newMLWHServeCommand()
+		convey.So(command.Flags().Lookup("mlwh-sync-interval"), convey.ShouldBeNil)
+		convey.So(command.Flags().Lookup("mlwh-cache"), convey.ShouldNotBeNil)
+	})
+}
+
+func mlwhServeCommandSourceForTest(source string) string {
+	start := strings.Index(source, "func newMLWHServeCommand")
+	if start == -1 {
+		return ""
+	}
+
+	remaining := source[start+len("func "):]
+	end := strings.Index(remaining, "\nfunc ")
+	if end == -1 {
+		return source[start:]
+	}
+
+	return source[start : start+len("func ")+end]
 }

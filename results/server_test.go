@@ -300,7 +300,7 @@ func assertLockedResponseForTest(t *testing.T, response *httptest.ResponseRecord
 type mockSearchExpander struct {
 	expandCalls           int
 	sampleOnlyCalls       int
-	searchValuesFunc      func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	searchValuesFunc      func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
 	sampleNamesFunc       func(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 	sampleNameFunc        func(context.Context, string) (mlwh.Match, error)
 	sampleFunc            func(context.Context, string) (mlwh.Match, error)
@@ -310,10 +310,10 @@ type mockSearchExpander struct {
 	libraryIdentifierFunc func(context.Context, string) (mlwh.Match, error)
 }
 
-func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 	m.expandCalls++
 	if m.searchValuesFunc == nil {
-		return nil, nil, nil, nil
+		return mlwh.SearchValues{}, nil
 	}
 
 	return m.searchValuesFunc(ctx, kind, canonical)
@@ -1549,15 +1549,15 @@ func TestServerGetResults(t *testing.T) {
 
 		sampleExpansionCalls := map[mlwh.IdentifierKind][]string{}
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				sampleExpansionCalls[kind] = append(sampleExpansionCalls[kind], canonical)
 				switch {
 				case kind == mlwh.KindSampleUUID && canonical == "sample-uuid-123":
-					return []string{"SANG-UUID"}, nil, nil, nil
+					return mlwh.SearchValues{Samples: []string{"SANG-UUID"}}, nil
 				case kind == mlwh.KindDonorID && canonical == "DONOR-42":
-					return []string{"SANG-DONOR"}, nil, nil, nil
+					return mlwh.SearchValues{Samples: []string{"SANG-DONOR"}}, nil
 				default:
-					return nil, nil, nil, nil
+					return mlwh.SearchValues{}, nil
 				}
 			},
 		}
@@ -1603,8 +1603,8 @@ func TestServerGetResults(t *testing.T) {
 					return mlwh.Match{}, mlwh.ErrNotFound
 				}
 			},
-			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-				return nil, nil, nil, errors.New("slow live expansion should not run for supplier-name sample search")
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, errors.New("slow live expansion should not run for supplier-name sample search")
 			},
 		}
 
@@ -2300,11 +2300,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []string{"7607STDY14643771"}, []string{"12345"}, []string{"12345_1#10"}, nil
+				return mlwh.SearchValues{Samples: []string{"7607STDY14643771"}, Runs: []string{"12345"}, Lanes: []string{"12345_1#10"}}, nil
 			},
 		}
 
@@ -2335,11 +2335,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []string{"SANG-CACHE"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"SANG-CACHE"}}, nil
 			},
 		}
 
@@ -2381,11 +2381,11 @@ func TestServerGetResults(t *testing.T) {
 					},
 				}, nil
 			},
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []string{"WTSI_wEMB10524782"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"WTSI_wEMB10524782"}}, nil
 			},
 		}
 
@@ -2419,11 +2419,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
 				convey.So(canonical, convey.ShouldEqual, "Standard")
 
-				return []string{"LIB-S1"}, []string{"100"}, []string{"100_1#1"}, nil
+				return mlwh.SearchValues{Samples: []string{"LIB-S1"}, Runs: []string{"100"}, Lanes: []string{"100_1#1"}}, nil
 			},
 		}
 
@@ -2455,11 +2455,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryID)
 				convey.So(canonical, convey.ShouldEqual, "71046409")
 
-				return []string{"LIB-ID-S1"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"LIB-ID-S1"}}, nil
 			},
 		}
 
@@ -2493,11 +2493,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSampleLimsID)
 				convey.So(canonical, convey.ShouldEqual, "12345")
 
-				return []string{"SANG-LIMS"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"SANG-LIMS"}}, nil
 			},
 		}
 
@@ -2525,11 +2525,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
 				convey.So(canonical, convey.ShouldEqual, "Supplier_Sample_Name")
 
-				return []string{"SANG-SUPPLIER"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"SANG-SUPPLIER"}}, nil
 			},
 		}
 
@@ -2553,8 +2553,8 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-				return nil, nil, nil, fmt.Errorf("full expansion must not run for direct sample metadata")
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, fmt.Errorf("full expansion must not run for direct sample metadata")
 			},
 			sampleNamesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
@@ -2585,8 +2585,8 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-				return nil, nil, nil, fmt.Errorf("full expansion must not run for direct sample metadata")
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, fmt.Errorf("full expansion must not run for direct sample metadata")
 			},
 			sampleNamesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, error) {
 				return nil, fmt.Errorf("global direct sample metadata expansion must not run")
@@ -2635,8 +2635,8 @@ func TestServerGetResults(t *testing.T) {
 
 		resolvedCandidates := []string{}
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-				return nil, nil, nil, fmt.Errorf("full expansion must not run for direct sample metadata")
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, fmt.Errorf("full expansion must not run for direct sample metadata")
 			},
 			sampleNamesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, error) {
 				return nil, fmt.Errorf("global direct sample metadata expansion must not run")
@@ -2692,11 +2692,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
 				convey.So(canonical, convey.ShouldEqual, "Supplier-Lookalike")
 
-				return nil, nil, nil, nil
+				return mlwh.SearchValues{}, nil
 			},
 		}
 
@@ -2724,11 +2724,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSampleLimsID)
 				convey.So(canonical, convey.ShouldEqual, "12345")
 
-				return nil, nil, nil, nil
+				return mlwh.SearchValues{}, nil
 			},
 		}
 
@@ -2756,11 +2756,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
 				convey.So(canonical, convey.ShouldEqual, "Custom")
 
-				return []string{"LIB-TYPE-S1"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"LIB-TYPE-S1"}}, nil
 			},
 		}
 
@@ -2785,11 +2785,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindRunID)
 				convey.So(canonical, convey.ShouldEqual, "100")
 
-				return []string{"RUN-S1"}, []string{"100"}, nil, nil
+				return mlwh.SearchValues{Samples: []string{"RUN-S1"}, Runs: []string{"100"}}, nil
 			},
 		}
 

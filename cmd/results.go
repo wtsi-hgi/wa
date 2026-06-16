@@ -490,7 +490,7 @@ func (c resultsServeSecurityConfig) authCallback() gas.AuthCallback {
 type resultsServeSyncClient interface {
 	Sync(context.Context) ([]mlwh.SyncReport, error)
 	ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error)
-	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
 	ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 	LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error)
 	ResolveRun(context.Context, string) (mlwh.Match, error)
@@ -548,7 +548,7 @@ func (r *resultsServeMLWHRuntime) ExpandIdentifier(ctx context.Context, kind mlw
 	return r.client.ExpandIdentifier(ctx, kind, canonical)
 }
 
-func (r *resultsServeMLWHRuntime) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+func (r *resultsServeMLWHRuntime) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 	return r.client.ExpandSearchValues(ctx, kind, canonical)
 }
 

@@ -23,5 +23,5 @@ security flags `--cert`/`--key`/`--server-token`/`--url`/`--port` plus
 `--mlwh-sync-interval`. Tests in `cmd/mlwh_test.go` cover all 5 acceptance
 tests from E4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

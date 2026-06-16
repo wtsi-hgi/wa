@@ -97,8 +97,8 @@ func (f *fakeResultsServeSyncClient) ExpandIdentifier(context.Context, mlwh.Iden
 	return nil, nil
 }
 
-func (f *fakeResultsServeSyncClient) ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-	return nil, nil, nil, nil
+func (f *fakeResultsServeSyncClient) ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+	return mlwh.SearchValues{}, nil
 }
 
 func (f *fakeResultsServeSyncClient) ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error) {

@@ -37,7 +37,7 @@ import (
 )
 
 type mlwhSearchExpander interface {
-	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
 }
 
 type mlwhSampleSearchExpander interface {
@@ -236,7 +236,7 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 		}
 	}
 
-	samples, runs, lanes, err := r.client.ExpandSearchValues(ctx, kind, trimmed)
+	values, err := r.client.ExpandSearchValues(ctx, kind, trimmed)
 	if err != nil {
 		switch {
 		case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier):
@@ -248,6 +248,7 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 		}
 	}
 
+	samples, runs, lanes := values.Samples, values.Runs, values.Lanes
 	runs = mergeSearchValues(runs, runIDsFromLaneValues(lanes))
 	r.cachePut(cacheKey, samples, runs, lanes)
 
