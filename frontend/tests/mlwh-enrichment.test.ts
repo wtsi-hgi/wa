@@ -14,10 +14,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EnrichmentResult, EnrichmentStudy } from "@/lib/contracts";
 import {
-    SeqmetaCache,
-    SeqmetaCacheContext,
-    SeqmetaCacheProvider,
-} from "@/lib/seqmeta-cache";
+    MLWHCache,
+    MLWHCacheContext,
+    MLWHCacheProvider,
+} from "@/lib/mlwh-cache";
 
 const enrichIdentifierMock = vi.fn();
 const enrichIdentifiersMock = vi.fn(async (values: string[]) =>
@@ -158,10 +158,10 @@ describe("H3 enrichment state and badge", () => {
 
     async function openSeqmetaDetails() {
         await waitFor(() => {
-            expect(screen.getByTestId("seqmeta-badge-trigger")).toBeTruthy();
+            expect(screen.getByTestId("mlwh-badge-trigger")).toBeTruthy();
         });
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -179,12 +179,12 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
         await waitFor(() => {
-            expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            expect(screen.getByTestId("mlwh-badge-label").textContent).toBe(
                 "6568",
             );
         });
@@ -216,7 +216,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -239,7 +239,7 @@ describe("H3 enrichment state and badge", () => {
             expect(
                 Array.from(
                     (sampleRow as HTMLElement).querySelectorAll(
-                        '[data-testid="seqmeta-badge-label"]',
+                        '[data-testid="mlwh-badge-label"]',
                     ),
                 ).map((label) => label.textContent),
             ).toEqual(["Hek_R1", "Hek_R2"]);
@@ -368,7 +368,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -379,7 +379,7 @@ describe("H3 enrichment state and badge", () => {
 
         fireEvent.click(
             screen
-                .getAllByTestId("seqmeta-badge-trigger")
+                .getAllByTestId("mlwh-badge-trigger")
                 .find((button) => button.textContent === "Custom")!,
         );
 
@@ -452,8 +452,8 @@ describe("H3 enrichment state and badge", () => {
             {
                 wrapper: ({ children }) =>
                     createElement(
-                        SeqmetaCacheContext.Provider,
-                        { value: new SeqmetaCache({ "6568": cachedAlias }) },
+                        MLWHCacheContext.Provider,
+                        { value: new MLWHCache({ "6568": cachedAlias }) },
                         children,
                     ),
             },
@@ -477,8 +477,7 @@ describe("H3 enrichment state and badge", () => {
     });
 
     it("loads study library samples through server action for JIT expansion", async () => {
-        const { fetchLibrarySamples } =
-            await import("@/lib/seqmeta-enrichment");
+        const { fetchLibrarySamples } = await import("@/lib/mlwh-enrichment");
 
         const samples = [
             {
@@ -510,8 +509,7 @@ describe("H3 enrichment state and badge", () => {
     });
 
     it("forwards specific library identifiers for study library sample expansion", async () => {
-        const { fetchLibrarySamples } =
-            await import("@/lib/seqmeta-enrichment");
+        const { fetchLibrarySamples } = await import("@/lib/mlwh-enrichment");
 
         fetchStudyLibrarySamplesMock.mockResolvedValue([]);
 
@@ -609,13 +607,13 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
         await waitFor(() => {
             const studyRow = document.querySelector(
-                '[data-metadata-row="seqmeta_studyid"] [data-testid="seqmeta-badge-label"]',
+                '[data-metadata-row="seqmeta_studyid"] [data-testid="mlwh-badge-label"]',
             );
 
             expect(studyRow?.textContent).toBe("6568");
@@ -627,10 +625,10 @@ describe("H3 enrichment state and badge", () => {
         expect(enrichIdentifierMock).toHaveBeenNthCalledWith(3, "RNA");
 
         const sampleRow = document.querySelector(
-            '[data-metadata-row="seqmeta_sampleid"] [data-testid="seqmeta-badge-label"]',
+            '[data-metadata-row="seqmeta_sampleid"] [data-testid="mlwh-badge-label"]',
         );
         const libraryRow = document.querySelector(
-            '[data-metadata-row="seqmeta_library"] [data-testid="seqmeta-badge-label"]',
+            '[data-metadata-row="seqmeta_library"] [data-testid="mlwh-badge-label"]',
         );
 
         expect(sampleRow?.textContent).toBe("SANG001");
@@ -652,13 +650,13 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
         await waitFor(() => {
             const studyRow = document.querySelector(
-                '[data-metadata-row="seqmeta_studyid"] [data-testid="seqmeta-badge-label"]',
+                '[data-metadata-row="seqmeta_studyid"] [data-testid="mlwh-badge-label"]',
             );
 
             expect(studyRow?.textContent).toBe("6568");
@@ -768,7 +766,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -787,7 +785,7 @@ describe("H3 enrichment state and badge", () => {
         );
 
         const libraryTrigger = document.querySelector(
-            '[data-metadata-row="seqmeta_library"] [data-testid="seqmeta-badge-trigger"]',
+            '[data-metadata-row="seqmeta_library"] [data-testid="mlwh-badge-trigger"]',
         );
         expect(libraryTrigger).toBeTruthy();
         fireEvent.click(libraryTrigger as Element);
@@ -813,7 +811,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -828,7 +826,7 @@ describe("H3 enrichment state and badge", () => {
         pending.resolve(buildEnrichmentResult());
 
         await waitFor(() => {
-            expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            expect(screen.getByTestId("mlwh-badge-label").textContent).toBe(
                 "6568",
             );
         });
@@ -850,7 +848,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -876,7 +874,7 @@ describe("H3 enrichment state and badge", () => {
         );
 
         await waitFor(() => {
-            expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            expect(screen.getByTestId("mlwh-badge-label").textContent).toBe(
                 "7777",
             );
         });
@@ -884,7 +882,7 @@ describe("H3 enrichment state and badge", () => {
         firstPending.resolve(buildEnrichmentResult());
 
         await waitFor(() => {
-            expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            expect(screen.getByTestId("mlwh-badge-label").textContent).toBe(
                 "7777",
             );
         });
@@ -914,7 +912,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -949,7 +947,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -971,7 +969,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -993,7 +991,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -1088,9 +1086,9 @@ describe("H3 enrichment state and badge", () => {
             {
                 wrapper: ({ children }) =>
                     createElement(
-                        SeqmetaCacheContext.Provider,
+                        MLWHCacheContext.Provider,
                         {
-                            value: new SeqmetaCache({
+                            value: new MLWHCache({
                                 "Chromium single cell 3 prime v3": null,
                             }),
                         },
@@ -1136,7 +1134,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
@@ -1199,7 +1197,7 @@ describe("H3 enrichment state and badge", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 

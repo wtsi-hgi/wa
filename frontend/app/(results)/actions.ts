@@ -5,10 +5,10 @@ import { type ZodType } from "zod";
 
 import {
     BackendRequestError,
+    mlwhJson,
     resultsAuthCookieName,
     resultsJson,
     resultsRaw,
-    seqmetaJson,
 } from "@/lib/backend-client";
 import {
     enrichmentResultSchema,
@@ -18,7 +18,7 @@ import {
     identifierResultSchema,
     metaKeysSchema,
     resultSetSchema,
-    sampleSchema,
+    samplesSchema,
     searchResultSchema,
     statsResultSchema,
     type EnrichmentResult,
@@ -30,8 +30,8 @@ import {
     type Study,
 } from "@/lib/contracts";
 import { buildSearchQuery } from "@/lib/search-params";
-import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
-import { primeSeqmetaCacheEntry } from "@/lib/seqmeta-enrichment";
+import { MLWHCache } from "@/lib/mlwh-cache-core";
+import { primeMLWHCacheEntry } from "@/lib/mlwh-enrichment";
 import { getStudies } from "@/lib/studies-cache";
 
 function buildQueryString(params: Record<string, string[]>): string {
@@ -211,8 +211,8 @@ export async function validateIdentifier(
     }
 
     try {
-        return await seqmetaJson(
-            `/validate/${encodeURIComponent(trimmed)}`,
+        return await mlwhJson(
+            `/classify/${encodeURIComponent(trimmed)}`,
             identifierResultSchema,
         );
     } catch (error) {
@@ -233,7 +233,7 @@ export async function enrichIdentifier(
     }
 
     try {
-        return await seqmetaJson(
+        return await mlwhJson(
             `/enrich/${encodeURIComponent(trimmed)}`,
             enrichmentResultSchema,
         );
@@ -258,7 +258,7 @@ export async function enrichIdentifiers(
     const uniqueValues = Array.from(
         new Set(values.map((value) => value.trim()).filter(Boolean)),
     );
-    const cache = new SeqmetaCache();
+    const cache = new MLWHCache();
     const results: EnrichmentLookupResult[] = [];
 
     for (const value of uniqueValues) {
@@ -286,7 +286,7 @@ export async function enrichIdentifiers(
             }
 
             cache.set(value, enrichment);
-            primeSeqmetaCacheEntry(cache, enrichment);
+            primeMLWHCacheEntry(cache, enrichment);
             results.push({
                 value,
                 enrichment: cache.get(value) ?? enrichment,
@@ -310,9 +310,9 @@ export async function enrichIdentifiers(
 }
 
 export async function fetchStudySamples(studyId: string): Promise<string[]> {
-    const samples = await seqmetaJson(
+    const samples = await mlwhJson(
         `/study/${encodeURIComponent(studyId)}/samples`,
-        sampleSchema.array(),
+        samplesSchema,
     );
 
     return samples.map((sample) => sample.sanger_id);
@@ -323,16 +323,25 @@ export async function fetchStudyLibrarySamples(
     libraryType: string,
     filters: { idLibraryLims?: string; libraryId?: string } = {},
 ) {
-    const params = new URLSearchParams({ library_type: libraryType });
-    if (filters.libraryId) {
-        params.set("library_id", filters.libraryId);
-    }
-    if (filters.idLibraryLims) {
-        params.set("id_library_lims", filters.idLibraryLims);
+    const idLibraryLims = filters.idLibraryLims?.trim();
+    const libraryId = filters.libraryId?.trim();
+
+    if (idLibraryLims) {
+        return mlwhJson(
+            `/library-lims-id/${encodeURIComponent(idLibraryLims)}/samples`,
+            enrichmentSamplesSchema,
+        );
     }
 
-    return seqmetaJson(
-        `/study/${encodeURIComponent(studyId)}/samples?${params.toString()}`,
+    if (libraryId) {
+        return mlwhJson(
+            `/library-id/${encodeURIComponent(libraryId)}/samples`,
+            enrichmentSamplesSchema,
+        );
+    }
+
+    return mlwhJson(
+        `/library/${encodeURIComponent(libraryType)}/study/${encodeURIComponent(studyId)}/samples`,
         enrichmentSamplesSchema,
     );
 }

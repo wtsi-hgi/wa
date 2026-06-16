@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Study } from "@/lib/contracts";
 
-const seqmetaJsonMock = vi.fn();
+const mlwhJsonMock = vi.fn();
 
 vi.mock("@/lib/backend-client", async () => {
     const actual = await vi.importActual<typeof import("@/lib/backend-client")>(
@@ -11,7 +11,7 @@ vi.mock("@/lib/backend-client", async () => {
 
     return {
         ...actual,
-        seqmetaJson: seqmetaJsonMock,
+        mlwhJson: mlwhJsonMock,
     };
 });
 
@@ -32,7 +32,7 @@ describe("K3 studies cache", () => {
         vi.resetModules();
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-04-16T12:00:00Z"));
-        seqmetaJsonMock.mockReset();
+        mlwhJsonMock.mockReset();
         delete process.env.WA_STUDIES_CACHE_TTL_SECONDS;
     });
 
@@ -53,9 +53,9 @@ describe("K3 studies cache", () => {
         vi.useRealTimers();
     });
 
-    it("returns cached studies within the configured TTL and hits seqmeta once", async () => {
+    it("returns cached studies within the configured TTL and hits MLWH once", async () => {
         process.env.WA_STUDIES_CACHE_TTL_SECONDS = "60";
-        seqmetaJsonMock.mockResolvedValue(studiesFixture);
+        mlwhJsonMock.mockResolvedValue(studiesFixture);
 
         const { getStudies } = await loadStudiesCache();
 
@@ -63,12 +63,16 @@ describe("K3 studies cache", () => {
         vi.advanceTimersByTime(59_000);
         await expect(getStudies()).resolves.toEqual(studiesFixture);
 
-        expect(seqmetaJsonMock).toHaveBeenCalledTimes(1);
+        expect(mlwhJsonMock).toHaveBeenCalledTimes(1);
+        expect(mlwhJsonMock).toHaveBeenCalledWith(
+            "/studies",
+            expect.anything(),
+        );
     });
 
     it("re-fetches once the cache age exceeds the configured TTL", async () => {
         process.env.WA_STUDIES_CACHE_TTL_SECONDS = "1";
-        seqmetaJsonMock.mockResolvedValue(studiesFixture);
+        mlwhJsonMock.mockResolvedValue(studiesFixture);
 
         const { getStudies } = await loadStudiesCache();
 
@@ -76,11 +80,11 @@ describe("K3 studies cache", () => {
         vi.advanceTimersByTime(1_001);
         await expect(getStudies()).resolves.toEqual(studiesFixture);
 
-        expect(seqmetaJsonMock).toHaveBeenCalledTimes(2);
+        expect(mlwhJsonMock).toHaveBeenCalledTimes(2);
     });
 
     it("uses the default TTL of 300 seconds when the env var is unset", async () => {
-        seqmetaJsonMock.mockResolvedValue(studiesFixture);
+        mlwhJsonMock.mockResolvedValue(studiesFixture);
 
         const { getStudies } = await loadStudiesCache();
 
@@ -90,26 +94,26 @@ describe("K3 studies cache", () => {
         vi.advanceTimersByTime(2_000);
         await expect(getStudies()).resolves.toEqual(studiesFixture);
 
-        expect(seqmetaJsonMock).toHaveBeenCalledTimes(2);
+        expect(mlwhJsonMock).toHaveBeenCalledTimes(2);
     });
 
-    it("throws on an initial seqmeta failure and leaves the cache empty", async () => {
+    it("throws on an initial MLWH failure and leaves the cache empty", async () => {
         process.env.WA_STUDIES_CACHE_TTL_SECONDS = "60";
-        seqmetaJsonMock
-            .mockRejectedValueOnce(new Error("seqmeta unavailable"))
+        mlwhJsonMock
+            .mockRejectedValueOnce(new Error("mlwh unavailable"))
             .mockResolvedValueOnce(studiesFixture);
 
         const { getStudies } = await loadStudiesCache();
 
-        await expect(getStudies()).rejects.toThrow("seqmeta unavailable");
+        await expect(getStudies()).rejects.toThrow("mlwh unavailable");
         await expect(getStudies()).resolves.toEqual(studiesFixture);
 
-        expect(seqmetaJsonMock).toHaveBeenCalledTimes(2);
+        expect(mlwhJsonMock).toHaveBeenCalledTimes(2);
     });
 
     it("does not serve stale studies when a refresh fails after TTL expiry", async () => {
         process.env.WA_STUDIES_CACHE_TTL_SECONDS = "1";
-        seqmetaJsonMock
+        mlwhJsonMock
             .mockResolvedValueOnce(studiesFixture)
             .mockRejectedValueOnce(new Error("refresh failed"));
 
@@ -119,7 +123,7 @@ describe("K3 studies cache", () => {
         vi.advanceTimersByTime(1_001);
         await expect(getStudies()).rejects.toThrow("refresh failed");
 
-        expect(seqmetaJsonMock).toHaveBeenCalledTimes(2);
+        expect(mlwhJsonMock).toHaveBeenCalledTimes(2);
     });
 });
 

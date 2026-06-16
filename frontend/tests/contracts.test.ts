@@ -204,6 +204,12 @@ describe("contract schemas", () => {
         expect(errorSchema.parse({ error: "not found" }).error).toBe(
             "not found",
         );
+        expect(
+            errorSchema.parse({
+                code: "not_found",
+                message: "identifier not found",
+            }).error,
+        ).toBe("identifier not found");
         expect(healthSchema.parse({ status: "healthy" }).status).toBe(
             "healthy",
         );

@@ -19,10 +19,10 @@ import type {
     MissingHop,
 } from "@/lib/contracts";
 import { canonicalSeqmetaKey } from "@/lib/seqmeta-keys";
-import { fetchLibrarySamples } from "@/lib/seqmeta-enrichment";
+import { fetchLibrarySamples } from "@/lib/mlwh-enrichment";
 import { cn } from "@/lib/utils";
 
-type SeqmetaBadgeProps = {
+type MLWHBadgeProps = {
     metadataKey: string;
     rawValue: string;
     enrichment: EnrichmentResult | null;
@@ -1619,7 +1619,7 @@ async function writeClipboard(value: string): Promise<boolean> {
     }
 }
 
-export function SeqmetaBadge({
+export function MLWHBadge({
     metadataKey,
     rawValue,
     enrichment,
@@ -1627,7 +1627,7 @@ export function SeqmetaBadge({
     loading = false,
     statusPlacement = "inline",
     triggerLabel,
-}: SeqmetaBadgeProps) {
+}: MLWHBadgeProps) {
     const inlineLabel = primaryLabel(rawValue, enrichment);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -1839,7 +1839,7 @@ export function SeqmetaBadge({
                     aria-expanded={dialogOpen}
                     aria-haspopup="dialog"
                     aria-label={`Open ${triggerDisplayKey} details`}
-                    data-testid="seqmeta-badge-trigger"
+                    data-testid="mlwh-badge-trigger"
                     className={cn(
                         "inline-flex max-w-full cursor-pointer items-center rounded-full border border-border/80 px-3 py-1 text-left text-xs font-medium tracking-[0.16em] transition hover:border-primary/45 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                         enrichment
@@ -1848,10 +1848,7 @@ export function SeqmetaBadge({
                     )}
                     onClick={() => setDialogOpen(true)}
                 >
-                    <span
-                        data-testid="seqmeta-badge-label"
-                        className="truncate"
-                    >
+                    <span data-testid="mlwh-badge-label" className="truncate">
                         {inlineLabel}
                     </span>
                 </button>

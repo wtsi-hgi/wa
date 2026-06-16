@@ -32,8 +32,8 @@ envelope. Test files `frontend/tests/actions.test.ts`,
 `frontend/tests/studies-cache.test.ts`. Covering all 5 acceptance tests
 from A3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.2: A4 - split study-samples endpoint selection in the frontend
 
@@ -49,8 +49,8 @@ Covering all 3 acceptance tests from A4.
 
 Depends on Item 6.1 (same file).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.3: E5 - frontend file/component/contract renames
 
@@ -68,5 +68,5 @@ corresponding vitest suites. Covering all 3 acceptance tests from E5.
 
 Depends on Items 6.1-6.2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

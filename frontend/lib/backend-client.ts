@@ -287,11 +287,11 @@ export async function resultsJson<T>(
     );
 }
 
-export async function seqmetaJson<T>(
+export async function mlwhJson<T>(
     path: string,
     schema: ZodType<T>,
 ): Promise<T> {
-    return backendJson("seqmeta", "WA_MLWH_BACKEND_URL", path, schema);
+    return backendJson("mlwh", "WA_MLWH_BACKEND_URL", path, schema);
 }
 
 export async function resultsRaw(

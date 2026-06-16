@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Info } from "lucide-react";
 
-import { SeqmetaBadge } from "@/components/seqmeta-badge";
+import { MLWHBadge } from "@/components/mlwh-badge";
 import {
     Popover,
     PopoverContent,
@@ -395,7 +395,7 @@ function MetadataValue({
                     const lookupKey = seqmetaLookupKey(rawValue);
 
                     return (
-                        <SeqmetaBadge
+                        <MLWHBadge
                             key={`${rawValue}:${index}`}
                             metadataKey={metadataKey}
                             rawValue={rawValue}

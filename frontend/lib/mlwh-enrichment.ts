@@ -1,6 +1,6 @@
 import { BackendRequestError } from "@/lib/backend-shared";
 import type { EnrichmentResult } from "@/lib/contracts";
-import type { SeqmetaCacheStore } from "@/lib/seqmeta-cache-core";
+import type { MLWHCacheStore } from "@/lib/mlwh-cache-core";
 import {
     canonicalSeqmetaKey,
     isSeqmetaKeyForUserFacingMlwhMetadataKey,
@@ -42,8 +42,8 @@ export function isSeqmetaKey(key: string): boolean {
     return isSeqmetaKeyValue(key);
 }
 
-export function hasUsableSeqmetaCacheEntry(
-    cache: SeqmetaCacheStore,
+export function hasUsableMLWHCacheEntry(
+    cache: MLWHCacheStore,
     value: string,
 ): boolean {
     if (!cache.has(value)) {
@@ -278,14 +278,14 @@ function collectSeqmetaLookupValues(
 
 export function buildCachedEnrichmentState(
     metadata: Record<string, string>,
-    cache: SeqmetaCacheStore,
+    cache: MLWHCacheStore,
     metadataValues?: Record<string, string[]>,
 ): SeqmetaEnrichmentState {
     const enrichments: Record<string, EnrichmentResult | null> = {};
     const errors: Record<string, "not_found" | "upstream_impaired"> = {};
 
     for (const value of collectSeqmetaValues(metadata, metadataValues)) {
-        if (!hasUsableSeqmetaCacheEntry(cache, value)) {
+        if (!hasUsableMLWHCacheEntry(cache, value)) {
             continue;
         }
 
@@ -300,8 +300,8 @@ export function buildCachedEnrichmentState(
     return { enrichments, errors };
 }
 
-export function primeSeqmetaCache(
-    cache: SeqmetaCacheStore,
+export function primeMLWHCache(
+    cache: MLWHCacheStore,
     enrichments: Record<string, EnrichmentResult | null>,
 ): void {
     for (const [value, result] of Object.entries(enrichments)) {
@@ -403,8 +403,8 @@ function collectSeqmetaAliases(
     return Array.from(aliases.entries());
 }
 
-export function primeSeqmetaCacheEntry(
-    cache: SeqmetaCacheStore,
+export function primeMLWHCacheEntry(
+    cache: MLWHCacheStore,
     enrichment: EnrichmentResult,
 ): void {
     for (const [value, type] of collectSeqmetaAliases(enrichment)) {
@@ -442,7 +442,7 @@ export function mergeSeqmetaEnrichmentState(
 
 export async function enrichSeqmetaMetadata(
     metadata: Record<string, string>,
-    cache: SeqmetaCacheStore,
+    cache: MLWHCacheStore,
     enrichIdentifier: (value: string) => Promise<EnrichmentResult | null>,
     metadataValues?: Record<string, string[]>,
 ): Promise<SeqmetaEnrichmentState> {
@@ -450,7 +450,7 @@ export async function enrichSeqmetaMetadata(
     const pendingValues = collectSeqmetaLookupValues(
         metadata,
         metadataValues,
-    ).filter((value) => !hasUsableSeqmetaCacheEntry(cache, value));
+    ).filter((value) => !hasUsableMLWHCacheEntry(cache, value));
 
     if (pendingValues.length === 0) {
         return state;
@@ -459,7 +459,7 @@ export async function enrichSeqmetaMetadata(
     if (pendingValues.length > 0) {
         const results = await Promise.all(
             pendingValues.map(async (value) => {
-                if (hasUsableSeqmetaCacheEntry(cache, value)) {
+                if (hasUsableMLWHCacheEntry(cache, value)) {
                     const enrichment = cache.get(value) ?? null;
                     return { value, enrichment, error: null };
                 }
@@ -477,7 +477,7 @@ export async function enrichSeqmetaMetadata(
                     }
 
                     cache.set(value, result);
-                    primeSeqmetaCacheEntry(cache, result);
+                    primeMLWHCacheEntry(cache, result);
                     const enrichment = cache.get(value) ?? result;
                     return { value, enrichment, error: null };
                 } catch (error) {
@@ -518,7 +518,7 @@ export async function enrichSeqmetaMetadata(
 
 export async function enrichSeqmetaMetadataBatch(
     metadata: Record<string, string>,
-    cache: SeqmetaCacheStore,
+    cache: MLWHCacheStore,
     enrichIdentifiers: (
         values: string[],
     ) => Promise<SeqmetaEnrichmentLookupResult[]>,
@@ -528,7 +528,7 @@ export async function enrichSeqmetaMetadataBatch(
     const pendingValues = collectSeqmetaLookupValues(
         metadata,
         metadataValues,
-    ).filter((value) => !hasUsableSeqmetaCacheEntry(cache, value));
+    ).filter((value) => !hasUsableMLWHCacheEntry(cache, value));
 
     if (pendingValues.length === 0) {
         return state;
@@ -541,7 +541,7 @@ export async function enrichSeqmetaMetadataBatch(
             cache.set(result.value, null);
         } else {
             cache.set(result.value, result.enrichment);
-            primeSeqmetaCacheEntry(cache, result.enrichment);
+            primeMLWHCacheEntry(cache, result.enrichment);
         }
 
         const enrichment = cache.get(result.value) ?? result.enrichment;

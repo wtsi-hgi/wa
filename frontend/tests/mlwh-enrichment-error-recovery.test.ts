@@ -6,8 +6,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
-import { SeqmetaCacheContext } from "@/lib/seqmeta-cache";
-import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
+import { MLWHCacheContext } from "@/lib/mlwh-cache";
+import { MLWHCache } from "@/lib/mlwh-cache-core";
 
 // Mock the enrichIdentifier action
 vi.mock("@/app/(results)/actions", () => ({
@@ -21,14 +21,14 @@ vi.mock("@/app/(results)/actions", () => ({
 
 describe("seqmeta enrichment error recovery", () => {
     test("loading state clears when enrichment fails", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata = {
             seqmeta_sampleid: "SANG5993",
         };
 
         render(
             createElement(
-                SeqmetaCacheContext.Provider,
+                MLWHCacheContext.Provider,
                 { value: cache },
                 createElement(ResultMetadataEnrichment, { metadata }),
             ),
@@ -56,14 +56,14 @@ describe("seqmeta enrichment error recovery", () => {
     });
 
     test("dialog doesnt show Looking up indefinitely after error", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata = {
             seqmeta_sampleid: "SANG5993",
         };
 
         render(
             createElement(
-                SeqmetaCacheContext.Provider,
+                MLWHCacheContext.Provider,
                 { value: cache },
                 createElement(ResultMetadataEnrichment, { metadata }),
             ),
@@ -80,7 +80,7 @@ describe("seqmeta enrichment error recovery", () => {
         );
 
         // Click the badge to open dialog (using getAllByTestId since there might be multiple)
-        const badges = screen.getAllByTestId("seqmeta-badge-trigger");
+        const badges = screen.getAllByTestId("mlwh-badge-trigger");
         fireEvent.click(badges[0]);
 
         // Dialog should open

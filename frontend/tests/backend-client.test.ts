@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+    mkdir,
+    mkdtemp,
+    readdir,
+    readFile,
+    rm,
+    writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -10,14 +17,54 @@ import { z } from "zod";
 import {
     BackendRequestError,
     BackendUnavailableError,
+    mlwhJson,
     resultsJson,
     resultsRaw,
-    seqmetaJson,
 } from "@/lib/backend-client";
 
 const agentTmpRoot = fileURLToPath(
     new URL("../../.tmp/agent/", import.meta.url),
 );
+const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
+
+const ignoredSourceDirectories = new Set([
+    ".next",
+    ".turbo",
+    "coverage",
+    "node_modules",
+]);
+const searchableExtensions = new Set([
+    ".cjs",
+    ".js",
+    ".json",
+    ".mjs",
+    ".ts",
+    ".tsx",
+]);
+
+async function collectFrontendTextFiles(directory: string): Promise<string[]> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    const files: string[] = [];
+
+    for (const entry of entries) {
+        if (ignoredSourceDirectories.has(entry.name)) {
+            continue;
+        }
+
+        const entryPath = path.join(directory, entry.name);
+
+        if (entry.isDirectory()) {
+            files.push(...(await collectFrontendTextFiles(entryPath)));
+            continue;
+        }
+
+        if (searchableExtensions.has(path.extname(entry.name))) {
+            files.push(entryPath);
+        }
+    }
+
+    return files;
+}
 
 const testServerKey = `-----BEGIN PRIVATE KEY-----
 MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC/m6zwd86IsLNZ
@@ -192,7 +239,7 @@ describe("H1 dual backend client", () => {
 
         const address = server.address() as AddressInfo;
         process.env.WA_RESULTS_BACKEND_URL = `https://127.0.0.1:${address.port}`;
-        process.env.WA_MLWH_BACKEND_URL = "https://seqmeta.example";
+        process.env.WA_MLWH_BACKEND_URL = "https://mlwh.example";
         const caPath = path.join(tempDir, "wa-results-ca.pem");
         await writeFile(caPath, testServerCert);
         process.env.WA_RESULTS_BACKEND_CA_CERT = caPath;
@@ -208,7 +255,7 @@ describe("H1 dual backend client", () => {
                 resultsJson("/results/stats", z.object({ total: z.number() })),
             ).resolves.toEqual({ total: 5 });
             await expect(
-                seqmetaJson("/studies", z.array(z.object({ id: z.string() }))),
+                mlwhJson("/studies", z.array(z.object({ id: z.string() }))),
             ).resolves.toEqual([{ id: "study-1" }]);
         } finally {
             await new Promise<void>((resolve) => {
@@ -219,20 +266,18 @@ describe("H1 dual backend client", () => {
 
         expect(seenResultsPaths).toEqual(["/results/stats"]);
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(fetchMock).toHaveBeenCalledWith(
-            "https://seqmeta.example/studies",
-        );
+        expect(fetchMock).toHaveBeenCalledWith("https://mlwh.example/studies");
     });
 
-    it("throws BackendUnavailableError when the seqmeta backend URL is not configured", async () => {
+    it("throws BackendUnavailableError when the MLWH backend URL is not configured", async () => {
         const studiesSchema = z.array(z.object({ id: z.string() }));
 
         await expect(
-            seqmetaJson("/studies", studiesSchema),
+            mlwhJson("/studies", studiesSchema),
         ).rejects.toBeInstanceOf(BackendUnavailableError);
     });
 
-    it("returns validated seqmeta JSON from the configured seqmeta backend", async () => {
+    it("returns validated MLWH JSON from the configured MLWH backend", async () => {
         process.env.WA_MLWH_BACKEND_URL = "http://localhost:8091";
 
         const fetchMock = vi
@@ -244,14 +289,14 @@ describe("H1 dual backend client", () => {
 
         const studiesSchema = z.array(z.object({ id: z.string() }));
 
-        await expect(seqmetaJson("/studies", studiesSchema)).resolves.toEqual([
+        await expect(mlwhJson("/studies", studiesSchema)).resolves.toEqual([
             { id: "study-1" },
         ]);
         expect(fetchMock).toHaveBeenCalledWith("http://localhost:8091/studies");
     });
 
-    it("preserves a path prefix in the configured seqmeta backend URL", async () => {
-        process.env.WA_MLWH_BACKEND_URL = "https://host/seqmeta-api";
+    it("preserves a path prefix in the configured MLWH backend URL", async () => {
+        process.env.WA_MLWH_BACKEND_URL = "https://host/mlwh-api";
 
         const fetchMock = vi
             .fn()
@@ -262,12 +307,49 @@ describe("H1 dual backend client", () => {
 
         const studiesSchema = z.array(z.object({ id: z.string() }));
 
-        await expect(seqmetaJson("/studies", studiesSchema)).resolves.toEqual([
+        await expect(mlwhJson("/studies", studiesSchema)).resolves.toEqual([
             { id: "study-1" },
         ]);
-        expect(fetchMock).toHaveBeenCalledWith(
-            "https://host/seqmeta-api/studies",
+        expect(fetchMock).toHaveBeenCalledWith("https://host/mlwh-api/studies");
+    });
+
+    it("throws BackendRequestError with parsed MLWH error envelopes", async () => {
+        process.env.WA_MLWH_BACKEND_URL = "http://localhost:8091";
+
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                Response.json(
+                    {
+                        code: "not_found",
+                        message: "identifier not found",
+                    },
+                    { status: 404 },
+                ),
+            ),
         );
+
+        const studiesSchema = z.array(z.object({ id: z.string() }));
+        const result = mlwhJson("/studies", studiesSchema);
+
+        await expect(result).rejects.toMatchObject({
+            status: 404,
+            body: {
+                code: "not_found",
+                message: "identifier not found",
+            },
+        });
+        await expect(result).rejects.toBeInstanceOf(BackendRequestError);
+    });
+
+    it("does not reference retired frontend backend client names", async () => {
+        const files = await collectFrontendTextFiles(frontendRoot);
+        const sourceText = (
+            await Promise.all(files.map((file) => readFile(file, "utf8")))
+        ).join("\n");
+
+        expect(sourceText).not.toContain("WA_" + "SEQMETA_BACKEND_URL");
+        expect(sourceText).not.toContain("seqmeta" + "Json");
     });
 
     it("returns the raw response for results file requests", async () => {

@@ -84,11 +84,30 @@ export type Study = z.infer<typeof studySchema>;
 export const studiesSchema = z.array(studySchema);
 export type Studies = z.infer<typeof studiesSchema>;
 
-export const sampleSchema = z
+const rawSampleSchema = z
     .object({
-        sanger_id: z.string(),
+        sanger_id: z.string().optional(),
+        sanger_sample_id: z.string().optional(),
+        name: z.string().optional(),
     })
     .passthrough();
+
+function normalizeSample(sample: z.infer<typeof rawSampleSchema>) {
+    const sangerID = [
+        sample.sanger_id,
+        sample.sanger_sample_id,
+        sample.name,
+    ].find((value) => value?.trim());
+
+    return {
+        ...sample,
+        sanger_id: sangerID,
+    };
+}
+
+export const sampleSchema = rawSampleSchema
+    .transform(normalizeSample)
+    .pipe(z.object({ sanger_id: z.string() }).passthrough());
 export type Sample = z.infer<typeof sampleSchema>;
 
 export const samplesSchema = z.array(sampleSchema);
@@ -413,9 +432,15 @@ export const enrichmentResultSchema = z.object({
 });
 export type EnrichmentResult = z.infer<typeof enrichmentResultSchema>;
 
-export const errorSchema = z.object({
-    error: z.string(),
-});
+export const errorSchema = z.union([
+    z.object({ error: z.string() }),
+    z
+        .object({
+            code: z.string(),
+            message: z.string(),
+        })
+        .transform(({ message }) => ({ error: message })),
+]);
 export type ErrorResponse = z.infer<typeof errorSchema>;
 
 export const lockedResponseSchema = z.object({

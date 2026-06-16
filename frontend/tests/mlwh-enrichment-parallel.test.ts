@@ -5,12 +5,12 @@ import {
     buildCachedEnrichmentState,
     enrichSeqmetaMetadataBatch,
     enrichSeqmetaMetadata,
-} from "@/lib/seqmeta-enrichment";
-import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
+} from "@/lib/mlwh-enrichment";
+import { MLWHCache } from "@/lib/mlwh-cache-core";
 
 describe("enrichSeqmetaMetadata", () => {
     it("should parallelize enrichment lookups for multiple seqmeta values to avoid slow sequential execution", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
 
         // Create metadata with 5 different seqmeta values
         const metadata: Record<string, string> = {
@@ -47,7 +47,7 @@ describe("enrichSeqmetaMetadata", () => {
     });
 
     it("starts every uncached lookup before waiting for the first enrichment result", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata: Record<string, string> = {
             seqmeta_librarytype: "Custom",
             seqmeta_runid: "48522",
@@ -91,7 +91,7 @@ describe("enrichSeqmetaMetadata", () => {
     });
 
     it("uses one batch call for multiple uncached metadata values", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata: Record<string, string> = {
             seqmeta_librarytype: "Custom",
             seqmeta_libraryid: "71046409",
@@ -137,7 +137,7 @@ describe("enrichSeqmetaMetadata", () => {
     });
 
     it("keeps direct study enrichment when a parallel sample lookup primes the same study alias first", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata: Record<string, string> = {
             seqmeta_sampleid: "7607STDY14643771",
             seqmeta_studyid: "7607",
@@ -193,7 +193,7 @@ describe("enrichSeqmetaMetadata", () => {
     });
 
     it("should handle parallel enrichment failures gracefully", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
 
         const metadata: Record<string, string> = {
             seqmeta_sampleid: "GOOD-1",
@@ -234,7 +234,7 @@ describe("enrichSeqmetaMetadata", () => {
     });
 
     it("retries stale negative cache entries for one-word identifiers that can now resolve", async () => {
-        const cache = new SeqmetaCache({
+        const cache = new MLWHCache({
             Custom: null,
             "48522": null,
             "7607STDY14643771": null,

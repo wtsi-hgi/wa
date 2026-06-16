@@ -20,14 +20,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 afterEach(cleanup);
 
-describe("seqmeta-badge library type study filtering", () => {
+describe("MLWHBadge library type study filtering", () => {
     it("shows only the single study when all samples belong to one study, even when enrichment returns multiple studies globally", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         // Simulate a global library-type lookup returning multiple studies for "Chromium single cell 3 prime v3"
         // but all samples in this enrichment belong to study 5631
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "Chromium single cell 3 prime v3",
                 enrichment: {
@@ -166,7 +166,7 @@ describe("seqmeta-badge library type study filtering", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -192,11 +192,11 @@ describe("seqmeta-badge library type study filtering", () => {
     });
 
     it("shows all studies when samples belong to multiple studies", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         // When samples actually belong to multiple studies, show all of them
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "RNA PolyA",
                 enrichment: {
@@ -287,7 +287,7 @@ describe("seqmeta-badge library type study filtering", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();

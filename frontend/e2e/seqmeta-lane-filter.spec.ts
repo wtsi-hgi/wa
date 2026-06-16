@@ -54,7 +54,7 @@ test.describe("Lane filtering support (bugfix 260501-4)", () => {
         );
         await expect(metadataRow).toContainText("WTSI_wEMB10524782");
 
-        const trigger = metadataRow.getByTestId("seqmeta-badge-trigger");
+        const trigger = metadataRow.getByTestId("mlwh-badge-trigger");
         await trigger.click();
 
         const dialog = page.getByRole("dialog", {

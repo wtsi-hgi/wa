@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { EnrichmentResult } from "@/lib/contracts";
 import {
-    buildSeqmetaCacheCookie,
-    deserializeSeqmetaCacheCookie,
-    serializeSeqmetaCacheCookie,
-    SeqmetaCache,
-} from "@/lib/seqmeta-cache-core";
-import { primeSeqmetaCache } from "@/lib/seqmeta-enrichment";
+    buildMLWHCacheCookie,
+    deserializeMLWHCacheCookie,
+    serializeMLWHCacheCookie,
+    MLWHCache,
+} from "@/lib/mlwh-cache-core";
+import { primeMLWHCache } from "@/lib/mlwh-enrichment";
 
 function flushMicrotasks(): Promise<void> {
     return new Promise((resolve) => {
@@ -81,20 +81,20 @@ function buildEnrichment(identifier: string): EnrichmentResult {
     } as EnrichmentResult;
 }
 
-describe("SeqmetaCache onChange coalescing", () => {
+describe("MLWHCache onChange coalescing", () => {
     it("invokes onChange at most once per microtask flush across many synchronous set calls", async () => {
         const onChange = vi.fn();
-        const cache = new SeqmetaCache({}, onChange);
+        const cache = new MLWHCache({}, onChange);
 
         // Simulate the storm: many sets in a single tick, mimicking
-        // primeSeqmetaCacheEntry's many alias writes per enrichment, across
+        // primeMLWHCacheEntry's many alias writes per enrichment, across
         // several enrichments that resolve in parallel.
         const enrichments: Record<string, EnrichmentResult | null> = {};
         for (let i = 0; i < 10; i++) {
             enrichments[`SAMPLE-${i}`] = buildEnrichment(`SAMPLE-${i}`);
         }
 
-        primeSeqmetaCache(cache, enrichments);
+        primeMLWHCache(cache, enrichments);
 
         // Synchronously after many sets, listener should NOT have fired N times.
         // It should be coalesced to a single deferred call per flush.
@@ -113,7 +113,7 @@ describe("SeqmetaCache onChange coalescing", () => {
     });
 
     it("makes set values visible synchronously via get/has/snapshot before flush", () => {
-        const cache = new SeqmetaCache({}, vi.fn());
+        const cache = new MLWHCache({}, vi.fn());
         const enrichment = buildEnrichment("X");
 
         cache.set("X", enrichment);
@@ -126,7 +126,7 @@ describe("SeqmetaCache onChange coalescing", () => {
     it("does not invoke onChange when a set is a no-op (equality short-circuit)", async () => {
         const enrichment = buildEnrichment("Y");
         const onChange = vi.fn();
-        const cache = new SeqmetaCache({ Y: enrichment }, onChange);
+        const cache = new MLWHCache({ Y: enrichment }, onChange);
 
         // Re-setting equal value must not schedule a flush.
         cache.set("Y", enrichment);
@@ -146,7 +146,7 @@ describe("SeqmetaCache onChange coalescing", () => {
                 },
             },
         } as unknown as EnrichmentResult;
-        const cache = new SeqmetaCache({ Z: enrichment }, vi.fn());
+        const cache = new MLWHCache({ Z: enrichment }, vi.fn());
 
         expect(() => {
             cache.set("Z", { ...enrichment });
@@ -155,7 +155,7 @@ describe("SeqmetaCache onChange coalescing", () => {
 
     it("coalesces multiple flush windows independently", async () => {
         const onChange = vi.fn();
-        const cache = new SeqmetaCache({}, onChange);
+        const cache = new MLWHCache({}, onChange);
 
         cache.set("A", buildEnrichment("A"));
         cache.set("B", buildEnrichment("B"));
@@ -172,7 +172,7 @@ describe("SeqmetaCache onChange coalescing", () => {
     });
 });
 
-describe("SeqmetaCache cookie persistence", () => {
+describe("MLWHCache cookie persistence", () => {
     it("does not stringify successful enrichment graphs when serializing a cookie", () => {
         const oversizeEnrichment = {
             ...buildEnrichment("SAMPLE-1"),
@@ -183,12 +183,12 @@ describe("SeqmetaCache cookie persistence", () => {
             },
         } as unknown as EnrichmentResult;
 
-        const serialized = serializeSeqmetaCacheCookie({
+        const serialized = serializeMLWHCacheCookie({
             "SAMPLE-1": oversizeEnrichment,
             "MISSING-1": null,
         });
 
-        expect(deserializeSeqmetaCacheCookie(serialized)).toEqual({
+        expect(deserializeMLWHCacheCookie(serialized)).toEqual({
             "MISSING-1": null,
         });
     });
@@ -201,8 +201,8 @@ describe("SeqmetaCache cookie persistence", () => {
             ]),
         );
 
-        const cookie = buildSeqmetaCacheCookie(snapshot);
-        const persisted = deserializeSeqmetaCacheCookie(
+        const cookie = buildMLWHCacheCookie(snapshot);
+        const persisted = deserializeMLWHCacheCookie(
             cookie.split(";")[0]!.split("=").slice(1).join("="),
         );
 
@@ -220,7 +220,7 @@ describe("SeqmetaCache cookie persistence", () => {
         );
 
         expect(
-            deserializeSeqmetaCacheCookie(legacyCookieValue)["SAMPLE-2"]
+            deserializeMLWHCacheCookie(legacyCookieValue)["SAMPLE-2"]
                 ?.identifier,
         ).toBe("SAMPLE-2");
     });

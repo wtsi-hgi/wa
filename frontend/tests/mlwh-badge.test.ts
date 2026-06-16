@@ -25,20 +25,21 @@ import type {
     FileEntry,
     IRODSPath,
     LaneDetail,
+    LibraryDetail,
     ResultSet,
     SampleDetail,
 } from "@/lib/contracts";
 import { enrichmentResultSchema } from "@/lib/contracts";
 import {
-    buildSeqmetaCacheCookie,
-    deserializeSeqmetaCacheCookie,
-    SEQMETA_CACHE_COOKIE_NAME,
-} from "@/lib/seqmeta-cache-core";
+    buildMLWHCacheCookie,
+    deserializeMLWHCacheCookie,
+    MLWH_CACHE_COOKIE_NAME,
+} from "@/lib/mlwh-cache-core";
 import {
-    SeqmetaCache,
-    SeqmetaCacheContext,
-    SeqmetaCacheProvider,
-} from "@/lib/seqmeta-cache";
+    MLWHCache,
+    MLWHCacheContext,
+    MLWHCacheProvider,
+} from "@/lib/mlwh-cache";
 
 const fetchResultMock = vi.fn();
 const fetchFilesMock = vi.fn();
@@ -86,9 +87,9 @@ vi.mock("@/app/(results)/actions", () => ({
     enrichIdentifiers: enrichIdentifiersMock,
 }));
 
-vi.mock("@/lib/seqmeta-enrichment", async (importOriginal) => {
+vi.mock("@/lib/mlwh-enrichment", async (importOriginal) => {
     const actual =
-        await importOriginal<typeof import("@/lib/seqmeta-enrichment")>();
+        await importOriginal<typeof import("@/lib/mlwh-enrichment")>();
     return {
         ...actual,
         fetchLibrarySamples: fetchLibrarySamplesMock,
@@ -114,7 +115,7 @@ function setRequestCookieHeader(cookieHeader?: string) {
 }
 
 function readSeqmetaCookieFromDocument(): string | undefined {
-    const prefix = `${SEQMETA_CACHE_COOKIE_NAME}=`;
+    const prefix = `${MLWH_CACHE_COOKIE_NAME}=`;
 
     return document.cookie
         .split(";")
@@ -326,7 +327,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     afterEach(() => {
         cleanup();
         vi.clearAllMocks();
-        document.cookie = `${SEQMETA_CACHE_COOKIE_NAME}=; Max-Age=0; Path=/`;
+        document.cookie = `${MLWH_CACHE_COOKIE_NAME}=; Max-Age=0; Path=/`;
         setRequestCookieHeader();
 
         if (originalDocumentCookie) {
@@ -335,10 +336,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("opens a modal with structured seqmeta details for an enriched badge", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: buildEnrichment(),
@@ -346,7 +347,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
         expect(screen.queryByRole("dialog")).toBeNull();
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -373,7 +374,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not render project rows even when legacy project fields are present", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const legacyEnrichment = enrichmentResultSchema.parse({
             identifier: "SANG001",
             type: "sanger_sample_id",
@@ -410,14 +411,14 @@ describe("M1 result detail seqmeta enrichment", () => {
         });
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: legacyEnrichment,
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -431,7 +432,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
     it("contains no removed upstream wording in the badge source", async () => {
         const source = await readFile(
-            resolve(process.cwd(), "components/seqmeta-badge.tsx"),
+            resolve(process.cwd(), "components/mlwh-badge.tsx"),
             "utf8",
         );
 
@@ -440,10 +441,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("renders seqmeta_library details without singular sample or study guesses", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "RNA",
                 enrichment: buildEnrichment({
@@ -467,12 +468,10 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
-            "RNA",
-        );
+        expect(screen.getByTestId("mlwh-badge-label").textContent).toBe("RNA");
         expect(screen.queryByText("sanger_sample_id: RNA")).toBeNull();
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -508,7 +507,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("opens library details quickly without rendering every related sample row", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const samples = Array.from({ length: 1000 }, (_, index) =>
             buildSample({
                 id_sample_lims: `LIMS${index}`,
@@ -518,7 +517,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         );
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_librarytype",
                 rawValue: "Custom",
                 enrichment: buildEnrichment({
@@ -543,7 +542,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         const startedAt = performance.now();
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -562,10 +561,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("renders a vertically scrollable body for long seqmeta detail content", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: buildEnrichment({
@@ -582,7 +581,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -597,10 +596,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("displays the raw metadata value in the badge, not enriched study name", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -610,16 +609,14 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
-            "6568",
-        );
+        expect(screen.getByTestId("mlwh-badge-label").textContent).toBe("6568");
     });
 
     it("shows the raw value with a failure indicator and unavailable tooltip when enrichment fails", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: null,
@@ -631,7 +628,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(
             screen.getByLabelText("enrichment unavailable").textContent,
         ).toContain("?");
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -678,7 +675,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(metadataWrapper?.className).toContain("overflow-hidden");
         expect(screen.queryByRole("tooltip")).toBeNull();
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -708,13 +705,13 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        expect(screen.getByTestId("seqmeta-badge-trigger").className).toContain(
+        expect(screen.getByTestId("mlwh-badge-trigger").className).toContain(
             "cursor-pointer",
         );
     });
 
     it("falls back to document copy for seqmeta details when Clipboard API is unavailable", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
             globalThis,
             "navigator",
@@ -732,14 +729,14 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         try {
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey: "seqmeta_sampleid",
                     rawValue: "SANG001",
                     enrichment: buildEnrichment(),
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -880,7 +877,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         const { ResultMetadataEnrichment } =
             await import("@/components/result-metadata-enrichment");
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata = {
             seqmeta_sampleid: "SANG001",
         };
@@ -895,14 +892,14 @@ describe("M1 result detail seqmeta enrichment", () => {
             {
                 wrapper: ({ children }) =>
                     createElement(
-                        SeqmetaCacheContext.Provider,
+                        MLWHCacheContext.Provider,
                         { value: cache },
                         children,
                     ),
             },
         );
 
-        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+        expect(screen.getByTestId("mlwh-badge-label").textContent).toBe(
             "SANG001",
         );
         expect(screen.queryByLabelText("loading enrichment")).toBeNull();
@@ -918,14 +915,14 @@ describe("M1 result detail seqmeta enrichment", () => {
             {
                 wrapper: ({ children }) =>
                     createElement(
-                        SeqmetaCacheContext.Provider,
+                        MLWHCacheContext.Provider,
                         { value: cache },
                         children,
                     ),
             },
         );
 
-        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+        expect(screen.getByTestId("mlwh-badge-label").textContent).toBe(
             "SANG001",
         );
         expect(screen.queryByLabelText("loading enrichment")).toBeNull();
@@ -953,14 +950,14 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
-        expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+        expect(screen.getByTestId("mlwh-badge-label").textContent).toBe(
             "SANG001",
         );
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1002,13 +999,13 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
         await waitFor(() => {
             expect(readSeqmetaCookieFromDocument()).toContain(
-                SEQMETA_CACHE_COOKIE_NAME,
+                MLWH_CACHE_COOKIE_NAME,
             );
         });
 
@@ -1016,7 +1013,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(persistedCookie).toBeTruthy();
 
         const cookieValue = persistedCookie?.split("=").slice(1).join("=");
-        expect(deserializeSeqmetaCacheCookie(cookieValue)).toEqual({});
+        expect(deserializeMLWHCacheCookie(cookieValue)).toEqual({});
 
         const firstMarkup = renderToStaticMarkup(
             await pageModule.ResultDetailPageContent({
@@ -1029,7 +1026,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         expect(firstMarkup).not.toContain("sanger_sample_id: SANG001");
 
         setRequestCookieHeader(
-            buildSeqmetaCacheCookie({ SANG001: buildEnrichment() }),
+            buildMLWHCacheCookie({ SANG001: buildEnrichment() }),
         );
 
         const secondMarkup = renderToStaticMarkup(
@@ -1046,7 +1043,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     it("does not rewrite the seqmeta cookie when mount enrichment matches the existing cache", async () => {
         const enrichment = buildEnrichment();
 
-        document.cookie = buildSeqmetaCacheCookie({ SANG001: enrichment });
+        document.cookie = buildMLWHCacheCookie({ SANG001: enrichment });
         const writesBeforeRender = cookieWrites.length;
 
         const { ResultMetadataEnrichment } =
@@ -1063,12 +1060,12 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
             {
                 wrapper: ({ children }) =>
-                    createElement(SeqmetaCacheProvider, null, children),
+                    createElement(MLWHCacheProvider, null, children),
             },
         );
 
         await waitFor(() => {
-            expect(screen.getByTestId("seqmeta-badge-label").textContent).toBe(
+            expect(screen.getByTestId("mlwh-badge-label").textContent).toBe(
                 "SANG001",
             );
         });
@@ -1113,8 +1110,8 @@ describe("M1 result detail seqmeta enrichment", () => {
         enrichIdentifierMock.mockReset();
         enrichIdentifierMock.mockResolvedValue(null);
         const serverTree = createElement(
-            SeqmetaCacheContext.Provider,
-            { value: new SeqmetaCache() },
+            MLWHCacheContext.Provider,
+            { value: new MLWHCache() },
             createElement(ResultMetadataEnrichment, {
                 metadata: {
                     seqmeta_sampleid: "SANG001",
@@ -1122,7 +1119,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
         const clientTree = createElement(
-            SeqmetaCacheProvider,
+            MLWHCacheProvider,
             null,
             createElement(ResultMetadataEnrichment, {
                 metadata: {
@@ -1133,7 +1130,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         const container = document.createElement("div");
         const recoverableErrors: unknown[] = [];
 
-        document.cookie = buildSeqmetaCacheCookie({ SANG001: null });
+        document.cookie = buildMLWHCacheCookie({ SANG001: null });
         container.innerHTML = renderToString(serverTree);
         document.body.appendChild(container);
 
@@ -1165,7 +1162,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
-    it("hydrates without mismatches when both server and client use SeqmetaCacheProvider with a stale not_found cookie", async () => {
+    it("hydrates without mismatches when both server and client use MLWHCacheProvider with a stale not_found cookie", async () => {
         const { ResultMetadataEnrichment } =
             await import("@/components/result-metadata-enrichment");
         enrichIdentifierMock.mockReset();
@@ -1174,14 +1171,14 @@ describe("M1 result detail seqmeta enrichment", () => {
         // Pre-populate document.cookie with a stale "not_found" entry, as
         // would happen on a returning user whose previous visit cached a
         // negative lookup for SANG001.
-        document.cookie = buildSeqmetaCacheCookie({ SANG001: null });
+        document.cookie = buildMLWHCacheCookie({ SANG001: null });
 
         // Both the server-rendered tree and the client hydrated tree go
-        // through the real SeqmetaCacheProvider, mirroring the production
+        // through the real MLWHCacheProvider, mirroring the production
         // (results)/layout.tsx wiring.
         const tree = () =>
             createElement(
-                SeqmetaCacheProvider,
+                MLWHCacheProvider,
                 null,
                 createElement(ResultMetadataEnrichment, {
                     metadata: {
@@ -1230,11 +1227,11 @@ describe("M1 result detail seqmeta enrichment", () => {
         enrichIdentifierMock.mockReset();
         enrichIdentifierMock.mockResolvedValue(null);
 
-        document.cookie = buildSeqmetaCacheCookie({ SANG001: null });
+        document.cookie = buildMLWHCacheCookie({ SANG001: null });
 
         const tree = () =>
             createElement(
-                SeqmetaCacheProvider,
+                MLWHCacheProvider,
                 null,
                 createElement(ResultMetadataEnrichment, {
                     metadata: {
@@ -1283,23 +1280,23 @@ describe("M1 result detail seqmeta enrichment", () => {
         }
     });
 
-    it("renders 'loading enrichment' on the server even when the SeqmetaCacheContext is fed a pre-populated cache (matches the client's first hydration render)", async () => {
+    it("renders 'loading enrichment' on the server even when the MLWHCacheContext is fed a pre-populated cache (matches the client's first hydration render)", async () => {
         const { ResultMetadataEnrichment } =
             await import("@/components/result-metadata-enrichment");
         enrichIdentifierMock.mockReset();
         enrichIdentifierMock.mockResolvedValue(null);
 
-        // Simulate the worst case: a SeqmetaCache that already contains a
-        // cached "not_found" result is provided via SeqmetaCacheContext for
+        // Simulate the worst case: a MLWHCache that already contains a
+        // cached "not_found" result is provided via MLWHCacheContext for
         // the SSR pass. This mirrors what would happen if any code path on
         // the server (or a returning client whose cookies were merged into
         // the live cache before hydration completed) hands a populated cache
         // into the consumer. The component must still render the loading
         // state on the very first render so that SSR and hydration agree.
-        const populatedCache = new SeqmetaCache({ SANG001: null });
+        const populatedCache = new MLWHCache({ SANG001: null });
 
         const serverTree = createElement(
-            SeqmetaCacheContext.Provider,
+            MLWHCacheContext.Provider,
             { value: populatedCache },
             createElement(ResultMetadataEnrichment, {
                 metadata: {
@@ -1317,10 +1314,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("shows dialog title matching raw value with canonical key in subtitle", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -1330,7 +1327,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1348,10 +1345,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("omits duplicate selected metadata value row from dialog", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -1361,7 +1358,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1371,10 +1368,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("omits redundant resolved seqmeta type row from dialog", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -1384,7 +1381,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1394,10 +1391,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("omits summary and resolution aside from dialog", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -1407,7 +1404,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1418,10 +1415,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("groups libraries without label duplication when study_detail hierarchy is present", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -1543,7 +1540,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1573,7 +1570,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("nests samples under each library, collapsed by default and expandable", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         const librarySamples = [
             {
@@ -1612,7 +1609,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchLibrarySamplesMock.mockResolvedValue(librarySamples);
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -1677,7 +1674,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1719,7 +1716,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("expands study libraries by specific library identifiers when a study has repeated library types", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const firstLibrarySample = buildSample({
             id_sample_lims: "SMP001",
             sanger_id: "S1",
@@ -1760,7 +1757,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         ] as unknown as LibraryDetail[];
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -1777,7 +1774,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1805,7 +1802,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("shows run-id related library identifiers with the run samples already in the details payload", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const runSamples = [
             buildSample({
                 id_study_lims: "7607",
@@ -1824,7 +1821,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         ];
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_runid",
                 rawValue: "48522",
                 enrichment: buildEnrichment({
@@ -1860,7 +1857,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1878,10 +1875,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("renders run-id related study and sample as one row per entity", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_runid",
                 rawValue: "48522",
                 enrichment: buildEnrichment({
@@ -1904,7 +1901,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1938,10 +1935,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("uses ID titles and omits duplicated identity metadata for run-id related entities", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_runid",
                 rawValue: "48522",
                 enrichment: buildEnrichment({
@@ -1974,7 +1971,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2013,7 +2010,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("uses the same related entity row shape from sample, study, and library detail contexts", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const sharedStudy = buildStudy({
             id_study_lims: "6568",
             name: "RNA Seq",
@@ -2140,14 +2137,14 @@ describe("M1 result detail seqmeta enrichment", () => {
         for (const testCase of cases) {
             cleanup();
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey: testCase.metadataKey,
                     rawValue: testCase.rawValue,
                     enrichment: testCase.enrichment,
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2168,10 +2165,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("renders study related libraries as entity rows with metadata pairs", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -2202,7 +2199,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2225,10 +2222,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("renders sample related library and lane rows with metadata pairs", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: buildEnrichment({
@@ -2274,7 +2271,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2316,10 +2313,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("renders library related samples as entity rows with metadata pairs", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_librarytype",
                 rawValue: "RNA",
                 enrichment: buildEnrichment({
@@ -2340,7 +2337,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2363,10 +2360,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("renders direct metadata for exact library-id details from related library identifiers", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_libraryid",
                 rawValue: "71046409",
                 enrichment: buildEnrichment({
@@ -2396,7 +2393,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2437,7 +2434,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("hides duplicate library-id direct metadata and keeps title copy and filter actions", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
             globalThis,
             "navigator",
@@ -2455,7 +2452,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         try {
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey: "seqmeta_libraryid",
                     rawValue: "71046409",
                     enrichment: buildEnrichment({
@@ -2485,7 +2482,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2582,10 +2579,10 @@ describe("M1 result detail seqmeta enrichment", () => {
             sample,
             suppressedDetailKey,
         }) => {
-            const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+            const { MLWHBadge } = await import("@/components/mlwh-badge");
 
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey,
                     rawValue,
                     enrichment: buildEnrichment({
@@ -2599,7 +2596,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2627,10 +2624,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     );
 
     it("omits the direct metadata section when only the selected title value would remain", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_librarytype",
                 rawValue: "Custom",
                 enrichment: buildEnrichment({
@@ -2658,7 +2655,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2682,7 +2679,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("filters sample related library rows by library id when the id is only on sample detail libraries", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
             globalThis,
             "navigator",
@@ -2700,7 +2697,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         try {
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey: "seqmeta_sampleid",
                     rawValue: "7607STDY14643771",
                     enrichment: buildEnrichment({
@@ -2741,7 +2738,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2784,7 +2781,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not emit duplicate-key warnings when expanded library samples share sample IDs", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         const consoleErrorSpy = vi
             .spyOn(console, "error")
@@ -2826,7 +2823,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchLibrarySamplesMock.mockResolvedValue(duplicateIdentitySamples);
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -2891,7 +2888,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -2915,7 +2912,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("falls back to graph.libraries for Libraries section when study_detail is absent", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         const librarySamples = [
             {
@@ -2938,7 +2935,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchLibrarySamplesMock.mockResolvedValue(librarySamples);
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -2976,7 +2973,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3005,10 +3002,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("lists samples individually for library detail and includes parent study", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "RNA",
                 enrichment: buildEnrichment({
@@ -3077,7 +3074,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3096,10 +3093,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("shows all direct metadata fields for a sample, not just sampleid", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "WTSI_wEMB10524782",
                 enrichment: buildEnrichment({
@@ -3173,7 +3170,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3199,10 +3196,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("displays legacy sample metadata details with MLWH field names and no alias/type subtitle", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "7607STDY14643771",
                 enrichment: buildEnrichment({
@@ -3226,7 +3223,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3255,10 +3252,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("keeps canonical direct metadata keys in label hover text instead of a visible second line", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "7607STDY14643771",
                 enrichment: buildEnrichment({
@@ -3282,7 +3279,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3314,10 +3311,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("uses the combined Sample search key for supplier-name direct metadata filters", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "7607STDY14643771",
                 enrichment: buildEnrichment({
@@ -3333,7 +3330,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3350,10 +3347,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("labels supplier-backed sample dialogs with the source-specific supplier key and hides the duplicate supplier-name direct row", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_supplier_name",
                 rawValue: "Hek_R1",
                 enrichment: buildEnrichment({
@@ -3372,7 +3369,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3438,10 +3435,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("shows hierarchical related data for sample with library parent, study grandparent, and lanes", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "WTSI_wEMB10524782",
                 enrichment: buildEnrichment({
@@ -3516,7 +3513,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3542,10 +3539,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not show linked samples for a sample (no sample-to-sample relations)", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "WTSI_wEMB10524782",
                 enrichment: buildEnrichment({
@@ -3662,7 +3659,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3681,11 +3678,11 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("omits redundant direct metadata row when value duplicates the dialog title", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         // Click on a study ID field - rawValue is the study ID
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -3719,7 +3716,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3769,10 +3766,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("keeps the study accession detail row when a study-accession title has the same value", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_study_accession",
                 rawValue: "EGAS00001005445",
                 enrichment: buildEnrichment({
@@ -3787,7 +3784,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3811,10 +3808,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not duplicate 'Lane' label in rows within Lanes section", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: buildEnrichment({
@@ -3831,7 +3828,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3867,10 +3864,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not duplicate 'Sample' label in rows within Samples section", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "RNA",
                 enrichment: buildEnrichment({
@@ -3896,7 +3893,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3931,10 +3928,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not duplicate 'Library type' label in rows within Library section", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG001",
                 enrichment: buildEnrichment({
@@ -3946,7 +3943,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -3980,10 +3977,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not duplicate 'Study name' label in rows within Study section", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "RNA",
                 enrichment: buildEnrichment({
@@ -4003,7 +4000,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4037,7 +4034,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not duplicate 'Library type' label in Libraries section with nested samples", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         // Mock JIT loading of library samples
         const librarySamples = [
@@ -4051,7 +4048,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchLibrarySamplesMock.mockResolvedValue(librarySamples);
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -4074,7 +4071,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4125,7 +4122,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not emit duplicate React key warnings when rendering library metadata with overlapping sample data", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         // Capture console.error calls to detect React key warnings
         const originalError = console.error;
@@ -4138,7 +4135,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         try {
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey: "seqmeta_library",
                     rawValue: "RNA",
                     enrichment: buildEnrichment({
@@ -4186,7 +4183,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4206,10 +4203,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("displays study section for library metadata when study data is present", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "Chromium single cell",
                 enrichment: {
@@ -4279,7 +4276,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4312,7 +4309,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("marks only the clicked library row copy button as Copied", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
             globalThis,
             "navigator",
@@ -4330,7 +4327,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         try {
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey: "seqmeta_studyid",
                     rawValue: "6568",
                     enrichment: buildEnrichment({
@@ -4400,7 +4397,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4430,7 +4427,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("marks only the clicked sample row copy button as Copied", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
             globalThis,
             "navigator",
@@ -4448,7 +4445,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         try {
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey: "seqmeta_library",
                     rawValue: "RNA",
                     enrichment: buildEnrichment({
@@ -4493,7 +4490,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4525,7 +4522,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("copies study visible name while keeping study filter links", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
         const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(
             globalThis,
             "navigator",
@@ -4543,7 +4540,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         try {
             render(
-                createElement(SeqmetaBadge, {
+                createElement(MLWHBadge, {
                     metadataKey: "seqmeta_library",
                     rawValue: "Chromium single cell",
                     enrichment: {
@@ -4597,7 +4594,7 @@ describe("M1 result detail seqmeta enrichment", () => {
                 }),
             );
 
-            fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+            fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
             await waitFor(() => {
                 expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4632,10 +4629,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("shows Related Data header before Study/Samples sections for seqmeta_library with no direct metadata", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_library",
                 rawValue: "Chromium single cell",
                 enrichment: {
@@ -4689,7 +4686,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4704,10 +4701,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("shows Related Data header before Library/Study/Lanes sections for seqmeta_sampleid with direct metadata", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "SANG_TEST_001",
                 enrichment: {
@@ -4782,7 +4779,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4801,7 +4798,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not show individual sample fields in flat detail fields for study metadata with study_detail", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         // Mock JIT loading of library samples - return first library's sample on first call
         const polyASamples = [
@@ -4825,7 +4822,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchLibrarySamplesMock.mockResolvedValue(polyASamples);
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -4928,7 +4925,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -4977,7 +4974,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not show linked_samples field for study metadata with study_detail", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         // Mock JIT loading of library samples
         const librarySamples = [
@@ -5001,7 +4998,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchLibrarySamplesMock.mockResolvedValue(librarySamples);
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -5083,7 +5080,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -5108,10 +5105,10 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("does not render legacy sample or library rows for study metadata without study_detail", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -5160,7 +5157,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
@@ -5175,7 +5172,7 @@ describe("M1 result detail seqmeta enrichment", () => {
     });
 
     it("renders each sample as a single row under expanded library, not as multiple field rows", async () => {
-        const { SeqmetaBadge } = await import("@/components/seqmeta-badge");
+        const { MLWHBadge } = await import("@/components/mlwh-badge");
 
         // Mock JIT loading of library samples
         const librarySamples = [
@@ -5214,7 +5211,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         fetchLibrarySamplesMock.mockResolvedValue(librarySamples);
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_studyid",
                 rawValue: "6568",
                 enrichment: buildEnrichment({
@@ -5279,7 +5276,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();

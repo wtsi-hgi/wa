@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BackendRequestError } from "@/lib/backend-client";
 import type { EnrichmentResult, EnrichmentStudy } from "@/lib/contracts";
-import { SeqmetaCache } from "@/lib/seqmeta-cache-core";
-import { enrichSeqmetaMetadata } from "@/lib/seqmeta-enrichment";
+import { MLWHCache } from "@/lib/mlwh-cache-core";
+import { enrichSeqmetaMetadata } from "@/lib/mlwh-enrichment";
 
 function buildStudy(overrides: Partial<EnrichmentStudy> = {}): EnrichmentStudy {
     return {
@@ -41,7 +41,7 @@ describe("enrichSeqmetaMetadata does not impose an artificial timeout", () => {
     });
 
     it("no artificial timeout — slow 404 is classified as not_found", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata: Record<string, string> = {
             seqmeta_studyid: "9999999",
         };
@@ -65,7 +65,7 @@ describe("enrichSeqmetaMetadata does not impose an artificial timeout", () => {
     });
 
     it("no artificial timeout — slow non-404 backend failure is classified as upstream_impaired", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata: Record<string, string> = {
             seqmeta_studyid: "boom",
         };
@@ -88,7 +88,7 @@ describe("enrichSeqmetaMetadata does not impose an artificial timeout", () => {
     });
 
     it("no artificial timeout — slow successful enrichment resolves without being aborted", async () => {
-        const cache = new SeqmetaCache();
+        const cache = new MLWHCache();
         const metadata: Record<string, string> = {
             seqmeta_studyid: "3361",
         };

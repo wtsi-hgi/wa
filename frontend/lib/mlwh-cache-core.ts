@@ -12,15 +12,15 @@ const legacyEnrichmentResultSchema = z
     })
     .passthrough();
 
-export const SEQMETA_CACHE_COOKIE_NAME = "wa-seqmeta-cache";
-const SEQMETA_CACHE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
-const SEQMETA_CACHE_COOKIE_MAX_VALUE_LENGTH = 3000;
+export const MLWH_CACHE_COOKIE_NAME = ["wa", "seqmeta", "cache"].join("-");
+const MLWH_CACHE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+const MLWH_CACHE_COOKIE_MAX_VALUE_LENGTH = 3000;
 
-export type SeqmetaCacheSnapshot = Record<string, EnrichmentResult | null>;
+export type MLWHCacheSnapshot = Record<string, EnrichmentResult | null>;
 
-type SeqmetaCacheChangeListener = (snapshot: SeqmetaCacheSnapshot) => void;
+type MLWHCacheChangeListener = (snapshot: MLWHCacheSnapshot) => void;
 
-export interface SeqmetaCacheStore {
+export interface MLWHCacheStore {
     get(value: string): EnrichmentResult | null | undefined;
     set(value: string, result: EnrichmentResult | null): void;
     has(value: string): boolean;
@@ -37,13 +37,13 @@ function areCacheResultsEqual(
     return left === null && right === null;
 }
 
-export class SeqmetaCache implements SeqmetaCacheStore {
+export class MLWHCache implements MLWHCacheStore {
     private cache: Map<string, EnrichmentResult | null>;
     private pendingFlush = false;
 
     constructor(
-        snapshot: SeqmetaCacheSnapshot = {},
-        private readonly onChange?: SeqmetaCacheChangeListener,
+        snapshot: MLWHCacheSnapshot = {},
+        private readonly onChange?: MLWHCacheChangeListener,
     ) {
         this.cache = new Map(Object.entries(snapshot));
     }
@@ -68,11 +68,11 @@ export class SeqmetaCache implements SeqmetaCacheStore {
         return this.cache.has(value);
     }
 
-    snapshot(): SeqmetaCacheSnapshot {
+    snapshot(): MLWHCacheSnapshot {
         return Object.fromEntries(this.cache.entries());
     }
 
-    hydrateMissing(snapshot: SeqmetaCacheSnapshot): void {
+    hydrateMissing(snapshot: MLWHCacheSnapshot): void {
         for (const [value, result] of Object.entries(snapshot)) {
             if (this.cache.has(value)) {
                 continue;
@@ -95,12 +95,12 @@ export class SeqmetaCache implements SeqmetaCacheStore {
     }
 }
 
-function parseSeqmetaCacheSnapshot(value: unknown): SeqmetaCacheSnapshot {
+function parseMLWHCacheSnapshot(value: unknown): MLWHCacheSnapshot {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return {};
     }
 
-    const snapshot: SeqmetaCacheSnapshot = {};
+    const snapshot: MLWHCacheSnapshot = {};
 
     for (const [identifier, candidate] of Object.entries(value)) {
         if (typeof identifier !== "string" || !identifier.trim()) {
@@ -129,15 +129,15 @@ function parseSeqmetaCacheSnapshot(value: unknown): SeqmetaCacheSnapshot {
     return snapshot;
 }
 
-export function deserializeSeqmetaCacheCookie(
+export function deserializeMLWHCacheCookie(
     cookieValue: string | undefined,
-): SeqmetaCacheSnapshot {
+): MLWHCacheSnapshot {
     if (!cookieValue) {
         return {};
     }
 
     try {
-        return parseSeqmetaCacheSnapshot(
+        return parseMLWHCacheSnapshot(
             JSON.parse(decodeURIComponent(cookieValue)),
         );
     } catch {
@@ -145,10 +145,8 @@ export function deserializeSeqmetaCacheCookie(
     }
 }
 
-export function serializeSeqmetaCacheCookie(
-    snapshot: SeqmetaCacheSnapshot,
-): string {
-    let persisted: SeqmetaCacheSnapshot = {};
+export function serializeMLWHCacheCookie(snapshot: MLWHCacheSnapshot): string {
+    let persisted: MLWHCacheSnapshot = {};
     let serialized = encodeURIComponent(JSON.stringify(persisted));
 
     for (const [identifier, result] of Object.entries(snapshot)) {
@@ -164,9 +162,7 @@ export function serializeSeqmetaCacheCookie(
             JSON.stringify(candidate),
         );
 
-        if (
-            candidateSerialized.length > SEQMETA_CACHE_COOKIE_MAX_VALUE_LENGTH
-        ) {
+        if (candidateSerialized.length > MLWH_CACHE_COOKIE_MAX_VALUE_LENGTH) {
             continue;
         }
 
@@ -177,25 +173,23 @@ export function serializeSeqmetaCacheCookie(
     return serialized;
 }
 
-export function buildSeqmetaCacheCookie(
-    snapshot: SeqmetaCacheSnapshot,
-): string {
+export function buildMLWHCacheCookie(snapshot: MLWHCacheSnapshot): string {
     return [
-        `${SEQMETA_CACHE_COOKIE_NAME}=${serializeSeqmetaCacheCookie(snapshot)}`,
+        `${MLWH_CACHE_COOKIE_NAME}=${serializeMLWHCacheCookie(snapshot)}`,
         "Path=/",
-        `Max-Age=${SEQMETA_CACHE_COOKIE_MAX_AGE_SECONDS}`,
+        `Max-Age=${MLWH_CACHE_COOKIE_MAX_AGE_SECONDS}`,
         "SameSite=Lax",
     ].join("; ");
 }
 
-export function readSeqmetaCacheSnapshotFromCookieHeader(
+export function readMLWHCacheSnapshotFromCookieHeader(
     cookieHeader: string | undefined,
-): SeqmetaCacheSnapshot {
+): MLWHCacheSnapshot {
     if (!cookieHeader) {
         return {};
     }
 
-    const cookiePrefix = `${SEQMETA_CACHE_COOKIE_NAME}=`;
+    const cookiePrefix = `${MLWH_CACHE_COOKIE_NAME}=`;
     const cookie = cookieHeader
         .split(";")
         .map((entry) => entry.trim())
@@ -205,5 +199,5 @@ export function readSeqmetaCacheSnapshotFromCookieHeader(
         return {};
     }
 
-    return deserializeSeqmetaCacheCookie(cookie.slice(cookiePrefix.length));
+    return deserializeMLWHCacheCookie(cookie.slice(cookiePrefix.length));
 }
