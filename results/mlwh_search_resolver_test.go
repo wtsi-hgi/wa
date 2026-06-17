@@ -126,4 +126,21 @@ func TestA2MLWHSearchResolver(t *testing.T) {
 		convey.So(err.Error(), convey.ShouldContainSubstring, "results: mlwh unavailable")
 		convey.So(err.Error(), convey.ShouldNotContainSubstring, "seqmeta unavailable")
 	})
+
+	convey.Convey("A2.4: Given ExpandSearchValues returns joined cache-never-synced and not-found, Expand preserves the cache error", t, func() {
+		expander := &mockSearchExpander{
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, errors.Join(mlwh.ErrCacheNeverSynced, mlwh.ErrNotFound)
+			},
+		}
+
+		samples, runs, lanes, err := NewMLWHSearchResolver(expander).Expand(context.Background(), mlwh.KindStudyLimsID, "6568")
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(errors.Is(err, ErrMLWHFailed), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, mlwh.ErrCacheNeverSynced), convey.ShouldBeTrue)
+		convey.So(samples, convey.ShouldBeNil)
+		convey.So(runs, convey.ShouldBeNil)
+		convey.So(lanes, convey.ShouldBeNil)
+	})
 }

@@ -225,6 +225,8 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 	values, err := r.client.ExpandSearchValues(ctx, kind, trimmed)
 	if err != nil {
 		switch {
+		case errors.Is(err, mlwh.ErrCacheNeverSynced):
+			return nil, nil, nil, fmt.Errorf("%w: expand identifier: %w", ErrMLWHFailed, err)
 		case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier):
 			r.cachePut(cacheKey, nil, nil, nil)
 
