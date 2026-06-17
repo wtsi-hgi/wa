@@ -74,7 +74,7 @@ type runDevEnvSnapshot struct {
 }
 
 func TestRunDevAutoManagedMLWHBackendUsesMLWHServe(t *testing.T) {
-	convey.Convey("run-dev.sh starts mlwh serve behind WA_MLWH_BACKEND_URL when it auto-manages the backend", t, func() {
+	convey.Convey("run-dev.sh syncs the MLWH cache before serving it when it auto-manages the backend", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -110,11 +110,19 @@ func TestRunDevAutoManagedMLWHBackendUsesMLWHServe(t *testing.T) {
 		})
 
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
-		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 2), "\n")
+		invocations := waitForRunDevStepsForTest(t, invocationsPath, 3)
+		invocationText := strings.Join(invocations, "\n")
 
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
-		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
-		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwhdiff serve")
+		convey.So(invocations[0], convey.ShouldContainSubstring, "results serve")
+		convey.So(invocations[1], convey.ShouldEqual, "mlwh sync")
+		convey.So(invocations[2], convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
+		convey.So(invocationText, convey.ShouldNotContainSubstring, "mlwhdiff serve")
+		convey.So(
+			process.stdout.String(),
+			convey.ShouldContainSubstring,
+			fmt.Sprintf("Waiting for MLWH studies readiness at http://127.0.0.1:%d/studies", seqmetaPort),
+		)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -165,6 +173,9 @@ case "${1:-} ${2:-}" in
 	"results serve")
 		port="$(port_arg "$@")"
 		exec node -e 'const http = require("node:http"); const port = Number(process.argv[1]); const server = http.createServer((_, response) => { response.writeHead(200, {"content-type":"application/json"}); response.end("{}"); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
+		;;
+	"mlwh sync")
+		exit 0
 		;;
 	"mlwh serve")
 		port="$(port_arg "$@")"
@@ -1215,6 +1226,7 @@ func TestRunDevScript(t *testing.T) {
 
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, remoteMLWHURL)
 		convey.So(invocations, convey.ShouldContainSubstring, "results serve")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
 		convey.So(process.stdout.String(), convey.ShouldContainSubstring, "MLWH: "+remoteMLWHURL)
@@ -1265,6 +1277,7 @@ func TestRunDevScript(t *testing.T) {
 
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, remoteMLWHURL)
 		convey.So(invocations, convey.ShouldContainSubstring, "results serve")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
 		convey.So(process.stdout.String(), convey.ShouldNotContainSubstring, fmt.Sprintf("Starting MLWH server on http://127.0.0.1:%d", seqmetaPort))
 
