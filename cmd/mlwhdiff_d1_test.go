@@ -39,8 +39,10 @@ func TestMLWHDiffD1CommandContract(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwhdiff", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "MLWH diff CLI")
 		convey.So(output, convey.ShouldContainSubstring, "diff")
 		convey.So(output, convey.ShouldContainSubstring, "serve")
+		convey.So(output, convey.ShouldNotContainSubstring, "Sequence metadata cache CLI")
 		convey.So(output, convey.ShouldNotContainSubstring, "validate")
 	})
 

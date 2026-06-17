@@ -57,7 +57,7 @@ func TestDiffCommandWriteFailureDoesNotAdvanceWatermark(t *testing.T) {
 	originalOpen := openMLWHDiffClientFunc
 	defer func() { openMLWHDiffClientFunc = originalOpen }()
 
-	openMLWHDiffClientFunc = func(_ context.Context, _ mlwhdiffMLWHConfig) (mlwhdiffCommandClient, error) {
+	openMLWHDiffClientFunc = func(_ context.Context, _ mlwhdiffMLWHConfig) (mlwhdiffMLWHHandle, error) {
 		return &mlwhdiffTestClient{provider: &mlwhdiffMockProvider{
 			samplesForStudyFunc: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
 				return []mlwh.Sample{{Name: "S1"}, {Name: "S2"}}, nil
@@ -325,7 +325,7 @@ func TestDiffCommand(t *testing.T) {
 	originalOpen := openMLWHDiffClientFunc
 	defer func() { openMLWHDiffClientFunc = originalOpen }()
 
-	openMLWHDiffClientFunc = func(_ context.Context, _ mlwhdiffMLWHConfig) (mlwhdiffCommandClient, error) {
+	openMLWHDiffClientFunc = func(_ context.Context, _ mlwhdiffMLWHConfig) (mlwhdiffMLWHHandle, error) {
 		return &mlwhdiffTestClient{provider: &mlwhdiffMockProvider{
 			samplesForStudyFunc: func(_ context.Context, studyLimsID string, _, _ int) ([]mlwh.Sample, error) {
 				if studyLimsID != "100" {
@@ -390,7 +390,7 @@ func TestServeCommand(t *testing.T) {
 			return []mlwh.IRODSPath{{IDProduct: "P1"}}, nil
 		},
 	}
-	openMLWHDiffClientFunc = func(_ context.Context, _ mlwhdiffMLWHConfig) (mlwhdiffCommandClient, error) {
+	openMLWHDiffClientFunc = func(_ context.Context, _ mlwhdiffMLWHConfig) (mlwhdiffMLWHHandle, error) {
 		return &mlwhdiffTestClient{provider: provider}, nil
 	}
 
@@ -815,207 +815,6 @@ func (c *mlwhdiffTestClient) Close() error {
 	}
 
 	return nil
-}
-
-func TestMLWHDiffMLWHClientAdapterFindSamplesBySangerIDForwardsDirectly(t *testing.T) {
-	adapter, db := openMLWHDiffAdapterForTest(t)
-	seedMLWHDiffSyncState(t, db, "sample")
-	seedMLWHDiffSample(t, db, mlwh.Sample{
-		IDSampleTmp:     1,
-		IDLims:          "SQSCP",
-		IDSampleLims:    "777",
-		UUIDSampleLims:  "00000000-0000-0000-0000-000000000001",
-		Name:            "SANGER-1",
-		SangerSampleID:  "12345",
-		SupplierName:    "SUP-1",
-		AccessionNumber: "ACC-1",
-		DonorID:         "DONOR-1",
-		TaxonID:         9606,
-		CommonName:      "human",
-		Description:     "sample",
-	})
-
-	convey.Convey("FindSamplesBySangerID forwards to the dedicated mlwh finder", t, func() {
-		samples, err := adapter.FindSamplesBySangerID(context.Background(), "12345")
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].Name, convey.ShouldEqual, "SANGER-1")
-		convey.So(samples[0].SangerSampleID, convey.ShouldEqual, "12345")
-	})
-}
-
-func seedMLWHDiffSyncState(t *testing.T, db *sql.DB, tableName string) {
-	t.Helper()
-
-	_, err := db.Exec(
-		`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, NULL, 0)`,
-		tableName,
-		"2026-05-11T00:00:00Z",
-		"2026-05-11T00:00:00Z",
-	)
-	if err != nil {
-		t.Fatalf("insert sync_state %s: %v", tableName, err)
-	}
-}
-
-func seedMLWHDiffSample(t *testing.T, db *sql.DB, sample mlwh.Sample) {
-	t.Helper()
-
-	_, err := db.Exec(
-		`INSERT INTO sample_mirror(id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sample.IDSampleTmp,
-		sample.IDLims,
-		sample.IDSampleLims,
-		sample.UUIDSampleLims,
-		sample.Name,
-		sample.SangerSampleID,
-		sample.SupplierName,
-		sample.AccessionNumber,
-		sample.DonorID,
-		sample.TaxonID,
-		sample.CommonName,
-		sample.Description,
-		"2026-05-11T00:00:00Z",
-	)
-	if err != nil {
-		t.Fatalf("insert sample_mirror %d: %v", sample.IDSampleTmp, err)
-	}
-}
-
-func TestMLWHDiffMLWHClientAdapterFindSamplesByIDSampleLimsForwardsDirectly(t *testing.T) {
-	adapter, db := openMLWHDiffAdapterForTest(t)
-	seedMLWHDiffSyncState(t, db, "sample")
-	seedMLWHDiffSample(t, db, mlwh.Sample{
-		IDSampleTmp:     2,
-		IDLims:          "SQSCP",
-		IDSampleLims:    "SAMPLE-LIMS-2",
-		UUIDSampleLims:  "00000000-0000-0000-0000-000000000002",
-		Name:            "SANGER-2",
-		SangerSampleID:  "SS2",
-		SupplierName:    "SUP-2",
-		AccessionNumber: "ACC-2",
-		DonorID:         "DONOR-2",
-		TaxonID:         9606,
-		CommonName:      "human",
-		Description:     "sample",
-	})
-
-	convey.Convey("FindSamplesByIDSampleLims forwards to the dedicated mlwh finder", t, func() {
-		samples, err := adapter.FindSamplesByIDSampleLims(context.Background(), "SAMPLE-LIMS-2")
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].IDSampleLims, convey.ShouldEqual, "SAMPLE-LIMS-2")
-	})
-}
-
-func TestMLWHDiffMLWHClientAdapterFindSamplesByAccessionNumberForwardsDirectly(t *testing.T) {
-	adapter, db := openMLWHDiffAdapterForTest(t)
-	seedMLWHDiffSyncState(t, db, "sample")
-	seedMLWHDiffSample(t, db, mlwh.Sample{
-		IDSampleTmp:     3,
-		IDLims:          "SQSCP",
-		IDSampleLims:    "888",
-		UUIDSampleLims:  "00000000-0000-0000-0000-000000000003",
-		Name:            "SANGER-3",
-		SangerSampleID:  "SS3",
-		SupplierName:    "SUP-3",
-		AccessionNumber: "2001",
-		DonorID:         "DONOR-3",
-		TaxonID:         9606,
-		CommonName:      "human",
-		Description:     "sample",
-	})
-
-	convey.Convey("FindSamplesByAccessionNumber forwards to the dedicated mlwh finder", t, func() {
-		samples, err := adapter.FindSamplesByAccessionNumber(context.Background(), "2001")
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(samples, convey.ShouldHaveLength, 1)
-		convey.So(samples[0].AccessionNumber, convey.ShouldEqual, "2001")
-	})
-}
-
-func TestMLWHDiffMLWHClientAdapterFindSamplesByLibraryTypeForwardsDirectly(t *testing.T) {
-	adapter, db := openMLWHDiffAdapterForTest(t)
-	seedMLWHDiffSyncState(t, db, "iseq_flowcell")
-	seedMLWHDiffSample(t, db, mlwh.Sample{
-		IDSampleTmp:     4,
-		IDLims:          "SQSCP",
-		IDSampleLims:    "444",
-		UUIDSampleLims:  "00000000-0000-0000-0000-000000000004",
-		Name:            "SANGER-4",
-		SangerSampleID:  "SS4",
-		SupplierName:    "SUP-4",
-		AccessionNumber: "ACC-4",
-		DonorID:         "DONOR-4",
-		TaxonID:         9606,
-		CommonName:      "human",
-		Description:     "sample",
-	})
-	seedMLWHDiffSample(t, db, mlwh.Sample{
-		IDSampleTmp:     5,
-		IDLims:          "SQSCP",
-		IDSampleLims:    "555",
-		UUIDSampleLims:  "00000000-0000-0000-0000-000000000005",
-		Name:            "SANGER-5",
-		SangerSampleID:  "SS5",
-		SupplierName:    "SUP-5",
-		AccessionNumber: "ACC-5",
-		DonorID:         "DONOR-5",
-		TaxonID:         9606,
-		CommonName:      "human",
-		Description:     "sample",
-	})
-	seedMLWHDiffLibrarySample(t, db, "LIBTYPE-1", 4, "6568")
-	seedMLWHDiffLibrarySample(t, db, "LIBTYPE-1", 5, "7777")
-
-	convey.Convey("FindSamplesByLibraryType forwards to the dedicated mlwh finder", t, func() {
-		samples, err := adapter.FindSamplesByLibraryType(context.Background(), "LIBTYPE-1")
-		convey.So(samples, convey.ShouldBeNil)
-		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(errors.Is(err, mlwh.ErrAmbiguous), convey.ShouldBeTrue)
-	})
-}
-
-func seedMLWHDiffLibrarySample(t *testing.T, db *sql.DB, pipelineIDLims string, idSampleTmp int64, studyLimsID string) {
-	t.Helper()
-
-	_, err := db.Exec(
-		`INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
-		pipelineIDLims,
-		idSampleTmp,
-		studyLimsID,
-	)
-	if err != nil {
-		t.Fatalf("insert library_samples %s/%d/%s: %v", pipelineIDLims, idSampleTmp, studyLimsID, err)
-	}
-}
-
-func openMLWHDiffAdapterForTest(t *testing.T) (*mlwhdiffMLWHClientAdapter, *sql.DB) {
-	t.Helper()
-
-	cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
-	client, err := mlwh.Open(context.Background(), mlwh.Config{
-		Cache:  mlwh.CacheConfig{Path: cachePath},
-		Source: mlwhdiffAdapterSourceStub{},
-	})
-	if err != nil {
-		t.Fatalf("mlwh.Open(): %v", err)
-	}
-	t.Cleanup(func() { _ = client.Close() })
-
-	db, err := sql.Open("sqlite", cachePath)
-	if err != nil {
-		t.Fatalf("sql.Open(): %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	return &mlwhdiffMLWHClientAdapter{client: client}, db
-}
-
-type mlwhdiffAdapterSourceStub struct{}
-
-func (mlwhdiffAdapterSourceStub) QueryContext(_ context.Context, _ string, _ ...any) (*sql.Rows, error) {
-	return nil, errors.New("unexpected source query")
 }
 
 func TestMLWHDiffServeHelpFlags(t *testing.T) {

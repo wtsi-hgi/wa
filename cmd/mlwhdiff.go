@@ -28,14 +28,12 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
@@ -45,8 +43,6 @@ import (
 )
 
 var listenFunc = net.Listen
-
-const mlwhdiffProviderFetchLimit = 1_000_000
 
 var openMLWHDiffMLWHCacheOnlyClient = mlwh.OpenCacheOnly
 
@@ -275,133 +271,6 @@ func newMLWHDiffServeCommand(options *mlwhdiffOptions) *cobra.Command {
 	return command
 }
 
-type mlwhdiffCommandClient = mlwhdiffMLWHHandle
-
-type mlwhdiffMLWHClientAdapter struct {
-	client *mlwh.Client
-}
-
-func (a *mlwhdiffMLWHClientAdapter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	if a == nil || a.client == nil || a.client.ReadDB() == nil {
-		return nil, errors.New("mlwhdiff: mlwh client cache reader is not configured")
-	}
-
-	return a.client.ReadDB().QueryContext(ctx, query, args...)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
-	return a.client.ClassifyIdentifier(ctx, raw)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) ResolveSample(ctx context.Context, raw string) (mlwh.Match, error) {
-	return a.client.ResolveSample(ctx, raw)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
-	return a.client.ResolveSampleName(ctx, raw)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) ResolveStudy(ctx context.Context, raw string) (mlwh.Match, error) {
-	return a.client.ResolveStudy(ctx, raw)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) ResolveRun(ctx context.Context, raw string) (mlwh.Match, error) {
-	return a.client.ResolveRun(ctx, raw)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) ResolveLibrary(ctx context.Context, raw string) (mlwh.Match, error) {
-	return a.client.ResolveLibrary(ctx, raw)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) AllStudies(ctx context.Context, limit, offset int) ([]mlwh.Study, error) {
-	return a.client.AllStudies(ctx, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) GetStudy(ctx context.Context, identifier string) (*mlwh.Study, error) {
-	match, err := a.client.ResolveStudy(ctx, identifier)
-	if err != nil {
-		return nil, err
-	}
-
-	return match.Study, nil
-}
-
-func (a *mlwhdiffMLWHClientAdapter) SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
-	return a.client.SamplesForStudy(ctx, studyLimsID, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) AllSamplesForStudy(ctx context.Context, studyLimsID string) ([]mlwh.Sample, error) {
-	return a.client.SamplesForStudy(ctx, studyLimsID, mlwhdiffProviderFetchLimit, 0)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]mlwh.Sample, error) {
-	return a.client.FindSamplesBySangerID(ctx, sangerID)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) FindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) ([]mlwh.Sample, error) {
-	return a.client.FindSamplesByIDSampleLims(ctx, idSampleLims)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) FindSamplesByRunID(ctx context.Context, idRun int) ([]mlwh.Sample, error) {
-	return a.client.SamplesForRun(ctx, strconv.Itoa(idRun), mlwhdiffProviderFetchLimit, 0)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]mlwh.Sample, error) {
-	return a.client.FindSamplesByLibraryType(ctx, libraryType)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]mlwh.Sample, error) {
-	return a.client.SamplesForLibraryType(ctx, pipelineIDLims, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) SamplesForLibraryID(ctx context.Context, libraryID string, limit, offset int) ([]mlwh.Sample, error) {
-	return a.client.SamplesForLibraryID(ctx, libraryID, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) SamplesForLibraryLimsID(ctx context.Context, idLibraryLims string, limit, offset int) ([]mlwh.Sample, error) {
-	return a.client.SamplesForLibraryLimsID(ctx, idLibraryLims, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) FindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) ([]mlwh.Sample, error) {
-	return a.client.FindSamplesByAccessionNumber(ctx, accessionNumber)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error) {
-	return a.client.SamplesForRun(ctx, idRun, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error) {
-	return a.client.SamplesForLibrary(ctx, pipelineIDLims, studyLimsID, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Library, error) {
-	return a.client.LibrariesForStudy(ctx, studyLimsID, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) StudiesForSample(ctx context.Context, sangerName string) ([]mlwh.Study, error) {
-	return a.client.StudiesForSample(ctx, sangerName)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.Lane, error) {
-	return a.client.LanesForSample(ctx, sangerName, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]mlwh.IRODSPath, error) {
-	return a.client.IRODSPathsForSample(ctx, sangerName, limit, offset)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) GetSampleFiles(ctx context.Context, sangerName string) ([]mlwh.IRODSPath, error) {
-	return a.client.IRODSPathsForSample(ctx, sangerName, mlwhdiffProviderFetchLimit, 0)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) Sync(ctx context.Context) ([]mlwh.SyncReport, error) {
-	return a.client.Sync(ctx)
-}
-
-func (a *mlwhdiffMLWHClientAdapter) Close() error {
-	return a.client.Close()
-}
-
 type mlwhdiffOptions struct {
 	dbPath        string
 	mlwhCachePath string
@@ -413,7 +282,7 @@ func newMLWHDiffCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "mlwhdiff",
-		Short: "Sequence metadata cache CLI",
+		Short: "MLWH diff CLI",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
