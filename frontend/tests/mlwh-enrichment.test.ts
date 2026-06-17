@@ -12,7 +12,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { EnrichmentResult, EnrichmentStudy } from "@/lib/contracts";
+import type {
+    EnrichmentResult,
+    EnrichmentSample,
+    EnrichmentStudy,
+} from "@/lib/contracts";
 import {
     MLWHCache,
     MLWHCacheContext,
