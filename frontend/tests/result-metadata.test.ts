@@ -368,7 +368,7 @@ describe("ResultMetadata", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
 
-        const dialogHeader = screen.getByText("Seqmeta details").closest("div");
+        const dialogHeader = screen.getByText("MLWH details").closest("div");
         const titleLabels = Array.from(
             dialogHeader?.querySelectorAll("p") ?? [],
         ).map((label) => label.textContent);

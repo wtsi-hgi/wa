@@ -199,7 +199,7 @@ describe("MLWHBadge - sample details regression (bug 4)", () => {
             supplierRow
                 ?.querySelector('[data-testid="seqmeta-direct-metadata-label"]')
                 ?.getAttribute("title"),
-        ).toBe("MLWH seqmeta key: seqmeta_supplier_name");
+        ).toBe("MLWH metadata key: seqmeta_supplier_name");
         expect(
             supplierRow
                 ?.querySelector(

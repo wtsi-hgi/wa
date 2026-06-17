@@ -1878,16 +1878,16 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(response.Body.String(), convey.ShouldEqual, "[]\n")
 	})
 
-	convey.Convey("E1.4: Given study_id is requested without seqmeta configured, then status is 400", t, func() {
+	convey.Convey("E1.4: Given study_id is requested without MLWH configured, then status is 400", t, func() {
 		store := newSQLiteStoreForTest(t)
 
 		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?study_id=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
-		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, "seqmeta not configured")
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, "MLWH resolver not configured")
 	})
 
-	convey.Convey("E1.5: Given seqmeta returns an error for the study lookup, then status is 502", t, func() {
+	convey.Convey("E1.5: Given MLWH returns an error for the study lookup, then status is 502", t, func() {
 		store := newSQLiteStoreForTest(t)
 		resolver := NewMLWHSearchResolver(&mockSearchExpander{
 			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
@@ -1898,6 +1898,8 @@ func TestServerGetResults(t *testing.T) {
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "results: mlwh unavailable")
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldNotContainSubstring, "seqmeta unavailable")
 	})
 
 	convey.Convey("E1.6: Given study_id combined with explicit seqmeta_sampleid, then the sample IDs are merged as a union", t, func() {

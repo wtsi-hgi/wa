@@ -764,7 +764,7 @@ func (s *Server) handleGetResults(c *gin.Context) {
 	if len(studyValues) > 0 {
 		if s.resolver == nil {
 			if legacyStudyIDUsed {
-				writeServerError(c, http.StatusBadRequest, "seqmeta not configured")
+				writeServerError(c, http.StatusBadRequest, "MLWH resolver not configured")
 
 				return
 			}

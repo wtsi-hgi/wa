@@ -122,5 +122,8 @@ func TestA2MLWHSearchResolver(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(errors.Is(err, mlwh.ErrCacheNeverSynced), convey.ShouldBeTrue)
+		convey.So(errors.Is(err, ErrMLWHFailed), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "results: mlwh unavailable")
+		convey.So(err.Error(), convey.ShouldNotContainSubstring, "seqmeta unavailable")
 	})
 }

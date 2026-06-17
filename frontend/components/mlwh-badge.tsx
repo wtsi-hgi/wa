@@ -898,7 +898,7 @@ function RelatedEntityRow({
 
 function DirectMetadataRow({ copied, field, onCopy }: DirectMetadataRowProps) {
     const href = detailFieldHref(field);
-    const tooltip = `MLWH seqmeta key: ${field.key}`;
+    const tooltip = `MLWH metadata key: ${field.key}`;
 
     return (
         <article
@@ -1865,7 +1865,7 @@ export function MLWHBadge({
                 >
                     <button
                         type="button"
-                        aria-label="Close seqmeta details backdrop"
+                        aria-label="Close MLWH details backdrop"
                         className="absolute inset-0 bg-[color:rgba(15,23,42,0.64)] backdrop-blur-sm"
                         onClick={() => setDialogOpen(false)}
                     />
@@ -1873,7 +1873,7 @@ export function MLWHBadge({
                         <div className="flex items-start justify-between gap-4 border-b border-border/70 px-6 py-5 sm:px-7">
                             <div className="min-w-0 flex-1 space-y-2">
                                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted-foreground">
-                                    Seqmeta details
+                                    MLWH details
                                 </p>
                                 <div className="flex flex-wrap items-center gap-3">
                                     <h3
@@ -1931,7 +1931,7 @@ export function MLWHBadge({
                             </div>
                             <button
                                 type="button"
-                                aria-label="Close seqmeta details"
+                                aria-label="Close MLWH details"
                                 className="inline-flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/80 text-foreground transition hover:border-primary/35 hover:bg-accent/25"
                                 onClick={() => setDialogOpen(false)}
                             >

@@ -2489,7 +2489,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             });
 
             const dialogHeader = screen
-                .getByText("Seqmeta details")
+                .getByText("MLWH details")
                 .closest("div");
             expect(dialogHeader?.querySelector("h3")?.textContent).toBe(
                 "71046409",
@@ -3184,7 +3184,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         // direct metadata section because it matches the dialog title (rawValue)
         // and would be redundant
         const dialogTitle = screen
-            .getByText("Seqmeta details")
+            .getByText("MLWH details")
             .parentElement?.querySelector("h3");
         expect(dialogTitle?.textContent).toBe("WTSI_wEMB10524782");
 
@@ -3306,7 +3306,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             '[data-testid="seqmeta-direct-metadata-label"]',
         );
         expect(label?.getAttribute("title")).toBe(
-            "MLWH seqmeta key: seqmeta_sanger_sample_id",
+            "MLWH metadata key: seqmeta_sanger_sample_id",
         );
     });
 
@@ -3375,7 +3375,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
 
-        const dialogHeader = screen.getByText("Seqmeta details").closest("div");
+        const dialogHeader = screen.getByText("MLWH details").closest("div");
         const titleLabels = Array.from(
             dialogHeader?.querySelectorAll("p") ?? [],
         ).map((label) => label.textContent);
@@ -3723,7 +3723,7 @@ describe("M1 result detail seqmeta enrichment", () => {
         });
 
         const dialogTitle = screen
-            .getByText("Seqmeta details")
+            .getByText("MLWH details")
             .parentElement?.querySelector("h3");
         expect(dialogTitle?.textContent).toBe("6568");
 
@@ -3792,7 +3792,7 @@ describe("M1 result detail seqmeta enrichment", () => {
 
         expect(
             screen
-                .getByText("Seqmeta details")
+                .getByText("MLWH details")
                 .parentElement?.querySelector("p.font-mono")?.textContent,
         ).toBe("seqmeta_study_accession");
 

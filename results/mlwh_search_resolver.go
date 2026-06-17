@@ -98,7 +98,7 @@ func (r *MLWHSearchResolver) CanonicalStudySearchValue(ctx context.Context, raw 
 		case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier):
 			return trimmed, nil
 		default:
-			return "", fmt.Errorf("%w: resolve study: %w", ErrSeqmetaFailed, err)
+			return "", fmt.Errorf("%w: resolve study: %w", ErrMLWHFailed, err)
 		}
 	}
 
@@ -175,12 +175,12 @@ func (r *MLWHSearchResolver) ResolveLibraryIdentifier(ctx context.Context, raw s
 
 func (r *MLWHSearchResolver) registrationResolver() (RegistrationResolver, error) {
 	if r == nil || r.client == nil {
-		return nil, fmt.Errorf("%w: MLWH resolver is not configured", ErrSeqmetaFailed)
+		return nil, fmt.Errorf("%w: MLWH resolver is not configured", ErrMLWHFailed)
 	}
 
 	resolver, ok := r.client.(RegistrationResolver)
 	if !ok {
-		return nil, fmt.Errorf("%w: MLWH registration resolver is not configured", ErrSeqmetaFailed)
+		return nil, fmt.Errorf("%w: MLWH registration resolver is not configured", ErrMLWHFailed)
 	}
 
 	return resolver, nil
@@ -209,7 +209,7 @@ func (r *MLWHSearchResolver) libraryIdentifierResolver() (registrationLibraryIde
 // Expand resolves related search values for a canonical identifier.
 func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 	if r == nil || r.client == nil {
-		return nil, nil, nil, fmt.Errorf("%w: resolver is not configured", ErrSeqmetaFailed)
+		return nil, nil, nil, fmt.Errorf("%w: resolver is not configured", ErrMLWHFailed)
 	}
 
 	trimmed := strings.TrimSpace(canonical)
@@ -230,7 +230,7 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 
 			return []string{}, []string{}, []string{}, nil
 		default:
-			return nil, nil, nil, fmt.Errorf("%w: expand identifier: %w", ErrSeqmetaFailed, err)
+			return nil, nil, nil, fmt.Errorf("%w: expand identifier: %w", ErrMLWHFailed, err)
 		}
 	}
 
@@ -269,7 +269,7 @@ func (r *MLWHSearchResolver) ExpandCandidateSampleSearchValues(ctx context.Conte
 				return nil, err
 			}
 
-			return nil, fmt.Errorf("%w: resolve candidate sample metadata: %w", ErrSeqmetaFailed, err)
+			return nil, fmt.Errorf("%w: resolve candidate sample metadata: %w", ErrMLWHFailed, err)
 		}
 		if !sampleMatchHasDirectMetadataValue(match.Sample, kind, target) {
 			continue

@@ -47,9 +47,9 @@ var (
 
 	ErrFileTooLarge = errors.New("results: file exceeds preview limit")
 
-	ErrSeqmetaFailed = errors.New("results: seqmeta unavailable")
-
 	ErrMLWHFailed = errors.New("results: mlwh unavailable")
+
+	ErrSeqmetaFailed = ErrMLWHFailed
 
 	ErrMLWHRejected = errors.New("results: mlwh validation failed")
 )
