@@ -6,12 +6,12 @@ REST APIs and CLIs, and a Next.js web UI for browsing results.
 
 ## Current Sub-Products
 
-| Sub-product     | What it does                                                                                                                                              |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                         |
-| **mlwh**        | Go client library and cache sync CLI for MLWH-backed study, sample, library, run, and iRODS lookups.                                                      |
-| **seqmeta**     | Sequence metadata API built on MLWH-backed caches. Hash-based change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs. |
-| **results-web** | Next.js web UI for the results API — searchable table, file browser with inline preview, dashboard stats, and study-based search via seqmeta.             |
+| Sub-product     | What it does                                                                                                                                          |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **results**     | REST API + CLI for registering, searching, and browsing pipeline output files. Deterministic IDs, file previews, aggregate stats.                     |
+| **mlwh**        | Go client library, cache sync CLI, and current-state REST query server for MLWH-backed study, sample, library, run, and iRODS lookups.                |
+| **mlwhdiff**    | Hash-based MLWH change detection with watermarks in SQLite, a REST polling API, and a CLI for ad-hoc diffs.                                           |
+| **results-web** | Next.js web UI for the results API - searchable table, file browser with inline preview, dashboard stats, and study-based search via the MLWH server. |
 
 Planned sub-products (notify, jobrun, watchtower, samplepicker) are described
 in [.docs/proposal.md](.docs/proposal.md).
@@ -36,8 +36,8 @@ Requires **Go 1.25+**.
 
 ```
 wa results   — Pipeline results tracker
-wa mlwh      — MLWH cache sync and inspector
-wa seqmeta   — Sequence metadata cache
+wa mlwh      — MLWH cache sync, inspector, and query server
+wa mlwhdiff  — MLWH change detection
 ```
 
 ### Register a result set
@@ -60,7 +60,7 @@ GitHub URL such as `https://github.com/nf-core/sarek`, or an `owner/repo`
 shorthand such as `seqeralabs/nf-hello-world`.
 
 The results server resolves the `--run`, `--study`, `--sample`, and `--library`
-flags through its configured MLWH cache and stores canonical `seqmeta_*`
+flags through its configured MLWH queryer and stores canonical `seqmeta_*`
 metadata entries for search and validation. Normal CLI users do not need
 `WA_MLWH_CACHE_PATH` or MLWH cache credentials locally.
 
@@ -129,8 +129,10 @@ and run `wa results serve` with the TLS and LDAP flags above, or pass a
 passwordless DSN with `--db 'user@tcp(host:3306)/dbname'` and export
 `WA_RESULTS_DB_PASSWORD`.
 Password-bearing DSNs are rejected on the command line.
-Add `--seqmeta-url http://host:8091` to enable seqmeta validation of
-`seqmeta_*` metadata fields.
+Set `WA_MLWH_SERVER_URL` or pass `--mlwh-server-url http://host:8091` to use a
+remote `wa mlwh serve` instance for MLWH validation and search expansion. If no
+server URL is set, `wa results serve` reads a local MLWH cache from
+`WA_MLWH_CACHE_PATH` or `--mlwh-cache`.
 To accept connections from another machine, bind the API to a reachable address
 with `--url 0.0.0.0:8090`. When using scenario envs, admins can instead set
 `WA_ENV=development`, `WA_DEV_RESULTS_HOST=0.0.0.0`, and
@@ -139,25 +141,34 @@ with `--url 0.0.0.0:8090`. When using scenario envs, admins can instead set
 `WA_PROD_RESULTS_HOST` and `WA_PROD_RESULTS_PORT`. Tell remote CLI users the
 public HTTPS URL via `WA_RESULTS_SERVER_URL`.
 
-### Start the seqmeta server
+### Start the MLWH query server
 
 ```bash
 export WA_MLWH_DSN='mlwh_user@tcp(host:3306)/mlwarehouse'
 export WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite
-wa seqmeta serve --port 8091
+wa mlwh sync
+wa mlwh serve --port 8091
 ```
 
 ### Poll for metadata changes
 
 ```bash
-wa seqmeta diff --study 12345
-wa seqmeta diff --sample SANG001
+export WA_MLWH_SERVER_URL=http://localhost:8091
+wa mlwhdiff diff --study 12345
+wa mlwhdiff diff --sample SANG001
 ```
 
-### Validate an identifier
+### Start the change-tracking API
 
 ```bash
-wa seqmeta validate SomeIdentifier
+export WA_MLWH_SERVER_URL=http://localhost:8091
+wa mlwhdiff serve --port 8092 --db mlwhdiff.db
+```
+
+### Classify an identifier
+
+```bash
+curl http://localhost:8091/classify/SomeIdentifier
 ```
 
 ## Development
@@ -168,7 +179,7 @@ instructions.
 Quick start:
 
 ```bash
-# Run the dev stack (MLWH-backed seqmeta, persistent SQLite DB, no fixtures)
+# Run the dev stack (MLWH-backed query server, persistent SQLite DB, no fixtures)
 make dev
 
 # Same, but seed demo fixtures into the dev DB for browsing
