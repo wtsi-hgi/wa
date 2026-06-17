@@ -213,6 +213,71 @@ func TestEnrichJSONGraphPreservesLibraryLinkContract(t *testing.T) {
 	})
 }
 
+type libraryStudySampleCount struct {
+	studyID string
+	count   int
+}
+
+func TestEnrichMultiStudyLibraryKeepsSamplesBelowMaxSamplesPerHop(t *testing.T) {
+	convey.Convey("Given a multi-study library hop returning more than 200 and fewer than MaxSamplesPerHop rows", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		const sampleCount = 250
+		seedMultiStudyLibrarySamples(t, client, "RNA PolyA", []libraryStudySampleCount{
+			{studyID: "6568", count: sampleCount / 2},
+			{studyID: "7777", count: sampleCount / 2},
+		})
+
+		result, err := client.Enrich(context.Background(), "RNA PolyA")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Partial, convey.ShouldBeFalse)
+		convey.So(result.Graph.Samples, convey.ShouldHaveLength, sampleCount)
+		convey.So(result.Graph.StudyDetails, convey.ShouldHaveLength, 2)
+		convey.So(countMissingReason(result.Missing, ReasonSamplesTruncated), convey.ShouldEqual, 0)
+	})
+}
+
+func TestEnrichMultiStudyLibraryTruncatesSamplesPerHop(t *testing.T) {
+	convey.Convey("Given a multi-study library hop returning more than MaxSamplesPerHop rows", t, func() {
+		client, _, cleanup := newHierarchyTestClient(t)
+		defer cleanup()
+
+		seedMultiStudyLibrarySamples(t, client, "RNA PolyA", []libraryStudySampleCount{
+			{studyID: "6568", count: MaxSamplesPerHop/2 + 100},
+			{studyID: "7777", count: MaxSamplesPerHop/2 + 100},
+		})
+
+		result, err := client.Enrich(context.Background(), "RNA PolyA")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(result.Partial, convey.ShouldBeTrue)
+		convey.So(result.Graph.Samples, convey.ShouldHaveLength, MaxSamplesPerHop)
+		convey.So(countMissingReason(result.Missing, ReasonSamplesTruncated), convey.ShouldEqual, 1)
+	})
+}
+
+func seedMultiStudyLibrarySamples(
+	t *testing.T,
+	client *Client,
+	libraryType string,
+	counts []libraryStudySampleCount,
+) {
+	t.Helper()
+
+	var nextSampleID int64 = 1
+	for studyIndex, study := range counts {
+		seedHierarchyStudy(t, client.cache.DB(), int64(studyIndex+1), study.studyID)
+		for range study.count {
+			sampleID := nextSampleID
+			nextSampleID++
+			seedHierarchySample(t, client.cache.DB(), sampleID, study.studyID, libraryType+"-"+formatInt(sampleID))
+			seedLibrarySample(t, client.cache.DB(), libraryType, sampleID, study.studyID)
+		}
+	}
+}
+
 func TestEnrichJSONGraphMatchesFrontendEnrichmentFixtures(t *testing.T) {
 	convey.Convey("Given frontend fixture-shaped study, sample, run, and library identifiers", t, func() {
 		client, _, cleanup := newHierarchyTestClient(t)

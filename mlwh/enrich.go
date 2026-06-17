@@ -35,10 +35,6 @@ import (
 
 const detailFetchLimit = 1_000_000
 
-// MaxLibraryTypeSamples limits total samples returned for library type
-// enrichment across multiple studies to keep enrichment payloads bounded.
-const MaxLibraryTypeSamples = 200
-
 type enrichClassifier struct {
 	classify func(context.Context, *Client, string) (*EnrichmentResult, bool, []MissingHop, error)
 }
@@ -290,9 +286,9 @@ func classifyLibraryType(ctx context.Context, client *Client, identifier string)
 
 	flattened := flattenStudyDetailSamples(studyDetails)
 	fetchTruncated := false
-	if len(studyDetails) > 1 && len(flattened) > MaxLibraryTypeSamples {
+	if len(studyDetails) > 1 && len(flattened) > MaxSamplesPerHop {
 		fetchTruncated = true
-		flattened = flattened[:MaxLibraryTypeSamples]
+		flattened = flattened[:MaxSamplesPerHop]
 		studyDetails = rebuildStudyDetailsFromSamples(studyDetails, flattened)
 	}
 
