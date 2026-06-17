@@ -805,7 +805,15 @@ func startRunDevForScenarioResultsBindOutputTest(
 	bindHostEnv := "WA_DEV_RESULTS_HOST"
 	switch mode {
 	case "prod":
+		mlwhCachePath := filepath.Join(repoRoot, ".tmp", fmt.Sprintf("run-dev-prod-mlwh-%d.sqlite", seqmetaPort))
+		t.Cleanup(func() {
+			for _, suffix := range []string{"", "-shm", "-wal"} {
+				_ = os.Remove(mlwhCachePath + suffix)
+			}
+		})
+
 		env["WA_ENV"] = "production"
+		env["WA_MLWH_CACHE_PATH"] = mlwhCachePath
 		bindHostEnv = "WA_PROD_RESULTS_HOST"
 	case "dev":
 		env["WA_MLWH_DSN"] = "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test"
@@ -1146,6 +1154,24 @@ func TestRunDevScript(t *testing.T) {
 		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(string(contents), convey.ShouldContainSubstring, `MLWH_CACHE_PATH="$TMP_DIR/mlwh-$scenario.sqlite"`)
+	})
+
+	convey.Convey("run-dev.sh --mode prod refuses before starting results serve when no MLWH query source is configured", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{
+			"--mode", "prod",
+			"--frontend-port", "1",
+			"--results-port", "1",
+			"--seqmeta-port", "1",
+		}, map[string]string{
+			"WA_ENV":             "production",
+			"WA_RESULTS_DB_PATH": filepath.Join(t.TempDir(), "results-prod.sqlite"),
+		}, []string{"WA_TEST_FRONTEND_PORT", "WA_TEST_RESULTS_PORT", "WA_TEST_SEQMETA_PORT"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+		convey.So(stdout, convey.ShouldNotContainSubstring, "Starting results server")
 	})
 
 	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds three fixtures, skips MLWH when no command or MLWH config is present, and cleans up on SIGINT", t, func() {

@@ -146,6 +146,13 @@ mlwh_dsn_looks_nonprod() {
   [[ -n "$value" && ( "$value" == "$KNOWN_DEVELOPMENT_MLWH_DSN" || "$lower_value" == *"localhost"* || "$lower_value" == *"127.0.0.1"* || "$lower_value" == *"_test"* ) ]]
 }
 
+has_nonblank_value() {
+  local value="${1:-}"
+
+  value="${value//[[:space:]]/}"
+  [[ -n "$value" ]]
+}
+
 # Scenario-specific guards. These run before any port allocation so a wrong
 # environment can never spawn servers.
 if [[ "$scenario" == "dev" && "${WA_ENV:-}" == "production" ]]; then
@@ -239,6 +246,15 @@ if [[ "$scenario" == "prod" ]]; then
 
   if [[ "${WA_MLWH_CACHE_PASSWORD:-}" == "$KNOWN_DEVELOPMENT_MLWH_PASSWORD" ]]; then
     printf 'run-dev.sh: refusing to run --mode prod with development or test-shaped WA_MLWH_CACHE_PASSWORD.\n' >&2
+    exit 1
+  fi
+
+  if ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
+     ! has_nonblank_value "${WA_MLWH_CACHE_PATH:-}" && \
+     ! has_nonblank_value "${WA_MLWH_DSN:-}" && \
+     ! has_nonblank_value "${WA_RUN_DEV_SEQMETA_CMD:-}"; then
+    printf 'run-dev.sh: --mode prod requires an MLWH query source for results serve.\n' >&2
+    printf 'Set WA_MLWH_SERVER_URL or WA_MLWH_CACHE_PATH, or configure WA_MLWH_DSN or WA_RUN_DEV_SEQMETA_CMD for an auto-managed local source.\n' >&2
     exit 1
   fi
 fi
@@ -1220,6 +1236,12 @@ fi
 
 if [[ "$scenario" == "test" ]]; then
   seed_test_mlwh_cache "$MLWH_CACHE_PATH"
+fi
+
+if ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
+   ! has_nonblank_value "$MLWH_CACHE_PATH" && \
+   has_nonblank_value "$SEQMETA_CMD"; then
+  export WA_MLWH_SERVER_URL="http://127.0.0.1:$seqmeta_port"
 fi
 
 if [[ -n "$MLWH_CACHE_PATH" ]]; then
