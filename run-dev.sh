@@ -200,8 +200,12 @@ if [[ "$scenario" != "test" && -z "${WA_RESULTS_DB_PATH:-}" ]]; then
   exit 1
 fi
 
-if [[ "$scenario" == "dev" && -z "${WA_MLWH_DSN:-}" ]]; then
-  printf 'run-dev.sh: --mode dev requires WA_MLWH_DSN to be set.\n' >&2
+if [[ "$scenario" == "dev" ]] && \
+   ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
+   ! has_nonblank_value "${WA_MLWH_DSN:-}" && \
+   ! has_nonblank_value "${WA_RUN_DEV_SEQMETA_CMD:-}"; then
+  printf 'run-dev.sh: --mode dev requires an MLWH query source to be set.\n' >&2
+  printf 'Set WA_MLWH_SERVER_URL for a remote MLWH server or WA_MLWH_DSN/WA_RUN_DEV_SEQMETA_CMD for a local managed server.\n' >&2
   exit 1
 fi
 
@@ -398,6 +402,10 @@ SEQMETA_LOG="$LOG_DIR/mlwh.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 SEQMETA_CMD="${WA_RUN_DEV_SEQMETA_CMD:-}"
+REMOTE_MLWH_SERVER_CONFIGURED=0
+if has_nonblank_value "${WA_MLWH_SERVER_URL:-}"; then
+  REMOTE_MLWH_SERVER_CONFIGURED=1
+fi
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
 SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-1200}"
 
@@ -974,7 +982,7 @@ ensure_port_available_or_reusable() {
 preflight_service_ports() {
   ensure_port_available_or_reusable "results" "results" "WA_${scenario_env_prefix}_RESULTS_PORT" "$results_port" "$RESULTS_HEALTH_URL" "$WA_RESULTS_BACKEND_CA_CERT"
 
-  if [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" ]]; then
+  if (( ! REMOTE_MLWH_SERVER_CONFIGURED )) && [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" ]]; then
     ensure_port_available_or_reusable "MLWH" "seqmeta" "WA_${scenario_env_prefix}_SEQMETA_PORT" "$seqmeta_port" "$SEQMETA_HEALTH_URL"
   fi
 
@@ -1222,7 +1230,7 @@ else
 
   # When the MLWH server is auto-managed from an MLWH DSN, provide a reusable local
   # cache path if the operator did not configure one explicitly.
-  if [[ -z "$MLWH_CACHE_PATH" && -n "${WA_MLWH_DSN:-}" ]]; then
+  if [[ -z "$MLWH_CACHE_PATH" && -n "${WA_MLWH_DSN:-}" ]] && (( ! REMOTE_MLWH_SERVER_CONFIGURED )); then
     MLWH_CACHE_PATH="$TMP_DIR/mlwh-$scenario.sqlite"
   fi
 
@@ -1256,6 +1264,9 @@ fi
 
 export WA_RESULTS_BACKEND_URL="https://127.0.0.1:$results_port"
 unset WA_MLWH_BACKEND_URL
+if (( REMOTE_MLWH_SERVER_CONFIGURED )); then
+  export WA_MLWH_BACKEND_URL="$WA_MLWH_SERVER_URL"
+fi
 
 RESULTS_STARTED=0
 SEQMETA_STARTED=0
@@ -1306,7 +1317,10 @@ else
   printf 'Skipping fixture seed (mode=%s, --fixtures not requested)\n' "$scenario"
 fi
 
-if [[ -n "$SEQMETA_CMD" ]]; then
+if (( REMOTE_MLWH_SERVER_CONFIGURED )); then
+  : >"$SEQMETA_LOG"
+  printf 'Using remote MLWH server from WA_MLWH_SERVER_URL: %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
+elif [[ -n "$SEQMETA_CMD" ]]; then
   export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
