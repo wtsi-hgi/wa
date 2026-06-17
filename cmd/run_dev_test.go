@@ -865,7 +865,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode dev reports wildcard results bind separately from local client URLs", t, func() {
 		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, "0.0.0.0")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=0.0.0.0:%d)", resultsPort, resultsPort))
@@ -882,7 +882,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode dev trims the configured results bind host before reporting it", t, func() {
 		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, " \t0.0.0.0 \t")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=0.0.0.0:%d)", resultsPort, resultsPort))
@@ -897,7 +897,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode prod trims the configured results bind host before reporting it", t, func() {
 		process, frontendPort, resultsPort := startRunDevForScenarioResultsBindOutputTest(t, "prod", " \t0.0.0.0 \t")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=prod; bind=0.0.0.0:%d)", resultsPort, resultsPort))
@@ -912,7 +912,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode dev falls back to loopback when the configured bind host trims blank", t, func() {
 		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, " \t ")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=127.0.0.1:%d)", resultsPort, resultsPort))
@@ -927,7 +927,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode dev reports loopback-only results bind when no bind host is configured", t, func() {
 		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, "")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=127.0.0.1:%d)", resultsPort, resultsPort))
