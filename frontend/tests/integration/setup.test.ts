@@ -3,7 +3,11 @@ import net from "node:net";
 
 import { describe, expect, it } from "vitest";
 
-import { buildResultsServerEnv, stopProcess } from "./setup";
+import {
+    buildResultsServerArgs,
+    buildResultsServerEnv,
+    stopProcess,
+} from "./setup";
 
 describe("integration setup environment", () => {
     it("removes inherited seqmeta backend configuration before starting the results server", () => {
@@ -20,6 +24,20 @@ describe("integration setup environment", () => {
             WA_RESULTS_BACKEND_URL: "http://127.0.0.1:9999",
         });
         expect(env.WA_MLWH_BACKEND_URL).toBeUndefined();
+    });
+
+    it("passes the fake MLWH server URL to results serve", () => {
+        const args = buildResultsServerArgs({
+            certPath: "/tmp/wa-dev-cert.pem",
+            dbPath: "/tmp/results.sqlite",
+            keyPath: "/tmp/wa-dev-key.pem",
+            mlwhServerUrl: "http://127.0.0.1:9010",
+            port: 8443,
+        });
+
+        expect(args).toContain("--mlwh-server-url");
+        expect(args).toContain("http://127.0.0.1:9010");
+        expect(args.join(" ")).toContain("results serve");
     });
 
     it("stops the spawned results server process group so child listeners do not leak", async () => {
