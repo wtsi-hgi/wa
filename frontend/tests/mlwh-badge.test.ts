@@ -72,6 +72,10 @@ const originalDocumentCookie = Object.getOwnPropertyDescriptor(
     document,
     "cookie",
 );
+const EXPECTED_RELATED_SAMPLE_RENDER_LIMIT = 50;
+// Use a deterministic render-work budget; jsdom wall-clock timing is noisy
+// under the full Vitest suite.
+const MAX_RELATED_SAMPLE_NAME_READS = EXPECTED_RELATED_SAMPLE_RENDER_LIMIT * 4;
 let cookieJar = "";
 let cookieWrites: string[] = [];
 
@@ -221,6 +225,29 @@ function buildSample(
         study_accession_number: "ERP123456",
         accession_number: "ERS123456",
         ...overrides,
+    };
+}
+
+function trackSampleNameReads(samples: EnrichmentSample[]) {
+    let sampleNameReads = 0;
+
+    return {
+        samples: samples.map((sample) => {
+            const sampleName = sample.sample_name;
+
+            return Object.defineProperty({ ...sample }, "sample_name", {
+                configurable: true,
+                enumerable: true,
+                get: () => {
+                    sampleNameReads += 1;
+                    return sampleName;
+                },
+            });
+        }),
+        readCount: () => sampleNameReads,
+        resetReadCount: () => {
+            sampleNameReads = 0;
+        },
     };
 }
 
@@ -508,13 +535,16 @@ describe("M1 result detail seqmeta enrichment", () => {
 
     it("opens library details quickly without rendering every related sample row", async () => {
         const { MLWHBadge } = await import("@/components/mlwh-badge");
-        const samples = Array.from({ length: 1000 }, (_, index) =>
-            buildSample({
-                id_sample_lims: `LIMS${index}`,
-                sanger_id: `SANG${index}`,
-                sample_name: `Sample ${index}`,
-            }),
+        const trackedSamples = trackSampleNameReads(
+            Array.from({ length: 1000 }, (_, index) =>
+                buildSample({
+                    id_sample_lims: `LIMS${index}`,
+                    sanger_id: `SANG${index}`,
+                    sample_name: `Sample ${index}`,
+                }),
+            ),
         );
+        const samples = trackedSamples.samples;
 
         render(
             createElement(MLWHBadge, {
@@ -540,7 +570,7 @@ describe("M1 result detail seqmeta enrichment", () => {
             }),
         );
 
-        const startedAt = performance.now();
+        trackedSamples.resetReadCount();
 
         fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
 
@@ -548,16 +578,21 @@ describe("M1 result detail seqmeta enrichment", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
 
-        const elapsedMs = performance.now() - startedAt;
         const sampleRows = screen
             .getByTestId("seqmeta-dialog-body")
             .querySelectorAll('[data-seqmeta-detail-key="sample"]');
 
-        expect(elapsedMs).toBeLessThan(1000);
-        expect(sampleRows.length).toBeLessThanOrEqual(50);
+        expect(sampleRows.length).toBe(EXPECTED_RELATED_SAMPLE_RENDER_LIMIT);
+        expect(trackedSamples.readCount()).toBeLessThanOrEqual(
+            MAX_RELATED_SAMPLE_NAME_READS,
+        );
         expect(screen.getByText("SANG0")).toBeTruthy();
         expect(screen.getByText("Sample 0")).toBeTruthy();
-        expect(screen.getByText("Showing 50 of 1000 samples")).toBeTruthy();
+        expect(
+            screen.getByText(
+                `Showing ${EXPECTED_RELATED_SAMPLE_RENDER_LIMIT} of 1000 samples`,
+            ),
+        ).toBeTruthy();
     });
 
     it("renders a vertically scrollable body for long seqmeta detail content", async () => {

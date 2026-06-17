@@ -42,6 +42,10 @@ const enrichIdentifiersMock = vi.fn(async (values: string[]) =>
     ),
 );
 const fetchStudyLibrarySamplesMock = vi.fn();
+const EXPECTED_RELATED_SAMPLE_RENDER_LIMIT = 50;
+// Use a deterministic render-work budget; jsdom wall-clock timing is noisy
+// under the full Vitest suite.
+const MAX_RELATED_SAMPLE_NAME_READS = EXPECTED_RELATED_SAMPLE_RENDER_LIMIT * 4;
 
 vi.mock("@/app/(results)/actions", () => ({
     enrichIdentifier: enrichIdentifierMock,
@@ -129,6 +133,29 @@ function buildEnrichmentSample(index: number) {
         irods_path: `/seq/48522/${index}`,
         study_accession_number: "ERP7607",
         accession_number: `ERS${index}`,
+    };
+}
+
+function trackSampleNameReads(samples: EnrichmentSample[]) {
+    let sampleNameReads = 0;
+
+    return {
+        samples: samples.map((sample) => {
+            const sampleName = sample.sample_name;
+
+            return Object.defineProperty({ ...sample }, "sample_name", {
+                configurable: true,
+                enumerable: true,
+                get: () => {
+                    sampleNameReads += 1;
+                    return sampleName;
+                },
+            });
+        }),
+        readCount: () => sampleNameReads,
+        resetReadCount: () => {
+            sampleNameReads = 0;
+        },
     };
 }
 
@@ -246,10 +273,13 @@ describe("H3 enrichment state and badge", () => {
         });
     });
 
-    it("shows multi-field result metadata details within one second after enrichment resolves", async () => {
-        const samples = Array.from({ length: 1000 }, (_, index) =>
-            buildEnrichmentSample(index),
+    it("shows multi-field result metadata details without rendering every related sample row", async () => {
+        const trackedSamples = trackSampleNameReads(
+            Array.from({ length: 1000 }, (_, index) =>
+                buildEnrichmentSample(index),
+            ),
         );
+        const samples = trackedSamples.samples;
         const study = buildEnrichmentStudy({
             id_study_tmp: 7607,
             id_study_lims: "7607",
@@ -355,8 +385,6 @@ describe("H3 enrichment state and badge", () => {
         const { ResultMetadataEnrichment } =
             await import("@/components/result-metadata-enrichment");
 
-        const startedAt = performance.now();
-
         render(
             createElement(ResultMetadataEnrichment, {
                 metadata: {
@@ -377,6 +405,8 @@ describe("H3 enrichment state and badge", () => {
             expect(screen.queryByLabelText("loading enrichment")).toBeNull();
         });
 
+        trackedSamples.resetReadCount();
+
         fireEvent.click(
             screen
                 .getAllByTestId("mlwh-badge-trigger")
@@ -387,14 +417,19 @@ describe("H3 enrichment state and badge", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
 
-        const elapsedMs = performance.now() - startedAt;
         const sampleRows = screen
             .getByTestId("seqmeta-dialog-body")
             .querySelectorAll('[data-seqmeta-detail-key="sample"]');
 
-        expect(elapsedMs).toBeLessThan(1000);
-        expect(sampleRows.length).toBeLessThanOrEqual(50);
-        expect(screen.getByText("Showing 50 of 1000 samples")).toBeTruthy();
+        expect(sampleRows.length).toBe(EXPECTED_RELATED_SAMPLE_RENDER_LIMIT);
+        expect(trackedSamples.readCount()).toBeLessThanOrEqual(
+            MAX_RELATED_SAMPLE_NAME_READS,
+        );
+        expect(
+            screen.getByText(
+                `Showing ${EXPECTED_RELATED_SAMPLE_RENDER_LIMIT} of 1000 samples`,
+            ),
+        ).toBeTruthy();
     });
 
     it("refreshes a study identifier when the cache only holds an aliased sample result", async () => {
