@@ -66,11 +66,35 @@ export type StatsResult = z.input<typeof statsResultSchema>;
 export const metaKeysSchema = z.array(z.string());
 export type MetaKeys = z.infer<typeof metaKeysSchema>;
 
-export const identifierResultSchema = z.object({
+const normalizedIdentifierResultSchema = z.object({
     identifier: z.string(),
     type: z.string(),
     object: z.unknown(),
 });
+
+const mlwhMatchSchema = z.object({
+    Kind: z.string(),
+    Canonical: z.string(),
+    Sample: z.unknown().nullable().optional(),
+    Study: z.unknown().nullable().optional(),
+    Run: z.unknown().nullable().optional(),
+    Library: z.unknown().nullable().optional(),
+});
+
+function mlwhMatchObject(match: z.infer<typeof mlwhMatchSchema>): unknown {
+    return match.Sample ?? match.Study ?? match.Run ?? match.Library ?? null;
+}
+
+export const identifierResultSchema = z
+    .union([
+        normalizedIdentifierResultSchema,
+        mlwhMatchSchema.transform((match) => ({
+            identifier: match.Canonical,
+            type: match.Kind,
+            object: mlwhMatchObject(match),
+        })),
+    ])
+    .pipe(normalizedIdentifierResultSchema);
 export type IdentifierResult = z.infer<typeof identifierResultSchema>;
 
 export const studySchema = z

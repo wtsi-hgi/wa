@@ -233,6 +233,29 @@ describe("contract schemas", () => {
         });
     });
 
+    it("normalizes real MLWH Match payloads for identifier results", () => {
+        const study = {
+            id_study_tmp: 42,
+            id_lims: "SQSCP",
+            id_study_lims: "6568",
+            name: "Cancer Programme",
+        };
+        const parsed = identifierResultSchema.parse({
+            Kind: "study_lims_id",
+            Canonical: "6568",
+            Sample: null,
+            Study: study,
+            Run: null,
+            Library: null,
+        });
+
+        expect(parsed).toEqual({
+            identifier: "6568",
+            type: "study_lims_id",
+            object: study,
+        });
+    });
+
     it("parses a valid enrichment result payload for a study graph", () => {
         const result = enrichmentResultSchema.safeParse({
             identifier: "6568",

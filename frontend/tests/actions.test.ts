@@ -43,13 +43,72 @@ const enrichmentStudyFixture = {
     data_release_timing: "Immediate",
 };
 
+const mlwhStudyMatchPayload = {
+    Kind: "study_lims_id",
+    Canonical: "6568",
+    Sample: null,
+    Study: {
+        id_study_tmp: 42,
+        id_lims: "SQSCP",
+        id_study_lims: "6568",
+        uuid_study_lims: "study-uuid-6568",
+        name: "Cancer Programme",
+        accession_number: "ERP123456",
+        study_title: "Cancer Programme Cohort",
+        faculty_sponsor: "Dr Example",
+        state: "active",
+        data_release_strategy: "managed",
+        data_access_group: "group-a",
+        programme: "Cancer",
+        reference_genome: "GRCh38",
+        ethically_approved: true,
+        study_type: "Whole Genome Sequencing",
+        contains_human_dna: true,
+        contaminated_human_dna: false,
+        study_visibility: "Always Open",
+        ega_dac_accession_number: "EGAC00001",
+        ega_policy_accession_number: "EGAP00001",
+        data_release_timing: "Immediate",
+    },
+    Run: null,
+    Library: null,
+};
+
 const identifierFixture: IdentifierResult = {
     identifier: "6568",
-    type: "study_id",
-    object: {
-        id_study_lims: "6568",
-        name: "Cancer Programme",
+    type: "study_lims_id",
+    object: mlwhStudyMatchPayload.Study,
+};
+
+const mlwhSampleMatchPayload = {
+    Kind: "sanger_sample_name",
+    Canonical: "7607STDY14643771",
+    Sample: {
+        id_sample_tmp: 73,
+        id_lims: "SQSCP",
+        id_sample_lims: "SMP-7607-1",
+        uuid_sample_lims: "sample-uuid-7607",
+        name: "7607STDY14643771",
+        sanger_sample_id: "SANG001",
+        supplier_name: "supplier-one",
+        accession_number: "SAMEA7607",
+        donor_id: "DONOR-1",
+        taxon_id: 9606,
+        common_name: "Human",
+        description: "primary sample",
+        studies: [mlwhStudyMatchPayload.Study],
+        libraries: [
+            {
+                pipeline_id_lims: "Custom",
+                id_study_lims: "7607",
+                library_id: "71046409",
+                id_library_lims: "SQPP-47463-G:B1",
+            },
+        ],
     },
+    Study: null,
+    Run: null,
+    Library: null,
 };
 
 const enrichmentFixture: EnrichmentResult = {
@@ -98,8 +157,10 @@ describe("A3 MLWH-backed server actions", () => {
         vi.unstubAllGlobals();
     });
 
-    it("classifies identifiers through the MLWH /classify endpoint", async () => {
-        const fetchMock = stubFetchResponses(jsonResponse(identifierFixture));
+    it("normalizes study classifications from the MLWH /classify endpoint", async () => {
+        const fetchMock = stubFetchResponses(
+            jsonResponse(mlwhStudyMatchPayload),
+        );
 
         const { validateIdentifier } = await import("@/app/(results)/actions");
 
@@ -108,6 +169,23 @@ describe("A3 MLWH-backed server actions", () => {
         );
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/classify/6568",
+        );
+    });
+
+    it("normalizes sample classifications from the MLWH /classify endpoint", async () => {
+        const fetchMock = stubFetchResponses(
+            jsonResponse(mlwhSampleMatchPayload),
+        );
+
+        const { validateIdentifier } = await import("@/app/(results)/actions");
+
+        await expect(validateIdentifier("7607STDY14643771")).resolves.toEqual({
+            identifier: "7607STDY14643771",
+            type: "sanger_sample_name",
+            object: mlwhSampleMatchPayload.Sample,
+        });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://mlwh:9000/classify/7607STDY14643771",
         );
     });
 
