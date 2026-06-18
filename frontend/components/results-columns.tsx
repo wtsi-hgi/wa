@@ -89,6 +89,12 @@ function LockedResultIndicator({ result }: { result: ResultSet }) {
     );
 }
 
+function projectName(result: ResultSet): string {
+    const project = result.metadata?.project?.trim();
+
+    return project || result.pipeline_name;
+}
+
 function resultCell(
     row: ResultsTableRow,
     value: string,
@@ -151,6 +157,28 @@ export function getResultsColumns(
     returnHref = "/",
 ): ColumnDef<ResultsTableRow>[] {
     const columns: ColumnDef<ResultsTableRow>[] = [
+        {
+            accessorKey: "project",
+            id: "project",
+            accessorFn: (row) => projectName(row.result),
+            header: ({ column }) => (
+                <SortableHeader
+                    columnId="project"
+                    label="Project"
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
+                />
+            ),
+            cell: ({ row }) =>
+                resultCell(
+                    row.original,
+                    projectName(row.original.result),
+                    "font-medium text-foreground transition hover:text-primary",
+                    returnHref,
+                    { showLock: true },
+                ),
+        },
         {
             accessorKey: "pipeline_name",
             id: "pipeline_name",

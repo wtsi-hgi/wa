@@ -1257,7 +1257,7 @@ test.describe("Q1 critical results flows", () => {
         const metrics = await collectRecentSortIconMetrics(page);
 
         expect(metrics.map((metric) => metric.columnId)).toEqual([
-            "pipeline_name",
+            "project",
             "registration_unique",
             "requester",
             "created_at",

@@ -12,11 +12,27 @@ const screenshotPath = path.join(
     "agent",
     "latest-result-sets-pagination-repro.png",
 );
+const projectColumnScreenshotPath = path.join(
+    repoRoot,
+    ".tmp",
+    "agent",
+    "latest-result-sets-project-column-repro.png",
+);
+
+type LatestResultSet = {
+    pipeline_name: string;
+    run_key: string;
+    metadata?: Record<string, string>;
+};
 
 type StatsResponse = {
     total: number;
-    recent: unknown[];
+    recent: LatestResultSet[];
 };
+
+function uniqueToken(runKey: string): string {
+    return new URLSearchParams(runKey).get("unique") ?? runKey;
+}
 
 test.beforeEach(async ({ context }) => {
     await installResultsAuthCookie(context);
@@ -72,4 +88,85 @@ test("latest result sets pagination and rows per page expose all stats rows", as
     await expect(page.locator('tbody tr[data-result-row="true"]')).toHaveCount(
         expectedVisibleRows,
     );
+});
+
+test("latest result sets project column leads with pipeline fallback", async ({
+    page,
+}) => {
+    const resultsPort = process.env.WA_TEST_RESULTS_PORT;
+
+    if (!resultsPort) {
+        throw new Error("WA_TEST_RESULTS_PORT is required for this repro");
+    }
+
+    const api = await request.newContext({
+        baseURL: `https://127.0.0.1:${resultsPort}`,
+        ignoreHTTPSErrors: true,
+    });
+    const statsResponse = await api.get("/rest/v1/results/stats?recent=100");
+
+    expect(statsResponse.ok()).toBe(true);
+
+    const stats = (await statsResponse.json()) as StatsResponse;
+
+    await api.dispose();
+
+    const projectResult = stats.recent.find(
+        (result) => result.metadata?.project,
+    );
+    const fallbackResult = stats.recent.find(
+        (result) => !result.metadata?.project,
+    );
+
+    expect(
+        projectResult,
+        "dev fixtures should include a latest result with project metadata",
+    ).toBeTruthy();
+    expect(
+        fallbackResult,
+        "dev fixtures should include a latest result without project metadata",
+    ).toBeTruthy();
+
+    mkdirSync(path.dirname(projectColumnScreenshotPath), { recursive: true });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await expect(page.getByText("Latest result sets")).toBeVisible();
+    await expect(page.locator("thead th").first()).toBeVisible();
+
+    const headerLabels = (await page.locator("thead th").allTextContents()).map(
+        (label) => label.trim(),
+    );
+    const projectRow = page
+        .locator('tbody tr[data-result-row="true"]')
+        .filter({ hasText: uniqueToken(projectResult!.run_key) });
+    const fallbackRow = page
+        .locator('tbody tr[data-result-row="true"]')
+        .filter({ hasText: uniqueToken(fallbackResult!.run_key) });
+
+    expect.soft(headerLabels.slice(0, 2)).toEqual(["Project", "Unique"]);
+    expect.soft(headerLabels).not.toContain("Pipeline Name");
+    await expect
+        .soft(projectRow.locator("td").first())
+        .toHaveText(projectResult!.metadata!.project);
+    await expect
+        .soft(fallbackRow.locator("td").first())
+        .toHaveText(fallbackResult!.pipeline_name);
+
+    await page
+        .getByRole("button", { name: "Toggle column visibility" })
+        .click();
+
+    const pipelineNameToggle = page.locator(
+        'button[role="menuitemcheckbox"][data-column-id="pipeline_name"]',
+    );
+
+    await expect.soft(pipelineNameToggle).toBeVisible();
+    await expect
+        .soft(pipelineNameToggle)
+        .toHaveAttribute("aria-checked", "false");
+    await page.screenshot({
+        path: projectColumnScreenshotPath,
+        fullPage: true,
+    });
 });

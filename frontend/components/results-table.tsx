@@ -60,6 +60,20 @@ const defaultHiddenColumns: Record<string, boolean> = {
     id: false,
 };
 
+function defaultColumnVisibility(mode: ResultsTableProps["mode"]) {
+    if (mode === "search") {
+        return {
+            ...defaultHiddenColumns,
+            project: false,
+        };
+    }
+
+    return {
+        ...defaultHiddenColumns,
+        pipeline_name: false,
+    };
+}
+
 function columnVisibilityLabel(columnId: string): string {
     if (columnId === "id") {
         return "ID";
@@ -95,8 +109,9 @@ export function ResultsTable({
         [returnHref, showMatchedSamples],
     );
     const [sorting, setSorting] = useState<SortingState>([]);
-    const [columnVisibility, setColumnVisibility] =
-        useState<Record<string, boolean>>(defaultHiddenColumns);
+    const [columnVisibility, setColumnVisibility] = useState<
+        Record<string, boolean>
+    >(() => defaultColumnVisibility(mode));
     const [pagination, setPagination] = useState({
         pageIndex: 0,
         pageSize: 10,
