@@ -41,6 +41,17 @@ type FilterEvidence = {
     visibleText: string | null;
 };
 
+type ReloadConsoleEvidence = {
+    location: string;
+    text: string;
+    type: string;
+};
+
+type MatchingReloadMessage = {
+    source: string;
+    text: string;
+};
+
 test.beforeAll(() => {
     registeredResults = [
         registerGlobFilterResult({
@@ -282,6 +293,112 @@ async function writeFilterEvidence(
     return evidence;
 }
 
+async function writeRefreshErrorEvidence({
+    consoleMessages,
+    label,
+    page,
+    pageErrors,
+    screenshotName,
+}: {
+    consoleMessages: ReloadConsoleEvidence[];
+    label: string;
+    page: Page;
+    pageErrors: string[];
+    screenshotName: string;
+}): Promise<{
+    bodyText: string;
+    evidencePath: string;
+    matchingMessages: MatchingReloadMessage[];
+    overlayText: string | null;
+    screenshotPath: string;
+}> {
+    mkdirSync(evidenceDir, { recursive: true });
+
+    const screenshotPath = path.join(evidenceDir, screenshotName);
+    const evidencePath = screenshotPath.replace(/\.png$/, ".json");
+    const pageSnapshot = await page.evaluate(() => {
+        const portal = document.querySelector("nextjs-portal") as
+            | (HTMLElement & { shadowRoot?: ShadowRoot | null })
+            | null;
+
+        return {
+            bodyText: document.body.innerText,
+            overlayText:
+                portal?.shadowRoot?.textContent ?? portal?.textContent ?? null,
+        };
+    });
+    const scriptTagErrorPattern =
+        /Encountered a script tag while rendering React component|Scripts inside React components are never executed/i;
+    const matchCandidates: MatchingReloadMessage[] = [
+        ...consoleMessages.map((message) => ({
+            source: `console:${message.type}`,
+            text: message.text,
+        })),
+        ...pageErrors.map((message) => ({
+            source: "pageerror",
+            text: message,
+        })),
+        {
+            source: "nextjs-portal",
+            text: pageSnapshot.overlayText ?? "",
+        },
+        {
+            source: "body",
+            text: pageSnapshot.bodyText,
+        },
+    ];
+    const matchingMessages = matchCandidates
+        .filter((message) => scriptTagErrorPattern.test(message.text))
+        .map((message) => {
+            const match = scriptTagErrorPattern.exec(message.text);
+            const matchIndex = match?.index ?? 0;
+            const snippetStart = Math.max(0, matchIndex - 300);
+            const snippetEnd = Math.min(message.text.length, matchIndex + 1200);
+
+            scriptTagErrorPattern.lastIndex = 0;
+
+            return {
+                source: message.source,
+                text: message.text.slice(snippetStart, snippetEnd),
+            };
+        });
+
+    await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: screenshotPath,
+    });
+    writeFileSync(
+        evidencePath,
+        `${JSON.stringify(
+            {
+                bodyText: pageSnapshot.bodyText.slice(0, 4000),
+                consoleMessages,
+                expected: {
+                    globPattern: expectedGlobPattern,
+                    noNextScriptTagErrorAfterRefresh: true,
+                },
+                label,
+                matchingMessages,
+                overlayText: pageSnapshot.overlayText?.slice(0, 4000) ?? null,
+                pageErrors,
+                pageUrl: page.url(),
+                screenshotPath,
+            },
+            null,
+            2,
+        )}\n`,
+    );
+
+    return {
+        bodyText: pageSnapshot.bodyText,
+        evidencePath,
+        matchingMessages,
+        overlayText: pageSnapshot.overlayText,
+        screenshotPath,
+    };
+}
+
 test("filters and persists a search-result file browser glob", async ({
     page,
 }) => {
@@ -428,4 +545,51 @@ test("filters and persists a result-detail file browser glob", async ({
     await page.reload();
     await expect(globInput).toHaveValue(expectedGlobPattern);
     await expect(page.locator('[data-directory-path$="/logs"]')).toHaveCount(0);
+});
+
+test("does not emit a Next script-tag error after reloading a saved search file-browser glob", async ({
+    page,
+}) => {
+    await openSearchResultFileBrowser(page);
+
+    const globInput = page.getByLabel("Filter files by glob");
+    const saveButton = page.getByRole("button", {
+        name: "Save file glob filter",
+    });
+
+    await globInput.fill(expectedGlobPattern);
+    await saveButton.click();
+
+    const consoleMessages: ReloadConsoleEvidence[] = [];
+    const pageErrors: string[] = [];
+
+    page.on("console", (message) => {
+        consoleMessages.push({
+            location: message.location().url,
+            text: message.text(),
+            type: message.type(),
+        });
+    });
+    page.on("pageerror", (error) => {
+        pageErrors.push(error.stack ?? error.message);
+    });
+
+    await page.reload();
+    await expect(page.getByLabel("Filter files by glob")).toHaveValue(
+        expectedGlobPattern,
+    );
+    await page.waitForTimeout(750);
+
+    const evidence = await writeRefreshErrorEvidence({
+        consoleMessages,
+        label: "search-result file browser refresh after saved glob",
+        page,
+        pageErrors,
+        screenshotName: "file-browser-glob-filter-refresh-script-tag-repro.png",
+    });
+
+    expect(
+        evidence.matchingMessages,
+        `Reloading after saving the file-browser glob filter should not emit Next's script-tag render error. Evidence: ${evidence.evidencePath}`,
+    ).toEqual([]);
 });

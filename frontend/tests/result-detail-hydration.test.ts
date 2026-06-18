@@ -112,6 +112,7 @@ describe("O1 result detail hydration", () => {
 
     afterEach(() => {
         document.body.innerHTML = "";
+        window.localStorage.clear();
         vi.clearAllMocks();
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
@@ -177,6 +178,61 @@ describe("O1 result detail hydration", () => {
             ).toBeNull();
         });
 
+        expect(recoverableErrors).toHaveLength(0);
+
+        await act(async () => {
+            root?.unmount();
+        });
+    });
+
+    it("hydrates a saved file glob filter after mount without changing the first client render", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+        const files = [
+            buildFile("/results/a/sample.bam"),
+            buildFile("/results/a/sample.cram"),
+        ];
+        const tree = createElement(ResultDetailFiles, {
+            files,
+            filterStorageKey: "pipeline-alpha",
+            resultId: "result-1",
+        });
+        const container = document.createElement("div");
+        const recoverableErrors: unknown[] = [];
+
+        window.localStorage.setItem(
+            "wa:file-browser:glob-filter:pipeline-alpha",
+            "*.bam",
+        );
+        document.body.appendChild(container);
+
+        const serverMarkup = renderToString(tree);
+
+        expect(serverMarkup).toContain("sample.bam");
+        expect(serverMarkup).toContain("sample.cram");
+
+        container.innerHTML = serverMarkup;
+
+        let root: ReturnType<typeof hydrateRoot> | null = null;
+
+        await act(async () => {
+            root = hydrateRoot(container, tree, {
+                onRecoverableError: (error) => {
+                    recoverableErrors.push(error);
+                },
+            });
+        });
+
+        await waitFor(() => {
+            const input = container.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+
+            expect(input?.value).toBe("*.bam");
+        });
+
+        expect(container.textContent).toContain("sample.bam");
+        expect(container.textContent).not.toContain("sample.cram");
         expect(recoverableErrors).toHaveLength(0);
 
         await act(async () => {

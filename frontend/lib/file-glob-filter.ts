@@ -1,3 +1,5 @@
+import { useMemo, useSyncExternalStore } from "react";
+
 import type { FileEntry } from "@/lib/contracts";
 
 export const fileBrowserGlobFilterStoragePrefix =
@@ -162,6 +164,12 @@ export function readSavedFileBrowserGlobFilter(
 ): string {
     const storageKey = fileBrowserGlobFilterStorageKey(storageScope);
 
+    return readSavedFileBrowserGlobFilterByKey(storageKey);
+}
+
+function readSavedFileBrowserGlobFilterByKey(
+    storageKey: string | undefined,
+): string {
     if (!storageKey || typeof window === "undefined") {
         return "";
     }
@@ -171,6 +179,29 @@ export function readSavedFileBrowserGlobFilter(
     } catch {
         return "";
     }
+}
+
+function emptyFileBrowserGlobFilterSnapshot(): string {
+    return "";
+}
+
+function subscribeToFileBrowserGlobFilterStorage(): () => void {
+    return () => undefined;
+}
+
+export function useSavedFileBrowserGlobFilter(
+    storageScope: string | undefined,
+): string {
+    const storageKey = useMemo(
+        () => fileBrowserGlobFilterStorageKey(storageScope),
+        [storageScope],
+    );
+
+    return useSyncExternalStore(
+        subscribeToFileBrowserGlobFilterStorage,
+        () => readSavedFileBrowserGlobFilterByKey(storageKey),
+        emptyFileBrowserGlobFilterSnapshot,
+    );
 }
 
 export function saveFileBrowserGlobFilter(

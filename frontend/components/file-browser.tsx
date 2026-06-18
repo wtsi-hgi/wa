@@ -39,8 +39,8 @@ import { type FileEntry } from "@/lib/contracts";
 import {
     fileBrowserGlobFilterStorageKey,
     filterFilesByGlobPattern,
-    readSavedFileBrowserGlobFilter,
     saveFileBrowserGlobFilter,
+    useSavedFileBrowserGlobFilter,
 } from "@/lib/file-glob-filter";
 import {
     allPreviewFileTypeIds,
@@ -1077,10 +1077,7 @@ export function FileBrowser({
         () => fileBrowserGlobFilterStorageKey(filterStorageKey),
         [filterStorageKey],
     );
-    const savedFileFilter = useMemo(
-        () => readSavedFileBrowserGlobFilter(filterStorageKey),
-        [filterStorageKey],
-    );
+    const savedFileFilter = useSavedFileBrowserGlobFilter(filterStorageKey);
     const [uncontrolledFileFilter, setUncontrolledFileFilter] = useState<{
         storageKey: string | undefined;
         value: string;

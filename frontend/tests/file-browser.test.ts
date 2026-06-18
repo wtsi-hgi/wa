@@ -2,8 +2,9 @@
 
 import { createElement, type ReactNode, useState } from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { fireEvent } from "@testing-library/react";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { FileEntry } from "@/lib/contracts";
@@ -378,6 +379,61 @@ describe("N1 file browser", () => {
         expect(filterInput()?.value).toBe("*.tsv");
         expect(container.textContent).toContain("alpha-summary.tsv");
         expect(container.textContent).not.toContain("alpha-run.log");
+    });
+
+    it("hydrates saved glob filters after the first client render without mismatches", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const hydrationContainer = document.createElement("div");
+        const storageScope = "pipeline-alpha";
+        const storageKey = "wa:file-browser:glob-filter:pipeline-alpha";
+        const files = [
+            buildFile("/demo/alpha-summary.tsv", "output"),
+            buildFile("/demo/alpha-run.log", "output"),
+        ];
+        const tree = createElement(FileBrowser, {
+            files,
+            filterStorageKey: storageScope,
+            onSelectDirectory: vi.fn(),
+            onSelectFile: vi.fn(),
+        });
+        const recoverableErrors: unknown[] = [];
+
+        window.localStorage.setItem(storageKey, "*.tsv");
+        document.body.appendChild(hydrationContainer);
+
+        const serverMarkup = renderToString(tree);
+
+        expect(serverMarkup).toContain("alpha-summary.tsv");
+        expect(serverMarkup).toContain("alpha-run.log");
+
+        hydrationContainer.innerHTML = serverMarkup;
+
+        let hydrationRoot: ReturnType<typeof hydrateRoot> | null = null;
+
+        await act(async () => {
+            hydrationRoot = hydrateRoot(hydrationContainer, tree, {
+                onRecoverableError: (error) => {
+                    recoverableErrors.push(error);
+                },
+            });
+        });
+
+        await waitFor(() => {
+            const input = hydrationContainer.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+
+            expect(input?.value).toBe("*.tsv");
+        });
+
+        expect(hydrationContainer.textContent).toContain("alpha-summary.tsv");
+        expect(hydrationContainer.textContent).not.toContain("alpha-run.log");
+        expect(recoverableErrors).toHaveLength(0);
+
+        await act(async () => {
+            hydrationRoot?.unmount();
+        });
+        hydrationContainer.remove();
     });
 
     it("renders expanded nested directory contents inside the directory row box", async () => {

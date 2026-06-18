@@ -25,7 +25,7 @@ import type { FileEntry } from "@/lib/contracts";
 import {
     fileBrowserGlobFilterStorageKey,
     filterFilesByGlobPattern,
-    readSavedFileBrowserGlobFilter,
+    useSavedFileBrowserGlobFilter,
 } from "@/lib/file-glob-filter";
 import {
     isBitmapPreviewFile,
@@ -369,10 +369,7 @@ export function ResultDetailFiles({
         () => fileBrowserGlobFilterStorageKey(filterStorageKey),
         [filterStorageKey],
     );
-    const savedFileFilter = useMemo(
-        () => readSavedFileBrowserGlobFilter(filterStorageKey),
-        [filterStorageKey],
-    );
+    const savedFileFilter = useSavedFileBrowserGlobFilter(filterStorageKey);
     const [fileFilterState, setFileFilterState] = useState<{
         storageKey: string | undefined;
         value: string;
