@@ -140,12 +140,107 @@ type SearchResolver interface {
 	Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error)
 }
 
+type searchSuggestionClassifier interface {
+	ClassifyIdentifier(context.Context, string) (mlwh.Match, error)
+}
+
 type candidateSampleSearchResolver interface {
 	ExpandCandidateSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string, candidates []string) ([]string, error)
 }
 
 type studySearchCanonicalizer interface {
 	CanonicalStudySearchValue(context.Context, string) (string, error)
+}
+
+type mlwhSearchSuggestionTarget struct {
+	fieldKey       string
+	directMetaKeys []string
+	directValues   []string
+	expansionKind  mlwh.IdentifierKind
+	expansionValue string
+}
+
+func mlwhSampleSearchSuggestionTarget(match mlwh.Match, raw string) mlwhSearchSuggestionTarget {
+	values := []string{raw, match.Canonical}
+	if match.Sample != nil {
+		values = append(values,
+			match.Sample.Name,
+			match.Sample.IDSampleLims,
+			match.Sample.SangerSampleID,
+			match.Sample.SupplierName,
+			match.Sample.AccessionNumber,
+			match.Sample.UUIDSampleLims,
+			match.Sample.DonorID,
+		)
+	}
+
+	expansionKind := match.Kind
+	expansionValue := raw
+	if match.Kind == mlwh.KindSangerSampleName {
+		expansionValue = firstNonEmptySearchValue(match.Canonical, raw)
+	}
+
+	return mlwhSearchSuggestionTarget{
+		fieldKey:       "sample",
+		directMetaKeys: combinedSampleMetaKeys,
+		directValues:   exactSearchValues(values...),
+		expansionKind:  expansionKind,
+		expansionValue: expansionValue,
+	}
+}
+
+func mlwhStudySearchSuggestionTarget(match mlwh.Match, raw string) mlwhSearchSuggestionTarget {
+	values := []string{raw, match.Canonical}
+	if match.Study != nil {
+		values = append(values,
+			match.Study.IDStudyLims,
+			match.Study.UUIDStudyLims,
+			match.Study.Name,
+			match.Study.AccessionNumber,
+		)
+	}
+
+	return mlwhSearchSuggestionTarget{
+		fieldKey:       "study",
+		directMetaKeys: combinedStudyMetaKeys,
+		directValues:   exactSearchValues(values...),
+		expansionKind:  mlwh.KindStudyLimsID,
+		expansionValue: firstNonEmptySearchValue(match.Canonical, studyLimsIDFromMatch(match), raw),
+	}
+}
+
+func mlwhRunSearchSuggestionTarget(match mlwh.Match, raw string) mlwhSearchSuggestionTarget {
+	values := []string{raw, match.Canonical}
+	if match.Run != nil {
+		values = append(values, strconv.Itoa(match.Run.IDRun))
+	}
+
+	return mlwhSearchSuggestionTarget{
+		fieldKey:       "run",
+		directMetaKeys: combinedRunMetaKeys,
+		directValues:   exactSearchValues(values...),
+		expansionKind:  mlwh.KindRunID,
+		expansionValue: firstNonEmptySearchValue(match.Canonical, raw),
+	}
+}
+
+func mlwhLibrarySearchSuggestionTarget(match mlwh.Match, raw string) mlwhSearchSuggestionTarget {
+	values := []string{raw, match.Canonical}
+	if match.Library != nil {
+		values = append(values,
+			match.Library.PipelineIDLims,
+			match.Library.LibraryID,
+			match.Library.IDLibraryLims,
+		)
+	}
+
+	return mlwhSearchSuggestionTarget{
+		fieldKey:       mlwhLibrarySuggestionFieldKey(match.Kind),
+		directMetaKeys: mlwhLibrarySuggestionMetaKeys(match.Kind),
+		directValues:   exactSearchValues(values...),
+		expansionKind:  match.Kind,
+		expansionValue: firstNonEmptySearchValue(match.Canonical, raw),
+	}
 }
 
 // SessionResponse reports the authenticated caller's current session state.
@@ -1117,7 +1212,125 @@ func (s *Server) handleGetSearchSuggestions(c *gin.Context) {
 		return
 	}
 
+	mlwhSuggestions, err := s.mlwhSearchSuggestions(c.Request.Context(), c.Query("q"), limit)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+	suggestions = appendUniqueSearchSuggestions(mlwhSuggestions, suggestions, limit)
+
 	writeJSON(c, http.StatusOK, suggestions)
+}
+
+func appendUniqueSearchSuggestions(existing []SearchSuggestion, incoming []SearchSuggestion, limit int) []SearchSuggestion {
+	if limit <= 0 {
+		return []SearchSuggestion{}
+	}
+
+	merged := make([]SearchSuggestion, 0, min(limit, len(existing)+len(incoming)))
+	seen := make(map[SearchSuggestion]struct{}, len(existing)+len(incoming))
+	for _, suggestion := range append(existing, incoming...) {
+		if suggestion.FieldKey == "" || suggestion.Value == "" {
+			continue
+		}
+		if _, ok := seen[suggestion]; ok {
+			continue
+		}
+
+		seen[suggestion] = struct{}{}
+		merged = append(merged, suggestion)
+		if len(merged) >= limit {
+			break
+		}
+	}
+
+	return merged
+}
+
+func (s *Server) mlwhSearchSuggestions(ctx context.Context, query string, limit int) ([]SearchSuggestion, error) {
+	term := strings.TrimSpace(query)
+	if term == "" || limit <= 0 || s == nil || s.resolver == nil {
+		return []SearchSuggestion{}, nil
+	}
+
+	classifier, ok := s.resolver.(searchSuggestionClassifier)
+	if !ok {
+		return []SearchSuggestion{}, nil
+	}
+
+	match, err := classifier.ClassifyIdentifier(ctx, term)
+	if err != nil {
+		switch {
+		case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier):
+			return []SearchSuggestion{}, nil
+		default:
+			return nil, fmt.Errorf("%w: classify search suggestion: %w", ErrMLWHFailed, err)
+		}
+	}
+
+	suggestions := []SearchSuggestion{}
+	for _, target := range mlwhSearchSuggestionTargets(match, term) {
+		registered, err := s.hasRegisteredMLWHSearchSuggestionTarget(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		if !registered {
+			continue
+		}
+
+		suggestions = append(suggestions, SearchSuggestion{FieldKey: target.fieldKey, Value: term})
+		if len(suggestions) >= limit {
+			break
+		}
+	}
+
+	return suggestions, nil
+}
+
+func mlwhSearchSuggestionTargets(match mlwh.Match, raw string) []mlwhSearchSuggestionTarget {
+	switch match.Kind {
+	case mlwh.KindSampleUUID, mlwh.KindSampleLimsID, mlwh.KindSangerSampleName,
+		mlwh.KindSangerSampleID, mlwh.KindSupplierName, mlwh.KindSampleAccession, mlwh.KindDonorID:
+		return []mlwhSearchSuggestionTarget{mlwhSampleSearchSuggestionTarget(match, raw)}
+	case mlwh.KindStudyUUID, mlwh.KindStudyLimsID, mlwh.KindStudyAccession, mlwh.KindStudyName:
+		return []mlwhSearchSuggestionTarget{mlwhStudySearchSuggestionTarget(match, raw)}
+	case mlwh.KindRunID:
+		return []mlwhSearchSuggestionTarget{mlwhRunSearchSuggestionTarget(match, raw)}
+	case mlwh.KindLibraryType, mlwh.KindLibraryID, mlwh.KindLibraryLimsID:
+		return []mlwhSearchSuggestionTarget{mlwhLibrarySearchSuggestionTarget(match, raw)}
+	default:
+		return []mlwhSearchSuggestionTarget{}
+	}
+}
+
+func (s *Server) hasRegisteredMLWHSearchSuggestionTarget(ctx context.Context, target mlwhSearchSuggestionTarget) (bool, error) {
+	registered, err := s.store.hasExactMetadataValue(ctx, target.directMetaKeys, target.directValues)
+	if err != nil || registered {
+		return registered, err
+	}
+
+	if target.expansionKind == "" || target.expansionValue == "" {
+		return false, nil
+	}
+
+	samples, runs, lanes, err := s.resolver.Expand(ctx, target.expansionKind, target.expansionValue)
+	if err != nil {
+		if errors.Is(err, mlwh.ErrNotFound) || errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	if registered, err = s.store.hasExactMetadataValue(ctx, combinedSampleMetaKeys, samples); err != nil || registered {
+		return registered, err
+	}
+	if registered, err = s.store.hasExactMetadataValue(ctx, combinedRunMetaKeys, runs); err != nil || registered {
+		return registered, err
+	}
+
+	return s.store.hasExactMetadataValue(ctx, combinedLaneMetaKeys, lanes)
 }
 
 func (s *Server) handleGetResultByID(c *gin.Context) {
@@ -1192,6 +1405,65 @@ func (s *Server) handleDeleteResultByID(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func mlwhLibrarySuggestionFieldKey(kind mlwh.IdentifierKind) string {
+	switch kind {
+	case mlwh.KindLibraryID:
+		return SeqmetaLibraryIDKey
+	case mlwh.KindLibraryLimsID:
+		return SeqmetaIDLibraryLimsKey
+	default:
+		return "library"
+	}
+}
+
+func mlwhLibrarySuggestionMetaKeys(kind mlwh.IdentifierKind) []string {
+	switch kind {
+	case mlwh.KindLibraryID:
+		return libraryIDMetaKeys
+	case mlwh.KindLibraryLimsID:
+		return libraryLimsMetaKeys
+	default:
+		return libraryTypeMetaKeys
+	}
+}
+
+func studyLimsIDFromMatch(match mlwh.Match) string {
+	if match.Study == nil {
+		return ""
+	}
+
+	return match.Study.IDStudyLims
+}
+
+func firstNonEmptySearchValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+
+	return ""
+}
+
+func exactSearchValues(values ...string) []string {
+	filtered := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+
+		seen[trimmed] = struct{}{}
+		filtered = append(filtered, trimmed)
+	}
+
+	return filtered
 }
 
 func currentUserFromValue(value any) *CurrentUser {

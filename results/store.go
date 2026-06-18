@@ -28,6 +28,7 @@ package results
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -1472,6 +1473,45 @@ func (s *Store) SearchSuggestions(ctx context.Context, query string, limit int) 
 	}
 
 	return suggestions, nil
+}
+
+func (s *Store) hasExactMetadataValue(ctx context.Context, keys []string, values []string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("%w: nil store", ErrInvalidInput)
+	}
+
+	keys = nonEmptySearchValues(keys)
+	values = nonEmptySearchValues(values)
+	if len(keys) == 0 || len(values) == 0 {
+		return false, nil
+	}
+
+	keyPlaceholders := strings.TrimSuffix(strings.Repeat("?, ", len(keys)), ", ")
+	args := make([]any, 0, len(keys)+len(values))
+	for _, key := range keys {
+		args = append(args, key)
+	}
+
+	valueClauses := make([]string, 0, len(values))
+	for _, value := range values {
+		valueClauses = append(valueClauses, "lower(value) = lower(?)")
+		args = append(args, value)
+	}
+
+	var exists int
+	err := s.db.QueryRowContext(
+		ctx,
+		fmt.Sprintf(`SELECT 1 FROM result_metadata WHERE meta_key IN (%s) AND (%s) LIMIT 1`, keyPlaceholders, strings.Join(valueClauses, " OR ")),
+		args...,
+	).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query exact metadata value: %w", err)
+	}
+
+	return true, nil
 }
 
 // DistinctMetadataValues returns sorted distinct metadata values for any of the supplied keys.

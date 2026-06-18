@@ -42,6 +42,10 @@ type mlwhSearchExpander interface {
 	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
 }
 
+type mlwhIdentifierClassifier interface {
+	ClassifyIdentifier(context.Context, string) (mlwh.Match, error)
+}
+
 type mlwhStudyResolver interface {
 	ResolveStudy(context.Context, string) (mlwh.Match, error)
 }
@@ -61,6 +65,7 @@ type mlwhSearchResolvedValues struct {
 // MLWHSearchResolver expands search identifiers through mlwh and caches them for repeated searches.
 type MLWHSearchResolver struct {
 	client        mlwhSearchExpander
+	classifier    mlwhIdentifierClassifier
 	studyResolver mlwhStudyResolver
 	cacheTTL      time.Duration
 	cacheMu       sync.Mutex
@@ -77,8 +82,20 @@ func NewMLWHSearchResolver(client mlwhSearchExpander) *MLWHSearchResolver {
 	if studyResolver, ok := client.(mlwhStudyResolver); ok {
 		resolver.studyResolver = studyResolver
 	}
+	if classifier, ok := client.(mlwhIdentifierClassifier); ok {
+		resolver.classifier = classifier
+	}
 
 	return resolver
+}
+
+// ClassifyIdentifier delegates generic exact identifier classification to the configured MLWH client.
+func (r *MLWHSearchResolver) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	if r == nil || r.classifier == nil {
+		return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
+	}
+
+	return r.classifier.ClassifyIdentifier(ctx, raw)
 }
 
 // CanonicalStudySearchValue resolves study accessions, names, and IDs to the

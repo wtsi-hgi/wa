@@ -48,6 +48,15 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+func (m *mockSearchExpander) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	m.classifyCalls = append(m.classifyCalls, raw)
+	if m.classifyFunc != nil {
+		return m.classifyFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
+}
+
 func newStaticMLWHSearchResolverForTest(responses map[mlwh.IdentifierKind]map[string]mlwh.SearchValues) *MLWHSearchResolver {
 	return NewMLWHSearchResolver(&mockSearchExpander{
 		searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
@@ -283,6 +292,8 @@ func assertLockedResponseForTest(t *testing.T, response *httptest.ResponseRecord
 type mockSearchExpander struct {
 	expandCalls           int
 	sampleOnlyCalls       int
+	classifyCalls         []string
+	classifyFunc          func(context.Context, string) (mlwh.Match, error)
 	searchValuesFunc      func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
 	sampleNamesFunc       func(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 	sampleNameFunc        func(context.Context, string) (mlwh.Match, error)
@@ -2987,6 +2998,74 @@ func TestServerGetSearchSuggestions(t *testing.T) {
 			"sample":         {"SAMPLE-needle-260618"},
 			"user":           {"requester-needle-260618"},
 		})
+	})
+
+	convey.Convey("Bug 260618-5 item 2: Given a registered sample and an MLWH supplier-name lookup, GET /results/search-suggestions offers a Sample filter for the supplier name", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-generic-suggestion", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "7607STDY14643771"}
+		}))
+
+		expander := &mockSearchExpander{
+			classifyFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "Hek_R1" {
+					return mlwh.Match{
+						Kind:      mlwh.KindSupplierName,
+						Canonical: "7607STDY14643771",
+						Sample: &mlwh.Sample{
+							Name:         "7607STDY14643771",
+							SupplierName: raw,
+						},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "7607STDY14643771" {
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: raw,
+						Sample: &mlwh.Sample{
+							Name:         raw,
+							SupplierName: "Hek_R1",
+						},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "Hek_R1" {
+					return mlwh.Match{
+						Kind:      mlwh.KindSupplierName,
+						Canonical: "7607STDY14643771",
+						Sample: &mlwh.Sample{
+							Name:         "7607STDY14643771",
+							SupplierName: raw,
+						},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
+				if kind == mlwh.KindSupplierName && canonical == "Hek_R1" {
+					return mlwh.SearchValues{Samples: []string{"7607STDY14643771"}}, nil
+				}
+
+				return mlwh.SearchValues{}, mlwh.ErrNotFound
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=Hek_R1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(expander.classifyCalls, convey.ShouldResemble, []string{"Hek_R1"})
+		convey.So(suggestionValuesByFieldForTest(suggestions)["sample"], convey.ShouldContain, "Hek_R1")
 	})
 
 	convey.Convey("GET /results/search-suggestions rejects invalid limits", t, func() {

@@ -73,6 +73,23 @@ func TestA2MLWHSearchResolver(t *testing.T) {
 		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
 	})
 
+	convey.Convey("Given ClassifyIdentifier returns a match, ClassifyIdentifier delegates generic exact lookup to MLWH", t, func() {
+		expander := &mockSearchExpander{
+			classifyFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				convey.So(raw, convey.ShouldEqual, "Hek_R1")
+
+				return mlwh.Match{Kind: mlwh.KindSupplierName, Canonical: "7607STDY14643771"}, nil
+			},
+		}
+
+		match, err := NewMLWHSearchResolver(expander).ClassifyIdentifier(context.Background(), "Hek_R1")
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(match.Kind, convey.ShouldEqual, mlwh.KindSupplierName)
+		convey.So(match.Canonical, convey.ShouldEqual, "7607STDY14643771")
+		convey.So(expander.classifyCalls, convey.ShouldResemble, []string{"Hek_R1"})
+	})
+
 	convey.Convey("A2.2: Given direct sample metadata expansion, Expand still calls ExpandSearchValues", t, func() {
 		expander := &mockSearchExpander{
 			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {

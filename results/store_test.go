@@ -1176,6 +1176,25 @@ func TestStoreSearchSuggestions(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(suggestions, convey.ShouldResemble, []SearchSuggestion{})
 	})
+
+	convey.Convey("Given registered metadata, hasExactMetadataValue matches exact values case-insensitively but not substrings", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-exact-metadata-suggestion", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSupplierNameKey: "Hek_R1"}
+		}))
+
+		matched, err := store.hasExactMetadataValue(ctx, combinedSampleMetaKeys, []string{"hek_r1"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(matched, convey.ShouldBeTrue)
+
+		matched, err = store.hasExactMetadataValue(ctx, combinedSampleMetaKeys, []string{"Hek"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(matched, convey.ShouldBeFalse)
+	})
 }
 
 func suggestionValuesByFieldForTest(suggestions []SearchSuggestion) map[string][]string {
