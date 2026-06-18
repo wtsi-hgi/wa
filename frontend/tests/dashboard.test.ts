@@ -606,6 +606,35 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(10);
     });
 
+    it("loads every latest result set when the stats total exceeds the first dashboard page", async () => {
+        fetchStatsMock
+            .mockResolvedValueOnce(
+                buildStats({
+                    total: 12,
+                    recent: Array.from({ length: 10 }, (_, index) =>
+                        buildResultSet(index + 1),
+                    ),
+                }),
+            )
+            .mockResolvedValueOnce(
+                buildStats({
+                    total: 12,
+                    recent: Array.from({ length: 12 }, (_, index) =>
+                        buildResultSet(index + 1),
+                    ),
+                }),
+            );
+        searchResultsMock.mockResolvedValue([]);
+
+        const markup = await renderDashboard();
+
+        expect(fetchStatsMock).toHaveBeenNthCalledWith(1, 10, 30);
+        expect(fetchStatsMock).toHaveBeenNthCalledWith(2, 12, 30);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(10);
+        expect(markup).toContain("12 rows");
+        expect(markup).toContain("Page 1 of 2");
+    });
+
     it("calls searchResults with repeated string arrays and shows search rows when params are present", async () => {
         fetchStatsMock.mockResolvedValue(
             buildStats({

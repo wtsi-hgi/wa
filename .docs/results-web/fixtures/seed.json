@@ -1,5 +1,137 @@
 [
     {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/wa-pagination-demo",
+        "run_key": "runid=99001&unique=latest_page_01",
+        "requester": "ivy",
+        "operator": "judy",
+        "command": "nextflow run wa-pagination-demo --case latest-page-01",
+        "pipeline_name": "wtsi/latest-pagination-demo",
+        "pipeline_version": "1.0.1",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "summary.md",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "project": "latest-pagination",
+            "seqmeta_studyid": "6568"
+        }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/wa-pagination-demo",
+        "run_key": "runid=99002&unique=latest_page_02",
+        "requester": "ivy",
+        "operator": "judy",
+        "command": "nextflow run wa-pagination-demo --case latest-page-02",
+        "pipeline_name": "wtsi/latest-pagination-demo",
+        "pipeline_version": "1.0.2",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "config.json",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "project": "latest-pagination",
+            "seqmeta_studyid": "6568"
+        }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/wa-pagination-demo",
+        "run_key": "runid=99003&unique=latest_page_03",
+        "requester": "ivy",
+        "operator": "judy",
+        "command": "nextflow run wa-pagination-demo --case latest-page-03",
+        "pipeline_name": "wtsi/latest-pagination-demo",
+        "pipeline_version": "1.0.3",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "report.csv",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "project": "latest-pagination",
+            "seqmeta_studyid": "6568"
+        }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/wa-pagination-demo",
+        "run_key": "runid=99004&unique=latest_page_04",
+        "requester": "ivy",
+        "operator": "judy",
+        "command": "nextflow run wa-pagination-demo --case latest-page-04",
+        "pipeline_name": "wtsi/latest-pagination-demo",
+        "pipeline_version": "1.0.4",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "results.html",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "project": "latest-pagination",
+            "seqmeta_studyid": "6568"
+        }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/wa-pagination-demo",
+        "run_key": "runid=99005&unique=latest_page_05",
+        "requester": "ivy",
+        "operator": "judy",
+        "command": "nextflow run wa-pagination-demo --case latest-page-05",
+        "pipeline_name": "wtsi/latest-pagination-demo",
+        "pipeline_version": "1.0.5",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "pipeline.nf",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "project": "latest-pagination",
+            "seqmeta_studyid": "6568"
+        }
+    },
+    {
+        "pipeline_identifier": "https://github.com/wtsi-hgi/wa-pagination-demo",
+        "run_key": "runid=99006&unique=latest_page_06",
+        "requester": "ivy",
+        "operator": "judy",
+        "command": "nextflow run wa-pagination-demo --case latest-page-06",
+        "pipeline_name": "wtsi/latest-pagination-demo",
+        "pipeline_version": "1.0.6",
+        "output_directory": ".docs/results-web/fixtures/files",
+        "files": [
+            {
+                "path": "plot.svg",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            }
+        ],
+        "metadata": {
+            "project": "latest-pagination",
+            "seqmeta_studyid": "6568"
+        }
+    },
+    {
         "pipeline_identifier": "https://github.com/nf-core/rnaseq",
         "run_key": "runid=48522&unique=exon_lib",
         "requester": "alice",
