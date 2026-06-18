@@ -361,6 +361,32 @@ describe("L1 results table", () => {
         expect(pipelineToggle?.getAttribute("aria-checked")).toBe("false");
     });
 
+    it("resets default column visibility when switching modes without remounting", async () => {
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, { data: [buildResultSet(1)] }),
+            );
+        });
+
+        expect(getHeaderLabels(container)).toContain("Project");
+        expect(getHeaderLabels(container)).not.toContain("Pipeline Name");
+
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, {
+                    data: [buildSearchResult(1)],
+                    mode: "search",
+                }),
+            );
+        });
+
+        const headers = getHeaderLabels(container);
+
+        expect(container.textContent).toContain("Search results");
+        expect(headers).toContain("Pipeline Name");
+        expect(headers).not.toContain("Project");
+    });
+
     it("shows the matched samples column and values when studyActive is true for search results", async () => {
         const data = [
             buildSearchResult(1, ["SANG1", "SANG2"]),

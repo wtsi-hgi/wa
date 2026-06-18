@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
     type ColumnDef,
@@ -112,10 +112,20 @@ export function ResultsTable({
     const [columnVisibility, setColumnVisibility] = useState<
         Record<string, boolean>
     >(() => defaultColumnVisibility(mode));
+    const previousMode = useRef(mode);
     const [pagination, setPagination] = useState({
         pageIndex: 0,
         pageSize: 10,
     });
+
+    useEffect(() => {
+        if (previousMode.current === mode) {
+            return;
+        }
+
+        previousMode.current = mode;
+        setColumnVisibility(defaultColumnVisibility(mode));
+    }, [mode]);
 
     // TanStack Table's hook currently triggers a React Compiler compatibility lint false positive.
     // eslint-disable-next-line react-hooks/incompatible-library
