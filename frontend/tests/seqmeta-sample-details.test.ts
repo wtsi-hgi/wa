@@ -13,11 +13,11 @@ import {
     within,
 } from "@testing-library/react";
 
-import { SeqmetaBadge } from "@/components/seqmeta-badge";
+import { MLWHBadge } from "@/components/mlwh-badge";
 import type { EnrichmentResult } from "@/lib/contracts";
-import * as enrichmentModule from "@/lib/seqmeta-enrichment";
+import * as enrichmentModule from "@/lib/mlwh-enrichment";
 
-describe("SeqmetaBadge - sample details regression (bug 4)", () => {
+describe("MLWHBadge - sample details regression (bug 4)", () => {
     beforeEach(() => {
         // Mock fetchLibrarySamples to prevent actual API calls
         vi.spyOn(enrichmentModule, "fetchLibrarySamples").mockResolvedValue([]);
@@ -107,14 +107,14 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
         };
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "WTSI_TEST_SAMPLE",
                 enrichment,
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
         await waitFor(() => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
@@ -199,7 +199,7 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
             supplierRow
                 ?.querySelector('[data-testid="seqmeta-direct-metadata-label"]')
                 ?.getAttribute("title"),
-        ).toBe("MLWH seqmeta key: seqmeta_supplier_name");
+        ).toBe("MLWH metadata key: seqmeta_supplier_name");
         expect(
             supplierRow
                 ?.querySelector(
@@ -288,14 +288,14 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
         };
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "WTSI_TEST_SAMPLE",
                 enrichment,
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
         const dialogBody = screen.getByTestId("seqmeta-dialog-body");
 
         const relatedDataSection = dialogBody.querySelector(
@@ -394,14 +394,14 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
         };
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "WTSI_TEST_SAMPLE",
                 enrichment,
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
         const dialogBody = screen.getByTestId("seqmeta-dialog-body");
 
         const relatedDataSection = dialogBody.querySelector(
@@ -502,14 +502,14 @@ describe("SeqmetaBadge - sample details regression (bug 4)", () => {
         };
 
         render(
-            createElement(SeqmetaBadge, {
+            createElement(MLWHBadge, {
                 metadataKey: "seqmeta_sampleid",
                 rawValue: "WTSI_TEST_SAMPLE",
                 enrichment,
             }),
         );
 
-        fireEvent.click(screen.getByTestId("seqmeta-badge-trigger"));
+        fireEvent.click(screen.getByTestId("mlwh-badge-trigger"));
         const dialogBody = screen.getByTestId("seqmeta-dialog-body");
 
         const relatedDataSection = dialogBody.querySelector(

@@ -32,11 +32,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -99,8 +96,6 @@ var candidateSampleNameMetaKeys = []string{
 
 var combinedLaneMetaKeys = []string{"seqmeta_lane"}
 
-const defaultSeqmetaResolverCacheTTL = 5 * time.Minute
-
 const (
 	currentUserGinContextKey      = "wa_current_user"
 	goAuthserverUserGinContextKey = "user"
@@ -140,39 +135,6 @@ type sampleSearchExpansion struct {
 	values []string
 }
 
-type seqmetaResolvedValues struct {
-	samples []string
-	runs    []string
-	lanes   []string
-
-	expiresAt time.Time
-}
-
-type seqmetaLaneForSearch struct {
-	IDRun    string `json:"id_run"`
-	Lane     string `json:"lane"`
-	TagIndex int    `json:"tag_index"`
-}
-
-type seqmetaSampleDetailForSearch struct {
-	Lanes []seqmetaLaneForSearch `json:"lanes"`
-}
-
-type seqmetaSampleForSearch struct {
-	SangerID string `json:"sanger_id"`
-	IDRun    int    `json:"id_run"`
-	Lane     int    `json:"lane"`
-	TagIndex int    `json:"tag_index"`
-}
-
-type seqmetaEnrichmentForSearch struct {
-	Graph struct {
-		Sample       *seqmetaSampleForSearch       `json:"sample,omitempty"`
-		Samples      []seqmetaSampleForSearch      `json:"samples,omitempty"`
-		SampleDetail *seqmetaSampleDetailForSearch `json:"sample_detail,omitempty"`
-	} `json:"graph"`
-}
-
 // SearchResolver expands search values into related sample, run, and lane values.
 type SearchResolver interface {
 	Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error)
@@ -184,381 +146,6 @@ type candidateSampleSearchResolver interface {
 
 type studySearchCanonicalizer interface {
 	CanonicalStudySearchValue(context.Context, string) (string, error)
-}
-
-// SeqmetaSampleResolver resolves study IDs to seqmeta sample IDs.
-type SeqmetaSampleResolver struct {
-	baseURL string
-	client  *http.Client
-
-	cacheTTL time.Duration
-	cacheMu  sync.Mutex
-	cache    map[string]seqmetaResolvedValues
-}
-
-// NewSeqmetaSampleResolver constructs a study sample resolver for the given seqmeta service URL.
-func NewSeqmetaSampleResolver(baseURL string, timeout time.Duration) *SeqmetaSampleResolver {
-	return &SeqmetaSampleResolver{
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		client: &http.Client{
-			Timeout: timeout,
-		},
-		cacheTTL: defaultSeqmetaResolverCacheTTL,
-		cache:    map[string]seqmetaResolvedValues{},
-	}
-}
-
-// SamplesForStudy returns the unique Sanger sample IDs associated with a study.
-func (r *SeqmetaSampleResolver) SamplesForStudy(ctx context.Context, studyID string) ([]string, error) {
-	samples, _, err := r.SamplesAndLanesForStudy(ctx, studyID)
-
-	return samples, err
-}
-
-// SamplesAndLanesForStudy returns unique sample IDs and lane IDs associated with a study.
-func (r *SeqmetaSampleResolver) SamplesAndLanesForStudy(ctx context.Context, studyID string) ([]string, []string, error) {
-	if r == nil || r.baseURL == "" {
-		return nil, nil, fmt.Errorf("%w: resolver is not configured", ErrSeqmetaFailed)
-	}
-
-	cacheKey := "study:" + strings.TrimSpace(studyID)
-	if cached, ok := r.cacheGet(cacheKey); ok {
-		return cached.samples, cached.lanes, nil
-	}
-
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		r.baseURL+"/study/"+url.PathEscape(studyID)+"/samples",
-		nil,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: build request: %w", ErrSeqmetaFailed, err)
-	}
-
-	response, err := r.client.Do(request)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: request seqmeta samples: %w", ErrSeqmetaFailed, err)
-	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
-
-	if response.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("%w: unexpected status %d", ErrSeqmetaFailed, response.StatusCode)
-	}
-
-	var samples []seqmetaSampleForSearch
-	if err := json.NewDecoder(response.Body).Decode(&samples); err != nil {
-		return nil, nil, fmt.Errorf("%w: decode response: %w", ErrSeqmetaFailed, err)
-	}
-
-	resolvedSamples := uniqueSangerIDs(samples)
-	resolvedRuns := uniqueRunIDs(samples)
-	resolvedLanes := uniqueLaneIDs(samples)
-	r.cachePut(cacheKey, resolvedSamples, resolvedRuns, resolvedLanes)
-
-	return resolvedSamples, resolvedLanes, nil
-}
-
-// SamplesAndLanesForLibrary returns sample and lane identifiers for a library type.
-func (r *SeqmetaSampleResolver) SamplesAndLanesForLibrary(ctx context.Context, libraryType string) ([]string, []string, error) {
-	if r == nil || r.baseURL == "" {
-		return nil, nil, fmt.Errorf("%w: resolver is not configured", ErrSeqmetaFailed)
-	}
-
-	trimmed := strings.TrimSpace(libraryType)
-	if trimmed == "" {
-		return []string{}, []string{}, nil
-	}
-
-	cacheKey := "library:" + trimmed
-	if cached, ok := r.cacheGet(cacheKey); ok {
-		return cached.samples, cached.lanes, nil
-	}
-
-	enrichment, err := r.fetchEnrichment(ctx, trimmed)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	resolvedSamples := uniqueSangerIDs(enrichment.Graph.Samples)
-	resolvedRuns := uniqueRunIDs(enrichment.Graph.Samples)
-	resolvedLanes := uniqueLaneIDs(enrichment.Graph.Samples)
-	r.cachePut(cacheKey, resolvedSamples, resolvedRuns, resolvedLanes)
-
-	return resolvedSamples, resolvedLanes, nil
-}
-
-// Expand returns the related search identifiers for a canonical identifier.
-func (r *SeqmetaSampleResolver) Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
-	trimmed := strings.TrimSpace(canonical)
-	if trimmed == "" {
-		return []string{}, []string{}, []string{}, nil
-	}
-
-	switch kind {
-	case mlwh.KindStudyLimsID:
-		samples, lanes, err := r.SamplesAndLanesForStudy(ctx, trimmed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		return samples, runIDsFromLaneValues(lanes), lanes, nil
-	case mlwh.KindLibraryType:
-		samples, lanes, err := r.SamplesAndLanesForLibrary(ctx, trimmed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		return samples, runIDsFromLaneValues(lanes), lanes, nil
-	case mlwh.KindSangerSampleName:
-		lanes, err := r.LanesForSample(ctx, trimmed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		return []string{trimmed}, runIDsFromLaneValues(lanes), lanes, nil
-	case mlwh.KindRunID:
-		if r == nil || r.baseURL == "" {
-			return nil, nil, nil, fmt.Errorf("%w: resolver is not configured", ErrSeqmetaFailed)
-		}
-
-		cacheKey := "run:" + trimmed
-		if cached, ok := r.cacheGet(cacheKey); ok {
-			return cached.samples, cached.runs, cached.lanes, nil
-		}
-
-		enrichment, err := r.fetchEnrichment(ctx, trimmed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		samples := uniqueSangerIDs(enrichment.Graph.Samples)
-		runs := uniqueRunIDs(enrichment.Graph.Samples)
-		if len(runs) == 0 {
-			runs = []string{trimmed}
-		}
-		lanes := uniqueLaneIDs(enrichment.Graph.Samples)
-		r.cachePut(cacheKey, samples, runs, lanes)
-
-		return samples, runs, lanes, nil
-	default:
-		return []string{}, []string{}, []string{}, nil
-	}
-}
-
-// LanesForSample returns lane identifiers related to a sample identifier.
-func (r *SeqmetaSampleResolver) LanesForSample(ctx context.Context, sampleID string) ([]string, error) {
-	if r == nil || r.baseURL == "" {
-		return nil, fmt.Errorf("%w: resolver is not configured", ErrSeqmetaFailed)
-	}
-
-	trimmed := strings.TrimSpace(sampleID)
-	if trimmed == "" {
-		return []string{}, nil
-	}
-
-	cacheKey := "sample:" + trimmed
-	if cached, ok := r.cacheGet(cacheKey); ok {
-		return cached.lanes, nil
-	}
-
-	enrichment, err := r.fetchEnrichment(ctx, trimmed)
-	if err != nil {
-		return nil, err
-	}
-
-	lanes := make([]string, 0)
-	seen := map[string]struct{}{}
-	if enrichment.Graph.SampleDetail != nil {
-		for _, lane := range enrichment.Graph.SampleDetail.Lanes {
-			laneID := buildLaneID(lane.IDRun, lane.Lane, lane.TagIndex)
-			if laneID == "" {
-				continue
-			}
-			if _, ok := seen[laneID]; ok {
-				continue
-			}
-			seen[laneID] = struct{}{}
-			lanes = append(lanes, laneID)
-		}
-	}
-
-	if enrichment.Graph.Sample != nil {
-		laneID := buildLaneID(
-			strconv.Itoa(enrichment.Graph.Sample.IDRun),
-			strconv.Itoa(enrichment.Graph.Sample.Lane),
-			enrichment.Graph.Sample.TagIndex,
-		)
-		if laneID != "" {
-			if _, ok := seen[laneID]; !ok {
-				lanes = append(lanes, laneID)
-			}
-		}
-	}
-
-	r.cachePut(cacheKey, nil, runIDsFromLaneValues(lanes), lanes)
-
-	return lanes, nil
-}
-
-func (r *SeqmetaSampleResolver) fetchEnrichment(ctx context.Context, identifier string) (*seqmetaEnrichmentForSearch, error) {
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		r.baseURL+"/enrich/"+url.PathEscape(identifier),
-		nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("%w: build request: %w", ErrSeqmetaFailed, err)
-	}
-
-	response, err := r.client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("%w: request seqmeta enrich: %w", ErrSeqmetaFailed, err)
-	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
-
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: unexpected status %d", ErrSeqmetaFailed, response.StatusCode)
-	}
-
-	var enrichment seqmetaEnrichmentForSearch
-	if err := json.NewDecoder(response.Body).Decode(&enrichment); err != nil {
-		return nil, fmt.Errorf("%w: decode enrichment: %w", ErrSeqmetaFailed, err)
-	}
-
-	return &enrichment, nil
-}
-
-func (r *SeqmetaSampleResolver) cacheGet(key string) (seqmetaResolvedValues, bool) {
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
-
-	entry, ok := r.cache[key]
-	if !ok {
-		return seqmetaResolvedValues{}, false
-	}
-
-	if time.Now().After(entry.expiresAt) {
-		delete(r.cache, key)
-
-		return seqmetaResolvedValues{}, false
-	}
-
-	return entry, true
-}
-
-func (r *SeqmetaSampleResolver) cachePut(key string, samples, runs, lanes []string) {
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
-
-	r.cache[key] = seqmetaResolvedValues{
-		samples:   samples,
-		runs:      runs,
-		lanes:     lanes,
-		expiresAt: time.Now().Add(r.cacheTTL),
-	}
-}
-
-func uniqueLaneIDs(samples []seqmetaSampleForSearch) []string {
-	laneIDs := make([]string, 0, len(samples))
-	seen := make(map[string]struct{}, len(samples))
-
-	for _, sample := range samples {
-		laneID := buildLaneID(
-			strconv.Itoa(sample.IDRun),
-			strconv.Itoa(sample.Lane),
-			sample.TagIndex,
-		)
-		if laneID == "" {
-			continue
-		}
-
-		if _, ok := seen[laneID]; ok {
-			continue
-		}
-
-		seen[laneID] = struct{}{}
-		laneIDs = append(laneIDs, laneID)
-	}
-
-	return laneIDs
-}
-
-func uniqueRunIDs(samples []seqmetaSampleForSearch) []string {
-	runIDs := make([]string, 0, len(samples))
-	seen := make(map[string]struct{}, len(samples))
-
-	for _, sample := range samples {
-		if sample.IDRun <= 0 {
-			continue
-		}
-
-		runID := strconv.Itoa(sample.IDRun)
-		if _, ok := seen[runID]; ok {
-			continue
-		}
-
-		seen[runID] = struct{}{}
-		runIDs = append(runIDs, runID)
-	}
-
-	return runIDs
-}
-
-func runIDsFromLaneValues(laneValues []string) []string {
-	runIDs := make([]string, 0, len(laneValues))
-	seen := make(map[string]struct{}, len(laneValues))
-
-	for _, laneValue := range laneValues {
-		runID, _, ok := strings.Cut(laneValue, "_")
-		if !ok || runID == "" {
-			continue
-		}
-
-		if _, ok := seen[runID]; ok {
-			continue
-		}
-
-		seen[runID] = struct{}{}
-		runIDs = append(runIDs, runID)
-	}
-
-	return runIDs
-}
-
-func buildLaneID(idRun, lane string, tagIndex int) string {
-	run := strings.TrimSpace(idRun)
-	laneValue := strings.TrimSpace(lane)
-	if run == "" || laneValue == "" || tagIndex <= 0 {
-		return ""
-	}
-
-	return run + "_" + laneValue + "#" + strconv.Itoa(tagIndex)
-}
-
-func uniqueSangerIDs(samples []seqmetaSampleForSearch) []string {
-	ids := make([]string, 0, len(samples))
-	seen := make(map[string]struct{}, len(samples))
-
-	for _, sample := range samples {
-		if sample.SangerID == "" {
-			continue
-		}
-
-		if _, ok := seen[sample.SangerID]; ok {
-			continue
-		}
-
-		seen[sample.SangerID] = struct{}{}
-		ids = append(ids, sample.SangerID)
-	}
-
-	return ids
 }
 
 // SessionResponse reports the authenticated caller's current session state.
@@ -579,7 +166,7 @@ type LockedResponse struct {
 // Server serves the results REST API.
 type Server struct {
 	store           *Store
-	validator       *SeqmetaValidator
+	validator       *MLWHValidator
 	resolver        SearchResolver
 	handler         http.Handler
 	maxPreviewBytes int64
@@ -587,7 +174,7 @@ type Server struct {
 }
 
 // NewServer constructs a results API server.
-func NewServer(store *Store, validator *SeqmetaValidator, resolver SearchResolver, opts ...ServerOption) *Server {
+func NewServer(store *Store, validator *MLWHValidator, resolver SearchResolver, opts ...ServerOption) *Server {
 	server := &Server{
 		store:           store,
 		validator:       validator,
@@ -954,9 +541,9 @@ func writeDomainError(c *gin.Context, err error) {
 		writeServerError(c, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrNotFound):
 		writeServerError(c, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrSeqmetaRejected):
+	case errors.Is(err, ErrMLWHRejected):
 		writeServerError(c, http.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, ErrSeqmetaFailed):
+	case errors.Is(err, ErrMLWHFailed), errors.Is(err, ErrSeqmetaFailed):
 		writeServerError(c, http.StatusBadGateway, err.Error())
 	default:
 		writeServerError(c, http.StatusInternalServerError, err.Error())
@@ -1177,7 +764,7 @@ func (s *Server) handleGetResults(c *gin.Context) {
 	if len(studyValues) > 0 {
 		if s.resolver == nil {
 			if legacyStudyIDUsed {
-				writeServerError(c, http.StatusBadRequest, "seqmeta not configured")
+				writeServerError(c, http.StatusBadRequest, "MLWH resolver not configured")
 
 				return
 			}

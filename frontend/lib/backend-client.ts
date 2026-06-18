@@ -15,7 +15,7 @@ export {
     resultsAuthCookieName,
 } from "@/lib/backend-shared";
 
-type BackendEnvVar = "WA_RESULTS_BACKEND_URL" | "WA_SEQMETA_BACKEND_URL";
+type BackendEnvVar = "WA_RESULTS_BACKEND_URL" | "WA_MLWH_BACKEND_URL";
 type BackendFetchOptions = Omit<RequestInit, "headers"> & {
     headers?: HeadersInit;
     jwt?: string | null;
@@ -287,11 +287,11 @@ export async function resultsJson<T>(
     );
 }
 
-export async function seqmetaJson<T>(
+export async function mlwhJson<T>(
     path: string,
     schema: ZodType<T>,
 ): Promise<T> {
-    return backendJson("seqmeta", "WA_SEQMETA_BACKEND_URL", path, schema);
+    return backendJson("mlwh", "WA_MLWH_BACKEND_URL", path, schema);
 }
 
 export async function resultsRaw(

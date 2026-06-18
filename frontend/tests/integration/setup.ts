@@ -1,7 +1,13 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import {
+    createServer as createHTTPServer,
+    type IncomingMessage,
+    type Server as HTTPServer,
+    type ServerResponse,
+} from "node:http";
 import { request as httpsRequest } from "node:https";
-import { createServer } from "node:net";
+import { createServer as createNetServer } from "node:net";
 import { userInfo } from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
@@ -23,6 +29,19 @@ type SeedRegistration = {
 
 type EnvLike = Record<string, string | undefined>;
 
+type FakeMLWHServer = {
+    baseUrl: string;
+    server: HTTPServer;
+};
+
+type ResultsServerArgsOptions = {
+    certPath: string;
+    dbPath: string;
+    keyPath: string;
+    mlwhServerUrl: string;
+    port: number;
+};
+
 const setupDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(setupDir, "..", "..");
 const repoRoot = path.resolve(frontendRoot, "..");
@@ -38,9 +57,36 @@ const seedPath = path.join(
 export function buildResultsServerEnv(env: EnvLike): EnvLike {
     const serverEnv = { ...env };
 
-    delete serverEnv.WA_SEQMETA_BACKEND_URL;
+    delete serverEnv.WA_MLWH_BACKEND_URL;
 
     return serverEnv;
+}
+
+export function buildResultsServerArgs({
+    certPath,
+    dbPath,
+    keyPath,
+    mlwhServerUrl,
+    port,
+}: ResultsServerArgsOptions): string[] {
+    return [
+        "results",
+        "serve",
+        "--port",
+        String(port),
+        "--db",
+        dbPath,
+        "--cert",
+        certPath,
+        "--key",
+        keyPath,
+        "--mlwh-server-url",
+        mlwhServerUrl,
+        "--ldap_server",
+        "wa-test-ldap.invalid",
+        "--ldap_dn",
+        "uid=%s,ou=people,dc=example,dc=org",
+    ];
 }
 
 function createCommandError(
@@ -118,7 +164,7 @@ function signalProcessGroup(
 
 async function getFreePort(): Promise<number> {
     return new Promise<number>((resolve, reject) => {
-        const server = createServer();
+        const server = createNetServer();
 
         server.on("error", reject);
         server.listen(0, "127.0.0.1", () => {
@@ -140,6 +186,116 @@ async function getFreePort(): Promise<number> {
                 }
 
                 resolve(address.port);
+            });
+        });
+    });
+}
+
+const fakeMLWHClassifications: Record<string, string> = {
+    "6568": "study_lims_id",
+    "Chromium single cell 3 prime v3": "library_type",
+    WTSI_wEMB10524782: "sanger_sample_name",
+};
+
+function writeFakeMLWHJSON(
+    response: ServerResponse,
+    statusCode: number,
+    body: unknown,
+): void {
+    response.writeHead(statusCode, { "content-type": "application/json" });
+    response.end(JSON.stringify(body));
+}
+
+function handleFakeMLWHRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+): void {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    const classifyPrefix = "/classify/";
+
+    if (
+        request.method === "GET" &&
+        requestUrl.pathname.startsWith(classifyPrefix)
+    ) {
+        let identifier: string;
+
+        try {
+            identifier = decodeURIComponent(
+                requestUrl.pathname.slice(classifyPrefix.length),
+            );
+        } catch {
+            writeFakeMLWHJSON(response, 400, {
+                code: "bad_request",
+                message: "invalid identifier path",
+            });
+
+            return;
+        }
+
+        const kind = fakeMLWHClassifications[identifier];
+
+        if (kind) {
+            writeFakeMLWHJSON(response, 200, {
+                Canonical: identifier,
+                Kind: kind,
+            });
+
+            return;
+        }
+
+        writeFakeMLWHJSON(response, 404, {
+            code: "not_found",
+            message: `fake MLWH has no classification for ${identifier}`,
+        });
+
+        return;
+    }
+
+    writeFakeMLWHJSON(response, 404, {
+        code: "not_found",
+        message: `fake MLWH has no route for ${request.method ?? "GET"} ${requestUrl.pathname}`,
+    });
+}
+
+function closeHTTPServer(server: HTTPServer): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+        server.close((error?: Error) => {
+            if (error) {
+                reject(error);
+
+                return;
+            }
+
+            resolve();
+        });
+    });
+}
+
+function startFakeMLWHServer(): Promise<FakeMLWHServer> {
+    const server = createHTTPServer(handleFakeMLWHRequest);
+
+    return new Promise<FakeMLWHServer>((resolve, reject) => {
+        const onError = (error: Error) => {
+            reject(error);
+        };
+
+        server.once("error", onError);
+        server.listen(0, "127.0.0.1", () => {
+            server.off("error", onError);
+
+            const address = server.address();
+
+            if (!address || typeof address === "string") {
+                void closeHTTPServer(server).finally(() => {
+                    reject(new Error("Unable to determine fake MLWH port"));
+                });
+
+                return;
+            }
+
+            resolve({
+                baseUrl: `http://127.0.0.1:${address.port}`,
+                server,
             });
         });
     });
@@ -426,25 +582,17 @@ export default async function setup(): Promise<() => Promise<void>> {
 
     await runCommand("go", ["build", "-o", binaryPath, "."], repoRoot);
     await createSelfSignedCertificate(certPath, keyPath);
+    const mlwhServer = await startFakeMLWHServer();
 
     const server = spawn(
         binaryPath,
-        [
-            "results",
-            "serve",
-            "--port",
-            String(port),
-            "--db",
-            dbPath,
-            "--cert",
+        buildResultsServerArgs({
             certPath,
-            "--key",
+            dbPath,
             keyPath,
-            "--ldap_server",
-            "wa-test-ldap.invalid",
-            "--ldap_dn",
-            "uid=%s,ou=people,dc=example,dc=org",
-        ],
+            mlwhServerUrl: mlwhServer.baseUrl,
+            port,
+        }),
         {
             cwd: repoRoot,
             detached: true,
@@ -457,8 +605,18 @@ export default async function setup(): Promise<() => Promise<void>> {
     );
     const { stdout, stderr } = collectProcessOutput(server);
 
-    await waitForServer(baseUrl, certPath, server, stdout, stderr);
-    const ownerJWT = await seedResults(baseUrl, certPath, tempDir);
+    let ownerJWT: string;
+
+    try {
+        await waitForServer(baseUrl, certPath, server, stdout, stderr);
+        ownerJWT = await seedResults(baseUrl, certPath, tempDir);
+    } catch (error) {
+        await stopProcess(server);
+        await closeHTTPServer(mlwhServer.server);
+        await rm(tempDir, { force: true, recursive: true });
+
+        throw error;
+    }
 
     process.env.WA_RESULTS_BACKEND_URL = baseUrl;
     process.env.WA_RESULTS_BACKEND_CA_CERT = certPath;
@@ -479,6 +637,7 @@ export default async function setup(): Promise<() => Promise<void>> {
         }
 
         await stopProcess(server);
+        await closeHTTPServer(mlwhServer.server);
         await rm(tempDir, { force: true, recursive: true });
     };
 }

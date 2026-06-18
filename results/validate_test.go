@@ -28,15 +28,16 @@ package results
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+
+	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 func TestSeqmetaMetadataValueKeys(t *testing.T) {
@@ -84,168 +85,6 @@ func TestValidateRegistrationAcceptsFileSymlinkPathsUnderOutputDirectory(t *test
 	})
 }
 
-type seqmetaResponseForTest struct {
-	status int
-	body   string
-}
-
-func TestSeqmetaValidatorValidateMetadata(t *testing.T) {
-	convey.Convey("D1.1: ValidateMetadata accepts matching seqmeta identifier types", t, func() {
-		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"48522": {status: http.StatusOK, body: `{"identifier":"48522","type":"run_id","object":{}}`},
-		})
-		defer server.Close()
-
-		validator := NewSeqmetaValidator(server.URL, time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_runid": "48522"})
-
-		convey.So(err, convey.ShouldBeNil)
-	})
-
-	convey.Convey("D1.2: ValidateMetadata rejects mismatched seqmeta identifier types", t, func() {
-		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"48522": {status: http.StatusOK, body: `{"identifier":"48522","type":"sanger_sample_id","object":{}}`},
-		})
-		defer server.Close()
-
-		validator := NewSeqmetaValidator(server.URL, time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_runid": "48522"})
-
-		convey.So(errors.Is(err, ErrSeqmetaRejected), convey.ShouldBeTrue)
-	})
-
-	convey.Convey("Bug 2: ValidateMetadata accepts seqmeta_library when seqmeta resolves it as a library type", t, func() {
-		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"71046409": {status: http.StatusOK, body: `{"identifier":"Custom","type":"library_type","object":{}}`},
-		})
-		defer server.Close()
-
-		validator := NewSeqmetaValidator(server.URL, time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_library": "71046409"})
-
-		convey.So(err, convey.ShouldBeNil)
-	})
-
-	convey.Convey("Bug 2: ValidateMetadata accepts seqmeta_libraryid when seqmeta resolves it as a library ID", t, func() {
-		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"71046409": {status: http.StatusOK, body: `{"identifier":"71046409","type":"library_id","object":{}}`},
-		})
-		defer server.Close()
-
-		validator := NewSeqmetaValidator(server.URL, time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_libraryid": "71046409"})
-
-		convey.So(err, convey.ShouldBeNil)
-	})
-
-	convey.Convey("Bug 3: ValidateMetadata accepts MLWH-named seqmeta metadata keys while keeping legacy aliases compatible", t, func() {
-		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"48522":             {status: http.StatusOK, body: `{"identifier":"48522","type":"run_id","object":{}}`},
-			"6568":              {status: http.StatusOK, body: `{"identifier":"6568","type":"study_lims_id","object":{}}`},
-			"7607STDY14643771":  {status: http.StatusOK, body: `{"identifier":"7607STDY14643771","type":"sanger_sample_name","object":{}}`},
-			"Custom":            {status: http.StatusOK, body: `{"identifier":"Custom","type":"library_type","object":{}}`},
-			"71046409":          {status: http.StatusOK, body: `{"identifier":"71046409","type":"library_id","object":{}}`},
-			"SQPP-47463-G:B1":   {status: http.StatusOK, body: `{"identifier":"SQPP-47463-G:B1","type":"id_library_lims","object":{}}`},
-			"legacy-study-lims": {status: http.StatusOK, body: `{"identifier":"legacy-study-lims","type":"study_lims_id","object":{}}`},
-		})
-		defer server.Close()
-
-		validator := NewSeqmetaValidator(server.URL, time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{
-			"seqmeta_id_run":           "48522",
-			"seqmeta_id_study_lims":    "6568",
-			"seqmeta_name":             "7607STDY14643771",
-			"seqmeta_pipeline_id_lims": "Custom",
-			"seqmeta_library_id":       "71046409",
-			"seqmeta_id_library_lims":  "SQPP-47463-G:B1",
-			"seqmeta_studyid":          "legacy-study-lims",
-		})
-
-		convey.So(err, convey.ShouldBeNil)
-	})
-
-	convey.Convey("ValidateMetadata accepts source-specific sample and study seqmeta metadata keys", t, func() {
-		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"Hek_R1":                               {status: http.StatusOK, body: `{"identifier":"Hek_R1","type":"supplier_name","object":{}}`},
-			"SANGER_SOURCE_3":                      {status: http.StatusOK, body: `{"identifier":"SANGER_SOURCE_3","type":"sanger_sample_id","object":{}}`},
-			"6050954":                              {status: http.StatusOK, body: `{"identifier":"6050954","type":"sample_lims_id","object":{}}`},
-			"SAMEA76070":                           {status: http.StatusOK, body: `{"identifier":"SAMEA76070","type":"sample_accession","object":{}}`},
-			"22222222-2222-3333-4444-555555557601": {status: http.StatusOK, body: `{"identifier":"22222222-2222-3333-4444-555555557601","type":"sample_uuid","object":{}}`},
-			"DONOR_HEK1":                           {status: http.StatusOK, body: `{"identifier":"DONOR_HEK1","type":"donor_id","object":{}}`},
-			"ERP7607":                              {status: http.StatusOK, body: `{"identifier":"ERP7607","type":"study_accession","object":{}}`},
-			"11111111-2222-3333-4444-555555557607": {status: http.StatusOK, body: `{"identifier":"11111111-2222-3333-4444-555555557607","type":"study_uuid","object":{}}`},
-			"Study 7609 Name":                      {status: http.StatusOK, body: `{"identifier":"Study 7609 Name","type":"study_name","object":{}}`},
-		})
-		defer server.Close()
-
-		validator := NewSeqmetaValidator(server.URL, time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{
-			"seqmeta_supplier_name":    "Hek_R1",
-			"seqmeta_sanger_sample_id": "SANGER_SOURCE_3",
-			"seqmeta_id_sample_lims":   "6050954",
-			"seqmeta_accession_number": "SAMEA76070",
-			"seqmeta_uuid_sample_lims": "22222222-2222-3333-4444-555555557601",
-			"seqmeta_donor_id":         "DONOR_HEK1",
-			"seqmeta_study_accession":  "ERP7607",
-			"seqmeta_uuid_study_lims":  "11111111-2222-3333-4444-555555557607",
-			"seqmeta_study_name":       "Study 7609 Name",
-		})
-
-		convey.So(err, convey.ShouldBeNil)
-	})
-
-	convey.Convey("D1.3: ValidateMetadata rejects unknown seqmeta metadata suffixes", t, func() {
-		validator := NewSeqmetaValidator("http://example.test", time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_unknown": "val"})
-
-		convey.So(errors.Is(err, ErrInvalidInput), convey.ShouldBeTrue)
-	})
-
-	convey.Convey("D1.4: ValidateMetadata wraps unreachable seqmeta service failures", t, func() {
-		validator := NewSeqmetaValidator("http://127.0.0.1:1", 50*time.Millisecond)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_runid": "48522"})
-
-		convey.So(errors.Is(err, ErrSeqmetaFailed), convey.ShouldBeTrue)
-	})
-
-	convey.Convey("D1.5: ValidateMetadata skips validation for a nil validator", t, func() {
-		var validator *SeqmetaValidator
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_runid": "48522"})
-
-		convey.So(err, convey.ShouldBeNil)
-	})
-
-	convey.Convey("D1.6: ValidateMetadata skips metadata without seqmeta keys", t, func() {
-		validator := NewSeqmetaValidator("http://127.0.0.1:1", time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"library": "exon"})
-
-		convey.So(err, convey.ShouldBeNil)
-	})
-
-	convey.Convey("D1.7: ValidateMetadata treats missing seqmeta identifiers as rejected", t, func() {
-		server := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"48522": {status: http.StatusNotFound, body: `{"error":"not found"}`},
-		})
-		defer server.Close()
-
-		validator := NewSeqmetaValidator(server.URL, time.Second)
-
-		err := validator.ValidateMetadata(context.Background(), map[string]string{"seqmeta_runid": "48522"})
-
-		convey.So(errors.Is(err, ErrSeqmetaRejected), convey.ShouldBeTrue)
-	})
-}
-
 func TestValidateRegistrationRejectsDirectorySymlinkEscapes(t *testing.T) {
 	convey.Convey("ValidateRegistration rejects output files reached via a directory symlink that exits the output directory", t, func() {
 		outputDir := t.TempDir()
@@ -277,22 +116,231 @@ func TestValidateRegistrationRejectsDirectorySymlinkEscapes(t *testing.T) {
 	})
 }
 
-func newSeqmetaServerForTest(responses map[string]seqmetaResponseForTest) *httptest.Server {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response, ok := responses[r.PathValue("identifier")]
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
+type mlwhValidationResponseForTest struct {
+	match mlwh.Match
+	err   error
+}
 
-			return
+func TestMLWHValidatorValidateMetadataValues(t *testing.T) {
+	convey.Convey("A1.1: ValidateMetadataValues accepts matching MLWH identifier types without an HTTP client field", t, func() {
+		queryer := &mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"6568": {match: mlwh.Match{Kind: mlwh.KindStudyLimsID}},
+			},
 		}
+		validator := NewMLWHValidator(queryer)
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(response.status)
-		_, _ = fmt.Fprint(w, response.body)
+		err := validator.ValidateMetadataValues(context.Background(), map[string][]string{
+			"seqmeta_id_study_lims": {"6568"},
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(queryer.calls, convey.ShouldResemble, []string{"6568"})
+		convey.So(httpClientFieldCount(validator), convey.ShouldEqual, 0)
 	})
 
-	mux := http.NewServeMux()
-	mux.Handle("GET /validate/{identifier}", handler)
+	convey.Convey("Bug 260618-3: ValidateMetadataValues validates through the expected MLWH resolver before broad classification", t, func() {
+		queryer := &mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"48522":    {match: mlwh.Match{Kind: mlwh.KindSampleLimsID}},
+				"71046409": {match: mlwh.Match{Kind: mlwh.KindSampleLimsID}},
+				"Hek_R1":   {match: mlwh.Match{Kind: mlwh.KindSangerSampleName}},
+			},
+			methodResponses: map[string]map[string]mlwhValidationResponseForTest{
+				"ResolveRun": {
+					"48522": {match: mlwh.Match{Kind: mlwh.KindRunID}},
+				},
+				"ResolveLibraryIdentifier": {
+					"71046409": {match: mlwh.Match{Kind: mlwh.KindLibraryID}},
+				},
+				"ResolveSample": {
+					"Hek_R1": {match: mlwh.Match{Kind: mlwh.KindSupplierName}},
+				},
+			},
+		}
+		validator := NewMLWHValidator(queryer)
 
-	return httptest.NewServer(mux)
+		err := validator.ValidateMetadataValues(context.Background(), map[string][]string{
+			SeqmetaIDRunKey:        {"48522"},
+			SeqmetaLibraryIDKey:    {"71046409"},
+			SeqmetaSupplierNameKey: {"Hek_R1"},
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(queryer.methodCalls, convey.ShouldResemble, []string{
+			"ResolveRun:48522",
+			"ResolveLibraryIdentifier:71046409",
+			"ResolveSample:Hek_R1",
+		})
+	})
+
+	convey.Convey("A1.2: ValidateMetadataValues rejects mismatched MLWH identifier types", t, func() {
+		queryer := &mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"X": {match: mlwh.Match{Kind: mlwh.KindSangerSampleName}},
+			},
+		}
+		validator := NewMLWHValidator(queryer)
+
+		err := validator.ValidateMetadataValues(context.Background(), map[string][]string{
+			"seqmeta_id_study_lims": {"X"},
+		})
+
+		convey.So(errors.Is(err, ErrMLWHRejected), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, `expected "study_lims_id", got "sanger_sample_name"`)
+	})
+
+	convey.Convey("A1.3: ValidateMetadataValues treats MLWH not found as rejected", t, func() {
+		queryer := &mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"6568": {err: mlwh.ErrNotFound},
+			},
+		}
+		validator := NewMLWHValidator(queryer)
+
+		err := validator.ValidateMetadataValues(context.Background(), map[string][]string{
+			"seqmeta_id_study_lims": {"6568"},
+		})
+
+		convey.So(errors.Is(err, ErrMLWHRejected), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "identifier not found")
+	})
+
+	convey.Convey("A1.4: ValidateMetadataValues treats MLWH upstream and unsynced cache errors as failed", t, func() {
+		for _, queryErr := range []error{mlwh.ErrUpstreamImpaired, mlwh.ErrCacheNeverSynced} {
+			queryer := &mlwhValidationQueryerForTest{
+				responses: map[string]mlwhValidationResponseForTest{
+					"6568": {err: queryErr},
+				},
+			}
+			validator := NewMLWHValidator(queryer)
+
+			err := validator.ValidateMetadataValues(context.Background(), map[string][]string{
+				"seqmeta_id_study_lims": {"6568"},
+			})
+
+			convey.So(errors.Is(err, ErrMLWHFailed), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrMLWHRejected), convey.ShouldBeFalse)
+		}
+	})
+
+	convey.Convey("A1.5: ValidateMetadataValues rejects unknown seqmeta metadata suffixes before querying MLWH", t, func() {
+		queryer := &mlwhValidationQueryerForTest{}
+		validator := NewMLWHValidator(queryer)
+
+		err := validator.ValidateMetadataValues(context.Background(), map[string][]string{
+			"seqmeta_unknown": {"val"},
+		})
+
+		convey.So(errors.Is(err, ErrInvalidInput), convey.ShouldBeTrue)
+		convey.So(err.Error(), convey.ShouldContainSubstring, `unknown seqmeta field "seqmeta_unknown"`)
+		convey.So(queryer.calls, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("A1.6: ValidateMetadataValues skips validation for a nil validator", t, func() {
+		var validator *MLWHValidator
+
+		err := validator.ValidateMetadataValues(context.Background(), map[string][]string{
+			"seqmeta_id_study_lims": {"6568"},
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
+func httpClientFieldCount(validator *MLWHValidator) int {
+	if validator == nil {
+		return 0
+	}
+
+	validatorType := reflect.TypeOf(*validator)
+	httpClientType := reflect.TypeOf((*http.Client)(nil))
+	count := 0
+
+	for i := range validatorType.NumField() {
+		if validatorType.Field(i).Type == httpClientType {
+			count++
+		}
+	}
+
+	return count
+}
+
+type mlwhValidationQueryerForTest struct {
+	mlwh.Queryer
+	calls           []string
+	methodCalls     []string
+	responses       map[string]mlwhValidationResponseForTest
+	methodResponses map[string]map[string]mlwhValidationResponseForTest
+}
+
+func (q *mlwhValidationQueryerForTest) ClassifyIdentifier(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ClassifyIdentifier", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveSample(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveSample", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveSampleName(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveSampleName", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveStudy(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveStudy", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveRun(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveRun", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveLibrary(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveLibrary", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveLibraryIdentifier(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveLibraryIdentifier", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) responseFor(
+	_ context.Context,
+	method string,
+	raw string,
+) (mlwh.Match, error) {
+	q.calls = append(q.calls, raw)
+	q.methodCalls = append(q.methodCalls, method+":"+raw)
+
+	if methodResponses := q.methodResponses[method]; methodResponses != nil {
+		if response, ok := methodResponses[raw]; ok {
+			return response.match, response.err
+		}
+	}
+
+	response, ok := q.responses[raw]
+	if !ok {
+		return mlwh.Match{}, mlwh.ErrNotFound
+	}
+
+	return response.match, response.err
 }

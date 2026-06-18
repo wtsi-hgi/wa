@@ -25,6 +25,28 @@
 
 package mlwh
 
+const (
+	// HopClassify records an identifier-classification enrichment hop.
+	HopClassify = "classify"
+	// HopStudy records a study metadata enrichment hop.
+	HopStudy = "study"
+	// HopSamples records a sample expansion enrichment hop.
+	HopSamples = "samples"
+	// HopLibraries records a library expansion enrichment hop.
+	HopLibraries = "libraries"
+	// HopStudies records a study expansion enrichment hop.
+	HopStudies = "studies"
+)
+
+const (
+	// ReasonUpstreamError records an upstream cache or source failure.
+	ReasonUpstreamError = "upstream_error"
+	// ReasonNotFound records a missing optional enrichment hop.
+	ReasonNotFound = "not_found"
+	// ReasonSamplesTruncated records a bounded sample expansion.
+	ReasonSamplesTruncated = "samples_truncated"
+)
+
 // Sample is the cache-backed sample shape mirrored from MLWH.
 type Sample struct {
 	IDSampleTmp     int64     `json:"id_sample_tmp"`
@@ -112,8 +134,53 @@ type RunDetail struct {
 	StudyDetails []StudyDetail `json:"study_details,omitempty"`
 }
 
+// LibraryLink is a compact library tuple used by the enrichment graph contract.
+type LibraryLink struct {
+	LibraryType   string `json:"library_type"`
+	IDStudyLims   string `json:"id_study_lims"`
+	LibraryID     string `json:"library_id,omitempty"`
+	IDLibraryLims string `json:"id_library_lims,omitempty"`
+}
+
+// EnrichmentGraph is the flat graph envelope returned under "graph".
+type EnrichmentGraph struct {
+	Study     *Study        `json:"study,omitempty"`
+	Studies   []Study       `json:"studies,omitempty"`
+	Sample    *Sample       `json:"sample,omitempty"`
+	Samples   []Sample      `json:"samples,omitempty"`
+	Library   *LibraryLink  `json:"library,omitempty"`
+	Libraries []LibraryLink `json:"libraries,omitempty"`
+
+	StudyDetail  *StudyDetail  `json:"study_detail,omitempty"`
+	StudyDetails []StudyDetail `json:"study_details,omitempty"`
+	SampleDetail *SampleDetail `json:"sample_detail,omitempty"`
+}
+
+// MissingHop records a hop that failed or was truncated.
+type MissingHop struct {
+	Hop    string `json:"hop"`
+	Reason string `json:"reason"`
+	Status int    `json:"status"`
+}
+
+// EnrichmentResult is the enrichment response body.
+type EnrichmentResult struct {
+	Identifier string          `json:"identifier"`
+	Type       IdentifierKind  `json:"type"`
+	Graph      EnrichmentGraph `json:"graph"`
+	Partial    bool            `json:"partial"`
+	Missing    []MissingHop    `json:"missing,omitempty"`
+}
+
 // TaggedID identifies one canonical identifier dimension for results expansion.
 type TaggedID struct {
 	Kind      IdentifierKind
 	Canonical string
+}
+
+// SearchValues groups expanded values used for results searches.
+type SearchValues struct {
+	Samples []string `json:"samples"`
+	Runs    []string `json:"runs"`
+	Lanes   []string `json:"lanes"`
 }

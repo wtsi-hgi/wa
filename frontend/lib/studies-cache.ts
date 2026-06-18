@@ -1,4 +1,4 @@
-import { seqmetaJson } from "@/lib/backend-client";
+import { mlwhJson } from "@/lib/backend-client";
 import { studiesSchema, type Study } from "@/lib/contracts";
 
 type StudiesCache = {
@@ -31,7 +31,7 @@ export async function getStudies(): Promise<Study[]> {
         return studiesCache.studies;
     }
 
-    const studies = await seqmetaJson("/studies", studiesSchema);
+    const studies = await mlwhJson("/studies", studiesSchema);
 
     studiesCache = {
         fetchedAt: now,

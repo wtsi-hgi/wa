@@ -489,6 +489,126 @@ const validations = new Map([
     ],
 ]);
 
+const mlwhKindAliases = new Map([["study_id", "study_lims_id"]]);
+
+const sampleKinds = new Set([
+    "sample_uuid",
+    "sample_lims_id",
+    "sanger_sample_name",
+    "sanger_sample_id",
+    "supplier_name",
+    "sample_accession",
+    "donor_id",
+]);
+const studyKinds = new Set([
+    "study_uuid",
+    "study_lims_id",
+    "study_accession",
+    "study_name",
+]);
+const runKinds = new Set(["run_id"]);
+const libraryKinds = new Set(["library_type", "library_id", "id_library_lims"]);
+
+function mlwhKind(type) {
+    return mlwhKindAliases.get(type) ?? type;
+}
+
+function sampleName(result) {
+    return result.object?.name ?? result.object?.sample_name;
+}
+
+function mlwhKindFromValidation(result) {
+    const kind = mlwhKind(result.type);
+
+    if (
+        kind === "sanger_sample_id" &&
+        sampleName(result) === result.identifier
+    ) {
+        return "sanger_sample_name";
+    }
+
+    return kind;
+}
+
+function canonicalIdentifier(result, kind) {
+    if (sampleKinds.has(kind)) {
+        return sampleName(result) ?? result.identifier;
+    }
+
+    if (studyKinds.has(kind)) {
+        return result.object?.id_study_lims ?? result.identifier;
+    }
+
+    if (runKinds.has(kind)) {
+        const idRun = Number(result.object?.id_run ?? result.identifier);
+
+        if (Number.isFinite(idRun)) {
+            return String(idRun);
+        }
+    }
+
+    if (kind === "library_type") {
+        return (
+            result.object?.pipeline_id_lims ??
+            result.object?.library_type ??
+            result.identifier
+        );
+    }
+
+    if (kind === "library_id") {
+        return result.object?.library_id ?? result.identifier;
+    }
+
+    if (kind === "id_library_lims") {
+        return result.object?.id_library_lims ?? result.identifier;
+    }
+
+    return result.identifier;
+}
+
+function runMatchObject(result) {
+    const idRun = Number(result.object?.id_run ?? result.identifier);
+
+    if (Number.isFinite(idRun)) {
+        return { id_run: idRun };
+    }
+
+    return result.object ?? null;
+}
+
+function mlwhMatchFromValidation(result) {
+    const kind = mlwhKindFromValidation(result);
+    const match = {
+        Kind: kind,
+        Canonical: canonicalIdentifier(result, kind),
+        Sample: null,
+        Study: null,
+        Run: null,
+        Library: null,
+    };
+
+    if (sampleKinds.has(kind)) {
+        match.Sample = result.object ?? null;
+        return match;
+    }
+
+    if (studyKinds.has(kind)) {
+        match.Study = result.object ?? null;
+        return match;
+    }
+
+    if (runKinds.has(kind)) {
+        match.Run = runMatchObject(result);
+        return match;
+    }
+
+    if (libraryKinds.has(kind)) {
+        match.Library = result.object ?? null;
+    }
+
+    return match;
+}
+
 function sendJson(response, statusCode, body) {
     response.writeHead(statusCode, { "content-type": "application/json" });
     response.end(JSON.stringify(body));
@@ -543,6 +663,18 @@ const server = http.createServer((request, response) => {
         }
     }
 
+    if (url.pathname.startsWith("/classify/")) {
+        const identifier = decodeURIComponent(
+            url.pathname.slice("/classify/".length),
+        );
+        const result = validations.get(identifier);
+
+        if (result) {
+            sendJson(response, 200, mlwhMatchFromValidation(result));
+            return;
+        }
+    }
+
     if (url.pathname.startsWith("/validate/")) {
         const identifier = decodeURIComponent(
             url.pathname.slice("/validate/".length),
@@ -553,6 +685,14 @@ const server = http.createServer((request, response) => {
             sendJson(response, 200, result);
             return;
         }
+    }
+
+    if (url.pathname.startsWith("/classify/")) {
+        sendJson(response, 404, {
+            code: "not_found",
+            message: "mlwh: identifier not found",
+        });
+        return;
     }
 
     if (

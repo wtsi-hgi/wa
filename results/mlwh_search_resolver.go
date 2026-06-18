@@ -36,12 +36,10 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-type mlwhSearchExpander interface {
-	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
-}
+const defaultMLWHSearchResolverCacheTTL = 5 * time.Minute
 
-type mlwhSampleSearchExpander interface {
-	ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error)
+type mlwhSearchExpander interface {
+	ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
 }
 
 type mlwhStudyResolver interface {
@@ -73,7 +71,7 @@ type MLWHSearchResolver struct {
 func NewMLWHSearchResolver(client mlwhSearchExpander) *MLWHSearchResolver {
 	resolver := &MLWHSearchResolver{
 		client:   client,
-		cacheTTL: defaultSeqmetaResolverCacheTTL,
+		cacheTTL: defaultMLWHSearchResolverCacheTTL,
 		cache:    map[string]mlwhSearchResolvedValues{},
 	}
 	if studyResolver, ok := client.(mlwhStudyResolver); ok {
@@ -100,7 +98,7 @@ func (r *MLWHSearchResolver) CanonicalStudySearchValue(ctx context.Context, raw 
 		case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier):
 			return trimmed, nil
 		default:
-			return "", fmt.Errorf("%w: resolve study: %w", ErrSeqmetaFailed, err)
+			return "", fmt.Errorf("%w: resolve study: %w", ErrMLWHFailed, err)
 		}
 	}
 
@@ -177,12 +175,12 @@ func (r *MLWHSearchResolver) ResolveLibraryIdentifier(ctx context.Context, raw s
 
 func (r *MLWHSearchResolver) registrationResolver() (RegistrationResolver, error) {
 	if r == nil || r.client == nil {
-		return nil, fmt.Errorf("%w: MLWH resolver is not configured", ErrSeqmetaFailed)
+		return nil, fmt.Errorf("%w: MLWH resolver is not configured", ErrMLWHFailed)
 	}
 
 	resolver, ok := r.client.(RegistrationResolver)
 	if !ok {
-		return nil, fmt.Errorf("%w: MLWH registration resolver is not configured", ErrSeqmetaFailed)
+		return nil, fmt.Errorf("%w: MLWH registration resolver is not configured", ErrMLWHFailed)
 	}
 
 	return resolver, nil
@@ -211,7 +209,7 @@ func (r *MLWHSearchResolver) libraryIdentifierResolver() (registrationLibraryIde
 // Expand resolves related search values for a canonical identifier.
 func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
 	if r == nil || r.client == nil {
-		return nil, nil, nil, fmt.Errorf("%w: resolver is not configured", ErrSeqmetaFailed)
+		return nil, nil, nil, fmt.Errorf("%w: resolver is not configured", ErrMLWHFailed)
 	}
 
 	trimmed := strings.TrimSpace(canonical)
@@ -224,55 +222,24 @@ func (r *MLWHSearchResolver) Expand(ctx context.Context, kind mlwh.IdentifierKin
 		return cached.samples, cached.runs, cached.lanes, nil
 	}
 
-	if directSampleSearchKind(kind) {
-		samples, err := r.expandDirectSampleSearchValues(ctx, kind, trimmed)
-		if err == nil {
-			r.cachePut(cacheKey, samples, nil, nil)
-
-			return samples, nil, nil, nil
-		}
-		if !errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
-			return nil, nil, nil, err
-		}
-	}
-
-	samples, runs, lanes, err := r.client.ExpandSearchValues(ctx, kind, trimmed)
+	values, err := r.client.ExpandSearchValues(ctx, kind, trimmed)
 	if err != nil {
 		switch {
+		case errors.Is(err, mlwh.ErrCacheNeverSynced):
+			return nil, nil, nil, fmt.Errorf("%w: expand identifier: %w", ErrMLWHFailed, err)
 		case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier):
 			r.cachePut(cacheKey, nil, nil, nil)
 
 			return []string{}, []string{}, []string{}, nil
 		default:
-			return nil, nil, nil, fmt.Errorf("%w: expand identifier: %w", ErrSeqmetaFailed, err)
+			return nil, nil, nil, fmt.Errorf("%w: expand identifier: %w", ErrMLWHFailed, err)
 		}
 	}
 
-	runs = mergeSearchValues(runs, runIDsFromLaneValues(lanes))
+	samples, runs, lanes := values.Samples, values.Runs, values.Lanes
 	r.cachePut(cacheKey, samples, runs, lanes)
 
 	return samples, runs, lanes, nil
-}
-
-func (r *MLWHSearchResolver) expandDirectSampleSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
-	expander, ok := r.client.(mlwhSampleSearchExpander)
-	if !ok {
-		return nil, mlwh.ErrUnsupportedIdentifier
-	}
-
-	samples, err := expander.ExpandSampleSearchValues(ctx, kind, canonical)
-	if err != nil {
-		switch {
-		case errors.Is(err, mlwh.ErrNotFound):
-			return []string{}, nil
-		case errors.Is(err, mlwh.ErrUnsupportedIdentifier):
-			return nil, err
-		default:
-			return nil, fmt.Errorf("%w: expand sample metadata: %w", ErrSeqmetaFailed, err)
-		}
-	}
-
-	return samples, nil
 }
 
 // ExpandCandidateSampleSearchValues resolves a direct sample metadata value by
@@ -304,7 +271,7 @@ func (r *MLWHSearchResolver) ExpandCandidateSampleSearchValues(ctx context.Conte
 				return nil, err
 			}
 
-			return nil, fmt.Errorf("%w: resolve candidate sample metadata: %w", ErrSeqmetaFailed, err)
+			return nil, fmt.Errorf("%w: resolve candidate sample metadata: %w", ErrMLWHFailed, err)
 		}
 		if !sampleMatchHasDirectMetadataValue(match.Sample, kind, target) {
 			continue

@@ -58,7 +58,7 @@ describe("G1 scaffold", () => {
         );
 
         expect(envExample).toContain("WA_RESULTS_BACKEND_URL=");
-        expect(envExample).toContain("WA_SEQMETA_BACKEND_URL=");
+        expect(envExample).toContain("WA_MLWH_BACKEND_URL=");
         expect(envExample).toContain("WA_STUDIES_CACHE_TTL_SECONDS=");
     });
 

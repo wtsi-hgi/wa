@@ -48,10 +48,18 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
-type seqmetaStudySamplesResponseForTest struct {
-	status  int
-	samples []seqmetaSampleForSearch
-	body    string
+func newStaticMLWHSearchResolverForTest(responses map[mlwh.IdentifierKind]map[string]mlwh.SearchValues) *MLWHSearchResolver {
+	return NewMLWHSearchResolver(&mockSearchExpander{
+		searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
+			if valuesByCanonical, ok := responses[kind]; ok {
+				if values, ok := valuesByCanonical[canonical]; ok {
+					return values, nil
+				}
+			}
+
+			return mlwh.SearchValues{}, mlwh.ErrNotFound
+		},
+	})
 }
 
 func TestServerAnnotateAccessB3(t *testing.T) {
@@ -107,12 +115,13 @@ func TestServerAnnotateAccessB3(t *testing.T) {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, studyAccessRegistrationForTest("run-b3-study-allowed", "SANG1", "alice", 200))
 		seedResultSetForTest(t, store, studyAccessRegistrationForTest("run-b3-study-locked", "SANG2", "carol", 300))
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG1", "SANG2"}},
+			},
 		})
-		defer seqmeta.Close()
 
-		router := newResultsGinHandlerForTest(t, NewServer(store, nil, NewSeqmetaSampleResolver(seqmeta.URL, time.Second)), &CurrentUser{
+		router := newResultsGinHandlerForTest(t, NewServer(store, nil, resolver), &CurrentUser{
 			Username: "alice",
 			User:     authUserForTest{},
 		})
@@ -132,14 +141,15 @@ func TestServerAnnotateAccessB3(t *testing.T) {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, studyAccessRegistrationForTest("run-b3-public-study-one", "SANG1", "alice", 200))
 		seedResultSetForTest(t, store, studyAccessRegistrationForTest("run-b3-public-study-two", "SANG2", "carol", 300))
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG1", "SANG2"}},
+			},
 		})
-		defer seqmeta.Close()
 
 		response := performResultsRequestForTest(
 			t,
-			NewServer(store, nil, NewSeqmetaSampleResolver(seqmeta.URL, time.Second)).Handler(),
+			NewServer(store, nil, resolver).Handler(),
 			http.MethodGet,
 			gas.EndPointREST+"/results?study_id=6568",
 			nil,
@@ -250,33 +260,6 @@ func searchResultAccessByRunKeyForTest(results []SearchResult) map[string]Access
 	return access
 }
 
-func newSeqmetaStudySamplesServerForTest(responses map[string]seqmetaStudySamplesResponseForTest) *httptest.Server {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response, ok := responses[r.PathValue("id")]
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(response.status)
-
-		if response.body != "" {
-			_, _ = fmt.Fprint(w, response.body)
-
-			return
-		}
-
-		_ = json.NewEncoder(w).Encode(response.samples)
-	})
-
-	mux := http.NewServeMux()
-	mux.Handle("GET /study/{id}/samples", handler)
-
-	return httptest.NewServer(mux)
-}
-
 type lockedResponseForTest struct {
 	Error    string `json:"error"`
 	Locked   bool   `json:"locked"`
@@ -300,7 +283,7 @@ func assertLockedResponseForTest(t *testing.T, response *httptest.ResponseRecord
 type mockSearchExpander struct {
 	expandCalls           int
 	sampleOnlyCalls       int
-	searchValuesFunc      func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error)
+	searchValuesFunc      func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
 	sampleNamesFunc       func(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 	sampleNameFunc        func(context.Context, string) (mlwh.Match, error)
 	sampleFunc            func(context.Context, string) (mlwh.Match, error)
@@ -310,10 +293,10 @@ type mockSearchExpander struct {
 	libraryIdentifierFunc func(context.Context, string) (mlwh.Match, error)
 }
 
-func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 	m.expandCalls++
 	if m.searchValuesFunc == nil {
-		return nil, nil, nil, nil
+		return mlwh.SearchValues{}, nil
 	}
 
 	return m.searchValuesFunc(ctx, kind, canonical)
@@ -1038,12 +1021,11 @@ func TestServerPostResults(t *testing.T) {
 
 	convey.Convey("E1.3: Given seqmeta_runid metadata and a validator returning the correct type, when POSTed, then status is 201", t, func() {
 		store := newSQLiteStoreForTest(t)
-		seqmeta := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"48522": {status: http.StatusOK, body: `{"identifier":"48522","type":"run_id","object":{}}`},
+		validator := NewMLWHValidator(&mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"48522": {match: mlwh.Match{Kind: mlwh.KindRunID}},
+			},
 		})
-		defer seqmeta.Close()
-
-		validator := NewSeqmetaValidator(seqmeta.URL, time.Second)
 		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
@@ -1251,14 +1233,13 @@ func TestServerPostResults(t *testing.T) {
 		convey.So(resultSetCountForTest(t, store), convey.ShouldEqual, 0)
 	})
 
-	convey.Convey("E1.4: Given seqmeta returns the wrong type, then status is 422 with an error body", t, func() {
+	convey.Convey("E1.4: Given MLWH returns the wrong type, then status is 422 with an error body", t, func() {
 		store := newSQLiteStoreForTest(t)
-		seqmeta := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"48522": {status: http.StatusOK, body: `{"identifier":"48522","type":"study_id","object":{}}`},
+		validator := NewMLWHValidator(&mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"48522": {match: mlwh.Match{Kind: mlwh.KindStudyLimsID}},
+			},
 		})
-		defer seqmeta.Close()
-
-		validator := NewSeqmetaValidator(seqmeta.URL, time.Second)
 		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
@@ -1270,13 +1251,12 @@ func TestServerPostResults(t *testing.T) {
 
 	convey.Convey("Given repeated seqmeta metadata values and one has the wrong type, then validation rejects the registration", t, func() {
 		store := newSQLiteStoreForTest(t)
-		seqmeta := newSeqmetaServerForTest(map[string]seqmetaResponseForTest{
-			"48522": {status: http.StatusOK, body: `{"identifier":"48522","type":"run_id","object":{}}`},
-			"SANG1": {status: http.StatusOK, body: `{"identifier":"SANG1","type":"sanger_sample_name","object":{}}`},
+		validator := NewMLWHValidator(&mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"48522": {match: mlwh.Match{Kind: mlwh.KindRunID}},
+				"SANG1": {match: mlwh.Match{Kind: mlwh.KindSangerSampleName}},
+			},
 		})
-		defer seqmeta.Close()
-
-		validator := NewSeqmetaValidator(seqmeta.URL, time.Second)
 		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{SeqmetaIDRunKey: "48522"}
 		body := mustJSONBodyForTest(t, struct {
@@ -1296,9 +1276,13 @@ func TestServerPostResults(t *testing.T) {
 		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "SANG1")
 	})
 
-	convey.Convey("E1.5: Given seqmeta is unreachable, then status is 502", t, func() {
+	convey.Convey("E1.5: Given MLWH is unavailable, then status is 502", t, func() {
 		store := newSQLiteStoreForTest(t)
-		validator := NewSeqmetaValidator("http://127.0.0.1:1", 50*time.Millisecond)
+		validator := NewMLWHValidator(&mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"48522": {err: mlwh.ErrUpstreamImpaired},
+			},
+		})
 		reg := testServerRegistration(t)
 		reg.Metadata = map[string]string{"seqmeta_runid": "48522"}
 
@@ -1549,15 +1533,15 @@ func TestServerGetResults(t *testing.T) {
 
 		sampleExpansionCalls := map[mlwh.IdentifierKind][]string{}
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				sampleExpansionCalls[kind] = append(sampleExpansionCalls[kind], canonical)
 				switch {
 				case kind == mlwh.KindSampleUUID && canonical == "sample-uuid-123":
-					return []string{"SANG-UUID"}, nil, nil, nil
+					return mlwh.SearchValues{Samples: []string{"SANG-UUID"}}, nil
 				case kind == mlwh.KindDonorID && canonical == "DONOR-42":
-					return []string{"SANG-DONOR"}, nil, nil, nil
+					return mlwh.SearchValues{Samples: []string{"SANG-DONOR"}}, nil
 				default:
-					return nil, nil, nil, nil
+					return mlwh.SearchValues{}, nil
 				}
 			},
 		}
@@ -1603,8 +1587,8 @@ func TestServerGetResults(t *testing.T) {
 					return mlwh.Match{}, mlwh.ErrNotFound
 				}
 			},
-			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-				return nil, nil, nil, errors.New("slow live expansion should not run for supplier-name sample search")
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, errors.New("slow live expansion should not run for supplier-name sample search")
 			},
 		}
 
@@ -1832,12 +1816,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG3"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG1", "SANG2"}},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -1862,12 +1845,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG1"}},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568&user=alice", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -1885,38 +1867,39 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Body.String(), convey.ShouldEqual, "[]\n")
 	})
 
-	convey.Convey("E1.4: Given study_id is requested without seqmeta configured, then status is 400", t, func() {
+	convey.Convey("E1.4: Given study_id is requested without MLWH configured, then status is 400", t, func() {
 		store := newSQLiteStoreForTest(t)
 
 		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?study_id=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
-		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, "seqmeta not configured")
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, "MLWH resolver not configured")
 	})
 
-	convey.Convey("E1.5: Given seqmeta returns an error for the study lookup, then status is 502", t, func() {
+	convey.Convey("E1.5: Given MLWH returns an error for the study lookup, then status is 502", t, func() {
 		store := newSQLiteStoreForTest(t)
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusBadGateway, body: `{"error":"upstream failed"}`},
+		resolver := NewMLWHSearchResolver(&mockSearchExpander{
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, mlwh.ErrUpstreamImpaired
+			},
 		})
-		defer seqmeta.Close()
 
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldContainSubstring, "results: mlwh unavailable")
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldNotContainSubstring, "seqmeta unavailable")
 	})
 
 	convey.Convey("E1.6: Given study_id combined with explicit seqmeta_sampleid, then the sample IDs are merged as a union", t, func() {
@@ -1929,12 +1912,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG9"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG1", "SANG2"}},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568&seqmeta_sampleid=SANG9", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -1952,12 +1934,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG1"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}, {SangerID: "SANG3"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG1", "SANG2", "SANG3"}},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study_id=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -2000,12 +1981,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "OTHER1"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"EGAS00001005445": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "ACC1"}, {SangerID: "ACC2"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"EGAS00001005445": {Samples: []string{"ACC1", "ACC2"}},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=EGAS00001005445", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -2031,12 +2011,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG99"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG1", "SANG2"}},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -2064,12 +2043,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_sampleid": "SANG99"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG1"}, {SangerID: "SANG2"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG1", "SANG2"}},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_studyid=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -2097,12 +2075,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_studyid": "9999"}
 		}))
 
-		seqmeta := newSeqmetaStudySamplesServerForTest(map[string]seqmetaStudySamplesResponseForTest{
-			"6568": {status: http.StatusOK, samples: []seqmetaSampleForSearch{{SangerID: "SANG42"}}},
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindStudyLimsID: {
+				"6568": {Samples: []string{"SANG42"}},
+			},
 		})
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -2142,21 +2119,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"library": "WGS"}
 		}))
 
-		mux := http.NewServeMux()
-		mux.HandleFunc("GET /enrich/{id}", func(w http.ResponseWriter, r *http.Request) {
-			if r.PathValue("id") != "RNA" {
-				w.WriteHeader(http.StatusNotFound)
-
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `{"graph":{"samples":[{"sanger_id":"LIBS1","id_run":100,"lane":1,"tag_index":1}]}}`)
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindLibraryType: {
+				"RNA": {Samples: []string{"LIBS1"}, Runs: []string{"100"}, Lanes: []string{"100_1#1"}},
+			},
 		})
-		seqmeta := httptest.NewServer(mux)
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?library=RNA", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -2190,21 +2157,11 @@ func TestServerGetResults(t *testing.T) {
 			reg.Metadata = map[string]string{"seqmeta_lane": "999_9#9"}
 		}))
 
-		mux := http.NewServeMux()
-		mux.HandleFunc("GET /enrich/{id}", func(w http.ResponseWriter, r *http.Request) {
-			if r.PathValue("id") != "SANGX" {
-				w.WriteHeader(http.StatusNotFound)
-
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `{"graph":{"sample_detail":{"lanes":[{"id_run":"200","lane":"2","tag_index":7}]}}}`)
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindSangerSampleName: {
+				"SANGX": {Samples: []string{"SANGX"}, Runs: []string{"200"}, Lanes: []string{"200_2#7"}},
+			},
 		})
-		seqmeta := httptest.NewServer(mux)
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?sample=SANGX", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
@@ -2223,21 +2180,11 @@ func TestServerGetResults(t *testing.T) {
 	})
 
 	convey.Convey("C2.3: Given sample fan-out across studies, sample resolver expansion returns both studies' lanes", t, func() {
-		mux := http.NewServeMux()
-		mux.HandleFunc("GET /enrich/{id}", func(w http.ResponseWriter, r *http.Request) {
-			if r.PathValue("id") != "S1" {
-				w.WriteHeader(http.StatusNotFound)
-
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `{"graph":{"sample_detail":{"lanes":[{"id_run":"100","lane":"1","tag_index":1},{"id_run":"101","lane":"2","tag_index":2}]}}}`)
+		resolver := newStaticMLWHSearchResolverForTest(map[mlwh.IdentifierKind]map[string]mlwh.SearchValues{
+			mlwh.KindSangerSampleName: {
+				"S1": {Samples: []string{"S1"}, Runs: []string{"100", "101"}, Lanes: []string{"100_1#1", "101_2#2"}},
+			},
 		})
-		seqmeta := httptest.NewServer(mux)
-		defer seqmeta.Close()
-
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		samples, runs, lanes, err := resolver.Expand(context.Background(), mlwh.KindSangerSampleName, "S1")
 
 		convey.So(err, convey.ShouldBeNil)
@@ -2253,22 +2200,20 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		studyHits := 0
-		mux := http.NewServeMux()
-		mux.HandleFunc("GET /study/{id}/samples", func(w http.ResponseWriter, r *http.Request) {
-			if r.PathValue("id") != "6568" {
-				w.WriteHeader(http.StatusNotFound)
+		resolver := NewMLWHSearchResolver(&mockSearchExpander{
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
+				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
+				convey.So(canonical, convey.ShouldEqual, "6568")
+				studyHits++
 
-				return
-			}
-
-			studyHits++
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(w, `[{"sanger_id":"SANG-CACHE","id_run":300,"lane":3,"tag_index":11}]`)
+				return mlwh.SearchValues{
+					Samples: []string{"SANG-CACHE"},
+					Runs:    []string{"300"},
+					Lanes:   []string{"300_3#11"},
+				}, nil
+			},
 		})
-		seqmeta := httptest.NewServer(mux)
-		defer seqmeta.Close()
 
-		resolver := NewSeqmetaSampleResolver(seqmeta.URL, time.Second)
 		first := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
 		second := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?study=6568", nil)
 
@@ -2300,11 +2245,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []string{"7607STDY14643771"}, []string{"12345"}, []string{"12345_1#10"}, nil
+				return mlwh.SearchValues{Samples: []string{"7607STDY14643771"}, Runs: []string{"12345"}, Lanes: []string{"12345_1#10"}}, nil
 			},
 		}
 
@@ -2335,11 +2280,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []string{"SANG-CACHE"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"SANG-CACHE"}}, nil
 			},
 		}
 
@@ -2381,11 +2326,11 @@ func TestServerGetResults(t *testing.T) {
 					},
 				}, nil
 			},
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindStudyLimsID)
 				convey.So(canonical, convey.ShouldEqual, "6568")
 
-				return []string{"WTSI_wEMB10524782"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"WTSI_wEMB10524782"}}, nil
 			},
 		}
 
@@ -2419,11 +2364,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
 				convey.So(canonical, convey.ShouldEqual, "Standard")
 
-				return []string{"LIB-S1"}, []string{"100"}, []string{"100_1#1"}, nil
+				return mlwh.SearchValues{Samples: []string{"LIB-S1"}, Runs: []string{"100"}, Lanes: []string{"100_1#1"}}, nil
 			},
 		}
 
@@ -2455,11 +2400,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryID)
 				convey.So(canonical, convey.ShouldEqual, "71046409")
 
-				return []string{"LIB-ID-S1"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"LIB-ID-S1"}}, nil
 			},
 		}
 
@@ -2493,11 +2438,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSampleLimsID)
 				convey.So(canonical, convey.ShouldEqual, "12345")
 
-				return []string{"SANG-LIMS"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"SANG-LIMS"}}, nil
 			},
 		}
 
@@ -2525,11 +2470,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
 				convey.So(canonical, convey.ShouldEqual, "Supplier_Sample_Name")
 
-				return []string{"SANG-SUPPLIER"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"SANG-SUPPLIER"}}, nil
 			},
 		}
 
@@ -2546,21 +2491,18 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].RunKey, convey.ShouldEqual, "run-supplier-clicked")
 	})
 
-	convey.Convey("Bug 260519-2: Given seqmeta_supplier_name search via mlwh, then direct sample metadata uses sample-only expansion instead of cold full hierarchy expansion", t, func() {
+	convey.Convey("Bug 260519-2: Given seqmeta_supplier_name search via mlwh, then direct sample metadata fallback uses ExpandSearchValues", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-fast", func(reg *Registration) {
 			reg.Metadata = map[string]string{"seqmeta_name": "7607STDY14643771"}
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-				return nil, nil, nil, fmt.Errorf("full expansion must not run for direct sample metadata")
-			},
-			sampleNamesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
 				convey.So(canonical, convey.ShouldEqual, "Hek_R1")
 
-				return []string{"7607STDY14643771"}, nil
+				return mlwh.SearchValues{Samples: []string{"7607STDY14643771"}}, nil
 			},
 		}
 
@@ -2568,8 +2510,8 @@ func TestServerGetResults(t *testing.T) {
 		response := performResultsRequestForTest(t, NewServer(store, nil, resolver).Handler(), http.MethodGet, "/results?seqmeta_supplier_name=Hek_R1", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(expander.expandCalls, convey.ShouldEqual, 0)
-		convey.So(expander.sampleOnlyCalls, convey.ShouldEqual, 1)
+		convey.So(expander.expandCalls, convey.ShouldEqual, 1)
+		convey.So(expander.sampleOnlyCalls, convey.ShouldEqual, 0)
 
 		var results []ResultSet
 		decodeJSONResponseForTest(t, response, &results)
@@ -2585,8 +2527,8 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-				return nil, nil, nil, fmt.Errorf("full expansion must not run for direct sample metadata")
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, fmt.Errorf("full expansion must not run for direct sample metadata")
 			},
 			sampleNamesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, error) {
 				return nil, fmt.Errorf("global direct sample metadata expansion must not run")
@@ -2635,8 +2577,8 @@ func TestServerGetResults(t *testing.T) {
 
 		resolvedCandidates := []string{}
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-				return nil, nil, nil, fmt.Errorf("full expansion must not run for direct sample metadata")
+			searchValuesFunc: func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+				return mlwh.SearchValues{}, fmt.Errorf("full expansion must not run for direct sample metadata")
 			},
 			sampleNamesFunc: func(context.Context, mlwh.IdentifierKind, string) ([]string, error) {
 				return nil, fmt.Errorf("global direct sample metadata expansion must not run")
@@ -2692,11 +2634,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSupplierName)
 				convey.So(canonical, convey.ShouldEqual, "Supplier-Lookalike")
 
-				return nil, nil, nil, nil
+				return mlwh.SearchValues{}, nil
 			},
 		}
 
@@ -2724,11 +2666,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindSampleLimsID)
 				convey.So(canonical, convey.ShouldEqual, "12345")
 
-				return nil, nil, nil, nil
+				return mlwh.SearchValues{}, nil
 			},
 		}
 
@@ -2756,11 +2698,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindLibraryType)
 				convey.So(canonical, convey.ShouldEqual, "Custom")
 
-				return []string{"LIB-TYPE-S1"}, nil, nil, nil
+				return mlwh.SearchValues{Samples: []string{"LIB-TYPE-S1"}}, nil
 			},
 		}
 
@@ -2785,11 +2727,11 @@ func TestServerGetResults(t *testing.T) {
 		}))
 
 		expander := &mockSearchExpander{
-			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) ([]string, []string, []string, error) {
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
 				convey.So(kind, convey.ShouldEqual, mlwh.KindRunID)
 				convey.So(canonical, convey.ShouldEqual, "100")
 
-				return []string{"RUN-S1"}, []string{"100"}, nil, nil
+				return mlwh.SearchValues{Samples: []string{"RUN-S1"}, Runs: []string{"100"}}, nil
 			},
 		}
 

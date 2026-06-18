@@ -12,8 +12,8 @@ export default defineConfig({
         environment: "node",
         include: [
             "tests/actions.test.ts",
-            "tests/seqmeta-enrichment.test.ts",
-            "tests/seqmeta-badge.test.ts",
+            "tests/mlwh-enrichment.test.ts",
+            "tests/mlwh-badge.test.ts",
         ],
         setupFiles: ["./tests/vitest.setup.ts"],
     },

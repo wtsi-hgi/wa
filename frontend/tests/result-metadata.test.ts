@@ -270,7 +270,7 @@ describe("ResultMetadata", () => {
         ).toBeNull();
         expect(
             within(sampleRow as HTMLElement)
-                .getAllByTestId("seqmeta-badge-label")
+                .getAllByTestId("mlwh-badge-label")
                 .map((label) => label.textContent),
         ).toEqual(["Hek_R1", "Hek_R2"]);
         expect(
@@ -347,7 +347,7 @@ describe("ResultMetadata", () => {
         expect(sampleRow).toBeTruthy();
         expect(
             within(sampleRow as HTMLElement)
-                .getAllByTestId("seqmeta-badge-label")
+                .getAllByTestId("mlwh-badge-label")
                 .map((label) => label.textContent),
         ).toEqual(["Hek_R1", "Hek_R2"]);
         expect(
@@ -368,7 +368,7 @@ describe("ResultMetadata", () => {
             expect(screen.getByRole("dialog")).toBeTruthy();
         });
 
-        const dialogHeader = screen.getByText("Seqmeta details").closest("div");
+        const dialogHeader = screen.getByText("MLWH details").closest("div");
         const titleLabels = Array.from(
             dialogHeader?.querySelectorAll("p") ?? [],
         ).map((label) => label.textContent);

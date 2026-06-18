@@ -393,9 +393,7 @@ export default async function ResultsLandingPage({
     let statsError: string | null = null;
     let metaKeys: string[] = [];
     const studies: Study[] = [];
-    const seqmetaAvailable = Boolean(
-        process.env.WA_SEQMETA_BACKEND_URL?.trim(),
-    );
+    const seqmetaAvailable = Boolean(process.env.WA_MLWH_BACKEND_URL?.trim());
     const statsPromise = fetchStats(10, 30);
     const metaKeysPromise = fetchMetaKeys();
 

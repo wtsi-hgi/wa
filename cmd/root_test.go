@@ -34,13 +34,13 @@ import (
 )
 
 func TestNewRootCommand(t *testing.T) {
-	convey.Convey("F1.2: Given seqmeta help, then help output lists diff, validate, and serve", t, func() {
-		output, err := executeRootCommandForTest(t, []string{"seqmeta", "--help"})
+	convey.Convey("D1.3: Given mlwhdiff help, then help output lists diff and serve only", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwhdiff", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "diff")
-		convey.So(output, convey.ShouldContainSubstring, "validate")
 		convey.So(output, convey.ShouldContainSubstring, "serve")
+		convey.So(output, convey.ShouldNotContainSubstring, "validate")
 	})
 
 	convey.Convey("F1.3: Given results help, then help output lists the results subcommands", t, func() {
@@ -55,22 +55,23 @@ func TestNewRootCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "serve")
 	})
 
-	convey.Convey("F1.4: Given results serve help, then help output lists the phase 5 serve flags", t, func() {
+	convey.Convey("F1.4: Given results serve help, then help output lists the MLWH serve wiring flags", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"results", "serve", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldContainSubstring, "--port")
 		convey.So(output, convey.ShouldContainSubstring, "--db")
-		convey.So(output, convey.ShouldContainSubstring, "--seqmeta-url")
-		convey.So(output, convey.ShouldContainSubstring, "WA_SEQMETA_BACKEND_URL")
-		convey.So(output, convey.ShouldContainSubstring, "--seqmeta-timeout")
+		convey.So(output, convey.ShouldContainSubstring, "--mlwh-server-url")
+		convey.So(output, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(output, convey.ShouldNotContainSubstring, "--seqmeta-url")
+		convey.So(output, convey.ShouldNotContainSubstring, "--seqmeta-timeout")
 	})
 
 	convey.Convey("E4.4: Given wa with no subcommand, then help lists the surviving top-level subcommand trees", t, func() {
 		output, err := executeRootCommandForTest(t, nil)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "seqmeta")
+		convey.So(output, convey.ShouldContainSubstring, "mlwhdiff")
 		convey.So(output, convey.ShouldContainSubstring, "results")
 		convey.So(output, convey.ShouldContainSubstring, "mlwh")
 	})

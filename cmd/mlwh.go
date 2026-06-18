@@ -30,17 +30,32 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
 var openMLWHSyncClient = func(ctx context.Context, cfg mlwh.Config) (mlwhSyncClient, error) {
 	return mlwh.Open(ctx, cfg)
+}
+
+var mlwhServeNewAuthServer = func(logWriter io.Writer) mlwhServeAuthServer {
+	return &mlwhServeGasAuthServer{Server: gas.New(logWriter)}
+}
+
+func mlwhServeRejectPasswordAuth(_, _ string) (bool, string) {
+	return false, ""
 }
 
 type mlwhSyncClient interface {
@@ -53,6 +68,239 @@ type mlwhSyncReportingClient interface {
 	SetSyncReportWriter(io.Writer)
 }
 
+type mlwhServeAuthServer interface {
+	Router() *gin.Engine
+	AuthRouter() *gin.RouterGroup
+	EnableAuthWithServerToken(certFile, keyFile, tokenBasename string, acb gas.AuthCallback) error
+	StartHTTP(ctx context.Context, addr string) error
+	Start(addr, certFile, keyFile string) error
+	Stop()
+}
+
+func startMLWHServeAuthServer(ctx context.Context, authServer mlwhServeAuthServer, config mlwhServeConfig) error {
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+	defer authServer.Stop()
+
+	if !config.secured {
+		return authServer.StartHTTP(serveCtx, config.addr)
+	}
+
+	go func() {
+		<-serveCtx.Done()
+		authServer.Stop()
+	}()
+
+	return authServer.Start(config.addr, config.cert, config.key)
+}
+
+type mlwhServeGasAuthServer struct {
+	*gas.Server
+}
+
+func (s *mlwhServeGasAuthServer) StartHTTP(ctx context.Context, addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
+
+	httpServer := &http.Server{
+		Handler:           s.Router(),
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}()
+
+	err = httpServer.Serve(listener)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+
+	return err
+}
+
+type mlwhServeConfig struct {
+	addr        string
+	cert        string
+	key         string
+	serverToken string
+	secured     bool
+}
+
+func resolveMLWHServeConfig(rawURL string, port int, portChanged bool, cert string, key string, serverToken string) (mlwhServeConfig, error) {
+	addr, err := resolveMLWHServeBindAddr(rawURL, port, portChanged)
+	if err != nil {
+		return mlwhServeConfig{}, err
+	}
+
+	config := mlwhServeConfig{
+		addr:        addr,
+		cert:        strings.TrimSpace(cert),
+		key:         strings.TrimSpace(key),
+		serverToken: strings.TrimSpace(serverToken),
+	}
+	config.secured = config.cert != "" || config.key != "" || config.serverToken != ""
+	if !config.secured {
+		return config, nil
+	}
+
+	if config.cert == "" || config.key == "" || config.serverToken == "" {
+		return mlwhServeConfig{}, errors.New("--cert, --key, and --server-token are required together for secured mlwh serve")
+	}
+
+	if err = validateResultsServeServerToken(config.serverToken); err != nil {
+		return mlwhServeConfig{}, err
+	}
+
+	return config, nil
+}
+
+func newMLWHServeCommand() *cobra.Command {
+	var port int
+	var bindURL string
+	var cert string
+	var key string
+	var serverToken string
+	var mlwhCache string
+
+	command := &cobra.Command{
+		Use:           "serve",
+		Short:         "Serve the MLWH cache-backed HTTP API",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Long: strings.Join([]string{
+			"Serve the local Sanger Multi-LIMS Warehouse (MLWH) metadata cache as",
+			"the registry-backed read-only HTTP API used by other wa services.",
+			"",
+			"The server opens only the local cache and never contacts the upstream",
+			"MLWH database or runs a sync; WA_MLWH_DSN is intentionally unused here.",
+			"Populate the cache separately with 'wa mlwh sync' before serving.",
+			"",
+			"Configuration is read from the environment after the persistent --env",
+			"flag has loaded matching .env files. Set WA_MLWH_CACHE_PATH or pass",
+			"--mlwh-cache to choose the cache, and optionally set WA_MLWH_SERVER_CERT,",
+			"WA_MLWH_SERVER_KEY, WA_MLWH_SERVER_TOKEN, WA_MLWH_SERVER_URL or",
+			"WA_MLWH_SERVER_PORT to secure or bind the server.",
+			"",
+			"Example:",
+			"  WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite wa --env production mlwh serve",
+		}, "\n"),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cacheConfig, err := resolveMLWHServeCacheConfig(mlwhCache, cmd.Flags().Changed("mlwh-cache"))
+			if err != nil {
+				return err
+			}
+
+			serveConfig, err := resolveMLWHServeConfig(
+				bindURL,
+				port,
+				cmd.Flags().Changed("port"),
+				cert,
+				key,
+				serverToken,
+			)
+			if err != nil {
+				return err
+			}
+
+			client, err := mlwh.OpenCacheOnly(commandContext(cmd), cacheConfig)
+			if err != nil {
+				return fmt.Errorf("open mlwh cache: %w", err)
+			}
+			defer func() { _ = client.Close() }()
+
+			authServer := mlwhServeNewAuthServer(cmd.ErrOrStderr())
+			server := mlwh.NewServer(client)
+			if serveConfig.secured {
+				if err = authServer.EnableAuthWithServerToken(
+					serveConfig.cert,
+					serveConfig.key,
+					serveConfig.serverToken,
+					mlwhServeRejectPasswordAuth,
+				); err != nil {
+					return err
+				}
+
+				configureMLWHServeRouter(authServer.Router())
+				server.RegisterRoutes(nil, authServer.AuthRouter())
+			} else {
+				server.RegisterRoutes(authServer.Router(), nil)
+			}
+
+			return startMLWHServeAuthServer(commandContext(cmd), authServer, serveConfig)
+		},
+	}
+
+	command.Flags().StringVar(&bindURL, "url", firstEnv("WA_MLWH_SERVER_URL"), "HTTP(S) bind address (defaults to 127.0.0.1:<port>)")
+	command.Flags().IntVar(&port, "port", 8080, "HTTP(S) port used only when --url is unset")
+	command.Flags().StringVar(&cert, "cert", firstEnv("WA_MLWH_SERVER_CERT"), "TLS certificate path")
+	command.Flags().StringVarP(&key, "key", "k", firstEnv("WA_MLWH_SERVER_KEY"), "TLS private key path")
+	command.Flags().StringVar(&serverToken, "server-token", firstEnv("WA_MLWH_SERVER_TOKEN"), "Server token basename or absolute path")
+	command.Flags().StringVar(&mlwhCache, "mlwh-cache", "", "MLWH cache backend path or MySQL DSN without a password; defaults to WA_MLWH_CACHE_PATH when unset")
+
+	return command
+}
+
+func resolveMLWHServeCacheConfig(flagValue string, flagChanged bool) (mlwh.CacheConfig, error) {
+	cachePath := strings.TrimSpace(flagValue)
+	sourceName := "--mlwh-cache"
+	if !flagChanged {
+		if envValue := strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH")); envValue != "" {
+			cachePath = envValue
+			sourceName = "WA_MLWH_CACHE_PATH"
+		}
+	}
+
+	if cachePath == "" {
+		return mlwh.CacheConfig{}, errors.New("WA_MLWH_CACHE_PATH must be set or --mlwh-cache provided")
+	}
+
+	if err := validateMLWHServeCachePath(cachePath, sourceName); err != nil {
+		return mlwh.CacheConfig{}, err
+	}
+
+	if err := ensureMLWHSyncCacheDirectory(cachePath); err != nil {
+		return mlwh.CacheConfig{}, err
+	}
+
+	return mlwh.CacheConfig{
+		Path:     cachePath,
+		Password: firstEnv("WA_MLWH_CACHE_PASSWORD"),
+	}, nil
+}
+
+func validateMLWHServeCachePath(cachePath string, sourceName string) error {
+	if !mlwhSyncCachePathLooksMySQL(cachePath) {
+		return nil
+	}
+
+	parsed, err := mysql.ParseDSN(cachePath)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", sourceName, err)
+	}
+
+	if parsed.Passwd != "" {
+		return fmt.Errorf("%s: %w", sourceName, mlwh.ErrPasswordInDSN)
+	}
+
+	return nil
+}
+
+func configureMLWHServeRouter(router *gin.Engine) {
+	if router == nil {
+		return
+	}
+
+	router.UseRawPath = true
+	router.UnescapePathValues = false
+}
+
 func newMLWHCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "mlwh",
@@ -63,7 +311,7 @@ func newMLWHCommand() *cobra.Command {
 			"wa keeps a mirrored local cache of five MLWH tables (study, sample,",
 			"iseq_flowcell, iseq_product_metrics and",
 			"seq_product_irods_locations) so commands such as 'wa results register' and 'wa",
-			"seqmeta serve' can resolve sample, study, run and library lookups",
+			"mlwhdiff serve' can resolve sample, study, run and library lookups",
 			"without re-querying the upstream MySQL warehouse on every call.",
 			"Use these subcommands to populate and refresh that cache.",
 			"",
@@ -97,6 +345,7 @@ func newMLWHCommand() *cobra.Command {
 
 	command.AddCommand(newMLWHSyncCommand())
 	command.AddCommand(newMLWHInfoCommand())
+	command.AddCommand(newMLWHServeCommand())
 
 	return command
 }
@@ -267,4 +516,66 @@ func mlwhSyncCachePathLooksMySQL(path string) bool {
 	}
 
 	return parsed.DBName != "" && (parsed.User != "" || parsed.Net != "" || parsed.Addr != "" || strings.Contains(path, "@"))
+}
+
+func resolveMLWHServeBindAddr(rawURL string, port int, portChanged bool) (string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		bindPort, err := resolveMLWHServeBindPort(port, portChanged)
+		if err != nil {
+			return "", err
+		}
+
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(bindPort)), nil
+	}
+
+	if strings.Contains(trimmed, "://") {
+		parsed, err := url.Parse(trimmed)
+		if err != nil {
+			return "", fmt.Errorf("invalid --url: %w", err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return "", errors.New("mlwh serve URL must use http or https")
+		}
+		if parsed.User != nil || parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", errors.New("mlwh serve URL must be a host[:port] with no path")
+		}
+
+		trimmed = parsed.Host
+	}
+
+	if strings.ContainsAny(trimmed, "/?#") {
+		return "", errors.New("mlwh serve bind address must be host:port")
+	}
+
+	if _, portValue, err := net.SplitHostPort(trimmed); err != nil {
+		return "", fmt.Errorf("mlwh serve bind address must be host:port: %w", err)
+	} else if portValue == "" {
+		return "", errors.New("mlwh serve bind address must include a port")
+	}
+
+	return trimmed, nil
+}
+
+func resolveMLWHServeBindPort(flagValue int, flagChanged bool) (int, error) {
+	port := flagValue
+	source := "--port"
+	if !flagChanged {
+		envPort := strings.TrimSpace(firstEnv("WA_MLWH_SERVER_PORT"))
+		if envPort != "" {
+			parsedPort, err := strconv.Atoi(envPort)
+			if err != nil {
+				return 0, fmt.Errorf("invalid WA_MLWH_SERVER_PORT %q", envPort)
+			}
+
+			port = parsedPort
+			source = "WA_MLWH_SERVER_PORT"
+		}
+	}
+
+	if port < 0 || port > 65535 {
+		return 0, fmt.Errorf("invalid %s %d", source, port)
+	}
+
+	return port, nil
 }

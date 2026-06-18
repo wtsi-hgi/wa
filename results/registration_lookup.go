@@ -58,7 +58,7 @@ func ApplyRegistrationLookups(ctx context.Context, registration *Registration, r
 	}
 
 	if resolver == nil {
-		return fmt.Errorf("%w: MLWH resolver is not configured for registration lookups", ErrSeqmetaFailed)
+		return fmt.Errorf("%w: MLWH resolver is not configured for registration lookups", ErrMLWHFailed)
 	}
 
 	lookupMetadata, err := ResolveRegistrationLookupMetadata(ctx, resolver, *registration.LookupValues)
@@ -80,7 +80,7 @@ func registrationLookupDomainError(err error) error {
 	case errors.Is(err, mlwh.ErrNotFound), errors.Is(err, mlwh.ErrUnsupportedIdentifier), errors.Is(err, mlwh.ErrAmbiguous):
 		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	default:
-		return fmt.Errorf("%w: %w", ErrSeqmetaFailed, err)
+		return fmt.Errorf("%w: %w", ErrMLWHFailed, err)
 	}
 }
 

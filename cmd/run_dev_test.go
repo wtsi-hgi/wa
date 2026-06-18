@@ -67,10 +67,134 @@ type runDevEnvSnapshot struct {
 	ResultsCACert     string `json:"WA_RESULTS_BACKEND_CA_CERT"`
 	ResultsServerCert string `json:"WA_RESULTS_SERVER_CERT"`
 	ResultsServerKey  string `json:"WA_RESULTS_SERVER_KEY"`
-	SeqmetaBackendURL string `json:"WA_SEQMETA_BACKEND_URL"`
+	MLWHBackendURL    string `json:"WA_MLWH_BACKEND_URL"`
 	ResultsDBPath     string `json:"WA_RESULTS_DB_PATH"`
 	MLWHCachePath     string `json:"WA_MLWH_CACHE_PATH"`
 	AllowedDevOrigins string `json:"WA_DEV_ALLOWED_ORIGINS"`
+}
+
+func TestRunDevAutoManagedMLWHBackendDoesNotSyncBeforeMLWHServe(t *testing.T) {
+	convey.Convey("run-dev.sh serves MLWH without syncing the cache when it auto-manages the backend", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "dev",
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env: map[string]string{
+				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"WA_ENV":                                "development",
+				"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+				"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+				"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+				"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_RESULTS_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/rest/v1/results/stats", resultsPort),
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
+		invocations := waitForRunDevStepsForTest(t, invocationsPath, 2)
+		invocationText := strings.Join(invocations, "\n")
+
+		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(invocations[0], convey.ShouldContainSubstring, "results serve")
+		convey.So(invocations[1], convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
+		convey.So(invocationText, convey.ShouldNotContainSubstring, "mlwh sync")
+		convey.So(invocationText, convey.ShouldNotContainSubstring, "mlwhdiff serve")
+		convey.So(
+			process.stdout.String(),
+			convey.ShouldContainSubstring,
+			fmt.Sprintf("Waiting for MLWH studies readiness at http://127.0.0.1:%d/studies", seqmetaPort),
+		)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+}
+
+func writeRunDevMLWHServeToolchainForTest(t *testing.T, binDir string, invocationsPath string) {
+	t.Helper()
+
+	fakeGo := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "build" && "${2:-}" == "-o" && -n "${3:-}" ]]; then
+	output="$3"
+	mkdir -p "$(dirname "$output")"
+	cat >"$output" <<'WAEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+invocations_path=%q
+
+port_arg() {
+	local previous=""
+	local arg
+
+	for arg in "$@"; do
+		if [[ "$previous" == "--port" ]]; then
+			printf '%%s' "$arg"
+			return
+		fi
+
+		case "$arg" in
+			--port=*)
+				printf '%%s' "${arg#*=}"
+				return
+				;;
+		esac
+
+		previous="$arg"
+	done
+
+	printf '0'
+}
+
+printf '%%s\n' "$*" >> "$invocations_path"
+
+case "${1:-} ${2:-}" in
+	"results serve")
+		port="$(port_arg "$@")"
+		exec node -e 'const http = require("node:http"); const port = Number(process.argv[1]); const server = http.createServer((_, response) => { response.writeHead(200, {"content-type":"application/json"}); response.end("{}"); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
+		;;
+	"mlwh sync")
+		exit 0
+		;;
+	"mlwh serve")
+		port="$(port_arg "$@")"
+		exec node -e 'const http = require("node:http"); const port = Number(process.argv[1]); const server = http.createServer((request, response) => { if (request.url === "/studies") { response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
+		;;
+esac
+
+printf 'unexpected fake wa args: %%s\n' "$*" >&2
+exit 2
+WAEOF
+	chmod +x "$output"
+	exit 0
+fi
+
+printf 'unexpected fake go args: %%s\n' "$*" >&2
+exit 2
+`, invocationsPath)
+
+	convey.So(os.WriteFile(filepath.Join(binDir, "go"), []byte(fakeGo), 0o755), convey.ShouldBeNil)
 }
 
 func runDevUnsetSeqmetaEnvForTest() []string {
@@ -236,6 +360,8 @@ func TestRunDevScriptF1DevCertificates(t *testing.T) {
 		convey.So(snapshot.ResultsServerKey, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-key.pem"))
 		convey.So(cmdline, convey.ShouldNotContainSubstring, " --cert ")
 		convey.So(cmdline, convey.ShouldNotContainSubstring, " --key ")
+		convey.So(cmdline, convey.ShouldContainSubstring, " --mlwh-cache ")
+		convey.So(cmdline, convey.ShouldContainSubstring, snapshot.MLWHCachePath)
 		convey.So(cmdline, convey.ShouldContainSubstring, " --ldap_server wa-test-ldap.invalid ")
 		convey.So(cmdline, convey.ShouldContainSubstring, " --ldap_dn uid=%s,ou=people,dc=example,dc=org ")
 		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "ldap")
@@ -690,7 +816,15 @@ func startRunDevForScenarioResultsBindOutputTest(
 	bindHostEnv := "WA_DEV_RESULTS_HOST"
 	switch mode {
 	case "prod":
+		mlwhCachePath := filepath.Join(repoRoot, ".tmp", fmt.Sprintf("run-dev-prod-mlwh-%d.sqlite", seqmetaPort))
+		t.Cleanup(func() {
+			for _, suffix := range []string{"", "-shm", "-wal"} {
+				_ = os.Remove(mlwhCachePath + suffix)
+			}
+		})
+
 		env["WA_ENV"] = "production"
+		env["WA_MLWH_CACHE_PATH"] = mlwhCachePath
 		bindHostEnv = "WA_PROD_RESULTS_HOST"
 	case "dev":
 		env["WA_MLWH_DSN"] = "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test"
@@ -731,7 +865,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode dev reports wildcard results bind separately from local client URLs", t, func() {
 		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, "0.0.0.0")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=0.0.0.0:%d)", resultsPort, resultsPort))
@@ -748,7 +882,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode dev trims the configured results bind host before reporting it", t, func() {
 		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, " \t0.0.0.0 \t")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=0.0.0.0:%d)", resultsPort, resultsPort))
@@ -763,7 +897,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode prod trims the configured results bind host before reporting it", t, func() {
 		process, frontendPort, resultsPort := startRunDevForScenarioResultsBindOutputTest(t, "prod", " \t0.0.0.0 \t")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=prod; bind=0.0.0.0:%d)", resultsPort, resultsPort))
@@ -778,7 +912,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode dev falls back to loopback when the configured bind host trims blank", t, func() {
 		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, " \t ")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=127.0.0.1:%d)", resultsPort, resultsPort))
@@ -793,7 +927,7 @@ func TestRunDevScriptReportsResultsBindAddress(t *testing.T) {
 	convey.Convey("run-dev.sh --mode dev reports loopback-only results bind when no bind host is configured", t, func() {
 		process, frontendPort, resultsPort := startRunDevForResultsBindOutputTest(t, "")
 
-		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Logs:"), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting results server on https://127.0.0.1:%d (mode=dev; bind=127.0.0.1:%d)", resultsPort, resultsPort))
@@ -922,30 +1056,6 @@ func failRunDevSnapshotWaitForExitedProcess(t *testing.T, process *runDevProcess
 	)
 }
 
-func TestRunDevSeqmetaDefaultReadinessBudgetAllowsColdMLWHSync(t *testing.T) {
-	convey.Convey("run-dev.sh gives seqmeta studies readiness at least five minutes by default", t, func() {
-		repoRoot := runDevRepoRootForTest(t)
-		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
-		convey.So(err, convey.ShouldBeNil)
-
-		match := regexp.MustCompile(`SEQMETA_HEALTH_MAX_ATTEMPTS="\$\{WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-([0-9]+)\}"`).FindSubmatch(contents)
-		convey.So(match, convey.ShouldHaveLength, 2)
-
-		attempts, err := strconv.Atoi(string(match[1]))
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(attempts, convey.ShouldBeGreaterThanOrEqualTo, 1200)
-	})
-}
-
-func TestRunDevScriptSeqmetaBuiltInLaunchDropsLegacySyncFlag(t *testing.T) {
-	convey.Convey("run-dev.sh no longer passes the removed --mlwh-sync-interval flag to built-in seqmeta serve", t, func() {
-		repoRoot := runDevRepoRootForTest(t)
-		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
-		convey.So(err, convey.ShouldBeNil)
-		convey.So(string(contents), convey.ShouldNotContainSubstring, "--mlwh-sync-interval")
-	})
-}
-
 func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 	convey.Convey("E6.7: run-dev.sh test mode exports an ephemeral WA_MLWH_CACHE_PATH under .tmp/", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
@@ -1031,12 +1141,12 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 
 		stdout := process.stdout.String()
 		resultsURL := runDevExtractURLForTest(t, stdout, "Results")
-		seqmetaURL := runDevExtractURLForTest(t, stdout, "Seqmeta")
+		mlwhURL := runDevExtractURLForTest(t, stdout, "MLWH")
 		frontendURL := runDevExtractURLForTest(t, stdout, "Frontend")
 
 		convey.So(frontendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", frontendPort))
 		convey.So(resultsURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
-		convey.So(seqmetaURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(mlwhURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		seededResultsMu.Lock()
 		convey.So(seededResults, convey.ShouldEqual, 6)
 		seededResultsMu.Unlock()
@@ -1050,14 +1160,132 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 }
 
 func TestRunDevScript(t *testing.T) {
-	convey.Convey("run-dev.sh synthesizes a reusable .tmp MLWH cache path when seqmeta is auto-managed from WA_MLWH_DSN", t, func() {
+	convey.Convey("run-dev.sh synthesizes a reusable .tmp MLWH cache path when MLWH is auto-managed from WA_MLWH_DSN", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(string(contents), convey.ShouldContainSubstring, `MLWH_CACHE_PATH="$TMP_DIR/mlwh-$scenario.sqlite"`)
 	})
 
-	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds three fixtures, skips seqmeta when no command or MLWH config is present, and cleans up on SIGINT", t, func() {
+	convey.Convey("run-dev.sh --mode prod refuses before starting results serve when no MLWH query source is configured", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{
+			"--mode", "prod",
+			"--frontend-port", "1",
+			"--results-port", "1",
+			"--seqmeta-port", "1",
+		}, map[string]string{
+			"WA_ENV":             "production",
+			"WA_RESULTS_DB_PATH": filepath.Join(t.TempDir(), "results-prod.sqlite"),
+		}, []string{"WA_TEST_FRONTEND_PORT", "WA_TEST_RESULTS_PORT", "WA_TEST_SEQMETA_PORT"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+		convey.So(stdout, convey.ShouldNotContainSubstring, "Starting results server")
+	})
+
+	convey.Convey("run-dev.sh propagates a remote MLWH server URL to the frontend without starting local MLWH", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+		remoteMLWHURL := "https://mlwh.example.test:9000/api"
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "dev",
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env: map[string]string{
+				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"WA_ENV":                                "development",
+				"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+				"WA_MLWH_SERVER_URL":                    remoteMLWHURL,
+				"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+				"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_RESULTS_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/rest/v1/results/stats", resultsPort),
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
+		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 1), "\n")
+
+		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, remoteMLWHURL)
+		convey.So(invocations, convey.ShouldContainSubstring, "results serve")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(process.stdout.String(), convey.ShouldContainSubstring, "MLWH: "+remoteMLWHURL)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("run-dev.sh lets a remote MLWH server URL win over WA_MLWH_DSN auto-start", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+		remoteMLWHURL := "https://mlwh.example.test:9000"
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "dev",
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env: map[string]string{
+				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"WA_ENV":                                "development",
+				"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+				"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+				"WA_MLWH_SERVER_URL":                    remoteMLWHURL,
+				"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+				"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_RESULTS_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/rest/v1/results/stats", resultsPort),
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
+		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 1), "\n")
+
+		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, remoteMLWHURL)
+		convey.So(invocations, convey.ShouldContainSubstring, "results serve")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
+		convey.So(process.stdout.String(), convey.ShouldNotContainSubstring, fmt.Sprintf("Starting MLWH server on http://127.0.0.1:%d", seqmetaPort))
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+
+	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds three fixtures, skips MLWH when no command or MLWH config is present, and cleans up on SIGINT", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -1094,21 +1322,21 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(snapshot.ResultsBackendURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
 		convey.So(snapshot.ResultsCACert, convey.ShouldEqual, filepath.Join(repoRoot, ".tmp", "wa-dev-cert.pem"))
 		convey.So(runDevPathExistsForTest(snapshot.ResultsCACert), convey.ShouldBeTrue)
-		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
+		convey.So(strings.TrimSpace(snapshot.MLWHBackendURL), convey.ShouldEqual, "")
 		convey.So(snapshot.ResultsDBPath, convey.ShouldNotBeBlank)
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
 		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeTrue)
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "results.log")), convey.ShouldBeTrue)
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "frontend.log")), convey.ShouldBeTrue)
-		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "seqmeta.log")), convey.ShouldBeTrue)
+		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, "logs", "mlwh.log")), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 		convey.So(runDevPathExistsForTest(snapshot.ResultsDBPath), convey.ShouldBeFalse)
 	})
 
-	convey.Convey("R1.4: run-dev.sh starts seqmeta and exports WA_SEQMETA_BACKEND_URL when an explicit seqmeta command is set", t, func() {
+	convey.Convey("R1.4: run-dev.sh starts MLWH and exports WA_MLWH_BACKEND_URL when an explicit MLWH command is set", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -1135,13 +1363,13 @@ func TestRunDevScript(t *testing.T) {
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		waitForTCPPortForTest(t, seqmetaPort)
 
-		convey.So(snapshot.SeqmetaBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
-	convey.Convey("run-dev.sh waits for seqmeta readiness without printing transient curl probe errors", t, func() {
+	convey.Convey("run-dev.sh waits for MLWH readiness without printing transient curl probe errors", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -1177,7 +1405,7 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(process.Stderr(), convey.ShouldNotContainSubstring, "Operation timed out")
 	})
 
-	convey.Convey("run-dev.sh surfaces seqmeta log output when seqmeta exits before becoming ready", t, func() {
+	convey.Convey("run-dev.sh surfaces MLWH log output when MLWH exits before becoming ready", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -1194,7 +1422,7 @@ func TestRunDevScript(t *testing.T) {
 			"WA_MLWH_CACHE_PATH":                    filepath.Join(t.TempDir(), "mlwh-cache.sqlite"),
 			"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
 			"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
-			"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('seqmeta boot failed: source db unavailable'); process.exit(23)"`,
+			"WA_RUN_DEV_SEQMETA_CMD":                `node -e "console.error('mlwh boot failed: source db unavailable'); process.exit(23)"`,
 			"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
 			"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
 			"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
@@ -1204,14 +1432,14 @@ func TestRunDevScript(t *testing.T) {
 		}, []string{"WA_ENV"})
 
 		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(stdout, convey.ShouldContainSubstring, "Starting seqmeta server")
-		convey.So(stderr, convey.ShouldContainSubstring, "seqmeta server exited before becoming ready")
+		convey.So(stdout, convey.ShouldContainSubstring, "Starting MLWH server")
+		convey.So(stderr, convey.ShouldContainSubstring, "MLWH server exited before becoming ready")
 		convey.So(stderr, convey.ShouldContainSubstring, "exit=23")
-		convey.So(stderr, convey.ShouldContainSubstring, "seqmeta boot failed: source db unavailable")
-		convey.So(stderr, convey.ShouldContainSubstring, "logs/seqmeta.log")
+		convey.So(stderr, convey.ShouldContainSubstring, "mlwh boot failed: source db unavailable")
+		convey.So(stderr, convey.ShouldContainSubstring, "logs/mlwh.log")
 	})
 
-	convey.Convey("run-dev.sh waits for seqmeta studies readiness before starting the frontend by default", t, func() {
+	convey.Convey("run-dev.sh waits for MLWH studies readiness before starting the frontend by default", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -1292,19 +1520,19 @@ exec %q "$@"
 
 		loggedURL := waitForRunDevStepsForTest(t, curlLogPath, 1)
 		convey.So(loggedURL, convey.ShouldResemble, []string{fmt.Sprintf("http://127.0.0.1:%d/studies", seqmetaPort)})
-		convey.So(waitForRunDevStdoutForTest(t, process, "Waiting for seqmeta studies readiness at"), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Waiting for MLWH studies readiness at"), convey.ShouldBeTrue)
 
 		convey.So(runDevPathExistsWithinForTest(snapshotPath, 1400*time.Millisecond), convey.ShouldBeFalse)
 
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
-		convey.So(snapshot.SeqmetaBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
-	convey.Convey("run-dev.sh tests can explicitly disable an inherited seqmeta command without changing product behavior", t, func() {
+	convey.Convey("run-dev.sh tests can explicitly disable an inherited legacy seqmeta command without changing product behavior", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -1329,7 +1557,7 @@ exec %q "$@"
 
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 
-		convey.So(strings.TrimSpace(snapshot.SeqmetaBackendURL), convey.ShouldEqual, "")
+		convey.So(strings.TrimSpace(snapshot.MLWHBackendURL), convey.ShouldEqual, "")
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -2469,6 +2697,32 @@ type runDevFixtureSummary struct {
 	hasRepeatedFileTypes            bool
 	maxPreviewableImagesInDirectory int
 	fileKinds                       []string
+}
+
+func TestRunDevMLWHDefaultReadinessBudgetAllowsColdMLWHSync(t *testing.T) {
+	convey.Convey("run-dev.sh gives MLWH studies readiness at least five minutes by default", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
+		convey.So(err, convey.ShouldBeNil)
+
+		match := regexp.MustCompile(`SEQMETA_HEALTH_MAX_ATTEMPTS="\$\{WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-([0-9]+)\}"`).FindSubmatch(contents)
+		convey.So(match, convey.ShouldHaveLength, 2)
+
+		attempts, err := strconv.Atoi(string(match[1]))
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(attempts, convey.ShouldBeGreaterThanOrEqualTo, 1200)
+	})
+}
+
+func TestRunDevScriptMLWHBuiltInLaunchDropsLegacySyncFlag(t *testing.T) {
+	convey.Convey("run-dev.sh auto-managed MLWH backend serves the current-state API", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		contents, err := os.ReadFile(filepath.Join(repoRoot, "run-dev.sh"))
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(string(contents), convey.ShouldNotContainSubstring, "--mlwh-sync-interval")
+		convey.So(string(contents), convey.ShouldNotContainSubstring, "mlwhdiff serve")
+		convey.So(string(contents), convey.ShouldContainSubstring, `mlwh_args=(mlwh serve --port "$seqmeta_port")`)
+	})
 }
 
 func TestRunDevScriptCleansUpHungResultsAfterReadinessTimeout(t *testing.T) {

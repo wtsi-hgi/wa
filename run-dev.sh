@@ -90,7 +90,7 @@ Options:
       --fixtures            Seed demo fixtures (only valid in --mode dev)
   -f, --frontend-port PORT  Frontend port (test default: 3000)
   -r, --results-port PORT   Results API port (test default: 8090)
-  -s, --seqmeta-port PORT   Seqmeta API port (test default: 8091)
+  -s, --seqmeta-port PORT   MLWH API port (legacy flag name; test default: 8091)
 
 Scenario behaviour:
   test  Ephemeral mktemp DB under .tmp/ (deleted on shutdown). Fixtures are
@@ -146,6 +146,13 @@ mlwh_dsn_looks_nonprod() {
   [[ -n "$value" && ( "$value" == "$KNOWN_DEVELOPMENT_MLWH_DSN" || "$lower_value" == *"localhost"* || "$lower_value" == *"127.0.0.1"* || "$lower_value" == *"_test"* ) ]]
 }
 
+has_nonblank_value() {
+  local value="${1:-}"
+
+  value="${value//[[:space:]]/}"
+  [[ -n "$value" ]]
+}
+
 # Scenario-specific guards. These run before any port allocation so a wrong
 # environment can never spawn servers.
 if [[ "$scenario" == "dev" && "${WA_ENV:-}" == "production" ]]; then
@@ -193,8 +200,12 @@ if [[ "$scenario" != "test" && -z "${WA_RESULTS_DB_PATH:-}" ]]; then
   exit 1
 fi
 
-if [[ "$scenario" == "dev" && -z "${WA_MLWH_DSN:-}" ]]; then
-  printf 'run-dev.sh: --mode dev requires WA_MLWH_DSN to be set.\n' >&2
+if [[ "$scenario" == "dev" ]] && \
+   ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
+   ! has_nonblank_value "${WA_MLWH_DSN:-}" && \
+   ! has_nonblank_value "${WA_RUN_DEV_SEQMETA_CMD:-}"; then
+  printf 'run-dev.sh: --mode dev requires an MLWH query source to be set.\n' >&2
+  printf 'Set WA_MLWH_SERVER_URL for a remote MLWH server or WA_MLWH_DSN/WA_RUN_DEV_SEQMETA_CMD for a local managed server.\n' >&2
   exit 1
 fi
 
@@ -239,6 +250,15 @@ if [[ "$scenario" == "prod" ]]; then
 
   if [[ "${WA_MLWH_CACHE_PASSWORD:-}" == "$KNOWN_DEVELOPMENT_MLWH_PASSWORD" ]]; then
     printf 'run-dev.sh: refusing to run --mode prod with development or test-shaped WA_MLWH_CACHE_PASSWORD.\n' >&2
+    exit 1
+  fi
+
+  if ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
+     ! has_nonblank_value "${WA_MLWH_CACHE_PATH:-}" && \
+     ! has_nonblank_value "${WA_MLWH_DSN:-}" && \
+     ! has_nonblank_value "${WA_RUN_DEV_SEQMETA_CMD:-}"; then
+    printf 'run-dev.sh: --mode prod requires an MLWH query source for results serve.\n' >&2
+    printf 'Set WA_MLWH_SERVER_URL or WA_MLWH_CACHE_PATH, or configure WA_MLWH_DSN or WA_RUN_DEV_SEQMETA_CMD for an auto-managed local source.\n' >&2
     exit 1
   fi
 fi
@@ -292,7 +312,7 @@ validate_port() {
 
 validate_port "$frontend_port" "frontend port"
 validate_port "$results_port" "results port"
-validate_port "$seqmeta_port" "seqmeta port"
+validate_port "$seqmeta_port" "MLWH port"
 
 # Always export WA_ENV so child processes (Next.js, Go binaries, tests) can
 # branch on the active scenario. The wrapper sets it to the canonical value
@@ -378,10 +398,14 @@ FRONTEND_DIR="${WA_RUN_DEV_FRONTEND_CWD:-$REPO_ROOT/frontend}"
 DEFAULT_DEV_TLS_CERT="$TMP_DIR/wa-dev-cert.pem"
 DEFAULT_DEV_TLS_KEY="$TMP_DIR/wa-dev-key.pem"
 RESULTS_LOG="$LOG_DIR/results.log"
-SEQMETA_LOG="$LOG_DIR/seqmeta.log"
+SEQMETA_LOG="$LOG_DIR/mlwh.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 SEQMETA_CMD="${WA_RUN_DEV_SEQMETA_CMD:-}"
+REMOTE_MLWH_SERVER_CONFIGURED=0
+if has_nonblank_value "${WA_MLWH_SERVER_URL:-}"; then
+  REMOTE_MLWH_SERVER_CONFIGURED=1
+fi
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
 SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-1200}"
 
@@ -586,12 +610,12 @@ if (( FRONTEND_HEALTH_MAX_ATTEMPTS < 1 )); then
 fi
 
 if [[ ! "$SEQMETA_HEALTH_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
-  printf 'seqmeta health max attempts must be an integer\n' >&2
+  printf 'MLWH health max attempts must be an integer\n' >&2
   exit 1
 fi
 
 if (( SEQMETA_HEALTH_MAX_ATTEMPTS < 1 )); then
-  printf 'seqmeta health max attempts must be at least 1\n' >&2
+  printf 'MLWH health max attempts must be at least 1\n' >&2
   exit 1
 fi
 
@@ -958,8 +982,8 @@ ensure_port_available_or_reusable() {
 preflight_service_ports() {
   ensure_port_available_or_reusable "results" "results" "WA_${scenario_env_prefix}_RESULTS_PORT" "$results_port" "$RESULTS_HEALTH_URL" "$WA_RESULTS_BACKEND_CA_CERT"
 
-  if [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" ]]; then
-    ensure_port_available_or_reusable "seqmeta" "seqmeta" "WA_${scenario_env_prefix}_SEQMETA_PORT" "$seqmeta_port" "$SEQMETA_HEALTH_URL"
+  if (( ! REMOTE_MLWH_SERVER_CONFIGURED )) && [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" ]]; then
+    ensure_port_available_or_reusable "MLWH" "seqmeta" "WA_${scenario_env_prefix}_SEQMETA_PORT" "$seqmeta_port" "$SEQMETA_HEALTH_URL"
   fi
 
   ensure_port_available_or_reusable "frontend" "frontend" "WA_${scenario_env_prefix}_FRONTEND_PORT" "$frontend_port" "$FRONTEND_HEALTH_URL" "$DEV_TLS_CERT"
@@ -1043,6 +1067,211 @@ main().catch((error) => {
 NODE
 }
 
+seed_test_mlwh_cache() {
+  local cache_path="$1"
+
+  node --no-warnings - "$REPO_ROOT" "$cache_path" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
+
+const [repoRoot, cachePath] = process.argv.slice(2);
+const db = new DatabaseSync(cachePath);
+const schemaDir = path.join(repoRoot, "mlwh", "cache_schema", "sqlite");
+const schemaNames = [
+  "sample_mirror",
+  "study_mirror",
+  "library_samples",
+  "donor_samples",
+  "iseq_product_metrics_mirror",
+  "seq_product_irods_locations_mirror",
+  "sync_state",
+  "schema_version",
+  "sync_lock",
+];
+const syncedAt = "2026-05-15T10:00:00Z";
+
+function run(statement, values) {
+  db.prepare(statement).run(...values);
+}
+
+try {
+  db.exec("BEGIN");
+
+  for (const name of schemaNames) {
+    db.exec(fs.readFileSync(path.join(schemaDir, `${name}.sql`), "utf8"));
+  }
+
+  db.exec("DELETE FROM schema_version");
+  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [3]);
+
+  for (const tableName of ["sample", "study", "iseq_flowcell", "iseq_product_metrics", "seq_product_irods_locations"]) {
+    run(
+      "INSERT OR REPLACE INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, NULL, 0)",
+      [tableName, syncedAt, syncedAt],
+    );
+  }
+
+  run(
+    `INSERT INTO study_mirror(
+      id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name,
+      accession_number, study_title, faculty_sponsor, state,
+      data_release_strategy, data_access_group, programme, reference_genome,
+      ethically_approved, study_type, contains_human_dna,
+      contaminated_human_dna, study_visibility, ega_dac_accession_number,
+      ega_policy_accession_number, data_release_timing, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      1,
+      "SQSCP",
+      "6568",
+      "11111111-2222-3333-4444-555555556568",
+      "Study 6568",
+      "EGAS00001006568",
+      "Study title 6568",
+      "Faculty sponsor 6568",
+      "active",
+      "managed",
+      "public",
+      "Human genetics",
+      "GRCh38",
+      1,
+      "genomic sequencing",
+      1,
+      0,
+      "visible",
+      "",
+      "",
+      "standard",
+      syncedAt,
+    ],
+  );
+
+  run(
+    `INSERT INTO study_mirror(
+      id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name,
+      accession_number, study_title, faculty_sponsor, state,
+      data_release_strategy, data_access_group, programme, reference_genome,
+      ethically_approved, study_type, contains_human_dna,
+      contaminated_human_dna, study_visibility, ega_dac_accession_number,
+      ega_policy_accession_number, data_release_timing, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      2,
+      "SQSCP",
+      "7607",
+      "11111111-2222-3333-4444-555555557607",
+      "7607",
+      "ERP7607",
+      "Seqmeta rendering repro study",
+      "Dr Repro",
+      "active",
+      "managed",
+      "seqmeta",
+      "Performance",
+      "GRCh38",
+      1,
+      "Whole Genome Sequencing",
+      1,
+      0,
+      "Always Open",
+      "EGAC7607",
+      "EGAP7607",
+      "Immediate",
+      syncedAt,
+    ],
+  );
+
+  run(
+    `INSERT INTO sample_mirror(
+      id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+      sanger_sample_id, supplier_name, accession_number, donor_id,
+      taxon_id, common_name, description, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      1,
+      "SQSCP",
+      "10524782",
+      "22222222-2222-3333-4444-555555524782",
+      "WTSI_wEMB10524782",
+      "WTSI_wEMB10524782",
+      "WTSI_wEMB10524782",
+      "ERS10524782",
+      "DONOR10524782",
+      9606,
+      "human",
+      "run-dev fixture sample",
+      syncedAt,
+    ],
+  );
+
+  run(
+    `INSERT INTO sample_mirror(
+      id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+      sanger_sample_id, supplier_name, accession_number, donor_id,
+      taxon_id, common_name, description, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      2,
+      "SQSCP",
+      "SMP7607-0000",
+      "22222222-2222-3333-4444-555555557607",
+      "7607STDY14643771",
+      "7607STDY14643771",
+      "Supplier Sample 7607",
+      "SAMEA76070000",
+      "DONOR7607",
+      9606,
+      "Human",
+      "run-dev seqmeta validation fixture sample",
+      syncedAt,
+    ],
+  );
+
+  run(
+    "INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)",
+    ["Chromium single cell 3 prime v3", 1, "6568", "71046409", "SQPP-71046409-G:A1"],
+  );
+
+  run(
+    "INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)",
+    ["Custom", 2, "7607", "71046409", "LIB7607-71046409"],
+  );
+
+  run(
+    `INSERT INTO iseq_product_metrics_mirror(
+      id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index,
+      id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      "7607-48522-1-1",
+      2,
+      48522,
+      1,
+      1,
+      2,
+      "7607",
+      1,
+      1,
+      1,
+      syncedAt,
+    ],
+  );
+
+  db.exec("COMMIT");
+} catch (error) {
+  try {
+    db.exec("ROLLBACK");
+  } catch (_) {
+    // Preserve the original failure.
+  }
+  throw error;
+} finally {
+  db.close();
+}
+NODE
+}
+
 case "$scenario" in
   test) scenario_env_prefix="TEST" ;;
   dev) scenario_env_prefix="DEV" ;;
@@ -1052,6 +1281,7 @@ esac
 preflight_service_ports
 
 printf 'Building Go binary at %s\n' "$BIN_PATH"
+rm -f "$BIN_PATH"
 go build -o "$BIN_PATH" .
 
 # Choose the database path per scenario: test gets a throwaway file under
@@ -1081,9 +1311,9 @@ else
   MLWH_CACHE_PATH="${WA_MLWH_CACHE_PATH:-}"
   MLWH_CACHE_EPHEMERAL=0
 
-  # When seqmeta is auto-managed from an MLWH DSN, provide a reusable local
+  # When the MLWH server is auto-managed from an MLWH DSN, provide a reusable local
   # cache path if the operator did not configure one explicitly.
-  if [[ -z "$MLWH_CACHE_PATH" && -n "${WA_MLWH_DSN:-}" ]]; then
+  if [[ -z "$MLWH_CACHE_PATH" && -n "${WA_MLWH_DSN:-}" ]] && (( ! REMOTE_MLWH_SERVER_CONFIGURED )); then
     MLWH_CACHE_PATH="$TMP_DIR/mlwh-$scenario.sqlite"
   fi
 
@@ -1093,6 +1323,16 @@ else
       mkdir -p "$mlwh_cache_dir"
     fi
   fi
+fi
+
+if [[ "$scenario" == "test" ]]; then
+  seed_test_mlwh_cache "$MLWH_CACHE_PATH"
+fi
+
+if ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
+   ! has_nonblank_value "$MLWH_CACHE_PATH" && \
+   has_nonblank_value "$SEQMETA_CMD"; then
+  export WA_MLWH_SERVER_URL="http://127.0.0.1:$seqmeta_port"
 fi
 
 if [[ -n "$MLWH_CACHE_PATH" ]]; then
@@ -1106,7 +1346,10 @@ else
 fi
 
 export WA_RESULTS_BACKEND_URL="https://127.0.0.1:$results_port"
-unset WA_SEQMETA_BACKEND_URL
+unset WA_MLWH_BACKEND_URL
+if (( REMOTE_MLWH_SERVER_CONFIGURED )); then
+  export WA_MLWH_BACKEND_URL="$WA_MLWH_SERVER_URL"
+fi
 
 RESULTS_STARTED=0
 SEQMETA_STARTED=0
@@ -1123,6 +1366,7 @@ else
   results_serve_args=(results serve --port "$results_port")
 
   if [[ "$scenario" == "test" ]]; then
+    results_serve_args+=(--mlwh-cache "$MLWH_CACHE_PATH")
     results_serve_args+=(--ldap_server "${WA_RESULTS_LDAP_SERVER:-wa-test-ldap.invalid}")
     results_serve_args+=(--ldap_dn "${WA_RESULTS_LDAP_DN:-uid=%s,ou=people,dc=example,dc=org}")
   else
@@ -1156,47 +1400,50 @@ else
   printf 'Skipping fixture seed (mode=%s, --fixtures not requested)\n' "$scenario"
 fi
 
-if [[ -n "$SEQMETA_CMD" ]]; then
-  export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
+if (( REMOTE_MLWH_SERVER_CONFIGURED )); then
+  : >"$SEQMETA_LOG"
+  printf 'Using remote MLWH server from WA_MLWH_SERVER_URL: %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
+elif [[ -n "$SEQMETA_CMD" ]]; then
+  export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
-    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL" >"$SEQMETA_LOG"
+    printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
+    printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
   else
-    printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
+    printf 'Starting MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
     WA_RUN_DEV_SEQMETA_CMD="$SEQMETA_CMD" \
       bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"' \
       >>"$SEQMETA_LOG" 2>&1 &
     PIDS+=("$!")
     SEQMETA_STARTED=1
-    printf 'Waiting for seqmeta studies readiness at %s' "$SEQMETA_HEALTH_URL"
+    printf 'Waiting for MLWH studies readiness at %s' "$SEQMETA_HEALTH_URL"
     if [[ -n "$MLWH_CACHE_PATH" ]]; then
       printf ' (MLWH cache: %s; a cold cache can take a while on first run)' "$MLWH_CACHE_PATH"
     fi
     printf '\n'
-    wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
+    wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
 elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
-  export WA_SEQMETA_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
+  export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
-    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-    printf 'Reusing existing seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL" >"$SEQMETA_LOG"
+    printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
+    printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
   else
-    printf 'Starting seqmeta server on %s\n' "$WA_SEQMETA_BACKEND_URL"
-    seqmeta_args=(seqmeta serve --port "$seqmeta_port")
-    "${BIN_PATH}" "${seqmeta_args[@]}" >"$SEQMETA_LOG" 2>&1 &
+    printf 'Starting MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
+    mlwh_args=(mlwh serve --port "$seqmeta_port")
+    "${BIN_PATH}" "${mlwh_args[@]}" >>"$SEQMETA_LOG" 2>&1 &
     PIDS+=("$!")
     SEQMETA_STARTED=1
-    printf 'Waiting for seqmeta studies readiness at %s' "$SEQMETA_HEALTH_URL"
+    printf 'Waiting for MLWH studies readiness at %s' "$SEQMETA_HEALTH_URL"
     if [[ -n "$MLWH_CACHE_PATH" ]]; then
       printf ' (MLWH cache: %s; a cold cache can take a while on first run)' "$MLWH_CACHE_PATH"
     fi
     printf '\n'
-    wait_for_http "seqmeta server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
+    wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
 else
-	printf 'seqmeta server skipped because no explicit command or MLWH DSN is set\n' >"$SEQMETA_LOG"
+	printf 'MLWH server skipped because no explicit command or MLWH DSN is set\n' >"$SEQMETA_LOG"
 fi
 
 printf '\n[dev]\n' >>"$FRONTEND_LOG"
@@ -1227,8 +1474,8 @@ if [[ -n "${WA_RESULTS_SERVER_URL:-}" ]]; then
 elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
   printf 'Results public: not configured (set WA_RESULTS_SERVER_URL to the reachable HTTPS URL for remote CLI users)\n'
 fi
-if [[ -n "${WA_SEQMETA_BACKEND_URL:-}" ]]; then
-  printf 'Seqmeta: %s\n' "$WA_SEQMETA_BACKEND_URL"
+if [[ -n "${WA_MLWH_BACKEND_URL:-}" ]]; then
+  printf 'MLWH: %s\n' "$WA_MLWH_BACKEND_URL"
 fi
 printf 'Frontend: https://127.0.0.1:%s\n' "$frontend_port"
 printf 'Logs: %s\n' "$LOG_DIR"

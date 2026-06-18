@@ -15,11 +15,11 @@ import {
     buildCachedEnrichmentState,
     collectSeqmetaValues,
     enrichSeqmetaMetadataBatch,
-    hasUsableSeqmetaCacheEntry,
+    hasUsableMLWHCacheEntry,
     mergeSeqmetaEnrichmentState,
-    primeSeqmetaCache,
-} from "@/lib/seqmeta-enrichment";
-import { SeqmetaCache, SeqmetaCacheContext } from "@/lib/seqmeta-cache";
+    primeMLWHCache,
+} from "@/lib/mlwh-enrichment";
+import { MLWHCache, MLWHCacheContext } from "@/lib/mlwh-cache";
 
 const EMPTY_ENRICHMENTS: Record<string, EnrichmentResult | null> = {};
 const EMPTY_ERRORS: Record<string, "not_found" | "upstream_impaired"> = {};
@@ -30,8 +30,8 @@ const EMPTY_LIVE_STATE = {
 
 // A shared, never-mutated empty cache used during SSR and the first client
 // render so that the markup is deterministic regardless of any cookie state
-// the SeqmetaCacheProvider may have already merged into the live cache.
-const EMPTY_CACHE = new SeqmetaCache();
+// the MLWHCacheProvider may have already merged into the live cache.
+const EMPTY_CACHE = new MLWHCache();
 
 // Idiomatic hydration-safe "have we mounted yet" check. useSyncExternalStore
 // returns the server snapshot during SSR *and* the very first client render
@@ -58,7 +58,7 @@ export function ResultMetadataEnrichment({
     metadataValues,
     variant = "section",
 }: ResultMetadataEnrichmentProps) {
-    const liveCache = useContext(SeqmetaCacheContext);
+    const liveCache = useContext(MLWHCacheContext);
     const inFlightValuesRef = useRef(new Set<string>());
     // Until we have mounted on the client, expose an empty cache to the
     // render so that the SSR markup and the first client render are
@@ -100,7 +100,7 @@ export function ResultMetadataEnrichment({
         values
             .filter(
                 (value) =>
-                    !hasUsableSeqmetaCacheEntry(cache, value) &&
+                    !hasUsableMLWHCacheEntry(cache, value) &&
                     !(value in initialEnrichments) &&
                     !(value in initialErrors) &&
                     !(value in activeLiveErrors) &&
@@ -114,11 +114,11 @@ export function ResultMetadataEnrichment({
             return;
         }
 
-        primeSeqmetaCache(liveCache, initialEnrichments);
+        primeMLWHCache(liveCache, initialEnrichments);
 
         const pendingValues = values.filter(
             (value) =>
-                !hasUsableSeqmetaCacheEntry(liveCache, value) &&
+                !hasUsableMLWHCacheEntry(liveCache, value) &&
                 !inFlightValuesRef.current.has(value) &&
                 !(value in initialEnrichments) &&
                 !(value in initialErrors) &&

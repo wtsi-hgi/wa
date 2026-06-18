@@ -8,7 +8,7 @@
         "lint": "prettier --check . && eslint .",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "test": "vitest run"
+        "test": "vitest run --exclude tests/scaffold.test.ts && vitest run --config vitest.custom.config.ts tests/scaffold.test.ts --poolOptions.forks.singleFork"
     },
     "dependencies": {
         "@radix-ui/react-popover": "^1.1.15",

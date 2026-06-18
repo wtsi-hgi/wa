@@ -11,7 +11,19 @@
 | **MySQL**   | 8+        | Production database (optional for dev)                       |
 
 MLWH settings (`WA_MLWH_DSN`, `WA_MLWH_PASSWORD`, and cache settings) are only
-required when you want to run seqmeta locally.
+required when you want `wa mlwh sync` to read real MLWH data or a local/dev
+server to use that cache.
+
+## Add a new MLWH query
+
+1. Add any required schema column and index in both `mlwh/cache_schema/sqlite/` and `mlwh/cache_schema/mysql/`.
+2. Add one `Client` method.
+3. Add one `Queryer` member.
+4. Add one `Registry` entry.
+
+Use the read-path audit in `.docs/mlwh-sync/spec.md` for every served column:
+it must be traceable to an indexed read path. Keep `TestParseSchemaShapeParity`
+passing so SQLite and MySQL table, column, and index sets stay aligned.
 
 ## Repository Layout
 
@@ -20,14 +32,15 @@ wa/
 ├── main.go              # Entrypoint — unified `wa` binary
 ├── cmd/                 # Cobra command definitions
 ├── results/             # Results REST API + store
-├── seqmeta/             # Sequence metadata cache
+├── mlwh/                # MLWH cache, query surface, and current-state server
+├── mlwhdiff/            # MLWH change detection store and API
 ├── frontend/            # Next.js web UI
 ├── run-dev.sh           # Bring-up script used by `make dev`, `make prod`, and Playwright
 ├── .docs/               # Specs and proposal
 │   ├── proposal.md
+│   ├── mlwh-overhaul/spec.md
 │   ├── results-rest/spec.md
-│   ├── results-web/spec.md
-│   └── seqmeta/spec.md
+│   └── results-web/spec.md
 ├── .env.test            # Committed defaults for `make test`
 ├── .env.development     # Committed development defaults
 └── .env.production      # Committed production defaults
@@ -48,7 +61,7 @@ cd frontend && pnpm install && cd ..
 cp .env.development .env.development.local
 # Open .env.development.local and set WA_MLWH_DSN or any per-machine overrides
 
-# Run the dev stack — persistent DB, MLWH-backed seqmeta, NO fixtures
+# Run the dev stack - persistent DB, MLWH-backed query server, NO fixtures
 make dev
 
 # Same but also seed demo fixtures (.docs/results-web/fixtures/seed.json)
@@ -56,13 +69,16 @@ make dev-fixtures
 # (or `make dev FIXTURES=1`)
 ```
 
-`make dev` builds the `wa` binary, starts the results and seqmeta servers
-against the persistent SQLite database at `WA_RESULTS_DB_PATH` (creating the
-file and parent directory if missing — never deleting it on shutdown), and
-starts the Next.js dev server. Logs go to `logs/`.
+`make dev` builds the `wa` binary, starts the results server against the
+persistent SQLite database at `WA_RESULTS_DB_PATH`, starts the MLWH query server
+against `WA_MLWH_CACHE_PATH`, and starts the Next.js dev server. SQLite files
+and parent directories are created if missing and never deleted on shutdown.
+Logs go to `logs/`.
 
-Development mode requires `WA_MLWH_DSN` in `.env.development.local`; the
-launcher refuses `make dev` without MLWH configured.
+Development mode requires `WA_MLWH_DSN` in `.env.development.local` so it can
+run the MLWH-backed query server; the launcher refuses `make dev` without MLWH
+configured. `wa mlwh serve` is cache-only, so run `wa mlwh sync` when you need
+to seed or refresh the cache explicitly.
 
 ## Make targets
 
@@ -85,7 +101,10 @@ Defaults applied when an env file does not pin a port:
 | ----------- | ---- | -------------------------------- | ------------------------------ |
 | Frontend    | 3000 | `WA_DEV_FRONTEND_PORT`           | `WA_PROD_FRONTEND_PORT`        |
 | Results API | 8090 | `WA_DEV_RESULTS_PORT`            | `WA_PROD_RESULTS_PORT`         |
-| Seqmeta API | 8091 | `WA_DEV_SEQMETA_PORT`            | `WA_PROD_SEQMETA_PORT`         |
+| MLWH API    | 8091 | `WA_DEV_SEQMETA_PORT`            | `WA_PROD_SEQMETA_PORT`         |
+
+The MLWH API port variables still carry the historical `SEQMETA` name for
+scenario-file compatibility; the managed service is `wa mlwh serve`.
 
 Results API bind hosts are separate from client URLs. Development and
 production can set `WA_DEV_RESULTS_HOST` or `WA_PROD_RESULTS_HOST` when
@@ -155,7 +174,7 @@ is set, it falls back to `https://localhost:8080`.
 `results serve` when `--url` is unset; they are not client dial hosts.
 `wa results --cert` / `wa results serve --key` default from the TLS env vars.
 `run-dev.sh` uses the scenario ports to export `WA_RESULTS_BACKEND_URL` and
-`WA_SEQMETA_BACKEND_URL` for the frontend.
+`WA_MLWH_BACKEND_URL` for the frontend.
 The MLWH lookup flags on `wa results register` are resolved by the results
 server. Remote CLI users do not need `WA_MLWH_CACHE_PATH`,
 `WA_MLWH_CACHE_PASSWORD`, or MLWH cache credentials on their machine.
@@ -236,6 +255,9 @@ If you prefer to run services individually:
 
 ### Go backend
 
+Run long-lived `serve` commands in separate terminals or under a process
+manager.
+
 ```bash
 # Build
 go build -o wa .
@@ -255,8 +277,14 @@ export WA_RESULTS_SERVER_KEY=.tmp/wa-dev-key.pem
 export WA_RESULTS_LDAP_SERVER=ldap.example.org
 export WA_RESULTS_LDAP_DN='uid=%s,ou=people,dc=example,dc=org'
 
+# Start MLWH query server (requires a synced MLWH cache)
+export WA_MLWH_DSN='mlwh_user@tcp(db-host:3306)/mlwarehouse'
+export WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite
+./wa mlwh sync
+./wa mlwh serve --port 8091
+
 # Start results server (SQLite for dev)
-./wa results serve --port 8090 --db dev.db
+./wa results serve --port 8090 --db dev.db --mlwh-server-url http://localhost:8091
 
 # Run the results CLI against the development stack described by .env.development
 ./wa --env development results search --pipeline nf-pipe
@@ -264,12 +292,7 @@ export WA_RESULTS_LDAP_DN='uid=%s,ou=people,dc=example,dc=org'
 # Start results server (MySQL without exposing the password on argv)
 export WA_RESULTS_DB_PATH='user@tcp(db-host:3306)/wa_results'
 export WA_RESULTS_DB_PASSWORD='super-secret'
-./wa results serve --port 8090
-
-# Start seqmeta server (requires MLWH settings)
-export WA_MLWH_DSN='mlwh_user@tcp(db-host:3306)/mlwarehouse'
-export WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite
-./wa seqmeta serve --port 8091
+./wa results serve --port 8090 --mlwh-server-url http://localhost:8091
 ```
 
 ### Frontend
@@ -279,6 +302,7 @@ cd frontend
 pnpm install
 WA_RESULTS_BACKEND_URL=https://localhost:8090 \
 WA_RESULTS_BACKEND_CA_CERT=../.tmp/wa-dev-cert.pem \
+WA_MLWH_BACKEND_URL=http://localhost:8091 \
   pnpm dev   # Starts on http://localhost:3000
 ```
 
@@ -297,7 +321,7 @@ Frontend environment variables (read from the process environment):
 | ------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `WA_RESULTS_BACKEND_URL`       | `https://localhost:8090` | Results API base URL                                                                                                                                   |
 | `WA_RESULTS_BACKEND_CA_CERT`   | _(empty)_                | Optional PEM certificate or CA bundle for non-system-trusted results backend TLS                                                                       |
-| `WA_SEQMETA_BACKEND_URL`       | _(empty)_                | Seqmeta API base URL (omit to disable)                                                                                                                 |
+| `WA_MLWH_BACKEND_URL`          | _(empty)_                | MLWH query API base URL (omit to disable MLWH-backed enrichment/study lookup in the frontend)                                                          |
 | `WA_STUDIES_CACHE_TTL_SECONDS` | `300`                    | Study list cache lifetime                                                                                                                              |
 | `WA_DEV_ALLOWED_ORIGINS`       | _(empty)_                | Dev-only; extra hostnames merged into Next.js `allowedDevOrigins` (see "Accessing `make dev` from a remote host" above). Ignored in production builds. |
 
@@ -311,7 +335,7 @@ go test -tags netgo --count 1 ./...
 
 # Specific package
 go test -tags netgo --count 1 ./results/...
-go test -tags netgo --count 1 ./seqmeta/...
+go test -tags netgo --count 1 ./mlwhdiff/...
 go test -tags netgo --count 1 ./cmd/...
 
 # With verbose output
@@ -385,9 +409,8 @@ pnpm exec playwright test
 
 Playwright coverage is hermetic. `make test-e2e` and `pnpm exec playwright test`
 start the app through `run-dev.sh --mode test`, which refuses `WA_MLWH_DSN` and
-uses the stub seqmeta server at `frontend/e2e/seqmeta-stub.mjs` instead of a
-real MLWH connection. Missing MLWH settings in `.env.development.local` do not
-change Playwright skip counts.
+uses a stub MLWH backend instead of a real MLWH connection. Missing MLWH
+settings in `.env.development.local` do not change Playwright skip counts.
 
 There is currently no Playwright suite that exercises a real MLWH database.
 Live MLWH-backed integration coverage belongs in the Go integration tests, not
@@ -397,9 +420,9 @@ the browser harness.
 
 ### Development
 
-SQLite is used for development and testing. The `results serve` and
-`seqmeta serve` commands create tables automatically on first run — no
-migrations needed.
+SQLite is used for development and testing. The `results serve`, `mlwh sync`,
+and `mlwhdiff serve` commands create their tables automatically on first run -
+no migrations needed.
 
 ### Production (MySQL)
 
@@ -423,14 +446,15 @@ Password-bearing DSNs are rejected on the command line.
 The DSN is detected by the presence of `@tcp(` or `@unix(` in the string.
 Tables are auto-created on startup, same as SQLite.
 
-Seqmeta persists local watermark state in SQLite and reads sequencing data via
-the MLWH-backed cache layer.
+`mlwhdiff` persists local watermark state in SQLite and reads sequencing data
+via the MLWH-backed query surface.
 
 ## Architecture
 
-The Go backend exposes JSON REST APIs via chi. The Next.js frontend consumes
-them through Server Actions (server-to-server calls), so the Go API can live
-on a private network — backend URLs are never exposed to the browser.
+The Go backend exposes JSON REST APIs via gin/gas-backed handlers. The Next.js
+frontend consumes them through Server Actions (server-to-server calls), so the
+Go API can live on a private network — backend URLs are never exposed to the
+browser.
 
 ```
 Browser  →  Next.js (Server Actions)  →  Go REST API  →  SQLite / MySQL caches
@@ -446,7 +470,7 @@ Browser  →  Next.js (Server Actions)  →  Go REST API  →  SQLite / MySQL ca
   Go interfaces for testable, isolated unit tests.
 - **Zod contracts**: The frontend validates API responses with Zod schemas,
   catching backend regressions at the boundary.
-- **Change detection**: Seqmeta uses per-entity SHA256 watermarks with
+- **Change detection**: `mlwhdiff` uses per-entity SHA256 watermarks with
   tombstones for removals. First poll returns all data as "added".
 
 ## Deploying to Production
@@ -472,6 +496,13 @@ Start the Go backend and Next.js frontend as separate processes. Use a process
 manager (systemd, supervisor, etc.) to keep them running.
 
 ```bash
+# MLWH current-state API
+export WA_MLWH_DSN='user@tcp(mlwh-host:3306)/warehouse'
+export WA_MLWH_PASSWORD='super-secret'
+export WA_MLWH_CACHE_PATH=/var/lib/wa/mlwh-cache.sqlite
+wa mlwh sync
+wa mlwh serve --port 8091
+
 # Results API (MySQL for production)
 export WA_ENV=production
 export WA_PROD_RESULTS_HOST=0.0.0.0
@@ -484,20 +515,18 @@ export WA_RESULTS_LDAP_SERVER=ldap.example.org
 export WA_RESULTS_LDAP_DN='uid=%s,ou=people,dc=example,dc=org'
 wa results serve \
   --port "$WA_PROD_RESULTS_PORT" \
-  --seqmeta-url http://localhost:8091
+  --mlwh-server-url http://localhost:8091
 
-# Seqmeta API
-export WA_MLWH_DSN='user@tcp(mlwh-host:3306)/warehouse'
-export WA_MLWH_PASSWORD='super-secret'
-export WA_MLWH_CACHE_PATH=/var/lib/wa/mlwh-cache.sqlite
-wa seqmeta serve \
-  --port 8091 \
-  --db /var/lib/wa/seqmeta.db
+# Optional MLWH change-tracking API
+export WA_MLWH_SERVER_URL=http://localhost:8091
+wa mlwhdiff serve \
+  --port 8092 \
+  --db /var/lib/wa/mlwhdiff.db
 
 # Frontend
 cd frontend
 WA_RESULTS_BACKEND_URL=https://localhost:8090 \
-WA_SEQMETA_BACKEND_URL=http://localhost:8091 \
+WA_MLWH_BACKEND_URL=http://localhost:8091 \
   node .next/standalone/server.js
 ```
 
@@ -507,22 +536,23 @@ trusted by the system.
 
 ### Environment variables for production
 
-| Variable                       | Required                   | Description                                                                                          |
-| ------------------------------ | -------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `WA_ENV`                       | For scenario CLI           | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                    |
-| `WA_PROD_RESULTS_PORT`         | For server/CLI             | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults      |
-| `WA_PROD_RESULTS_HOST`         | For server                 | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections        |
-| `WA_RESULTS_SERVER_URL`        | For remote CLI             | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`        |
-| `WA_RESULTS_DB_PATH`           | For results                | SQLite path, full DSN, or passwordless MySQL DSN                                                     |
-| `WA_RESULTS_DB_PASSWORD`       | Optional                   | MySQL password paired with a passwordless DSN                                                        |
-| `WA_MLWH_DSN`                  | For seqmeta                | Passwordless MLWH DSN                                                                                |
-| `WA_MLWH_PASSWORD`             | Optional                   | MLWH password paired with a passwordless DSN                                                         |
-| `WA_MLWH_CACHE_PATH`           | For seqmeta/results server | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                         |
-| `WA_MLWH_CACHE_PASSWORD`       | Optional                   | MLWH cache MySQL password                                                                            |
-| `WA_RESULTS_SERVER_CERT`       | For results                | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root     |
-| `WA_RESULTS_SERVER_KEY`        | For results                | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root |
-| `WA_RESULTS_BACKEND_URL`       | For frontend               | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility           |
-| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                   | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted       |
-| `WA_SEQMETA_BACKEND_URL`       | For frontend               | Seqmeta API URL (server-side only)                                                                   |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | No                         | Study list cache TTL (default: 300)                                                                  |
-| `PORT`                         | No                         | Frontend listen port (default: 3000)                                                                 |
+| Variable                       | Required                          | Description                                                                                          |
+| ------------------------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `WA_ENV`                       | For scenario CLI                  | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                    |
+| `WA_PROD_RESULTS_PORT`         | For server/CLI                    | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults      |
+| `WA_PROD_RESULTS_HOST`         | For server                        | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections        |
+| `WA_RESULTS_SERVER_URL`        | For remote CLI                    | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`        |
+| `WA_RESULTS_DB_PATH`           | For results                       | SQLite path, full DSN, or passwordless MySQL DSN                                                     |
+| `WA_RESULTS_DB_PASSWORD`       | Optional                          | MySQL password paired with a passwordless DSN                                                        |
+| `WA_MLWH_DSN`                  | For `wa mlwh sync`                | Passwordless MLWH DSN                                                                                |
+| `WA_MLWH_PASSWORD`             | Optional                          | MLWH password paired with a passwordless DSN                                                         |
+| `WA_MLWH_CACHE_PATH`           | For `wa mlwh` and local consumers | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                         |
+| `WA_MLWH_CACHE_PASSWORD`       | Optional                          | MLWH cache MySQL password                                                                            |
+| `WA_MLWH_SERVER_URL`           | For results/mlwhdiff clients      | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url`                                        |
+| `WA_RESULTS_SERVER_CERT`       | For results                       | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root     |
+| `WA_RESULTS_SERVER_KEY`        | For results                       | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root |
+| `WA_RESULTS_BACKEND_URL`       | For frontend                      | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility           |
+| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                          | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted       |
+| `WA_MLWH_BACKEND_URL`          | For frontend                      | MLWH query API URL (server-side only)                                                                |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | No                                | Study list cache TTL (default: 300)                                                                  |
+| `PORT`                         | No                                | Frontend listen port (default: 3000)                                                                 |

@@ -48,117 +48,133 @@ import (
 	"github.com/wtsi-hgi/wa/results"
 )
 
-func TestResultsServeCommandSeqmetaURLFallback(t *testing.T) {
-	t.Setenv("WA_SEQMETA_BACKEND_URL", "http://seqmeta.example")
+func TestResultsServeCommandNoSeqmetaFlags(t *testing.T) {
+	t.Setenv("WA_MLWH_BACKEND_URL", "http://seqmeta.example")
 
 	command := newResultsServeCommand()
-	flag := command.Flags().Lookup("seqmeta-url")
-	if flag == nil {
-		t.Fatal("expected seqmeta-url flag")
-	}
 
-	convey.Convey("results serve falls back to WA_SEQMETA_BACKEND_URL when --seqmeta-url is unset", t, func() {
-		convey.So(flag.DefValue, convey.ShouldEqual, "http://seqmeta.example")
+	convey.Convey("E2.4: Given results serve flags, then seqmeta URL and timeout flags are absent", t, func() {
+		convey.So(command.Flags().Lookup("seqmeta-url"), convey.ShouldBeNil)
+		convey.So(command.Flags().Lookup("seqmeta-timeout"), convey.ShouldBeNil)
 	})
 }
 
 func TestResultsServeCommandHelpIncludesMLWHFlags(t *testing.T) {
-	convey.Convey("E5.1: Given results serve help, then it documents the MLWH cache flag but not the removed sync flag", t, func() {
+	convey.Convey("E2.4: Given results serve help, then it documents MLWH selection and omits seqmeta flags", t, func() {
 		output, err := executeRootCommandForTest(t, []string{"results", "serve", "--help"})
 
 		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "--mlwh-server-url")
 		convey.So(output, convey.ShouldContainSubstring, "--mlwh-cache")
 		convey.So(output, convey.ShouldContainSubstring, "MLWH cache")
+		convey.So(output, convey.ShouldNotContainSubstring, "--seqmeta-url")
+		convey.So(output, convey.ShouldNotContainSubstring, "--seqmeta-timeout")
 		convey.So(output, convey.ShouldNotContainSubstring, "--mlwh-sync-interval")
 	})
 }
 
-type fakeResultsServeSyncClient struct {
-	mu        sync.Mutex
-	syncCalls int
-	syncCh    chan struct{}
+type fakeResultsServeMLWHHandle struct {
+	mlwh.Queryer
+
+	mu                 sync.Mutex
+	classifiedValues   []string
+	classifyByRaw      map[string]mlwh.Match
+	expandSearchValue  mlwh.SearchValues
+	resolveStudyByRaw  map[string]mlwh.Match
+	resolveRunByRaw    map[string]mlwh.Match
+	resolveSampleByRaw map[string]mlwh.Match
 }
 
-func (f *fakeResultsServeSyncClient) Sync(context.Context) ([]mlwh.SyncReport, error) {
+func (f *fakeResultsServeMLWHHandle) ClassifyIdentifier(_ context.Context, raw string) (mlwh.Match, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if f.syncCh == nil {
-		f.syncCh = make(chan struct{}, 8)
+	f.classifiedValues = append(f.classifiedValues, raw)
+	if match, ok := f.classifyByRaw[raw]; ok {
+		return match, nil
 	}
 
-	f.syncCalls++
-	f.syncCh <- struct{}{}
-
-	return nil, nil
+	return mlwh.Match{Kind: mlwh.KindRunID, Canonical: raw}, nil
 }
 
-func (f *fakeResultsServeSyncClient) ExpandIdentifier(context.Context, mlwh.IdentifierKind, string) ([]mlwh.TaggedID, error) {
-	return nil, nil
-}
+func (f *fakeResultsServeMLWHHandle) ResolveRun(_ context.Context, raw string) (mlwh.Match, error) {
+	if match, ok := f.resolveRunByRaw[raw]; ok {
+		return match, nil
+	}
 
-func (f *fakeResultsServeSyncClient) ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, []string, []string, error) {
-	return nil, nil, nil, nil
-}
-
-func (f *fakeResultsServeSyncClient) ExpandSampleSearchValues(context.Context, mlwh.IdentifierKind, string) ([]string, error) {
-	return nil, nil
-}
-
-func (f *fakeResultsServeSyncClient) LanesForSample(context.Context, string, int, int) ([]mlwh.Lane, error) {
-	return nil, nil
-}
-
-func (f *fakeResultsServeSyncClient) ResolveRun(context.Context, string) (mlwh.Match, error) {
 	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
-func (f *fakeResultsServeSyncClient) ResolveStudy(context.Context, string) (mlwh.Match, error) {
+func (f *fakeResultsServeMLWHHandle) ResolveStudy(_ context.Context, raw string) (mlwh.Match, error) {
+	if match, ok := f.resolveStudyByRaw[raw]; ok {
+		return match, nil
+	}
+
 	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
-func (f *fakeResultsServeSyncClient) ResolveSample(context.Context, string) (mlwh.Match, error) {
+func (f *fakeResultsServeMLWHHandle) ResolveSample(_ context.Context, raw string) (mlwh.Match, error) {
+	if match, ok := f.resolveSampleByRaw[raw]; ok {
+		return match, nil
+	}
+
 	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
-func (f *fakeResultsServeSyncClient) ResolveSampleName(context.Context, string) (mlwh.Match, error) {
+func (f *fakeResultsServeMLWHHandle) ResolveSampleName(context.Context, string) (mlwh.Match, error) {
 	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
-func (f *fakeResultsServeSyncClient) ResolveLibrary(context.Context, string) (mlwh.Match, error) {
+func (f *fakeResultsServeMLWHHandle) ResolveLibrary(context.Context, string) (mlwh.Match, error) {
 	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
-func (f *fakeResultsServeSyncClient) ResolveLibraryIdentifier(context.Context, string) (mlwh.Match, error) {
+func (f *fakeResultsServeMLWHHandle) ResolveLibraryIdentifier(context.Context, string) (mlwh.Match, error) {
 	return mlwh.Match{}, mlwh.ErrNotFound
 }
 
-func (f *fakeResultsServeSyncClient) Close() error {
+func (f *fakeResultsServeMLWHHandle) ExpandSearchValues(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error) {
+	return f.expandSearchValue, nil
+}
+
+func (f *fakeResultsServeMLWHHandle) Close() error {
 	return nil
 }
 
-func (f *fakeResultsServeSyncClient) SyncCalls() int {
+func (f *fakeResultsServeMLWHHandle) ClassifiedValues() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return f.syncCalls
+	values := make([]string, len(f.classifiedValues))
+	copy(values, f.classifiedValues)
+
+	return values
 }
 
-func (f *fakeResultsServeSyncClient) WaitForSyncCall(t *testing.T) {
-	t.Helper()
+func TestResultsServeMLWHHandleE2(t *testing.T) {
+	convey.Convey("E2.1: Given a remote MLWH server URL and no cache path, the results serve handle is a RemoteClient", t, func() {
+		handle, err := openResultsServeMLWHClientWithConfig(
+			context.Background(),
+			resultsServeMLWHConfig{ServerURL: "https://mlwh.example:9000"},
+		)
 
-	f.mu.Lock()
-	if f.syncCh == nil {
-		f.syncCh = make(chan struct{}, 8)
-	}
-	ch := f.syncCh
-	f.mu.Unlock()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { convey.So(handle.Close(), convey.ShouldBeNil) }()
+		_, ok := handle.(*mlwh.RemoteClient)
+		convey.So(ok, convey.ShouldBeTrue)
+	})
 
-	select {
-	case <-ch:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for sync call")
-	}
+	convey.Convey("E2.2: Given a local MLWH cache path and no server URL, the results serve handle is a local Client", t, func() {
+		handle, err := openResultsServeMLWHClientWithConfig(
+			context.Background(),
+			resultsServeMLWHConfig{CachePath: filepath.Join(t.TempDir(), "mlwh.sqlite")},
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		defer func() { convey.So(handle.Close(), convey.ShouldBeNil) }()
+		_, ok := handle.(*mlwh.Client)
+		convey.So(ok, convey.ShouldBeTrue)
+	})
 }
 
 func TestResultsServeCommand(t *testing.T) {
@@ -216,17 +232,18 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(statusCode, convey.ShouldEqual, http.StatusCreated)
 	})
 
-	convey.Convey("H1.2: Given results serve with --seqmeta-url, posting seqmeta metadata triggers validation", t, func() {
+	convey.Convey("E2.5: Given results serve with an MLWH queryer, posting seqmeta metadata validates through that queryer", t, func() {
 		fakeAuth := newFakeResultsServeAuthServer()
 		installFakeResultsServeAuthServer(t, fakeAuth)
 
-		validationCh := make(chan string, 1)
-		seqmetaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			validationCh <- r.URL.Path
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"type": "run_id", "object": map[string]any{}})
-		}))
-		defer seqmetaServer.Close()
+		fakeMLWH := &fakeResultsServeMLWHHandle{
+			classifyByRaw: map[string]mlwh.Match{
+				"48522": {Kind: mlwh.KindRunID, Canonical: "48522"},
+			},
+		}
+		resultsServeOpenMLWHClient = func(context.Context, resultsServeMLWHConfig) (resultsServeMLWHHandle, error) {
+			return fakeMLWH, nil
+		}
 
 		var statusCode int
 		fakeAuth.onStart = func(server *fakeResultsServeAuthServer) error {
@@ -245,10 +262,10 @@ func TestResultsServeCommand(t *testing.T) {
 			return nil
 		}
 
-		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0", "--seqmeta-url", seqmetaServer.URL))
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0", "--mlwh-server-url", "https://mlwh.example"))
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(statusCode, convey.ShouldEqual, http.StatusCreated)
-		convey.So(<-validationCh, convey.ShouldEqual, "/validate/48522")
+		convey.So(fakeMLWH.ClassifiedValues(), convey.ShouldResemble, []string{"48522"})
 	})
 
 	convey.Convey("H1.3: Given results serve --port abc, then exit code is non-zero", t, func() {
@@ -285,54 +302,91 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(resultsSQLiteDSN("file:/tmp/results.db?mode=ro"), convey.ShouldEqual, "file:/tmp/results.db?mode=ro")
 	})
 
-	convey.Convey("E5.2: Given MLWH env vars and no flag overrides, when results serve boots, then the resolved DSN includes the env password and the cache path comes from the environment", t, func() {
+	convey.Convey("E2.1: Given WA_MLWH_SERVER_URL and no cache path, when results serve boots, then remote MLWH config is selected", t, func() {
 		fakeAuth := newFakeResultsServeAuthServer()
 		installFakeResultsServeAuthServer(t, fakeAuth)
 
-		secret := "topsecret"
-		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(mlwh-db-ro:3435)/mlwarehouse")
-		t.Setenv("WA_MLWH_PASSWORD", secret)
-		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh.sqlite"))
+		t.Setenv("WA_MLWH_SERVER_URL", "https://mlwh:9000")
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
 
 		seenConfigCh := make(chan resultsServeMLWHConfig, 1)
-		resultsServeOpenMLWHClient = func(_ context.Context, cfg resultsServeMLWHConfig) (resultsServeSyncClient, error) {
+		resultsServeOpenMLWHClient = func(_ context.Context, cfg resultsServeMLWHConfig) (resultsServeMLWHHandle, error) {
 			seenConfigCh <- cfg
 
-			return &fakeResultsServeSyncClient{}, nil
+			return &fakeResultsServeMLWHHandle{}, nil
 		}
 
-		stdout := &bytes.Buffer{}
-		stderr := &bytes.Buffer{}
 		cmd := NewRootCommand()
-		cmd.SetOut(stdout)
-		cmd.SetErr(stderr)
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
 		cmd.SetArgs(secureResultsServeArgs("--port", "0"))
 
 		err := cmd.ExecuteContext(context.Background())
 		seenConfig := <-seenConfigCh
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(seenConfig.DSN, convey.ShouldEqual, "mlwh_user:"+secret+"@tcp(mlwh-db-ro:3435)/mlwarehouse?interpolateParams=false&multiStatements=false")
-		convey.So(seenConfig.CachePath, convey.ShouldEqual, os.Getenv("WA_MLWH_CACHE_PATH"))
-		convey.So(stdout.String(), convey.ShouldNotContainSubstring, secret)
-		convey.So(stderr.String(), convey.ShouldNotContainSubstring, secret)
-		convey.So(strings.Join(os.Args, " "), convey.ShouldNotContainSubstring, secret)
+		convey.So(seenConfig.ServerURL, convey.ShouldEqual, "https://mlwh:9000")
+		convey.So(seenConfig.CachePath, convey.ShouldEqual, "")
 	})
 
-	convey.Convey("results serve opens the read-only MLWH resolver from cache when a source DSN is present", t, func() {
+	convey.Convey("E2.2: Given only WA_MLWH_CACHE_PATH, when results serve boots, then local MLWH cache config is selected", t, func() {
+		fakeAuth := newFakeResultsServeAuthServer()
+		installFakeResultsServeAuthServer(t, fakeAuth)
+
+		cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
+		t.Setenv("WA_MLWH_SERVER_URL", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+
+		seenConfigCh := make(chan resultsServeMLWHConfig, 1)
+		resultsServeOpenMLWHClient = func(_ context.Context, cfg resultsServeMLWHConfig) (resultsServeMLWHHandle, error) {
+			seenConfigCh <- cfg
+
+			return &fakeResultsServeMLWHHandle{}, nil
+		}
+
+		_, err := executeRootCommandForTest(t, []string{
+			"results", "serve",
+			"--db", ":memory:",
+			"--cert", "cert.pem",
+			"--key", "key.pem",
+			"--ldap_server", "ldap.example.org",
+			"--ldap_dn", "uid=%s,ou=people,dc=example,dc=org",
+			"--port", "0",
+		})
+		seenConfig := <-seenConfigCh
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(seenConfig.ServerURL, convey.ShouldEqual, "")
+		convey.So(seenConfig.CachePath, convey.ShouldEqual, cachePath)
+	})
+
+	convey.Convey("E2.3: Given no MLWH server URL or cache path, when results serve runs, then configuration is rejected", t, func() {
+		t.Setenv("WA_MLWH_SERVER_URL", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0", "--mlwh-server-url", ""))
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(err.Error(), convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
+	})
+
+	convey.Convey("results serve opens the read-only MLWH resolver from cache when cache config is present", t, func() {
 		fakeAuth := newFakeResultsServeAuthServer()
 		installFakeResultsServeAuthServer(t, fakeAuth)
 
 		resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
-		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(127.0.0.1:1)/mlwarehouse")
-		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh.sqlite"))
+		t.Setenv("WA_MLWH_SERVER_URL", "")
+		cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
 
-		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0"))
+		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--port", "0", "--mlwh-cache", cachePath))
 
 		convey.So(err, convey.ShouldBeNil)
 	})
 
 	convey.Convey("E5.3: Given --mlwh-cache with an embedded password, when results serve parses flags, then the error wraps ErrPasswordInDSN and names --mlwh-cache", t, func() {
+		t.Setenv("WA_MLWH_SERVER_URL", "")
+
 		_, err := executeRootCommandForTest(t, secureResultsServeArgs("--mlwh-cache", "cache_user:secret@tcp(localhost:3306)/wa_cache"))
 
 		convey.So(err, convey.ShouldNotBeNil)
@@ -347,17 +401,12 @@ func TestResultsServeCommand(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "unknown flag: --mlwh-sync-interval")
 	})
 
-	convey.Convey("E5.5: Given the default sync interval, when results serve runs, then no MLWH sync loop is started", t, func() {
+	convey.Convey("E5.5: Given the default sync interval, when results serve runs, then no MLWH sync ticker is started", t, func() {
 		fakeAuth := newFakeResultsServeAuthServer()
 		installFakeResultsServeAuthServer(t, fakeAuth)
 
-		t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(mlwh-db-ro:3435)/mlwarehouse")
-		t.Setenv("WA_MLWH_PASSWORD", "secret")
-		t.Setenv("WA_MLWH_CACHE_PATH", filepath.Join(t.TempDir(), "mlwh.sqlite"))
-
-		fakeClient := &fakeResultsServeSyncClient{}
-		resultsServeOpenMLWHClient = func(_ context.Context, _ resultsServeMLWHConfig) (resultsServeSyncClient, error) {
-			return fakeClient, nil
+		resultsServeOpenMLWHClient = func(context.Context, resultsServeMLWHConfig) (resultsServeMLWHHandle, error) {
+			return &fakeResultsServeMLWHHandle{}, nil
 		}
 
 		tickerCreated := 0
@@ -376,7 +425,6 @@ func TestResultsServeCommand(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(tickerCreated, convey.ShouldEqual, 0)
-		convey.So(fakeClient.SyncCalls(), convey.ShouldEqual, 0)
 	})
 
 	convey.Convey("Bug 260519-2: Given results serve with a sample-only MLWH cache, seqmeta_supplier_name search uses the runtime sample-only expansion", t, func() {
@@ -384,6 +432,7 @@ func TestResultsServeCommand(t *testing.T) {
 		installFakeResultsServeAuthServer(t, fakeAuth)
 
 		resultsServeOpenMLWHClient = openResultsServeMLWHClientWithConfig
+		t.Setenv("WA_MLWH_SERVER_URL", "")
 		dbPath := filepath.Join(t.TempDir(), "results.sqlite")
 		mlwhCachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
 		seedResultsServeDirectSampleSearchFixture(t, dbPath, mlwhCachePath)
@@ -450,8 +499,24 @@ func secureResultsServeArgs(extra ...string) []string {
 		"--ldap_server", "ldap.example.org",
 		"--ldap_dn", "uid=%s,ou=people,dc=example,dc=org",
 	}
+	if !resultsServeArgsIncludeMLWHForTest(extra) && strings.TrimSpace(os.Getenv("WA_MLWH_SERVER_URL")) == "" {
+		args = append(args, "--mlwh-server-url", "https://mlwh.example")
+	}
 
 	return append(args, extra...)
+}
+
+func resultsServeArgsIncludeMLWHForTest(args []string) bool {
+	for _, arg := range args {
+		if arg == "--mlwh-server-url" || strings.HasPrefix(arg, "--mlwh-server-url=") {
+			return true
+		}
+		if arg == "--mlwh-cache" || strings.HasPrefix(arg, "--mlwh-cache=") {
+			return true
+		}
+	}
+
+	return false
 }
 
 type fakeResultsServeAuthEnableCall struct {
@@ -581,12 +646,16 @@ func TestResultsServeCommandA2(t *testing.T) {
 		leakedToken, err := gas.GenerateToken()
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(os.WriteFile(tokenPath, leakedToken, 0o644), convey.ShouldBeNil)
+		convey.So(os.Chmod(tokenPath, 0o644), convey.ShouldBeNil)
+		info, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o644)
 
 		ownerConfig, err := resultsServeOwnerSessionConfig(tokenPath, results.NewOwnerSessionStore())
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(bytes.Equal(ownerConfig.ServerToken, leakedToken), convey.ShouldBeFalse)
 
-		info, err := os.Stat(tokenPath)
+		info, err = os.Stat(tokenPath)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o600)
 
@@ -613,8 +682,12 @@ func TestResultsServeCommandA2(t *testing.T) {
 
 		cacheDir := filepath.Join(t.TempDir(), "certs")
 		convey.So(os.Mkdir(cacheDir, 0o755), convey.ShouldBeNil)
+		convey.So(os.Chmod(cacheDir, 0o755), convey.ShouldBeNil)
+		info, err := os.Stat(cacheDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o755)
 
-		_, err := executeRootCommandForTest(t, []string{
+		_, err = executeRootCommandForTest(t, []string{
 			"results", "serve",
 			"--db", ":memory:",
 			"--acme", "https://acme.example/dir",

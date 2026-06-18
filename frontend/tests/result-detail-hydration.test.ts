@@ -17,12 +17,12 @@ const enrichIdentifierMock = vi.fn();
 const enrichIdentifiersMock = vi.fn();
 const enrichSeqmetaMetadataMock = vi.fn();
 const enrichSeqmetaMetadataBatchMock = vi.fn();
-const getRequestSeqmetaCacheMock = vi.fn();
+const getRequestMLWHCacheMock = vi.fn();
 const buildCachedEnrichmentStateMock = vi.fn();
 const collectSeqmetaValuesMock = vi.fn();
-const hasUsableSeqmetaCacheEntryMock = vi.fn();
+const hasUsableMLWHCacheEntryMock = vi.fn();
 const mergeSeqmetaEnrichmentStateMock = vi.fn();
-const primeSeqmetaCacheMock = vi.fn();
+const primeMLWHCacheMock = vi.fn();
 const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
     toastErrorMock: vi.fn(),
     toastSuccessMock: vi.fn(),
@@ -44,18 +44,18 @@ vi.mock("@/app/(results)/actions", () => ({
     validateIdentifier: validateIdentifierMock,
 }));
 
-vi.mock("@/lib/seqmeta-enrichment", () => ({
+vi.mock("@/lib/mlwh-enrichment", () => ({
     buildCachedEnrichmentState: buildCachedEnrichmentStateMock,
     collectSeqmetaValues: collectSeqmetaValuesMock,
     enrichSeqmetaMetadata: enrichSeqmetaMetadataMock,
     enrichSeqmetaMetadataBatch: enrichSeqmetaMetadataBatchMock,
-    hasUsableSeqmetaCacheEntry: hasUsableSeqmetaCacheEntryMock,
+    hasUsableMLWHCacheEntry: hasUsableMLWHCacheEntryMock,
     mergeSeqmetaEnrichmentState: mergeSeqmetaEnrichmentStateMock,
-    primeSeqmetaCache: primeSeqmetaCacheMock,
+    primeMLWHCache: primeMLWHCacheMock,
 }));
 
-vi.mock("@/lib/seqmeta-cache-server", () => ({
-    getRequestSeqmetaCache: getRequestSeqmetaCacheMock,
+vi.mock("@/lib/mlwh-cache-server", () => ({
+    getRequestMLWHCache: getRequestMLWHCacheMock,
 }));
 
 function buildFile(path: string): FileEntry {
@@ -205,7 +205,7 @@ describe("O1 result detail hydration", () => {
             errors: {},
         });
         collectSeqmetaValuesMock.mockReturnValue(["SANG001"]);
-        hasUsableSeqmetaCacheEntryMock.mockReturnValue(false);
+        hasUsableMLWHCacheEntryMock.mockReturnValue(false);
         mergeSeqmetaEnrichmentStateMock.mockImplementation(
             (base, override) => ({
                 enrichments: {
@@ -218,7 +218,7 @@ describe("O1 result detail hydration", () => {
                 },
             }),
         );
-        getRequestSeqmetaCacheMock.mockResolvedValue({});
+        getRequestMLWHCacheMock.mockResolvedValue({});
 
         toLocaleStringSpy.mockImplementation(() => "16 Apr 2026, 10:15");
 
@@ -291,7 +291,7 @@ describe("O1 result detail hydration", () => {
             errors: {},
         });
         collectSeqmetaValuesMock.mockReturnValue(["6568"]);
-        hasUsableSeqmetaCacheEntryMock.mockReturnValue(false);
+        hasUsableMLWHCacheEntryMock.mockReturnValue(false);
         mergeSeqmetaEnrichmentStateMock.mockImplementation(
             (base, override) => ({
                 enrichments: {
@@ -404,7 +404,7 @@ describe("O1 result detail hydration", () => {
             errors: {},
         });
         collectSeqmetaValuesMock.mockReturnValue(["6568"]);
-        hasUsableSeqmetaCacheEntryMock.mockReturnValue(false);
+        hasUsableMLWHCacheEntryMock.mockReturnValue(false);
         mergeSeqmetaEnrichmentStateMock.mockImplementation(
             (base, override) => ({
                 enrichments: {
