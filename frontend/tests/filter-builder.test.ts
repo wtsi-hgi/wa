@@ -689,6 +689,54 @@ describe("K1 filter builder component", () => {
         );
     });
 
+    it("clears generic all-field suggestions as soon as a non-empty query changes", async () => {
+        fetchMock
+            .mockResolvedValueOnce({
+                json: async () => [
+                    {
+                        field_key: "meta_assay_tag",
+                        value: "alpha-stale-beta-260618",
+                    },
+                ],
+                ok: true,
+            })
+            .mockReturnValue(new Promise(() => undefined));
+
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["assay_tag"],
+                seqmetaAvailable: false,
+                studies: [],
+            }),
+        );
+
+        const genericInput = screen.getByLabelText(/generic all-field search/i);
+
+        fireEvent.change(genericInput, {
+            target: { value: "alpha-stale" },
+        });
+
+        expect(
+            await screen.findByRole("option", {
+                name: /add assay tag filter alpha-stale-beta-260618/i,
+            }),
+        ).toBeTruthy();
+
+        fireEvent.change(genericInput, {
+            target: { value: "beta" },
+        });
+
+        expect(screen.queryByRole("listbox")).toBeNull();
+        expect(
+            screen.queryByRole("option", {
+                name: /add assay tag filter beta/i,
+            }),
+        ).toBeNull();
+    });
+
     it("offers the typed generic substring for each matching field while keeping full values selectable", async () => {
         fetchMock.mockResolvedValue({
             json: async () => [

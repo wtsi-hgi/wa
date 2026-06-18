@@ -256,6 +256,8 @@ function clampPreviewHeight(value: number): number {
 
 type FileBrowserProps = {
     activeFiles?: FileEntry[];
+    /** True when files, activeFiles, and visibleFiles already reflect fileFilterValue. */
+    fileFilterApplied?: boolean;
     filterStorageKey?: string;
     files: FileEntry[];
     fileFilterValue?: string;
@@ -278,6 +280,7 @@ type FileBrowserProps = {
     renderSinglePreview?: (file: FileEntry | null) => ReactNode;
     selectedDirectory?: string;
     selectedPath?: string;
+    unfilteredFileCount?: number;
     visibleFiles?: FileEntry[];
 };
 
@@ -1051,6 +1054,7 @@ export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
 
 export function FileBrowser({
     activeFiles: activeFilesOverride,
+    fileFilterApplied = false,
     filterStorageKey,
     files,
     fileFilterValue,
@@ -1070,6 +1074,7 @@ export function FileBrowser({
     renderSinglePreview,
     selectedDirectory,
     selectedPath,
+    unfilteredFileCount,
     visibleFiles,
 }: FileBrowserProps) {
     const activeDesign = activeFileBrowserDesign;
@@ -1090,26 +1095,30 @@ export function FileBrowser({
     const effectiveFileFilter =
         fileFilterValue ?? effectiveUncontrolledFileFilter;
     const filteredFiles = useMemo(
-        () => filterFilesByGlobPattern(files, effectiveFileFilter),
-        [effectiveFileFilter, files],
+        () =>
+            fileFilterApplied
+                ? files
+                : filterFilesByGlobPattern(files, effectiveFileFilter),
+        [effectiveFileFilter, fileFilterApplied, files],
     );
     const filteredActiveFilesOverride = useMemo(
         () =>
-            activeFilesOverride
+            activeFilesOverride && !fileFilterApplied
                 ? filterFilesByGlobPattern(
                       activeFilesOverride,
                       effectiveFileFilter,
                   )
-                : undefined,
-        [activeFilesOverride, effectiveFileFilter],
+                : activeFilesOverride,
+        [activeFilesOverride, effectiveFileFilter, fileFilterApplied],
     );
     const filteredVisibleFiles = useMemo(
         () =>
-            visibleFiles
+            visibleFiles && !fileFilterApplied
                 ? filterFilesByGlobPattern(visibleFiles, effectiveFileFilter)
-                : undefined,
-        [effectiveFileFilter, visibleFiles],
+                : visibleFiles,
+        [effectiveFileFilter, fileFilterApplied, visibleFiles],
     );
+    const registeredFileCount = unfilteredFileCount ?? files.length;
     const [uncontrolledDirectory, setUncontrolledDirectory] = useState<
         string | undefined
     >(selectedDirectory);
@@ -2430,13 +2439,13 @@ export function FileBrowser({
                 </div>
             </div>
 
-            {files.length === 0 ? (
+            {registeredFileCount === 0 ? (
                 <div className={activeDesign.emptyStateClass}>
                     No registered files
                 </div>
             ) : null}
 
-            {files.length > 0 && filteredFiles.length === 0 ? (
+            {registeredFileCount > 0 && filteredFiles.length === 0 ? (
                 <div
                     className={activeDesign.emptyStateClass}
                     data-file-browser-empty-filter="true"

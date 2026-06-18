@@ -88,10 +88,12 @@ vi.mock("@/components/file-browser", () => ({
         return siblingDirectories.size > 1 ? parentDirectory : undefined;
     },
     FileBrowser: ({
+        fileFilterValue,
         files,
         onPreviewHeightChange,
         onPreviewModeChange,
         onPreviewPageChange,
+        onFileFilterChange,
         onSelectDirectory,
         onSelectFile,
         previewHeight,
@@ -105,7 +107,9 @@ vi.mock("@/components/file-browser", () => ({
         selectedPath,
         visibleFiles,
     }: {
+        fileFilterValue?: string;
         files: FileEntry[];
+        onFileFilterChange?: (value: string) => void;
         onPreviewHeightChange?: (value: number) => void;
         onPreviewModeChange?: (mode: "single" | "grid") => void;
         onPreviewPageChange?: (page: number) => void;
@@ -125,6 +129,7 @@ vi.mock("@/components/file-browser", () => ({
         selectedPath?: string;
         visibleFiles?: FileEntry[];
     }) => {
+        const displayedFiles = visibleFiles ?? files;
         const directoryPaths = [
             ...new Set(
                 files.map(
@@ -150,8 +155,19 @@ vi.mock("@/components/file-browser", () => ({
                 "data-preview-summary": previewSummary ?? "",
                 "data-selected-directory": selectedDirectory ?? "",
                 "data-selected-path": selectedPath ?? "",
+                "data-file-filter-value": fileFilterValue ?? "",
+                "data-tree-file-paths": files
+                    .map((file) => file.path)
+                    .join("\n"),
             },
             createElement("h2", { key: "title" }, "File Browser"),
+            createElement("input", {
+                "aria-label": "Filter files by glob",
+                key: "glob-filter",
+                onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+                    onFileFilterChange?.(event.target.value),
+                value: fileFilterValue ?? "",
+            }),
             directoryPaths.map((directoryPath) =>
                 createElement(
                     "button",
@@ -192,7 +208,7 @@ vi.mock("@/components/file-browser", () => ({
                     `collapse:${directoryPath}`,
                 ),
             ]),
-            (visibleFiles ?? files).map((file) =>
+            displayedFiles.map((file) =>
                 createElement(
                     "button",
                     {
@@ -260,7 +276,7 @@ vi.mock("@/components/file-browser", () => ({
                   )
                 : null,
             ...(previewMode === "grid"
-                ? (visibleFiles ?? files).map((file) =>
+                ? displayedFiles.map((file) =>
                       createElement(
                           "div",
                           {
@@ -330,6 +346,7 @@ afterEach(() => {
     cleanup();
     fetchMock.mockReset();
     filePreviewRenderCounts.clear();
+    window.localStorage.clear();
 });
 
 describe("O1 result detail file integration", () => {
@@ -667,6 +684,46 @@ describe("O1 result detail file integration", () => {
                 screen.getByText("preview:/tmp/results/a/report.json"),
             ).toBeTruthy();
         });
+    });
+
+    it("passes the saved filtered file list to the browser while preserving the visible filter value", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        window.localStorage.setItem(
+            "wa:file-browser:glob-filter:detail-filter-scope",
+            "*.html",
+        );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [
+                    buildFile("/tmp/results/a/report.html"),
+                    buildFile("/tmp/results/a/plot.png"),
+                ],
+                filterStorageKey: "detail-filter-scope",
+                resultId: "result-1",
+            }),
+        );
+
+        const fileBrowser = screen.getByText("File Browser").parentElement;
+
+        expect(fileBrowser?.getAttribute("data-file-filter-value")).toBe(
+            "*.html",
+        );
+        expect(fileBrowser?.getAttribute("data-tree-file-paths")).toBe(
+            "/tmp/results/a/report.html",
+        );
+        expect(
+            screen.getByRole("button", {
+                name: "/tmp/results/a/report.html",
+            }),
+        ).toBeTruthy();
+        expect(
+            screen.queryByRole("button", {
+                name: "/tmp/results/a/plot.png",
+            }),
+        ).toBeNull();
     });
 
     it("requests inline-mode previews for line-readable text files", async () => {

@@ -664,9 +664,7 @@ export function FilterBuilder({
                                     const nextValue = event.target.value;
                                     setGenericDraftValue(nextValue);
                                     setIsGenericFocused(true);
-                                    if (!nextValue.trim()) {
-                                        setGenericSuggestions([]);
-                                    }
+                                    setGenericSuggestions([]);
                                 }}
                                 onFocus={() => setIsGenericFocused(true)}
                                 className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"

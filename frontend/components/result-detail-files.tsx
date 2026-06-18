@@ -677,9 +677,10 @@ export function ResultDetailFiles({
     return (
         <FileBrowser
             activeFiles={selectedDirectoryFiles}
+            fileFilterApplied
             fileFilterValue={fileFilterValue}
             filterStorageKey={filterStorageKey}
-            files={files}
+            files={filteredFiles}
             onFileFilterChange={handleFileFilterChange}
             onPreviewHeightChange={setPreviewHeight}
             onPreviewModeChange={(nextMode) => {
@@ -776,6 +777,7 @@ export function ResultDetailFiles({
             renderSinglePreview={renderSinglePreview}
             selectedDirectory={effectiveSelectedDirectory}
             selectedPath={effectiveSelectedFile?.path}
+            unfilteredFileCount={files.length}
             visibleFiles={visiblePreviewFiles}
         />
     );
