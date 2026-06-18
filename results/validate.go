@@ -209,6 +209,14 @@ func mlwhValidationError(err error) error {
 	}
 }
 
+func validateIdentifierKind(actualKind, expectedKind mlwh.IdentifierKind) error {
+	if actualKind != expectedKind {
+		return fmt.Errorf("%w: expected %q, got %q", ErrMLWHRejected, expectedKind, actualKind)
+	}
+
+	return nil
+}
+
 // ValidateMetadata checks all seqmeta_* fields in metadata.
 func (v *MLWHValidator) ValidateMetadata(ctx context.Context, metadata map[string]string) error {
 	return v.ValidateMetadataValues(ctx, metadataValuesFromMap(metadata))
@@ -238,15 +246,42 @@ func (v *MLWHValidator) ValidateMetadataValues(ctx context.Context, metadata map
 }
 
 func (v *MLWHValidator) validateIdentifier(ctx context.Context, identifier, expectedType string) error {
-	match, err := v.q.ClassifyIdentifier(ctx, identifier)
+	expectedKind := mlwh.IdentifierKind(expectedType)
+	match, err := v.resolveExpectedIdentifier(ctx, identifier, expectedKind)
 	if err != nil {
-		return mlwhValidationError(err)
+		if !errors.Is(err, mlwh.ErrNotFound) && !errors.Is(err, mlwh.ErrUnsupportedIdentifier) {
+			return mlwhValidationError(err)
+		}
+
+		match, err = v.q.ClassifyIdentifier(ctx, identifier)
+		if err != nil {
+			return mlwhValidationError(err)
+		}
 	}
 
-	actualType := string(match.Kind)
-	if actualType != expectedType {
-		return fmt.Errorf("%w: expected %q, got %q", ErrMLWHRejected, expectedType, actualType)
-	}
+	return validateIdentifierKind(match.Kind, expectedKind)
+}
 
-	return nil
+func (v *MLWHValidator) resolveExpectedIdentifier(
+	ctx context.Context,
+	identifier string,
+	expectedKind mlwh.IdentifierKind,
+) (mlwh.Match, error) {
+	switch expectedKind {
+	case mlwh.KindRunID:
+		return v.q.ResolveRun(ctx, identifier)
+	case mlwh.KindStudyLimsID, mlwh.KindStudyAccession, mlwh.KindStudyUUID, mlwh.KindStudyName:
+		return v.q.ResolveStudy(ctx, identifier)
+	case mlwh.KindSangerSampleName:
+		return v.q.ResolveSampleName(ctx, identifier)
+	case mlwh.KindSampleUUID, mlwh.KindSampleLimsID, mlwh.KindSangerSampleID,
+		mlwh.KindSupplierName, mlwh.KindSampleAccession, mlwh.KindDonorID:
+		return v.q.ResolveSample(ctx, identifier)
+	case mlwh.KindLibraryID, mlwh.KindLibraryLimsID:
+		return v.q.ResolveLibraryIdentifier(ctx, identifier)
+	case mlwh.KindLibraryType:
+		return v.q.ResolveLibrary(ctx, identifier)
+	default:
+		return v.q.ClassifyIdentifier(ctx, identifier)
+	}
 }

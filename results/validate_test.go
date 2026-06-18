@@ -139,6 +139,41 @@ func TestMLWHValidatorValidateMetadataValues(t *testing.T) {
 		convey.So(httpClientFieldCount(validator), convey.ShouldEqual, 0)
 	})
 
+	convey.Convey("Bug 260618-3: ValidateMetadataValues validates through the expected MLWH resolver before broad classification", t, func() {
+		queryer := &mlwhValidationQueryerForTest{
+			responses: map[string]mlwhValidationResponseForTest{
+				"48522":    {match: mlwh.Match{Kind: mlwh.KindSampleLimsID}},
+				"71046409": {match: mlwh.Match{Kind: mlwh.KindSampleLimsID}},
+				"Hek_R1":   {match: mlwh.Match{Kind: mlwh.KindSangerSampleName}},
+			},
+			methodResponses: map[string]map[string]mlwhValidationResponseForTest{
+				"ResolveRun": {
+					"48522": {match: mlwh.Match{Kind: mlwh.KindRunID}},
+				},
+				"ResolveLibraryIdentifier": {
+					"71046409": {match: mlwh.Match{Kind: mlwh.KindLibraryID}},
+				},
+				"ResolveSample": {
+					"Hek_R1": {match: mlwh.Match{Kind: mlwh.KindSupplierName}},
+				},
+			},
+		}
+		validator := NewMLWHValidator(queryer)
+
+		err := validator.ValidateMetadataValues(context.Background(), map[string][]string{
+			SeqmetaIDRunKey:        {"48522"},
+			SeqmetaLibraryIDKey:    {"71046409"},
+			SeqmetaSupplierNameKey: {"Hek_R1"},
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(queryer.methodCalls, convey.ShouldResemble, []string{
+			"ResolveRun:48522",
+			"ResolveLibraryIdentifier:71046409",
+			"ResolveSample:Hek_R1",
+		})
+	})
+
 	convey.Convey("A1.2: ValidateMetadataValues rejects mismatched MLWH identifier types", t, func() {
 		queryer := &mlwhValidationQueryerForTest{
 			responses: map[string]mlwhValidationResponseForTest{
@@ -233,15 +268,74 @@ func httpClientFieldCount(validator *MLWHValidator) int {
 
 type mlwhValidationQueryerForTest struct {
 	mlwh.Queryer
-	calls     []string
-	responses map[string]mlwhValidationResponseForTest
+	calls           []string
+	methodCalls     []string
+	responses       map[string]mlwhValidationResponseForTest
+	methodResponses map[string]map[string]mlwhValidationResponseForTest
 }
 
 func (q *mlwhValidationQueryerForTest) ClassifyIdentifier(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ClassifyIdentifier", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveSample(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveSample", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveSampleName(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveSampleName", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveStudy(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveStudy", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveRun(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveRun", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveLibrary(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveLibrary", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) ResolveLibraryIdentifier(
+	ctx context.Context,
+	raw string,
+) (mlwh.Match, error) {
+	return q.responseFor(ctx, "ResolveLibraryIdentifier", raw)
+}
+
+func (q *mlwhValidationQueryerForTest) responseFor(
 	_ context.Context,
+	method string,
 	raw string,
 ) (mlwh.Match, error) {
 	q.calls = append(q.calls, raw)
+	q.methodCalls = append(q.methodCalls, method+":"+raw)
+
+	if methodResponses := q.methodResponses[method]; methodResponses != nil {
+		if response, ok := methodResponses[raw]; ok {
+			return response.match, response.err
+		}
+	}
 
 	response, ok := q.responses[raw]
 	if !ok {
