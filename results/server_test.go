@@ -2964,6 +2964,41 @@ func TestServerGetMetaKeys(t *testing.T) {
 	})
 }
 
+func TestServerGetSearchSuggestions(t *testing.T) {
+	convey.Convey("Given registered values, GET /results/search-suggestions returns typed substring matches", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-suggestion", func(reg *Registration) {
+			reg.Requester = "requester-needle-260618"
+			reg.Metadata = map[string]string{
+				"assay_tag":        "alpha-needle-260618-omega",
+				"seqmeta_sampleid": "SAMPLE-needle-260618",
+			}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/search-suggestions?q=needle-260618", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(suggestionValuesByFieldForTest(suggestions), convey.ShouldResemble, map[string][]string{
+			"meta_assay_tag": {"alpha-needle-260618-omega"},
+			"sample":         {"SAMPLE-needle-260618"},
+			"user":           {"requester-needle-260618"},
+		})
+	})
+
+	convey.Convey("GET /results/search-suggestions rejects invalid limits", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/search-suggestions?q=needle&limit=-1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, "invalid limit query parameter")
+	})
+}
+
 func TestServerDeleteResult(t *testing.T) {
 	convey.Convey("E6.1: Given a stored result set, when DELETE /results/{id} is called, then status is 204 and subsequent GET /results/{id} returns 404", t, func() {
 		store := newSQLiteStoreForTest(t)

@@ -237,6 +237,12 @@ type SearchResult struct {
 	MatchedSamples []string  `json:"matched_samples,omitempty"`
 }
 
+// SearchSuggestion is a field/value match for generic registration search.
+type SearchSuggestion struct {
+	FieldKey string `json:"field_key"`
+	Value    string `json:"value"`
+}
+
 // Store persists result sets in SQL.
 type Store struct{ db *sql.DB }
 

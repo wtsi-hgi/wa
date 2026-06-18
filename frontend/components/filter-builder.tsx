@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Check, Plus, Search, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -21,6 +21,8 @@ import {
     CommandItem,
     CommandList,
 } from "@/components/ui/command";
+import type { SearchSuggestion } from "@/lib/contracts";
+import { formatRegistrationUnique } from "@/lib/result-identity";
 import { buildSearchQuery, type SearchFilters } from "@/lib/search-params";
 import { cn } from "@/lib/utils";
 import type { Study } from "@/lib/contracts";
@@ -90,10 +92,6 @@ const permanentFieldOptions: FieldOption[] = [
     { key: "sample", label: "Sample", placeholder: "SANG001 or SMP001" },
     { key: "user", label: "Requester", placeholder: "alice" },
 ];
-
-const permanentFieldKeys = new Set(
-    permanentFieldOptions.map((option) => option.key),
-);
 
 const coreFieldOptions: FieldOption[] = [
     ...permanentFieldOptions,
@@ -173,10 +171,6 @@ function getFieldLabel(fieldOptions: FieldOption[], key: string): string {
     );
 }
 
-function getAdditionalFieldOptions(fieldOptions: FieldOption[]): FieldOption[] {
-    return fieldOptions.filter((option) => !permanentFieldKeys.has(option.key));
-}
-
 function createNextFilters(
     currentFilters: SearchFilters,
     key: string,
@@ -242,6 +236,31 @@ function getVisibleSuggestions(
         .slice(0, 8);
 }
 
+function isSearchSuggestion(value: unknown): value is SearchSuggestion {
+    if (!value || typeof value !== "object") {
+        return false;
+    }
+
+    const candidate = value as Partial<SearchSuggestion>;
+
+    return (
+        typeof candidate.field_key === "string" &&
+        typeof candidate.value === "string"
+    );
+}
+
+function suggestionFilterValue(suggestion: SearchSuggestion): string {
+    if (suggestion.field_key === "run_key") {
+        return formatRegistrationUnique(suggestion.value);
+    }
+
+    return suggestion.value;
+}
+
+function searchSuggestionsPath(query: string): string {
+    return `/api/results/search-suggestions?q=${encodeURIComponent(query)}`;
+}
+
 export function FilterBuilder({
     currentFilters,
     metaKeys,
@@ -252,21 +271,20 @@ export function FilterBuilder({
     const pathname = usePathname();
     const router = useRouter();
     const fieldOptions = getFieldOptions(metaKeys, seqmetaAvailable);
-    const additionalFieldOptions = getAdditionalFieldOptions(fieldOptions);
 
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
     const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(
         null,
     );
     const [draftValue, setDraftValue] = useState("");
-    const [permanentDraftValues, setPermanentDraftValues] = useState<
-        Record<string, string>
-    >({});
+    const [genericDraftValue, setGenericDraftValue] = useState("");
+    const [genericSuggestions, setGenericSuggestions] = useState<
+        SearchSuggestion[]
+    >([]);
+    const [isGenericFocused, setIsGenericFocused] = useState(false);
 
     const selectedField =
-        additionalFieldOptions.find(
-            (option) => option.key === selectedFieldKey,
-        ) ?? null;
+        fieldOptions.find((option) => option.key === selectedFieldKey) ?? null;
     const visibleSuggestions = getVisibleSuggestions(
         currentFilters,
         suggestionValues,
@@ -276,6 +294,50 @@ export function FilterBuilder({
     const suggestionListId = selectedFieldKey
         ? `filter-suggestions-${selectedFieldKey}`
         : undefined;
+    const visibleGenericSuggestions = genericSuggestions.slice(0, 8);
+    const showGenericSuggestions =
+        isGenericFocused &&
+        genericDraftValue.trim().length > 0 &&
+        visibleGenericSuggestions.length > 0;
+
+    useEffect(() => {
+        const trimmedValue = genericDraftValue.trim();
+        if (!trimmedValue) {
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => {
+            void fetch(searchSuggestionsPath(trimmedValue), {
+                signal: controller.signal,
+            })
+                .then((response) => (response.ok ? response.json() : []))
+                .then((payload: unknown) => {
+                    if (!Array.isArray(payload)) {
+                        setGenericSuggestions([]);
+
+                        return;
+                    }
+
+                    setGenericSuggestions(payload.filter(isSearchSuggestion));
+                })
+                .catch((error: unknown) => {
+                    if (
+                        error instanceof DOMException &&
+                        error.name === "AbortError"
+                    ) {
+                        return;
+                    }
+
+                    setGenericSuggestions([]);
+                });
+        }, 120);
+
+        return () => {
+            controller.abort();
+            window.clearTimeout(timeout);
+        };
+    }, [genericDraftValue]);
 
     function pushFilters(filters: SearchFilters) {
         const renderedQuery = buildSearchQuery(filters).toString();
@@ -295,23 +357,30 @@ export function FilterBuilder({
         setIsPopoverOpen(false);
     }
 
-    function applyPermanentFilterValue(fieldKey: string, value: string) {
-        const nextFilters = createNextFilters(currentFilters, fieldKey, value);
-        if (nextFilters === currentFilters) {
-            return;
-        }
-
-        pushFilters(nextFilters);
-        setPermanentDraftValues((currentValues) => {
-            const { [fieldKey]: _removed, ...remainingValues } = currentValues;
-
-            return remainingValues;
-        });
-    }
-
     function handleFieldSelect(fieldKey: string) {
         setSelectedFieldKey(fieldKey);
         setDraftValue("");
+    }
+
+    function applyGenericSuggestion(suggestion: SearchSuggestion) {
+        applyFilterValue(
+            suggestion.field_key,
+            suggestionFilterValue(suggestion),
+        );
+        setGenericDraftValue("");
+        setGenericSuggestions([]);
+        setIsGenericFocused(false);
+    }
+
+    function handleGenericSearchSubmit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (visibleGenericSuggestions.length === 1) {
+            applyGenericSuggestion(visibleGenericSuggestions[0]);
+
+            return;
+        }
+
+        setIsGenericFocused(true);
     }
 
     function handleAddFilter(event: FormEvent<HTMLFormElement>) {
@@ -325,17 +394,6 @@ export function FilterBuilder({
         }
 
         applyFilterValue(selectedField.key, draftValue);
-    }
-
-    function handlePermanentFilterSubmit(
-        event: FormEvent<HTMLFormElement>,
-        fieldKey: string,
-    ) {
-        event.preventDefault();
-        applyPermanentFilterValue(
-            fieldKey,
-            permanentDraftValues[fieldKey] ?? "",
-        );
     }
 
     return (
@@ -368,7 +426,7 @@ export function FilterBuilder({
                             className={boxTitleActionClass}
                         >
                             <Plus className="size-4" />
-                            Add filter
+                            Add specific field to filter
                         </button>
 
                         {isPopoverOpen ? (
@@ -389,46 +447,42 @@ export function FilterBuilder({
                                                 No matching fields.
                                             </CommandEmpty>
                                             <CommandGroup>
-                                                {additionalFieldOptions.map(
-                                                    (field) => {
-                                                        const isSelected =
-                                                            field.key ===
-                                                            selectedFieldKey;
+                                                {fieldOptions.map((field) => {
+                                                    const isSelected =
+                                                        field.key ===
+                                                        selectedFieldKey;
 
-                                                        return (
-                                                            <CommandItem
-                                                                key={field.key}
-                                                                aria-label={
-                                                                    field.label
-                                                                }
-                                                                className="flex w-full items-center justify-between gap-3 text-left"
-                                                                data-filter-field-option={
-                                                                    field.key
-                                                                }
-                                                                value={`${field.label} ${field.key}`}
-                                                                onSelect={() =>
-                                                                    handleFieldSelect(
-                                                                        field.key,
-                                                                    )
-                                                                }
-                                                            >
-                                                                <span className="font-medium text-foreground">
-                                                                    {
-                                                                        field.label
-                                                                    }
-                                                                </span>
-                                                                <Check
-                                                                    className={cn(
-                                                                        "ml-auto size-4 text-primary",
-                                                                        isSelected
-                                                                            ? "opacity-100"
-                                                                            : "opacity-0",
-                                                                    )}
-                                                                />
-                                                            </CommandItem>
-                                                        );
-                                                    },
-                                                )}
+                                                    return (
+                                                        <CommandItem
+                                                            key={field.key}
+                                                            aria-label={
+                                                                field.label
+                                                            }
+                                                            className="flex w-full items-center justify-between gap-3 text-left"
+                                                            data-filter-field-option={
+                                                                field.key
+                                                            }
+                                                            value={`${field.label} ${field.key}`}
+                                                            onSelect={() =>
+                                                                handleFieldSelect(
+                                                                    field.key,
+                                                                )
+                                                            }
+                                                        >
+                                                            <span className="font-medium text-foreground">
+                                                                {field.label}
+                                                            </span>
+                                                            <Check
+                                                                className={cn(
+                                                                    "ml-auto size-4 text-primary",
+                                                                    isSelected
+                                                                        ? "opacity-100"
+                                                                        : "opacity-0",
+                                                                )}
+                                                            />
+                                                        </CommandItem>
+                                                    );
+                                                })}
                                             </CommandGroup>
                                         </CommandList>
                                         <div
@@ -516,9 +570,7 @@ export function FilterBuilder({
                                                 </form>
                                             ) : (
                                                 <p className="text-sm leading-6 text-muted-foreground">
-                                                    Choose a field, then enter a
-                                                    value to append it to the
-                                                    current search.
+                                                    No field selected.
                                                 </p>
                                             )}
                                         </div>
@@ -530,88 +582,98 @@ export function FilterBuilder({
                 </div>
 
                 <div className="flex flex-col gap-4">
-                    <div
-                        data-search-builder-permanent-fields="true"
-                        className="grid grid-cols-[repeat(auto-fit,minmax(min(7rem,100%),1fr))] gap-3"
+                    <form
+                        className="relative"
+                        onSubmit={handleGenericSearchSubmit}
                     >
-                        {permanentFieldOptions.map((field) => {
-                            const fieldInputId = `permanent-filter-${field.key}`;
-                            const fieldDraftValue =
-                                permanentDraftValues[field.key] ?? "";
-                            const fieldSuggestions = getVisibleSuggestions(
-                                currentFilters,
-                                suggestionValues,
-                                field.key,
-                                fieldDraftValue,
-                            );
-                            const fieldSuggestionListId = `filter-suggestions-${field.key}`;
-
-                            return (
-                                <form
-                                    key={field.key}
-                                    className="min-w-0 space-y-1.5"
-                                    onSubmit={(event) =>
-                                        handlePermanentFilterSubmit(
-                                            event,
-                                            field.key,
-                                        )
+                        <label
+                            htmlFor="generic-all-field-search"
+                            className="sr-only"
+                        >
+                            Generic all-field search
+                        </label>
+                        <div className="flex h-11 min-w-0 overflow-hidden rounded-xl border border-border bg-background transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
+                            <div className="flex w-11 shrink-0 items-center justify-center text-muted-foreground">
+                                <Search className="size-4" aria-hidden="true" />
+                            </div>
+                            <input
+                                aria-label="Generic all-field search"
+                                data-generic-search-input="true"
+                                id="generic-all-field-search"
+                                value={genericDraftValue}
+                                onBlur={() => {
+                                    window.setTimeout(
+                                        () => setIsGenericFocused(false),
+                                        100,
+                                    );
+                                }}
+                                onChange={(event) => {
+                                    const nextValue = event.target.value;
+                                    setGenericDraftValue(nextValue);
+                                    setIsGenericFocused(true);
+                                    if (!nextValue.trim()) {
+                                        setGenericSuggestions([]);
                                     }
-                                >
-                                    <label
-                                        htmlFor={fieldInputId}
-                                        className="block truncate text-xs font-semibold text-muted-foreground"
-                                    >
-                                        {field.label}
-                                    </label>
-                                    <div className="flex h-10 min-w-0 overflow-hidden rounded-xl border border-border bg-background transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
-                                        <input
-                                            data-permanent-filter-input={
-                                                field.key
-                                            }
-                                            id={fieldInputId}
-                                            list={fieldSuggestionListId}
-                                            value={fieldDraftValue}
-                                            onChange={(event) =>
-                                                setPermanentDraftValues(
-                                                    (currentValues) => ({
-                                                        ...currentValues,
-                                                        [field.key]:
-                                                            event.target.value,
-                                                    }),
+                                }}
+                                onFocus={() => setIsGenericFocused(true)}
+                                className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
+                            />
+                            <button
+                                type="submit"
+                                aria-label="Add generic search match"
+                                title="Add generic search match"
+                                className="relative -my-px flex h-11 w-11 shrink-0 items-center justify-center bg-card text-foreground transition before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border before:content-[''] hover:bg-accent/35"
+                            >
+                                <Plus className="size-4" />
+                            </button>
+                        </div>
+                        {showGenericSuggestions ? (
+                            <div
+                                data-generic-search-suggestions="true"
+                                role="listbox"
+                                className="absolute left-0 right-0 z-40 mt-2 overflow-hidden rounded-xl border border-border/80 bg-popover p-1 text-popover-foreground shadow-[0_24px_72px_-48px_rgba(28,40,58,0.72)]"
+                            >
+                                {visibleGenericSuggestions.map((suggestion) => {
+                                    const value =
+                                        suggestionFilterValue(suggestion);
+                                    const label = getFieldLabel(
+                                        fieldOptions,
+                                        suggestion.field_key,
+                                    );
+
+                                    return (
+                                        <button
+                                            key={`${suggestion.field_key}:${suggestion.value}`}
+                                            type="button"
+                                            role="option"
+                                            aria-selected="false"
+                                            aria-label={`Add ${label} filter ${value}`}
+                                            onClick={() =>
+                                                applyGenericSuggestion(
+                                                    suggestion,
                                                 )
                                             }
-                                            className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
-                                        />
-                                        <button
-                                            type="submit"
-                                            aria-label={`Add ${field.label} filter`}
-                                            title={`Add ${field.label} filter`}
-                                            className="relative -my-px flex h-10 w-10 shrink-0 items-center justify-center bg-card text-foreground transition before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border before:content-[''] hover:bg-accent/35"
+                                            onMouseDown={(event) =>
+                                                event.preventDefault()
+                                            }
+                                            className="flex min-h-10 w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-accent/45"
                                         >
-                                            <Plus className="size-4" />
+                                            <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                                                {value}
+                                            </span>
+                                            <span className="shrink-0 rounded-full border border-border/70 bg-background px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                                                {label}
+                                            </span>
                                         </button>
-                                    </div>
-                                    {fieldSuggestions.length > 0 ? (
-                                        <datalist id={fieldSuggestionListId}>
-                                            {fieldSuggestions.map(
-                                                (suggestion) => (
-                                                    <option
-                                                        key={suggestion}
-                                                        value={suggestion}
-                                                    />
-                                                ),
-                                            )}
-                                        </datalist>
-                                    ) : null}
-                                </form>
-                            );
-                        })}
-                    </div>
+                                    );
+                                })}
+                            </div>
+                        ) : null}
+                    </form>
 
                     {Object.keys(currentFilters).length === 0 ? (
                         <div className="rounded-2xl border border-dashed border-border/80 bg-muted/35 px-4 py-5 text-sm text-muted-foreground">
-                            No filters applied. Use the permanent fields above,
-                            or add another filter.
+                            No filters applied.
                         </div>
                     ) : (
                         <div className="flex flex-wrap gap-3">

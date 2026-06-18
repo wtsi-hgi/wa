@@ -204,26 +204,35 @@ async function collectTitleTreatmentMetric(
     );
 }
 
-async function collectPermanentSearchLabels(page: Page): Promise<string[]> {
-    return page.evaluate(() =>
-        Array.from(
-            document.querySelectorAll(
-                '[data-search-builder-permanent-fields="true"] label',
-            ),
-        ).map((label) => label.textContent?.trim() ?? ""),
-    );
+async function collectSpecificFilterLabels(page: Page): Promise<string[]> {
+    const searchBuilder = page.locator('[data-search-builder="true"]');
+    const trigger = searchBuilder.getByRole("button", {
+        name: /add specific field to filter/i,
+    });
+
+    await trigger.click();
+    const labels = await searchBuilder
+        .locator("[data-filter-field-option]")
+        .evaluateAll((elements) =>
+            elements.map((element) => element.textContent?.trim() ?? ""),
+        );
+    await trigger.click();
+
+    return labels;
 }
 
 async function collectSearchInputMetrics(page: Page): Promise<{
     additional: FilterInputMetric[];
+    generic: FilterInputMetric | null;
     permanent: FilterInputMetric[];
 }> {
     return page.evaluate(() => {
         const toMetric = (input: HTMLInputElement): FilterInputMetric => ({
-            key:
-                input.dataset.permanentFilterInput ??
-                input.dataset.filterValueInput ??
-                "",
+            key: input.dataset.genericSearchInput
+                ? "generic"
+                : (input.dataset.permanentFilterInput ??
+                  input.dataset.filterValueInput ??
+                  ""),
             list: input.getAttribute("list"),
             placeholder: input.getAttribute("placeholder"),
             value: input.value,
@@ -235,6 +244,15 @@ async function collectSearchInputMetrics(page: Page): Promise<{
                     "[data-filter-value-input]",
                 ),
             ).map(toMetric),
+            generic: document.querySelector<HTMLInputElement>(
+                '[data-generic-search-input="true"]',
+            )
+                ? toMetric(
+                      document.querySelector<HTMLInputElement>(
+                          '[data-generic-search-input="true"]',
+                      ) as HTMLInputElement,
+                  )
+                : null,
             permanent: Array.from(
                 document.querySelectorAll<HTMLInputElement>(
                     "[data-permanent-filter-input]",
@@ -430,13 +448,39 @@ async function addRequesterFilter(
     page: Page,
     requester: string,
 ): Promise<void> {
+    await addSpecificSearchFilter(page, "Requester", requester);
+}
+
+async function selectSpecificSearchField(
+    page: Page,
+    label: string,
+): Promise<Locator> {
     const searchBuilder = page.locator('[data-search-builder="true"]');
 
     await expect(searchBuilder).toBeVisible();
-    await searchBuilder.getByLabel(/^requester$/i).fill(requester);
     await searchBuilder
-        .getByRole("button", { name: /add requester filter/i })
+        .getByRole("button", { name: /add specific field to filter/i })
         .click();
+    await page
+        .getByRole("option", { name: new RegExp(`^${label}$`, "i") })
+        .click();
+
+    const input = page.getByLabel(new RegExp(`${label} value`, "i"));
+
+    await expect(input).toBeVisible();
+
+    return input;
+}
+
+async function addSpecificSearchFilter(
+    page: Page,
+    label: string,
+    value: string,
+): Promise<void> {
+    const input = await selectSpecificSearchField(page, label);
+
+    await input.fill(value);
+    await page.getByRole("button", { name: /^add$/i }).click();
 }
 
 async function openResultDetail(
@@ -857,7 +901,7 @@ test.describe("Q1 critical results flows", () => {
             '[data-file-browser="true"]',
             "File Browser",
         );
-        const permanentLabels = await collectPermanentSearchLabels(page);
+        const specificFilterLabels = await collectSpecificFilterLabels(page);
 
         await page
             .locator("main")
@@ -883,7 +927,7 @@ test.describe("Q1 critical results flows", () => {
             fileBrowserMetric.icon.height,
             1,
         );
-        expect(permanentLabels).toEqual([
+        expect(specificFilterLabels.slice(0, 5)).toEqual([
             "Pipeline name",
             "Unique",
             "Study",
@@ -891,7 +935,7 @@ test.describe("Q1 critical results flows", () => {
             "Requester",
         ]);
         expect(
-            permanentLabels.filter((label) => /\bvalue\b/i.test(label)),
+            specificFilterLabels.filter((label) => /\bvalue\b/i.test(label)),
         ).toEqual([]);
 
         await page.goto("/");
@@ -972,7 +1016,7 @@ test.describe("Q1 critical results flows", () => {
 
         const search = await collectTitleSectionGeometryMetric(page, {
             boxSelector: '[data-search-builder="true"]',
-            contentSelector: '[data-search-builder-permanent-fields="true"]',
+            contentSelector: '[data-generic-search-input="true"]',
             title: "Search",
             titleSectionSelector:
                 '[data-search-builder="true"] > div > div:first-child',
@@ -1093,7 +1137,7 @@ test.describe("Q1 critical results flows", () => {
         );
     });
 
-    test("does not show suggested values in empty permanent or add-filter inputs", async ({
+    test("does not show suggested values in empty generic or add-filter inputs", async ({
         page,
     }) => {
         const screenshotPath = path.join(
@@ -1114,7 +1158,9 @@ test.describe("Q1 critical results flows", () => {
             searchBuilder.getByRole("button", { name: /nf-core\/rnaseq/i }),
         ).toBeVisible();
 
-        await searchBuilder.getByRole("button", { name: "Add filter" }).click();
+        await searchBuilder
+            .getByRole("button", { name: /add specific field to filter/i })
+            .click();
         await page.getByRole("option", { name: /^library$/i }).click();
         await expect(page.getByLabel(/library value/i)).toBeVisible();
 
@@ -1125,34 +1171,13 @@ test.describe("Q1 critical results flows", () => {
             path: screenshotPath,
         });
 
-        expect(metrics.permanent.map((metric) => metric.key)).toEqual([
-            "pipeline_name",
-            "run_key",
-            "study",
-            "sample",
-            "user",
-        ]);
-        expect(metrics.permanent.map((metric) => metric.value)).toEqual([
-            "",
-            "",
-            "",
-            "",
-            "",
-        ]);
-        expect(metrics.permanent.map((metric) => metric.placeholder)).toEqual([
-            null,
-            null,
-            null,
-            null,
-            null,
-        ]);
-        expect(metrics.permanent.map((metric) => metric.list)).toEqual([
-            "filter-suggestions-pipeline_name",
-            "filter-suggestions-run_key",
-            "filter-suggestions-study",
-            "filter-suggestions-sample",
-            "filter-suggestions-user",
-        ]);
+        expect(metrics.generic).toEqual({
+            key: "generic",
+            list: null,
+            placeholder: null,
+            value: "",
+        });
+        expect(metrics.permanent).toEqual([]);
         expect(metrics.additional).toEqual([
             {
                 key: "library",
@@ -1176,7 +1201,7 @@ test.describe("Q1 critical results flows", () => {
         await page.goto("/");
 
         const addFilterButton = page.getByRole("button", {
-            name: "Add filter",
+            name: "Add specific field to filter",
         });
         const columnsButton = page.getByRole("button", {
             name: "Toggle column visibility",
@@ -1212,9 +1237,7 @@ test.describe("Q1 critical results flows", () => {
             columnsMetric.icon.height,
             1,
         );
-        expect(
-            Math.abs(addFilterMetric.width - columnsMetric.width),
-        ).toBeLessThanOrEqual(12);
+        expect(addFilterMetric.width).toBeGreaterThan(columnsMetric.width);
 
         await addFilterButton.click();
         await expect(

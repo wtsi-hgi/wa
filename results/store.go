@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -95,6 +96,22 @@ CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value
 const createResultMetadataMetaKeyValueIndexMySQLSQL = `
 CREATE INDEX idx_result_metadata_meta_key_value
 	ON result_metadata(meta_key, value(255));`
+
+type searchSuggestionSource struct {
+	fieldKey string
+	column   string
+	order    int
+}
+
+var searchSuggestionSources = []searchSuggestionSource{
+	{fieldKey: "pipeline_name", column: "pipeline_name", order: 10},
+	{fieldKey: "run_key", column: "run_key", order: 20},
+	{fieldKey: "user", column: "requester", order: 30},
+	{fieldKey: "operator", column: "operator", order: 40},
+	{fieldKey: "pipeline_version", column: "pipeline_version", order: 50},
+	{fieldKey: "pipeline_identifier", column: "pipeline_identifier", order: 60},
+	{fieldKey: "output_dir_prefix", column: "output_directory", order: 70},
+}
 
 // OutputDirectoryGID returns the Unix group ID for an output directory.
 func OutputDirectoryGID(path string) (*int64, error) {
@@ -309,6 +326,20 @@ func isMissingPrimaryKeyError(err error) bool {
 		strings.Contains(message, "check that column/key exists") ||
 		strings.Contains(message, "no such index") ||
 		strings.Contains(message, "does not exist")
+}
+
+func appendSearchSuggestionQueryPart(parts []string, args []any, source searchSuggestionSource, term string) ([]string, []any) {
+	parts = append(parts, fmt.Sprintf(
+		`SELECT %d AS field_order, ? AS field_key, %s AS match_value
+		 FROM result_sets
+		 WHERE instr(lower(%s), lower(?)) > 0`,
+		source.order,
+		source.column,
+		source.column,
+	))
+	args = append(args, source.fieldKey, term)
+
+	return parts, args
 }
 
 // NewStore enables foreign keys and creates the SQL schema on demand.
@@ -1072,25 +1103,18 @@ func appendMultiMetadataSearchFilters(filters []string, args []any, metadata map
 			continue
 		}
 
-		if len(values) == 1 {
-			filters = append(filters, `EXISTS (
-				SELECT 1 FROM result_metadata rm
-				WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value = ?
-			)`)
-			args = append(args, key, values[0])
-
-			continue
+		filterArgs := []any{key}
+		valueClauses := make([]string, 0, len(values))
+		for _, value := range values {
+			valueClauses = append(valueClauses, "instr(lower(rm.value), lower(?)) > 0")
+			filterArgs = append(filterArgs, value)
 		}
-		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
+
 		filters = append(filters, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM result_metadata rm
-			WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value IN (%s)
-		)`, placeholders))
-		args = append(args, key)
-
-		for _, value := range values {
-			args = append(args, value)
-		}
+			WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND (%s)
+		)`, strings.Join(valueClauses, " OR ")))
+		args = append(args, filterArgs...)
 	}
 
 	return filters, args
@@ -1122,20 +1146,13 @@ func appendOrMetaSearchFilter(filters []string, args []any, orMeta []map[string]
 				continue
 			}
 
-			if len(values) == 1 {
-				clauses = append(clauses, `EXISTS (SELECT 1 FROM result_metadata rm WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value = ?)`)
-				args = append(args, key, values[0])
-
-				continue
-			}
-
-			placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
-			clauses = append(clauses, fmt.Sprintf(`EXISTS (SELECT 1 FROM result_metadata rm WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value IN (%s))`, placeholders))
+			valueClauses := make([]string, 0, len(values))
 			args = append(args, key)
-
-			for _, v := range values {
-				args = append(args, v)
+			for _, value := range values {
+				valueClauses = append(valueClauses, "instr(lower(rm.value), lower(?)) > 0")
+				args = append(args, value)
 			}
+			clauses = append(clauses, fmt.Sprintf(`EXISTS (SELECT 1 FROM result_metadata rm WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND (%s))`, strings.Join(valueClauses, " OR ")))
 		}
 	}
 
@@ -1199,6 +1216,35 @@ func expandRunKeySearchValues(values []string) []string {
 	}
 
 	return expanded
+}
+
+func searchSuggestionFieldKey(rawFieldKey string) string {
+	for _, source := range searchSuggestionSources {
+		if rawFieldKey == source.fieldKey {
+			return rawFieldKey
+		}
+	}
+
+	switch {
+	case slices.Contains(combinedStudyMetaKeys, rawFieldKey):
+		return "study"
+	case slices.Contains(combinedSampleMetaKeys, rawFieldKey):
+		return "sample"
+	case slices.Contains(libraryTypeMetaKeys, rawFieldKey):
+		return "library"
+	case slices.Contains(libraryIDMetaKeys, rawFieldKey):
+		return SeqmetaLibraryIDKey
+	case slices.Contains(libraryLimsMetaKeys, rawFieldKey):
+		return SeqmetaIDLibraryLimsKey
+	case slices.Contains(combinedRunMetaKeys, rawFieldKey):
+		return "run"
+	case slices.Contains(combinedLaneMetaKeys, rawFieldKey):
+		return rawFieldKey
+	case strings.HasPrefix(rawFieldKey, "seqmeta_"):
+		return rawFieldKey
+	default:
+		return "meta_" + rawFieldKey
+	}
 }
 
 func multiSearchParamsFromSingle(params SearchParams) MultiSearchParams {
@@ -1357,6 +1403,75 @@ func (s *Store) SearchMulti(ctx context.Context, params MultiSearchParams) ([]Re
 	filters, args = appendOrMetaSearchFilter(filters, args, params.OrMeta)
 
 	return querySearchResults(ctx, conn, filters, args)
+}
+
+// SearchSuggestions returns field/value substring matches from registered result data.
+func (s *Store) SearchSuggestions(ctx context.Context, query string, limit int) ([]SearchSuggestion, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
+	}
+
+	term := strings.TrimSpace(query)
+	if term == "" || limit <= 0 {
+		return []SearchSuggestion{}, nil
+	}
+
+	queryParts := make([]string, 0, len(searchSuggestionSources)+1)
+	args := make([]any, 0, len(searchSuggestionSources)*2+2)
+	for _, source := range searchSuggestionSources {
+		queryParts, args = appendSearchSuggestionQueryPart(queryParts, args, source, term)
+	}
+
+	queryParts = append(queryParts, `SELECT 100 AS field_order, meta_key AS field_key, value AS match_value
+		FROM result_metadata
+		WHERE instr(lower(value), lower(?)) > 0`)
+	args = append(args, term, limit*4)
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		fmt.Sprintf(`SELECT field_key, match_value
+			FROM (%s) matches
+			WHERE match_value <> ''
+			GROUP BY field_key, match_value
+			ORDER BY MIN(field_order), lower(match_value)
+			LIMIT ?`, strings.Join(queryParts, " UNION ALL ")),
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query search suggestions: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	suggestions := []SearchSuggestion{}
+	seen := map[SearchSuggestion]struct{}{}
+	for rows.Next() {
+		var rawFieldKey string
+		var value string
+		if err := rows.Scan(&rawFieldKey, &value); err != nil {
+			return nil, fmt.Errorf("scan search suggestion: %w", err)
+		}
+
+		suggestion := SearchSuggestion{
+			FieldKey: searchSuggestionFieldKey(rawFieldKey),
+			Value:    value,
+		}
+		if _, ok := seen[suggestion]; ok {
+			continue
+		}
+
+		seen[suggestion] = struct{}{}
+		suggestions = append(suggestions, suggestion)
+		if len(suggestions) >= limit {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate search suggestions: %w", err)
+	}
+
+	return suggestions, nil
 }
 
 // DistinctMetadataValues returns sorted distinct metadata values for any of the supplied keys.

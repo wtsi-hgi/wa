@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -785,6 +786,26 @@ func TestStoreSearch(t *testing.T) {
 		convey.So(results[0].Metadata, convey.ShouldResemble, map[string]string{"library": "exon", "study": "alpha"})
 	})
 
+	convey.Convey("Given a result set with a longer metadata value, when Search is filtered by a substring, then it returns the matching registration", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-substring-match", func(reg *Registration) {
+			reg.Metadata = map[string]string{"assay_tag": "alpha-needle-260618-omega", "study": "alpha"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-substring-other", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Metadata = map[string]string{"assay_tag": "alpha-unrelated-omega", "study": "alpha"}
+		}))
+
+		results, err := store.Search(ctx, SearchParams{Meta: map[string]string{"assay_tag": "needle-260618"}})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-substring-match")
+		convey.So(results[0].Metadata["assay_tag"], convey.ShouldEqual, "alpha-needle-260618-omega")
+	})
+
 	convey.Convey("C4.3: Given result sets with output directories /a/b/c and /a/d/e, when Search is filtered by output directory prefix /a/b, then it returns 1 result set", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()
@@ -1066,6 +1087,59 @@ func TestStoreSearchMulti(t *testing.T) {
 		convey.So(runKeys, convey.ShouldContain, "run-study-tag")
 		convey.So(runKeys, convey.ShouldContain, "run-sample-tag")
 	})
+}
+
+func TestStoreSearchSuggestions(t *testing.T) {
+	convey.Convey("Given registered scalar and metadata values, SearchSuggestions returns typed substring matches from the registration database", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-generic-search", func(reg *Registration) {
+			reg.Requester = "requester-needle-260618"
+			reg.Metadata = map[string]string{
+				"assay_tag":        "alpha-needle-260618-omega",
+				"seqmeta_sampleid": "SAMPLE-needle-260618",
+			}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-generic-other", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Requester = "requester-unrelated"
+			reg.Metadata = map[string]string{"assay_tag": "alpha-unrelated-omega"}
+		}))
+
+		suggestions, err := store.SearchSuggestions(ctx, "needle-260618", 10)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(suggestions, convey.ShouldHaveLength, 3)
+		convey.So(suggestionValuesByFieldForTest(suggestions), convey.ShouldResemble, map[string][]string{
+			"meta_assay_tag": {"alpha-needle-260618-omega"},
+			"sample":         {"SAMPLE-needle-260618"},
+			"user":           {"requester-needle-260618"},
+		})
+	})
+
+	convey.Convey("SearchSuggestions returns an empty slice for a blank query", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		suggestions, err := store.SearchSuggestions(context.Background(), "   ", 10)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(suggestions, convey.ShouldResemble, []SearchSuggestion{})
+	})
+}
+
+func suggestionValuesByFieldForTest(suggestions []SearchSuggestion) map[string][]string {
+	valuesByField := map[string][]string{}
+
+	for _, suggestion := range suggestions {
+		valuesByField[suggestion.FieldKey] = append(valuesByField[suggestion.FieldKey], suggestion.Value)
+	}
+
+	for key := range valuesByField {
+		sort.Strings(valuesByField[key])
+	}
+
+	return valuesByField
 }
 
 func TestStoreGet(t *testing.T) {

@@ -208,6 +208,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 		router.GET(gas.EndPointREST+"/results", s.handleGetResults)
 		router.GET(gas.EndPointREST+"/results/stats", s.handleGetStats)
 		router.GET(gas.EndPointREST+"/results/meta-keys", s.handleGetMetaKeys)
+		router.GET(gas.EndPointREST+"/results/search-suggestions", s.handleGetSearchSuggestions)
 		router.GET(gas.EndPointREST+"/results/:id/file", s.handleGetFile)
 		router.GET(gas.EndPointREST+"/results/:id/files", s.handleGetResultFiles)
 		router.GET(gas.EndPointREST+"/results/:id", s.handleGetResultByID)
@@ -218,6 +219,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 		auth.POST("/logout", s.handlePostLogout)
 		auth.GET("/results", s.handleGetResults)
 		auth.GET("/results/stats", s.handleGetStats)
+		auth.GET("/results/search-suggestions", s.handleGetSearchSuggestions)
 		auth.POST("/results", s.handlePostResults)
 		auth.GET("/results/:id/file", s.handleGetFile)
 		auth.GET("/results/:id/files", s.handleGetResultFiles)
@@ -1089,6 +1091,33 @@ func (s *Server) handleGetMetaKeys(c *gin.Context) {
 	}
 
 	writeJSON(c, http.StatusOK, keys)
+}
+
+func (s *Server) handleGetSearchSuggestions(c *gin.Context) {
+	if s == nil || s.store == nil {
+		writeServerError(c, http.StatusInternalServerError, "server store is not configured")
+
+		return
+	}
+
+	limit, err := nonNegativeIntQueryValue(c.Request, "limit", 20)
+	if err != nil {
+		writeServerError(c, http.StatusBadRequest, err.Error())
+
+		return
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	suggestions, err := s.store.SearchSuggestions(c.Request.Context(), c.Query("q"), limit)
+	if err != nil {
+		writeDomainError(c, err)
+
+		return
+	}
+
+	writeJSON(c, http.StatusOK, suggestions)
 }
 
 func (s *Server) handleGetResultByID(c *gin.Context) {
