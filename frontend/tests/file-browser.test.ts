@@ -9,6 +9,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "@/lib/contracts";
 import { previewFileTypeOptions } from "@/lib/preview-file-types";
 
+const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
+    toastErrorMock: vi.fn(),
+    toastSuccessMock: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+    toast: {
+        error: toastErrorMock,
+        success: toastSuccessMock,
+    },
+}));
+
 function buildFile(
     path: string,
     kind: FileEntry["kind"],
@@ -49,6 +61,8 @@ describe("N1 file browser", () => {
             root.unmount();
         });
         container.remove();
+        vi.clearAllMocks();
+        vi.unstubAllGlobals();
     });
 
     it("renders a single tree-view pane with expandable directory rows", async () => {
@@ -957,6 +971,75 @@ describe("N1 file browser", () => {
         );
 
         expect(handleSelectFile).toHaveBeenCalledWith(file);
+    });
+
+    it("copies full file and directory paths without selecting or expanding rows", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
+        const handleSelectDirectory = vi.fn();
+        const handleSelectFile = vi.fn();
+        const file = buildFile("/results/root/report.txt", "output");
+        const nestedFile = buildFile(
+            "/results/root/nested/table.tsv",
+            "output",
+        );
+
+        vi.stubGlobal("navigator", {
+            clipboard: {
+                writeText: writeTextMock,
+            },
+        });
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [file, nestedFile],
+                    onSelectDirectory: handleSelectDirectory,
+                    onSelectFile: handleSelectFile,
+                }),
+            );
+        });
+
+        handleSelectDirectory.mockClear();
+        handleSelectFile.mockClear();
+
+        const fileRow = container.querySelector(
+            '[data-file-path="/results/root/report.txt"]',
+        );
+        const directoryButton = container.querySelector(
+            'button[data-directory-path="/results/root/nested"]',
+        );
+        const directoryCopyButton = container.querySelector(
+            '[aria-label="Copy directory full path /results/root/nested"]',
+        );
+        const fileCopyButton = fileRow?.querySelector(
+            '[aria-label="Copy file full path /results/root/report.txt"]',
+        );
+
+        expect(fileRow).toBeTruthy();
+        expect(directoryButton).toBeTruthy();
+        expect(fileCopyButton).toBeTruthy();
+        expect(directoryCopyButton).toBeTruthy();
+        expect(fileCopyButton).not.toBe(fileRow);
+        expect(directoryCopyButton).not.toBe(directoryButton);
+        expect(directoryButton?.getAttribute("data-directory-expanded")).toBe(
+            "false",
+        );
+
+        await click(directoryCopyButton);
+
+        expect(writeTextMock).toHaveBeenCalledWith("/results/root/nested");
+        expect(handleSelectDirectory).not.toHaveBeenCalled();
+        expect(directoryButton?.getAttribute("data-directory-expanded")).toBe(
+            "false",
+        );
+
+        await click(fileCopyButton);
+
+        expect(writeTextMock).toHaveBeenCalledWith("/results/root/report.txt");
+        expect(handleSelectFile).not.toHaveBeenCalled();
+        expect(toastSuccessMock).toHaveBeenCalledWith("Path copied");
+        expect(toastErrorMock).not.toHaveBeenCalled();
     });
 
     it("renders human-readable file sizes", async () => {
@@ -3006,11 +3089,15 @@ describe("N1 file browser", () => {
         const cardAFilename = rowA?.querySelector(
             '[data-subdir-preview-filename="/demo/sample-a/img-1.png"]',
         );
+        const cardACopyPathControl = cardA?.querySelector(
+            '[aria-label="Copy file full path /demo/sample-a/img-1.png"]',
+        );
 
         expect(galleryStripA).toBeTruthy();
         expect(rowAHeading).toBeTruthy();
         expect(cardA).toBeTruthy();
         expect(cardAFilename?.textContent).toBe("img-1.png");
+        expect(cardACopyPathControl).toBeTruthy();
         expect(rowA?.className).not.toMatch(/lg:grid-cols-\[/);
         expect(galleryStripA?.className).toMatch(/(?:^|\s)flex/);
         expect(galleryStripA?.className).toMatch(/(?:^|\s)w-full/);

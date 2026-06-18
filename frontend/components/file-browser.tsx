@@ -18,11 +18,13 @@ import {
 import {
     ChevronDown,
     ChevronRight,
+    Copy,
     Eye,
     FolderTree,
     ListFilter,
     Save,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import {
     boxPanelInsetClass,
@@ -663,6 +665,97 @@ function fileName(path: string): string {
     return path.split("/").pop() ?? path;
 }
 
+function fallbackCopyText(value: string): boolean {
+    if (
+        typeof document === "undefined" ||
+        typeof document.execCommand !== "function"
+    ) {
+        return false;
+    }
+
+    const textarea = document.createElement("textarea");
+
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+        return document.execCommand("copy");
+    } finally {
+        document.body.removeChild(textarea);
+    }
+}
+
+async function copyText(value: string): Promise<boolean> {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(value);
+            return true;
+        } catch {
+            return fallbackCopyText(value);
+        }
+    }
+
+    return fallbackCopyText(value);
+}
+
+function CopyPathControl({
+    kind,
+    path,
+}: {
+    kind: "directory" | "file";
+    path: string;
+}) {
+    const handleCopy = async () => {
+        const copied = await copyText(path);
+
+        if (copied) {
+            toast.success("Path copied");
+            return;
+        }
+
+        toast.error("Could not copy path");
+    };
+    const handleClick = (event: ReactMouseEvent<HTMLSpanElement>): void => {
+        event.preventDefault();
+        event.stopPropagation();
+        void handleCopy();
+    };
+    const handleKeyDown = (
+        event: ReactKeyboardEvent<HTMLSpanElement>,
+    ): void => {
+        event.stopPropagation();
+
+        if (event.key !== "Enter" && event.key !== " ") {
+            return;
+        }
+
+        event.preventDefault();
+        void handleCopy();
+    };
+
+    return (
+        <span
+            aria-label={`Copy ${kind} full path ${path}`}
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+            data-copy-path-control={kind}
+            onClick={handleClick}
+            onKeyDown={handleKeyDown}
+            role="button"
+            tabIndex={0}
+            title="Copy full path"
+        >
+            <Copy className="size-3.5" aria-hidden="true" />
+        </span>
+    );
+}
+
 function directoryLabel(path: string): string {
     return path === "/" ? "/" : path.slice(1);
 }
@@ -1288,9 +1381,12 @@ export function FileBrowser({
         compact = false,
         style?: CSSProperties,
     ) => {
+        const name = fileName(file.path);
+
         return (
             <button
                 type="button"
+                aria-label={`Select file ${name}`}
                 key={file.path}
                 className={cn(
                     activeDesign.fileButtonBaseClass,
@@ -1316,8 +1412,16 @@ export function FileBrowser({
                     {file.kind.slice(0, 1)}
                 </span>
                 <span className="min-w-0 flex-1">
-                    <span className={activeDesign.fileNameClass}>
-                        {fileName(file.path)}
+                    <span className="flex min-w-0 items-center gap-1.5">
+                        <span
+                            className={cn(
+                                activeDesign.fileNameClass,
+                                "min-w-0 flex-1",
+                            )}
+                        >
+                            {name}
+                        </span>
+                        <CopyPathControl kind="file" path={file.path} />
                     </span>
                     <span className={activeDesign.fileMetaClass}>
                         {renderMetaItems([
@@ -1808,15 +1912,24 @@ export function FileBrowser({
                                         maxWidth: `calc(var(--subdir-preview-height) * 1.8)`,
                                     }}
                                 >
-                                    <p
-                                        className={
-                                            activeDesign.subdirFilenameClass
-                                        }
-                                        data-subdir-preview-filename={file.path}
-                                        title={fileName(file.path)}
-                                    >
-                                        {fileName(file.path)}
-                                    </p>
+                                    <div className="flex min-w-0 items-center gap-1.5">
+                                        <p
+                                            className={cn(
+                                                activeDesign.subdirFilenameClass,
+                                                "min-w-0 flex-1",
+                                            )}
+                                            data-subdir-preview-filename={
+                                                file.path
+                                            }
+                                            title={fileName(file.path)}
+                                        >
+                                            {fileName(file.path)}
+                                        </p>
+                                        <CopyPathControl
+                                            kind="file"
+                                            path={file.path}
+                                        />
+                                    </div>
                                     <ResizablePreviewFrame
                                         className={cn(
                                             activeDesign.subdirFrameBaseClass,
@@ -1927,6 +2040,11 @@ export function FileBrowser({
             const folderControlsInNameArea =
                 controlPlacement === "name-area" && Boolean(folderControls);
             const directoryAction = renderDirectoryAction?.(node) ?? null;
+            const directoryDisplayLabel = visibleDirectoryLabel(
+                node.path,
+                node.label,
+                depth,
+            );
             const headingSideContent =
                 folderControlsInNameArea || directoryAction ? (
                     <div
@@ -1940,6 +2058,7 @@ export function FileBrowser({
             const renderDirectoryButton = () => (
                 <button
                     type="button"
+                    aria-label={`Toggle directory ${directoryDisplayLabel}`}
                     className={activeDesign.directoryButtonClass}
                     data-depth={depth}
                     data-directory-expanded={String(isExpanded)}
@@ -2014,17 +2133,22 @@ export function FileBrowser({
                             className="block truncate text-base font-medium text-foreground"
                             title={node.path}
                         >
-                            {visibleDirectoryLabel(
-                                node.path,
-                                node.label,
-                                depth,
-                            )}
+                            {directoryDisplayLabel}
                         </span>
-                        <span
-                            className={activeDesign.directoryMetaClass}
-                            data-directory-meta={node.path}
-                        >
-                            {renderDirectoryMetaItems(node, hasChildren)}
+                        <span className="mt-1 flex min-w-0 items-start gap-1.5">
+                            <span
+                                className={cn(
+                                    activeDesign.directoryMetaClass,
+                                    "mt-0 min-w-0 flex-1",
+                                )}
+                                data-directory-meta={node.path}
+                            >
+                                {renderDirectoryMetaItems(node, hasChildren)}
+                            </span>
+                            <CopyPathControl
+                                kind="directory"
+                                path={node.path}
+                            />
                         </span>
                     </span>
                 </button>
