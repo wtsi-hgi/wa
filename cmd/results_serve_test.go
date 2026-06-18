@@ -646,12 +646,16 @@ func TestResultsServeCommandA2(t *testing.T) {
 		leakedToken, err := gas.GenerateToken()
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(os.WriteFile(tokenPath, leakedToken, 0o644), convey.ShouldBeNil)
+		convey.So(os.Chmod(tokenPath, 0o644), convey.ShouldBeNil)
+		info, err := os.Stat(tokenPath)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o644)
 
 		ownerConfig, err := resultsServeOwnerSessionConfig(tokenPath, results.NewOwnerSessionStore())
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(bytes.Equal(ownerConfig.ServerToken, leakedToken), convey.ShouldBeFalse)
 
-		info, err := os.Stat(tokenPath)
+		info, err = os.Stat(tokenPath)
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o600)
 
@@ -678,8 +682,12 @@ func TestResultsServeCommandA2(t *testing.T) {
 
 		cacheDir := filepath.Join(t.TempDir(), "certs")
 		convey.So(os.Mkdir(cacheDir, 0o755), convey.ShouldBeNil)
+		convey.So(os.Chmod(cacheDir, 0o755), convey.ShouldBeNil)
+		info, err := os.Stat(cacheDir)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(info.Mode().Perm(), convey.ShouldEqual, 0o755)
 
-		_, err := executeRootCommandForTest(t, []string{
+		_, err = executeRootCommandForTest(t, []string{
 			"results", "serve",
 			"--db", ":memory:",
 			"--acme", "https://acme.example/dir",
