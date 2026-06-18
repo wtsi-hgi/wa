@@ -1658,17 +1658,38 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].Metadata, convey.ShouldResemble, map[string]string{"library": "exon", "study": "alpha"})
 	})
 
-	convey.Convey("E2.3: Given GET /results?output_dir_prefix=/lustre/scratch, then only result sets whose output_directory starts with that prefix are returned", t, func() {
+	convey.Convey("E2.3: Given GET /results?output_directory=project-a, then only result sets whose output_directory contains that substring are returned", t, func() {
 		store := newSQLiteStoreForTest(t)
-		seedResultSetForTest(t, store, searchRegistrationForTest("run-prefix-match", func(reg *Registration) {
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-output-directory-match", func(reg *Registration) {
 			reg.OutputDirectory = "/lustre/scratch/project-a/run-1"
 		}))
-		seedResultSetForTest(t, store, searchRegistrationForTest("run-prefix-miss", func(reg *Registration) {
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-output-directory-miss", func(reg *Registration) {
 			reg.PipelineIdentifier = "pipe-2"
 			reg.OutputDirectory = "/lustre/archive/project-b/run-2"
 		}))
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?output_dir_prefix=/lustre/scratch", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?output_directory=project-a", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].OutputDirectory, convey.ShouldEqual, "/lustre/scratch/project-a/run-1")
+	})
+
+	convey.Convey("Given GET /results?output_dir_prefix=project-a, then the legacy output directory query parameter remains supported", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-legacy-output-directory-match", func(reg *Registration) {
+			reg.OutputDirectory = "/lustre/scratch/project-a/run-1"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-legacy-output-directory-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.OutputDirectory = "/lustre/archive/project-b/run-2"
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?output_dir_prefix=project-a", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 

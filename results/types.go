@@ -191,7 +191,7 @@ type SearchParams struct {
 	PipelineVersion    string
 	PipelineIdentifier string
 	RunKey             string
-	OutputDirPrefix    string
+	OutputDirectory    string
 	Meta               map[string]string
 }
 
@@ -203,7 +203,7 @@ type MultiSearchParams struct {
 	PipelineVersion    []string
 	PipelineIdentifier []string
 	RunKey             []string
-	OutputDirPrefix    []string
+	OutputDirectory    []string
 	Meta               map[string][]string
 	// OrMeta, if non-empty, is a list of single-key meta conditions ORed together.
 	// A result must match at least one condition. Each element maps one meta key to

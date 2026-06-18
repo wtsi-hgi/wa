@@ -693,11 +693,11 @@ describe("K1 filter builder component", () => {
         fetchMock.mockResolvedValue({
             json: async () => [
                 {
-                    field_key: "output_dir_prefix",
+                    field_key: "output_directory",
                     value: "/tmp/shared/output-substring-260618/alpha",
                 },
                 {
-                    field_key: "output_dir_prefix",
+                    field_key: "output_directory",
                     value: "/tmp/shared/output-substring-260618/beta",
                 },
             ],
@@ -720,30 +720,29 @@ describe("K1 filter builder component", () => {
         });
 
         const typedSubstringOption = await screen.findByRole("option", {
-            name: /add output directory prefix filter output-substring-260618/i,
+            name: /add output directory filter output-substring-260618/i,
         });
 
         expect(typedSubstringOption.textContent).toContain(
             "output-substring-260618",
         );
-        expect(typedSubstringOption.textContent).toContain(
-            "Output directory prefix",
-        );
+        expect(typedSubstringOption.textContent).toContain("Output directory");
+        expect(typedSubstringOption.textContent).not.toContain("prefix");
         expect(
             screen.getByRole("option", {
-                name: /add output directory prefix filter \/tmp\/shared\/output-substring-260618\/alpha/i,
+                name: /add output directory filter \/tmp\/shared\/output-substring-260618\/alpha/i,
             }).textContent,
         ).toContain("/tmp/shared/output-substring-260618/alpha");
         expect(
             screen.getByRole("option", {
-                name: /add output directory prefix filter \/tmp\/shared\/output-substring-260618\/beta/i,
+                name: /add output directory filter \/tmp\/shared\/output-substring-260618\/beta/i,
             }).textContent,
         ).toContain("/tmp/shared/output-substring-260618/beta");
 
         fireEvent.click(typedSubstringOption);
 
         expect(pushMock).toHaveBeenCalledWith(
-            "/?output_dir_prefix=output-substring-260618",
+            "/?output_directory=output-substring-260618",
         );
     });
 });

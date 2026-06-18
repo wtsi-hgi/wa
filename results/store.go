@@ -111,7 +111,7 @@ var searchSuggestionSources = []searchSuggestionSource{
 	{fieldKey: "operator", column: "operator", order: 40},
 	{fieldKey: "pipeline_version", column: "pipeline_version", order: 50},
 	{fieldKey: "pipeline_identifier", column: "pipeline_identifier", order: 60},
-	{fieldKey: "output_dir_prefix", column: "output_directory", order: 70},
+	{fieldKey: "output_directory", column: "output_directory", order: 70},
 }
 
 // OutputDirectoryGID returns the Unix group ID for an output directory.
@@ -1077,26 +1077,6 @@ func appendMultiValueSearchFilter(filters []string, args []any, field string, va
 	return append(filters, "("+strings.Join(clauses, " OR ")+")"), args
 }
 
-func appendMultiPrefixFilter(filters []string, args []any, field string, values []string) ([]string, []any) {
-	values = nonEmptySearchValues(values)
-	if len(values) == 0 {
-		return filters, args
-	}
-
-	clauses := make([]string, 0, len(values))
-
-	for _, value := range values {
-		clauses = append(clauses, fmt.Sprintf("instr(lower(%s), lower(?)) > 0", field))
-		args = append(args, value)
-	}
-
-	if len(clauses) == 1 {
-		return append(filters, clauses[0]), args
-	}
-
-	return append(filters, "("+strings.Join(clauses, " OR ")+")"), args
-}
-
 func appendMultiMetadataSearchFilters(filters []string, args []any, metadata map[string][]string) ([]string, []any) {
 	for _, key := range sortedMultiMetadataKeys(metadata) {
 		values := nonEmptySearchValues(metadata[key])
@@ -1277,8 +1257,8 @@ func multiSearchParamsFromSingle(params SearchParams) MultiSearchParams {
 		multi.RunKey = []string{params.RunKey}
 	}
 
-	if params.OutputDirPrefix != "" {
-		multi.OutputDirPrefix = []string{params.OutputDirPrefix}
+	if params.OutputDirectory != "" {
+		multi.OutputDirectory = []string{params.OutputDirectory}
 	}
 
 	for key, value := range params.Meta {
@@ -1399,7 +1379,7 @@ func (s *Store) SearchMulti(ctx context.Context, params MultiSearchParams) ([]Re
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_version", params.PipelineVersion)
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_identifier", params.PipelineIdentifier)
 	filters, args = appendMultiValueSearchFilter(filters, args, "run_key", expandRunKeySearchValues(params.RunKey))
-	filters, args = appendMultiPrefixFilter(filters, args, "output_directory", params.OutputDirPrefix)
+	filters, args = appendMultiValueSearchFilter(filters, args, "output_directory", params.OutputDirectory)
 	filters, args = appendMultiMetadataSearchFilters(filters, args, params.Meta)
 	filters, args = appendOrMetaSearchFilter(filters, args, params.OrMeta)
 

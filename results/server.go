@@ -539,7 +539,7 @@ func multiSearchParamsFromRequest(r *http.Request) MultiSearchParams {
 		PipelineVersion:    nonEmptySearchValues(query["pipeline_version"]),
 		PipelineIdentifier: nonEmptySearchValues(query["pipeline_identifier"]),
 		RunKey:             nonEmptySearchValues(query["run_key"]),
-		OutputDirPrefix:    nonEmptySearchValues(query["output_dir_prefix"]),
+		OutputDirectory:    nonEmptySearchValues(outputDirectoryQueryValues(query)),
 		Meta:               map[string][]string{},
 	}
 
@@ -1405,6 +1405,12 @@ func (s *Server) handleDeleteResultByID(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func outputDirectoryQueryValues(query map[string][]string) []string {
+	values := append([]string{}, query["output_directory"]...)
+
+	return append(values, query["output_dir_prefix"]...)
 }
 
 func mlwhLibrarySuggestionFieldKey(kind mlwh.IdentifierKind) string {

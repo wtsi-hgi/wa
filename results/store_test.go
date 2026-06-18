@@ -825,7 +825,7 @@ func TestStoreSearch(t *testing.T) {
 		convey.So(results[0].Metadata["assay_tag"], convey.ShouldEqual, "alpha-needle-260618-omega")
 	})
 
-	convey.Convey("C4.3: Given result sets with output directories /a/b/c and /a/d/e, when Search is filtered by output directory prefix /a/b, then it returns 1 result set", t, func() {
+	convey.Convey("C4.3: Given result sets with output directories /a/b/c and /a/d/e, when Search is filtered by output directory /a/b, then it returns 1 result set", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()
 
@@ -837,7 +837,7 @@ func TestStoreSearch(t *testing.T) {
 			reg.OutputDirectory = "/a/d/e"
 		}))
 
-		results, err := store.Search(ctx, SearchParams{OutputDirPrefix: "/a/b"})
+		results, err := store.Search(ctx, SearchParams{OutputDirectory: "/a/b"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(results, convey.ShouldHaveLength, 1)
@@ -860,7 +860,7 @@ func TestStoreSearch(t *testing.T) {
 			reg.OutputDirectory = "/tmp/unrelated/gamma"
 		}))
 
-		results, err := store.Search(ctx, SearchParams{OutputDirPrefix: "output-substring-260618"})
+		results, err := store.Search(ctx, SearchParams{OutputDirectory: "output-substring-260618"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(results, convey.ShouldHaveLength, 2)
@@ -875,7 +875,7 @@ func TestStoreSearch(t *testing.T) {
 		convey.So(runKeys, convey.ShouldNotContain, "run-output-miss")
 	})
 
-	convey.Convey("Search escapes wildcard characters in output directory prefixes", t, func() {
+	convey.Convey("Search treats wildcard characters literally in output directory values", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()
 
@@ -887,7 +887,7 @@ func TestStoreSearch(t *testing.T) {
 			reg.OutputDirectory = "/a/100x/run"
 		}))
 
-		results, err := store.Search(ctx, SearchParams{OutputDirPrefix: "/a/100%"})
+		results, err := store.Search(ctx, SearchParams{OutputDirectory: "/a/100%"})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(results, convey.ShouldHaveLength, 1)
@@ -1079,7 +1079,7 @@ func TestStoreSearchMulti(t *testing.T) {
 		convey.So([]string{results[0].Metadata["seqmeta_sampleid"], results[1].Metadata["seqmeta_sampleid"]}, convey.ShouldResemble, []string{"SANG1", "SANG2"})
 	})
 
-	convey.Convey("D1.8: Given output directory prefixes /data/a and /data/b, when SearchMulti is called, then result sets matching either prefix are returned", t, func() {
+	convey.Convey("D1.8: Given output directory filters /data/a and /data/b, when SearchMulti is called, then result sets matching either value are returned", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()
 
@@ -1095,7 +1095,7 @@ func TestStoreSearchMulti(t *testing.T) {
 			reg.OutputDirectory = "/data/c/project-3"
 		}))
 
-		results, err := store.SearchMulti(ctx, MultiSearchParams{OutputDirPrefix: []string{"/data/a", "/data/b"}})
+		results, err := store.SearchMulti(ctx, MultiSearchParams{OutputDirectory: []string{"/data/a", "/data/b"}})
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(results, convey.ShouldHaveLength, 2)
@@ -1145,6 +1145,7 @@ func TestStoreSearchSuggestions(t *testing.T) {
 		ctx := context.Background()
 
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-generic-search", func(reg *Registration) {
+			reg.OutputDirectory = "/tmp/shared/needle-260618/run"
 			reg.Requester = "requester-needle-260618"
 			reg.Metadata = map[string]string{
 				"assay_tag":        "alpha-needle-260618-omega",
@@ -1160,11 +1161,12 @@ func TestStoreSearchSuggestions(t *testing.T) {
 		suggestions, err := store.SearchSuggestions(ctx, "needle-260618", 10)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(suggestions, convey.ShouldHaveLength, 3)
+		convey.So(suggestions, convey.ShouldHaveLength, 4)
 		convey.So(suggestionValuesByFieldForTest(suggestions), convey.ShouldResemble, map[string][]string{
-			"meta_assay_tag": {"alpha-needle-260618-omega"},
-			"sample":         {"SAMPLE-needle-260618"},
-			"user":           {"requester-needle-260618"},
+			"meta_assay_tag":   {"alpha-needle-260618-omega"},
+			"output_directory": {"/tmp/shared/needle-260618/run"},
+			"sample":           {"SAMPLE-needle-260618"},
+			"user":             {"requester-needle-260618"},
 		})
 	})
 

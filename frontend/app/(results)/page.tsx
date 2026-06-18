@@ -184,7 +184,7 @@ function buildSuggestionValues(
         );
         appendSuggestion(
             suggestions,
-            "output_dir_prefix",
+            "output_directory",
             result.output_directory,
         );
 

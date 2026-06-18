@@ -122,7 +122,7 @@ func TestResultsSearchCommand(t *testing.T) {
 		convey.So(output, convey.ShouldEqual, "[]")
 	})
 
-	convey.Convey("search forwards pipeline-version, pipeline-identifier, and run-key filters", t, func() {
+	convey.Convey("search forwards pipeline-version, pipeline-identifier, run-key, and output-directory filters", t, func() {
 		query, err := buildResultsSearchQuery(
 			"alice",
 			"bob",
@@ -141,8 +141,39 @@ func TestResultsSearchCommand(t *testing.T) {
 		convey.So(query.Get("pipeline_version"), convey.ShouldEqual, "1.2.3")
 		convey.So(query.Get("pipeline_identifier"), convey.ShouldEqual, "pipe-a")
 		convey.So(query.Get("run_key"), convey.ShouldEqual, "runid=48522")
-		convey.So(query.Get("output_dir_prefix"), convey.ShouldEqual, "/tmp/results")
+		convey.So(query.Get("output_directory"), convey.ShouldEqual, "/tmp/results")
+		convey.So(query.Get("output_dir_prefix"), convey.ShouldBeBlank)
 		convey.So(query.Get("meta_library"), convey.ShouldEqual, "exon")
+	})
+
+	convey.Convey("Given --output-directory, search forwards the canonical output_directory query", t, func() {
+		queryCh := make(chan string, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			queryCh <- r.URL.Query().Get("output_directory")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		}))
+		defer server.Close()
+
+		_, err := executeRootCommandForTest(t, []string{"results", "search", "--server", server.URL, "--output-directory", "/tmp/results"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(<-queryCh, convey.ShouldEqual, "/tmp/results")
+	})
+
+	convey.Convey("Given deprecated --output-dir-prefix, search still forwards the canonical output_directory query", t, func() {
+		queryCh := make(chan string, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			queryCh <- r.URL.Query().Get("output_directory")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		}))
+		defer server.Close()
+
+		_, err := executeRootCommandForTest(t, []string{"results", "search", "--server", server.URL, "--output-dir-prefix", "/tmp/results"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(<-queryCh, convey.ShouldEqual, "/tmp/results")
 	})
 
 	convey.Convey("Given --unique, search forwards the value as the compatibility run_key query", t, func() {

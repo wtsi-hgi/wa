@@ -1439,7 +1439,7 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 	var pipelineIdentifier string
 	var unique string
 	var legacyRunKey string
-	var outputDirPrefix string
+	var outputDirectory string
 	var metaValues []string
 
 	command := &cobra.Command{
@@ -1451,7 +1451,7 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 				return err
 			}
 
-			query, err := buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, uniqueValue, outputDirPrefix, metaValues)
+			query, err := buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, uniqueValue, outputDirectory, metaValues)
 			if err != nil {
 				return err
 			}
@@ -1480,8 +1480,10 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&unique, "unique", "", "Unique key filter")
 	command.Flags().StringVar(&legacyRunKey, "run-key", "", "Deprecated alias for --unique")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata filter in key=value form")
-	command.Flags().StringVar(&outputDirPrefix, "output-dir-prefix", "", "Output directory prefix filter")
+	command.Flags().StringVar(&outputDirectory, "output-directory", "", "Output directory filter")
+	command.Flags().StringVar(&outputDirectory, "output-dir-prefix", "", "Deprecated alias for --output-directory")
 	_ = command.Flags().MarkHidden("run-key")
+	_ = command.Flags().MarkHidden("output-dir-prefix")
 
 	return command
 }
@@ -1501,7 +1503,7 @@ func resultsSearchUniqueValue(unique, legacyRunKey string) (string, error) {
 	return trimmedLegacyRunKey, nil
 }
 
-func buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, runKey, outputDirPrefix string, metaValues []string) (url.Values, error) {
+func buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, runKey, outputDirectory string, metaValues []string) (url.Values, error) {
 	query := url.Values{}
 	if requester != "" {
 		query.Set("user", requester)
@@ -1527,8 +1529,8 @@ func buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion,
 		query.Set("run_key", runKey)
 	}
 
-	if outputDirPrefix != "" {
-		query.Set("output_dir_prefix", outputDirPrefix)
+	if outputDirectory != "" {
+		query.Set("output_directory", outputDirectory)
 	}
 
 	metadata, err := parseResultsMetadataFilters(metaValues)

@@ -1,9 +1,18 @@
 export type SearchFilters = Record<string, string[]>;
 
+const legacySearchFilterKeys: Record<string, string> = {
+    output_dir_prefix: "output_directory",
+};
+
+export function canonicalSearchFilterKey(key: string): string {
+    return legacySearchFilterKeys[key] ?? key;
+}
+
 export function parseSearchFilters(params: URLSearchParams): SearchFilters {
     const filters: SearchFilters = {};
 
-    for (const [key, rawValue] of params.entries()) {
+    for (const [rawKey, rawValue] of params.entries()) {
+        const key = canonicalSearchFilterKey(rawKey);
         const value = rawValue.trim();
         if (!value) {
             continue;
@@ -22,7 +31,8 @@ export function parseSearchFilters(params: URLSearchParams): SearchFilters {
 export function buildSearchQuery(filters: SearchFilters): URLSearchParams {
     const params = new URLSearchParams();
 
-    for (const [key, values] of Object.entries(filters)) {
+    for (const [rawKey, values] of Object.entries(filters)) {
+        const key = canonicalSearchFilterKey(rawKey);
         for (const rawValue of values) {
             const value = rawValue.trim();
             if (!value) {

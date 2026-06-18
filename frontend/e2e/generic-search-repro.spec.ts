@@ -30,6 +30,14 @@ const outputSubstringPostfixScreenshotPath = path.join(
     evidenceDir,
     "generic-search-output-directory-substring-choice-postfix.png",
 );
+const outputDirectoryPrefixAutocompleteScreenshotPath = path.join(
+    evidenceDir,
+    "output-directory-prefix-label-autocomplete-current-repro.png",
+);
+const outputDirectoryPrefixAppliedScreenshotPath = path.join(
+    evidenceDir,
+    "output-directory-prefix-label-applied-current-repro.png",
+);
 const evidencePath = path.join(
     evidenceDir,
     "generic-search-current-ui-repro.json",
@@ -45,6 +53,10 @@ const outputSubstringEvidencePath = path.join(
 const outputSubstringPostfixEvidencePath = path.join(
     evidenceDir,
     "generic-search-output-directory-substring-choice-postfix.json",
+);
+const outputDirectoryPrefixLabelEvidencePath = path.join(
+    evidenceDir,
+    "output-directory-prefix-label-current-repro.json",
 );
 
 const pipelineName = "wa/generic-search-repro";
@@ -97,6 +109,16 @@ type OutputSubstringPostfixEvidence = {
     matchedOutputDirectories: string[];
     registrationInfoLabels: string[];
     resultRows: number;
+    url: string;
+};
+
+type OutputDirectoryPrefixLabelEvidence = {
+    activeFilterButtonLabels: string[];
+    activeOutputDirectoryFilterLabels: string[];
+    autocompleteOptionLabels: string[];
+    autocompleteOutputDirectoryLabels: string[];
+    hasPrefixInAppliedFilter: boolean;
+    hasPrefixInAutocomplete: boolean;
     url: string;
 };
 
@@ -237,7 +259,7 @@ test("adds a generic output-directory typed substring filter and returns every m
 
     const typedSubstringOption = suggestions.getByRole("option", {
         name: new RegExp(
-            `add output directory prefix filter ${outputDirectorySubstring}`,
+            `add output directory filter ${outputDirectorySubstring}`,
             "i",
         ),
     });
@@ -246,7 +268,7 @@ test("adds a generic output-directory typed substring filter and returns every m
 
     await expect(page).toHaveURL(
         new RegExp(
-            `output_dir_prefix=${encodeURIComponent(outputDirectorySubstring)}`,
+            `output_directory=${encodeURIComponent(outputDirectorySubstring)}`,
         ),
     );
     await expect(
@@ -284,6 +306,97 @@ test("adds a generic output-directory typed substring filter and returns every m
         outputSubstringDirectory("alpha"),
         outputSubstringDirectory("beta"),
     ]);
+});
+
+test("reproduces stale output-directory prefix wording for generic substring filters", async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+
+    const searchBuilder = page.locator('[data-search-builder="true"]');
+    await expect(searchBuilder).toBeVisible();
+
+    await searchBuilder
+        .getByLabel(/generic all-field search/i)
+        .fill(outputDirectorySubstring);
+
+    const suggestions = page.locator(
+        '[data-generic-search-suggestions="true"]',
+    );
+    await expect(suggestions).toBeVisible();
+    await expect(suggestions.getByRole("option").first()).toBeVisible();
+
+    const autocompleteEvidence =
+        await collectOutputDirectoryPrefixLabelEvidence(page);
+
+    await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: outputDirectoryPrefixAutocompleteScreenshotPath,
+    });
+
+    await suggestions
+        .getByRole("option")
+        .filter({ hasText: outputDirectorySubstring })
+        .first()
+        .click();
+
+    await expect(page).toHaveURL(
+        new RegExp(
+            `output_directory=${encodeURIComponent(outputDirectorySubstring)}`,
+        ),
+    );
+    await expect(
+        page.getByRole("button", {
+            name: new RegExp(`remove .*${outputDirectorySubstring}`, "i"),
+        }),
+    ).toBeVisible();
+
+    const appliedEvidence =
+        await collectOutputDirectoryPrefixLabelEvidence(page);
+    const labelEvidence: OutputDirectoryPrefixLabelEvidence = {
+        ...appliedEvidence,
+        autocompleteOptionLabels: autocompleteEvidence.autocompleteOptionLabels,
+        autocompleteOutputDirectoryLabels:
+            autocompleteEvidence.autocompleteOutputDirectoryLabels,
+        hasPrefixInAutocomplete: autocompleteEvidence.hasPrefixInAutocomplete,
+    };
+
+    await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: outputDirectoryPrefixAppliedScreenshotPath,
+    });
+    writeFileSync(
+        outputDirectoryPrefixLabelEvidencePath,
+        `${JSON.stringify(
+            {
+                ...labelEvidence,
+                expectedLabel: "Output directory",
+                unexpectedLabel: "Output directory prefix",
+                screenshots: {
+                    applied: outputDirectoryPrefixAppliedScreenshotPath,
+                    autocomplete:
+                        outputDirectoryPrefixAutocompleteScreenshotPath,
+                },
+                typedSubstring: outputDirectorySubstring,
+            },
+            null,
+            2,
+        )}\n`,
+    );
+
+    expect
+        .soft(labelEvidence.autocompleteOutputDirectoryLabels)
+        .toContain(`Add Output directory filter ${outputDirectorySubstring}`);
+    expect.soft(labelEvidence.hasPrefixInAutocomplete).toBe(false);
+    expect
+        .soft(labelEvidence.activeOutputDirectoryFilterLabels)
+        .toContain("Output directory");
+    expect
+        .soft(labelEvidence.activeOutputDirectoryFilterLabels)
+        .not.toContain("Output directory prefix");
 });
 
 function registerGenericSearchResult(): ResultSet {
@@ -485,7 +598,7 @@ async function collectOutputSubstringEvidence(
                 "",
         );
         const outputDirectoryOptions = optionLabels.filter((label) =>
-            /output directory prefix/i.test(label),
+            /output directory/i.test(label),
         );
 
         return {
@@ -495,7 +608,7 @@ async function collectOutputSubstringEvidence(
             typedSubstringOptionCount: outputDirectoryOptions.filter(
                 (label) =>
                     label.toLowerCase() ===
-                    `add output directory prefix filter ${expectedSubstring}`.toLowerCase(),
+                    `add output directory filter ${expectedSubstring}`.toLowerCase(),
             ).length,
         };
     }, outputDirectorySubstring);
@@ -530,4 +643,51 @@ async function collectOutputSubstringPostfixEvidence(
         },
         [outputSubstringDirectory("alpha"), outputSubstringDirectory("beta")],
     );
+}
+
+async function collectOutputDirectoryPrefixLabelEvidence(
+    page: Page,
+): Promise<OutputDirectoryPrefixLabelEvidence> {
+    return page.evaluate((expectedSubstring) => {
+        const optionLabels = Array.from(
+            document.querySelectorAll<HTMLButtonElement>(
+                '[data-generic-search-suggestions="true"] [role="option"]',
+            ),
+        ).map(
+            (option) =>
+                option.getAttribute("aria-label") ??
+                option.textContent?.trim() ??
+                "",
+        );
+        const autocompleteOutputDirectoryLabels = optionLabels.filter((label) =>
+            /output directory/i.test(label),
+        );
+        const activeFilterButtonLabels = Array.from(
+            document.querySelectorAll<HTMLButtonElement>(
+                '[data-search-builder="true"] button[aria-label^="Remove "]',
+            ),
+        ).map((button) => button.getAttribute("aria-label") ?? "");
+        const activeOutputDirectoryFilterLabels = activeFilterButtonLabels
+            .filter((label) => label.endsWith(` ${expectedSubstring}`))
+            .map((label) =>
+                label
+                    .replace(/^Remove /, "")
+                    .slice(0, -` ${expectedSubstring}`.length),
+            )
+            .filter((label) => /output directory/i.test(label));
+
+        return {
+            activeFilterButtonLabels,
+            activeOutputDirectoryFilterLabels,
+            autocompleteOptionLabels: optionLabels,
+            autocompleteOutputDirectoryLabels,
+            hasPrefixInAppliedFilter: activeOutputDirectoryFilterLabels.some(
+                (label) => /output directory prefix/i.test(label),
+            ),
+            hasPrefixInAutocomplete: autocompleteOutputDirectoryLabels.some(
+                (label) => /output directory prefix/i.test(label),
+            ),
+            url: window.location.href,
+        };
+    }, outputDirectorySubstring);
 }

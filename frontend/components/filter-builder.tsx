@@ -23,7 +23,11 @@ import {
 } from "@/components/ui/command";
 import type { SearchSuggestion } from "@/lib/contracts";
 import { formatRegistrationUnique } from "@/lib/result-identity";
-import { buildSearchQuery, type SearchFilters } from "@/lib/search-params";
+import {
+    buildSearchQuery,
+    canonicalSearchFilterKey,
+    type SearchFilters,
+} from "@/lib/search-params";
 import { cn } from "@/lib/utils";
 import type { Study } from "@/lib/contracts";
 
@@ -114,8 +118,8 @@ const coreFieldOptions: FieldOption[] = [
         placeholder: "gh://repo/workflow.nf",
     },
     {
-        key: "output_dir_prefix",
-        label: "Output directory prefix",
+        key: "output_directory",
+        label: "Output directory",
         placeholder: "/lustre/scratch/project-a",
     },
 ];
@@ -165,9 +169,11 @@ function getFieldOptions(
 }
 
 function getFieldLabel(fieldOptions: FieldOption[], key: string): string {
+    const canonicalKey = canonicalSearchFilterKey(key);
+
     return (
-        fieldOptions.find((option) => option.key === key)?.label ??
-        toTitleCase(key.replace(/^meta_/, ""))
+        fieldOptions.find((option) => option.key === canonicalKey)?.label ??
+        toTitleCase(canonicalKey.replace(/^meta_/, ""))
     );
 }
 
@@ -176,6 +182,8 @@ function createNextFilters(
     key: string,
     value: string,
 ): SearchFilters {
+    key = canonicalSearchFilterKey(key);
+
     const trimmedValue = value.trim();
     if (!trimmedValue) {
         return currentFilters;
@@ -197,6 +205,8 @@ function removeFilterValue(
     key: string,
     value: string,
 ): SearchFilters {
+    key = canonicalSearchFilterKey(key);
+
     const remainingValues = (currentFilters[key] ?? []).filter(
         (entry) => entry !== value,
     );
@@ -258,7 +268,7 @@ function suggestionFilterValue(suggestion: SearchSuggestion): string {
 }
 
 function genericSuggestionIdentity(suggestion: SearchSuggestion): string {
-    return `${suggestion.field_key}:${suggestionFilterValue(suggestion)}`;
+    return `${canonicalSearchFilterKey(suggestion.field_key)}:${suggestionFilterValue(suggestion)}`;
 }
 
 function getVisibleGenericSuggestions(
@@ -407,7 +417,7 @@ export function FilterBuilder({
 
     function applyGenericSuggestion(suggestion: SearchSuggestion) {
         applyFilterValue(
-            suggestion.field_key,
+            canonicalSearchFilterKey(suggestion.field_key),
             suggestionFilterValue(suggestion),
         );
         setGenericDraftValue("");
