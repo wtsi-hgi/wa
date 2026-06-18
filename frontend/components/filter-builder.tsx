@@ -257,6 +257,46 @@ function suggestionFilterValue(suggestion: SearchSuggestion): string {
     return suggestion.value;
 }
 
+function genericSuggestionIdentity(suggestion: SearchSuggestion): string {
+    return `${suggestion.field_key}:${suggestionFilterValue(suggestion)}`;
+}
+
+function getVisibleGenericSuggestions(
+    suggestions: SearchSuggestion[],
+    draftValue: string,
+): SearchSuggestion[] {
+    const trimmedValue = draftValue.trim();
+    if (!trimmedValue) {
+        return [];
+    }
+
+    const visibleSuggestions: SearchSuggestion[] = [];
+    const seen = new Set<string>();
+
+    const appendSuggestion = (suggestion: SearchSuggestion) => {
+        const identity = genericSuggestionIdentity(suggestion);
+        if (seen.has(identity)) {
+            return;
+        }
+
+        seen.add(identity);
+        visibleSuggestions.push(suggestion);
+    };
+
+    for (const suggestion of suggestions) {
+        appendSuggestion({
+            field_key: suggestion.field_key,
+            value: trimmedValue,
+        });
+    }
+
+    for (const suggestion of suggestions) {
+        appendSuggestion(suggestion);
+    }
+
+    return visibleSuggestions.slice(0, 8);
+}
+
 function searchSuggestionsPath(query: string): string {
     return `/api/results/search-suggestions?q=${encodeURIComponent(query)}`;
 }
@@ -294,7 +334,10 @@ export function FilterBuilder({
     const suggestionListId = selectedFieldKey
         ? `filter-suggestions-${selectedFieldKey}`
         : undefined;
-    const visibleGenericSuggestions = genericSuggestions.slice(0, 8);
+    const visibleGenericSuggestions = getVisibleGenericSuggestions(
+        genericSuggestions,
+        genericDraftValue,
+    );
     const showGenericSuggestions =
         isGenericFocused &&
         genericDraftValue.trim().length > 0 &&

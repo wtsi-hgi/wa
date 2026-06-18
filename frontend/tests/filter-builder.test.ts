@@ -688,4 +688,62 @@ describe("K1 filter builder component", () => {
             "/?meta_assay_tag=alpha-needle-260618-omega",
         );
     });
+
+    it("offers the typed generic substring for each matching field while keeping full values selectable", async () => {
+        fetchMock.mockResolvedValue({
+            json: async () => [
+                {
+                    field_key: "output_dir_prefix",
+                    value: "/tmp/shared/output-substring-260618/alpha",
+                },
+                {
+                    field_key: "output_dir_prefix",
+                    value: "/tmp/shared/output-substring-260618/beta",
+                },
+            ],
+            ok: true,
+        });
+
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: [],
+                seqmetaAvailable: false,
+                studies: [],
+            }),
+        );
+
+        fireEvent.change(screen.getByLabelText(/generic all-field search/i), {
+            target: { value: "output-substring-260618" },
+        });
+
+        const typedSubstringOption = await screen.findByRole("option", {
+            name: /add output directory prefix filter output-substring-260618/i,
+        });
+
+        expect(typedSubstringOption.textContent).toContain(
+            "output-substring-260618",
+        );
+        expect(typedSubstringOption.textContent).toContain(
+            "Output directory prefix",
+        );
+        expect(
+            screen.getByRole("option", {
+                name: /add output directory prefix filter \/tmp\/shared\/output-substring-260618\/alpha/i,
+            }).textContent,
+        ).toContain("/tmp/shared/output-substring-260618/alpha");
+        expect(
+            screen.getByRole("option", {
+                name: /add output directory prefix filter \/tmp\/shared\/output-substring-260618\/beta/i,
+            }).textContent,
+        ).toContain("/tmp/shared/output-substring-260618/beta");
+
+        fireEvent.click(typedSubstringOption);
+
+        expect(pushMock).toHaveBeenCalledWith(
+            "/?output_dir_prefix=output-substring-260618",
+        );
+    });
 });

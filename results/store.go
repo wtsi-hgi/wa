@@ -1062,18 +1062,18 @@ func appendMultiValueSearchFilter(filters []string, args []any, field string, va
 		return filters, args
 	}
 
-	if len(values) == 1 {
-		return append(filters, field+" = ?"), append(args, values[0])
-	}
-
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
-	filters = append(filters, fmt.Sprintf("%s IN (%s)", field, placeholders))
+	clauses := make([]string, 0, len(values))
 
 	for _, value := range values {
+		clauses = append(clauses, fmt.Sprintf("instr(lower(%s), lower(?)) > 0", field))
 		args = append(args, value)
 	}
 
-	return filters, args
+	if len(clauses) == 1 {
+		return append(filters, clauses[0]), args
+	}
+
+	return append(filters, "("+strings.Join(clauses, " OR ")+")"), args
 }
 
 func appendMultiPrefixFilter(filters []string, args []any, field string, values []string) ([]string, []any) {
@@ -1085,8 +1085,8 @@ func appendMultiPrefixFilter(filters []string, args []any, field string, values 
 	clauses := make([]string, 0, len(values))
 
 	for _, value := range values {
-		clauses = append(clauses, fmt.Sprintf("substr(%s, 1, length(?)) = ?", field))
-		args = append(args, value, value)
+		clauses = append(clauses, fmt.Sprintf("instr(lower(%s), lower(?)) > 0", field))
+		args = append(args, value)
 	}
 
 	if len(clauses) == 1 {

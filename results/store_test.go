@@ -767,6 +767,25 @@ func TestStoreSearch(t *testing.T) {
 		convey.So(resultRequestersForTest(results), convey.ShouldResemble, []string{"alice", "alice"})
 	})
 
+	convey.Convey("Given a scalar result field with a longer value, when Search is filtered by a substring, then it returns the matching registration", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-requester-substring", func(reg *Registration) {
+			reg.Requester = "requester-needle-260618"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-requester-other", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.Requester = "requester-unrelated"
+		}))
+
+		results, err := store.Search(ctx, SearchParams{Requester: "needle-260618"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].RunKey, convey.ShouldEqual, "run-requester-substring")
+	})
+
 	convey.Convey("C4.2: Given a result set with metadata library=exon and another with library=intron, when Search is filtered by metadata, then it returns 1 exact match", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()
@@ -823,6 +842,37 @@ func TestStoreSearch(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(results, convey.ShouldHaveLength, 1)
 		convey.So(results[0].OutputDirectory, convey.ShouldEqual, "/a/b/c")
+	})
+
+	convey.Convey("Given output directories with a shared non-prefix substring, when Search is filtered by that output directory text, then every containing result set is returned", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-output-alpha", func(reg *Registration) {
+			reg.OutputDirectory = "/tmp/a/output-substring-260618/alpha"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-output-beta", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.OutputDirectory = "/var/b/output-substring-260618/beta"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-output-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-3"
+			reg.OutputDirectory = "/tmp/unrelated/gamma"
+		}))
+
+		results, err := store.Search(ctx, SearchParams{OutputDirPrefix: "output-substring-260618"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(results, convey.ShouldHaveLength, 2)
+
+		runKeys := make([]string, len(results))
+		for i, r := range results {
+			runKeys[i] = r.RunKey
+		}
+
+		convey.So(runKeys, convey.ShouldContain, "run-output-alpha")
+		convey.So(runKeys, convey.ShouldContain, "run-output-beta")
+		convey.So(runKeys, convey.ShouldNotContain, "run-output-miss")
 	})
 
 	convey.Convey("Search escapes wildcard characters in output directory prefixes", t, func() {
