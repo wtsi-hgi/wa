@@ -23,6 +23,7 @@ import {
     FolderTree,
     ListFilter,
     Save,
+    X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -1203,6 +1204,9 @@ export function FileBrowser({
     const previewableActiveFiles = activeFiles.filter((file) =>
         fileMatchesPreviewKinds(file, selectedPreviewKinds),
     );
+    const hasSupportedPreviewableActiveFiles = activeFiles.some((file) =>
+        fileMatchesPreviewKinds(file, allSubdirPreviewKinds),
+    );
     const preferredSelectedPath = selectedPath ?? uncontrolledPath;
     const activeFile =
         previewableActiveFiles.find(
@@ -1230,6 +1234,22 @@ export function FileBrowser({
     const handleSaveFileFilter = useCallback(() => {
         saveFileBrowserGlobFilter(filterStorageKey, effectiveFileFilter);
     }, [effectiveFileFilter, filterStorageKey]);
+    const updateSubdirPreviewKinds = useCallback(
+        (
+            directoryPath: string,
+            kinds: ReadonlySet<SubdirPreviewKind>,
+        ): void => {
+            setSubdirPreviewKindsByPath((current) => ({
+                ...current,
+                [directoryPath]: new Set(kinds),
+            }));
+            setSubdirPreviewPages((current) => ({
+                ...current,
+                [directoryPath]: 1,
+            }));
+        },
+        [],
+    );
 
     const visibleExpandedDirectories = useMemo(() => {
         const next = new Set(expandedDirectories);
@@ -1708,11 +1728,33 @@ export function FileBrowser({
                                 data-subdir-preview-kinds={directoryPath}
                             >
                                 <div
-                                    className={
-                                        activeDesign.controlMenuHeadingClass
-                                    }
+                                    className={cn(
+                                        activeDesign.controlMenuHeadingClass,
+                                        "flex items-center justify-between gap-2",
+                                    )}
                                 >
-                                    File types
+                                    <span>File types</span>
+                                    <button
+                                        aria-label="Deselect all file types"
+                                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 py-0.5 text-[11px] font-medium normal-case tracking-normal text-muted-foreground transition hover:border-primary/45 hover:bg-muted/70 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                                        data-subdir-preview-kind-clear={
+                                            directoryPath
+                                        }
+                                        disabled={subdirPreviewKinds.size === 0}
+                                        onClick={() => {
+                                            updateSubdirPreviewKinds(
+                                                directoryPath,
+                                                new Set<SubdirPreviewKind>(),
+                                            );
+                                        }}
+                                        type="button"
+                                    >
+                                        <X
+                                            aria-hidden="true"
+                                            className="size-3"
+                                        />
+                                        <span>Deselect all</span>
+                                    </button>
                                 </div>
                                 <div
                                     className="grid grid-cols-[repeat(auto-fit,minmax(5.6rem,1fr))] gap-1"
@@ -1734,41 +1776,23 @@ export function FileBrowser({
                                                     option.id
                                                 }
                                                 onChange={(event) => {
-                                                    setSubdirPreviewKindsByPath(
-                                                        (current) => {
-                                                            const next = {
-                                                                ...current,
-                                                            };
-                                                            const nextKinds =
-                                                                new Set(
-                                                                    subdirPreviewKinds,
-                                                                );
-
-                                                            if (
-                                                                event.target
-                                                                    .checked
-                                                            ) {
-                                                                nextKinds.add(
-                                                                    option.id,
-                                                                );
-                                                            } else {
-                                                                nextKinds.delete(
-                                                                    option.id,
-                                                                );
-                                                            }
-
-                                                            next[
-                                                                directoryPath
-                                                            ] = nextKinds;
-
-                                                            return next;
-                                                        },
+                                                    const nextKinds = new Set(
+                                                        subdirPreviewKinds,
                                                     );
-                                                    setSubdirPreviewPages(
-                                                        (current) => ({
-                                                            ...current,
-                                                            [directoryPath]: 1,
-                                                        }),
+
+                                                    if (event.target.checked) {
+                                                        nextKinds.add(
+                                                            option.id,
+                                                        );
+                                                    } else {
+                                                        nextKinds.delete(
+                                                            option.id,
+                                                        );
+                                                    }
+
+                                                    updateSubdirPreviewKinds(
+                                                        directoryPath,
+                                                        nextKinds,
                                                     );
                                                 }}
                                                 type="checkbox"
@@ -1990,7 +2014,7 @@ export function FileBrowser({
                 isStructurallyExpanded &&
                 isSelected &&
                 activeFiles.length > 0 &&
-                hasPreviewableActiveFiles &&
+                hasSupportedPreviewableActiveFiles &&
                 Boolean(renderGridPreview || renderSinglePreview);
             const showFilePreviewWidgets =
                 node.path === effectiveSelectedDirectory &&

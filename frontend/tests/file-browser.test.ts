@@ -2264,6 +2264,14 @@ describe("N1 file browser", () => {
         const txtCheckbox = container.querySelector(
             'input[data-subdir-preview-kind="txt"]',
         ) as HTMLInputElement | null;
+        const getDeselectAllButton = () =>
+            container.querySelector(
+                'button[data-subdir-preview-kind-clear="/demo"]',
+            ) as HTMLButtonElement | null;
+        const getFileTypeMenu = () =>
+            container.querySelector(
+                '[data-subdir-preview-kinds="/demo"]',
+            ) as HTMLElement | null;
 
         expect(optionLabels).toEqual(
             previewFileTypeOptions.map((option) => option.label),
@@ -2281,6 +2289,7 @@ describe("N1 file browser", () => {
         expect(csvCheckbox?.checked).toBe(true);
         expect(mdCheckbox?.checked).toBe(true);
         expect(txtCheckbox?.checked).toBe(true);
+        expect(getDeselectAllButton()?.textContent).toContain("Deselect all");
 
         await click(csvCheckbox);
         await click(mdCheckbox);
@@ -2302,6 +2311,120 @@ describe("N1 file browser", () => {
             )?.textContent,
         ).toBe("");
         expect(subfolderToggle?.checked).toBe(false);
+
+        await click(getDeselectAllButton());
+
+        const selectedFileTypeInputs = [
+            ...(getFileTypeMenu()?.querySelectorAll<HTMLInputElement>(
+                "input[data-subdir-preview-kind]",
+            ) ?? []),
+        ];
+
+        expect(selectedFileTypeInputs).toHaveLength(
+            previewFileTypeOptions.length,
+        );
+        expect(selectedFileTypeInputs.every((input) => !input.checked)).toBe(
+            true,
+        );
+        expect(
+            container.querySelector(
+                '[data-file-browser-control-current="file-types"]',
+            )?.textContent,
+        ).toBe("No file types");
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/demo/photo.png"]',
+            ),
+        ).toBeNull();
+    });
+
+    it("keeps direct-file-only file type controls after deselecting all so a type can be reselected", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plots/plot-001.png", "output"),
+            buildFile("/results/plots/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewModeChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "grid",
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": `grid-preview-${file.path}` },
+                            file.path,
+                        ),
+                    selectedDirectory: "/results/plots",
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        const controls = () =>
+            container.querySelector(
+                '[data-file-browser-folder-controls="/results/plots"]',
+            ) as HTMLElement | null;
+        const menu = () =>
+            container.querySelector(
+                '[data-subdir-preview-kinds="/results/plots"]',
+            ) as HTMLElement | null;
+        const summary = () =>
+            controls()?.querySelector(
+                'summary[aria-label="File types"]',
+            ) as HTMLElement | null;
+        const selectedSummary = () =>
+            controls()?.querySelector(
+                '[data-file-browser-control-current="file-types"]',
+            )?.textContent ?? null;
+        const imageCheckbox = () =>
+            menu()?.querySelector(
+                'input[data-subdir-preview-kind="image"]',
+            ) as HTMLInputElement | null;
+
+        expect(controls()).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/results/plots/plot-001.png"]',
+            ),
+        ).toBeTruthy();
+
+        await click(summary());
+        await click(
+            menu()?.querySelector(
+                'button[data-subdir-preview-kind-clear="/results/plots"]',
+            ) ?? null,
+        );
+
+        expect(controls()).toBeTruthy();
+        expect(summary()).toBeTruthy();
+        expect(selectedSummary()).toBe("No file types");
+        expect(imageCheckbox()?.checked).toBe(false);
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/results/plots/plot-001.png"]',
+            ),
+        ).toBeNull();
+
+        await click(imageCheckbox());
+
+        expect(controls()).toBeTruthy();
+        expect(selectedSummary()).toBe("Images");
+        expect(imageCheckbox()?.checked).toBe(true);
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/results/plots/plot-001.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-testid="grid-preview-/results/plots/plot-001.png"]',
+            ),
+        ).toBeTruthy();
     });
 
     it("keeps preview mode summaries and toggles aligned when selection moves from a parent folder to a subfolder", async () => {

@@ -16,11 +16,32 @@ const fixturesRoot = path.join(
 );
 const galleriesDemoRootPath = path.join(fixturesRoot, "galleries-demo");
 const galleriesDemoSampleAPath = path.join(galleriesDemoRootPath, "sample-a");
+const galleriesDemoSampleBPath = path.join(galleriesDemoRootPath, "sample-b");
+const sampleBFirstPreviewPath = path.join(
+    galleriesDemoSampleBPath,
+    "orange-heatmap.svg",
+);
 const screenshotPath = path.join(
     evidenceDir,
     "file-types-dropdown-compact-extensions-postfix.png",
 );
 const evidencePath = screenshotPath.replace(/\.png$/, ".json");
+const deselectAllScreenshotPath = path.join(
+    evidenceDir,
+    "file-types-dropdown-deselect-all-postfix.png",
+);
+const deselectAllEvidencePath = deselectAllScreenshotPath.replace(
+    /\.png$/,
+    ".json",
+);
+const directDeselectAllScreenshotPath = path.join(
+    evidenceDir,
+    "file-types-dropdown-direct-deselect-all-postfix.png",
+);
+const directDeselectAllEvidencePath = directDeselectAllScreenshotPath.replace(
+    /\.png$/,
+    ".json",
+);
 const expectedFileTypeLabels = [
     "Images",
     ".svg",
@@ -160,6 +181,25 @@ async function openFileTypes(controls: Locator) {
 
         if (!(details instanceof HTMLDetailsElement)) {
             throw new Error("Missing file types disclosure");
+        }
+
+        if (!details.open) {
+            (element as HTMLElement).click();
+        }
+    });
+}
+
+async function openPreviewModes(controls: Locator) {
+    const summary = controls
+        .locator('summary[aria-label="Preview modes"]')
+        .first();
+
+    await expect(summary).toBeVisible();
+    await summary.evaluate((element) => {
+        const details = element.closest("details");
+
+        if (!(details instanceof HTMLDetailsElement)) {
+            throw new Error("Missing preview modes disclosure");
         }
 
         if (!details.open) {
@@ -372,4 +412,219 @@ test("shows compact specific preview extensions in the File types dropdown", asy
     });
     expect(evidence.labelsAreOnePerLine).toBe(false);
     expect(evidence.rowCount).toBeLessThan(evidence.fileTypeOptions.length);
+});
+
+test("deselects all file types from the compact File types dropdown", async ({
+    page,
+}) => {
+    test.setTimeout(120000);
+
+    await openNamedResultFileBrowser(page, "wtsi/galleries-demo");
+    await selectDirectory(page, galleriesDemoSampleAPath);
+
+    const controls = page.locator(
+        `[data-file-browser-folder-controls="${galleriesDemoSampleAPath}"]`,
+    );
+    const menu = page.locator(
+        `[data-subdir-preview-kinds="${galleriesDemoSampleAPath}"]`,
+    );
+
+    await expect(controls).toBeVisible();
+    await openFileTypes(controls);
+    await expect(menu).toBeVisible();
+    await expect(
+        menu.locator('input[data-subdir-preview-kind="image"]'),
+    ).toBeChecked();
+    await expect(
+        menu.locator('input[data-subdir-preview-kind="svg"]'),
+    ).toBeChecked();
+    await expect(menu.getByText(".csv", { exact: true })).toBeVisible();
+
+    const initialCheckedCount = await menu
+        .locator("input[data-subdir-preview-kind]:checked")
+        .count();
+    const deselectAllButton = menu.getByRole("button", {
+        name: /deselect all/i,
+    });
+
+    await expect(deselectAllButton).toBeVisible();
+    expect(initialCheckedCount).toBeGreaterThan(1);
+
+    await deselectAllButton.click();
+    await expect(
+        menu.locator("input[data-subdir-preview-kind]:checked"),
+    ).toHaveCount(0);
+    await expect(
+        controls.locator('[data-file-browser-control-current="file-types"]'),
+    ).toHaveText("No file types");
+
+    const evidence = await menu.evaluate(
+        (element, details) => {
+            const labels = [...element.querySelectorAll("label")].map(
+                (label) => label.textContent?.trim() ?? "",
+            );
+            const checkedLabels = [
+                ...element.querySelectorAll("label"),
+            ].flatMap((label) => {
+                const input = label.querySelector("input");
+
+                if (!(input instanceof HTMLInputElement) || !input.checked) {
+                    return [];
+                }
+
+                return label.textContent?.trim() ?? "";
+            });
+            const buttons = [...element.querySelectorAll("button")].map(
+                (button) => button.textContent?.trim() ?? "",
+            );
+
+            return {
+                buttons,
+                checkedLabels,
+                fixedBug: {
+                    expected:
+                        "a Deselect all button clears every selected File types option",
+                    observed:
+                        "the File types menu has a Deselect all button and no checked options after clicking it",
+                },
+                hasDeselectAllButton: buttons.some((label) =>
+                    /deselect all/i.test(label),
+                ),
+                initialCheckedCount: details.initialCheckedCount,
+                labels,
+                menuText: element.textContent?.trim() ?? "",
+                screenshotPath: details.screenshotPath,
+            };
+        },
+        {
+            initialCheckedCount,
+            screenshotPath: deselectAllScreenshotPath,
+        },
+    );
+
+    mkdirSync(evidenceDir, { recursive: true });
+    await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: deselectAllScreenshotPath,
+    });
+    writeFileSync(
+        deselectAllEvidencePath,
+        `${JSON.stringify(evidence, null, 2)}\n`,
+    );
+
+    expect(evidence.labels).toEqual(expectedFileTypeLabels);
+    expect(evidence.initialCheckedCount).toBeGreaterThan(1);
+    expect(evidence.checkedLabels).toEqual([]);
+    expect(evidence.hasDeselectAllButton).toBe(true);
+});
+
+test("keeps File types available after deselecting all in a direct-file-only folder", async ({
+    page,
+}) => {
+    test.setTimeout(120000);
+
+    await openNamedResultFileBrowser(page, "wtsi/galleries-demo");
+    await selectDirectory(page, galleriesDemoSampleBPath);
+
+    const controls = page.locator(
+        `[data-file-browser-folder-controls="${galleriesDemoSampleBPath}"]`,
+    );
+    const menu = page.locator(
+        `[data-subdir-preview-kinds="${galleriesDemoSampleBPath}"]`,
+    );
+    const gridRow = page.locator(
+        `[data-file-browser-grid-row="${sampleBFirstPreviewPath}"]`,
+    );
+
+    await expect(controls).toBeVisible();
+    await openPreviewModes(controls);
+    await controls.getByLabel("1 preview per row").check();
+    await expect(gridRow).toBeVisible();
+
+    await openFileTypes(controls);
+    await expect(menu).toBeVisible();
+    await expect(
+        menu.locator('input[data-subdir-preview-kind="svg"]'),
+    ).toBeChecked();
+
+    const deselectAllButton = menu.getByRole("button", {
+        name: /deselect all/i,
+    });
+
+    await deselectAllButton.click();
+
+    await expect(controls).toBeVisible();
+    await expect(menu).toBeVisible();
+    await expect(
+        menu.locator("input[data-subdir-preview-kind]:checked"),
+    ).toHaveCount(0);
+    await expect(
+        controls.locator('[data-file-browser-control-current="file-types"]'),
+    ).toHaveText("No file types");
+    await expect(gridRow).toHaveCount(0);
+
+    await menu.locator('input[data-subdir-preview-kind="svg"]').check();
+
+    await expect(
+        controls.locator('[data-file-browser-control-current="file-types"]'),
+    ).toHaveText(".svg");
+    await expect(gridRow).toBeVisible();
+    await expect(
+        page
+            .locator(`[data-grid-preview-path="${sampleBFirstPreviewPath}"]`)
+            .first(),
+    ).toBeVisible();
+
+    const evidence = await page.evaluate(
+        (details) => {
+            const controls = document.querySelector<HTMLElement>(
+                `[data-file-browser-folder-controls="${details.directoryPath}"]`,
+            );
+            const menu = document.querySelector<HTMLElement>(
+                `[data-subdir-preview-kinds="${details.directoryPath}"]`,
+            );
+            const restoredRow = document.querySelector<HTMLElement>(
+                `[data-file-browser-grid-row="${details.previewPath}"]`,
+            );
+
+            return {
+                directoryPath: details.directoryPath,
+                fixedBug: {
+                    expected:
+                        "direct-file-only folders keep File types available after Deselect all and allow reselecting a type",
+                    observed:
+                        "the File types control remains mounted, reports .svg after reselecting, and the SVG preview row is restored",
+                },
+                restoredPreviewText: restoredRow?.innerText.trim() ?? null,
+                screenshotPath: details.screenshotPath,
+                selectedSummary:
+                    controls
+                        ?.querySelector(
+                            '[data-file-browser-control-current="file-types"]',
+                        )
+                        ?.textContent?.trim() ?? null,
+                visibleMenuText: menu?.innerText.trim() ?? null,
+            };
+        },
+        {
+            directoryPath: galleriesDemoSampleBPath,
+            previewPath: sampleBFirstPreviewPath,
+            screenshotPath: directDeselectAllScreenshotPath,
+        },
+    );
+
+    mkdirSync(evidenceDir, { recursive: true });
+    await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: directDeselectAllScreenshotPath,
+    });
+    writeFileSync(
+        directDeselectAllEvidencePath,
+        `${JSON.stringify(evidence, null, 2)}\n`,
+    );
+
+    expect(evidence.selectedSummary).toBe(".svg");
+    expect(evidence.restoredPreviewText).toContain("orange-heatmap.svg");
 });
