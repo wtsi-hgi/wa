@@ -9,6 +9,7 @@ import {
     registerResult,
     type ResultSet,
 } from "./results-auth-helpers";
+import { withSeqmetaHeavyE2ELock } from "./seqmeta-test-lock";
 
 type FilterEvidence = {
     finalUrl: string;
@@ -148,96 +149,102 @@ test("direct seqmeta sample metadata filter links return the originating result 
 }) => {
     test.setTimeout(180_000);
 
-    const result = await registerDirectMetadataReproResult();
-    const evidenceRoot = path.resolve(process.cwd(), "..", ".tmp", "agent");
-    const evidencePath = path.join(
-        evidenceRoot,
-        "seqmeta-direct-filter-repro.json",
-    );
-    const tracePath = path.join(
-        evidenceRoot,
-        "seqmeta-direct-filter-repro-trace.zip",
-    );
-    let cleanupNeeded = true;
-
-    const context = await browser.newContext();
-    await installResultsAuthCookie(context);
-    await context.tracing.start({ screenshots: true, snapshots: true });
-    const page = await context.newPage();
-
-    try {
-        await openSampleDetails(page, result.id);
-        const titleEvidence = await captureFilterEvidence(
-            page,
-            "title sample-name filter",
-            /Send seqmeta_sample_name to search filter/i,
-            "seqmeta-title-filter-repro.png",
+    await withSeqmetaHeavyE2ELock(async () => {
+        const result = await registerDirectMetadataReproResult();
+        const evidenceRoot = path.resolve(process.cwd(), "..", ".tmp", "agent");
+        const evidencePath = path.join(
+            evidenceRoot,
+            "seqmeta-direct-filter-repro.json",
         );
-
-        await openSampleDetails(page, result.id);
-        const directSupplierEvidence = await captureFilterEvidence(
-            page,
-            "direct supplier-name filter",
-            /Send seqmeta_supplier_name to search filter/i,
-            "seqmeta-direct-supplier-filter-repro.png",
+        const tracePath = path.join(
+            evidenceRoot,
+            "seqmeta-direct-filter-repro-trace.zip",
         );
+        let cleanupNeeded = true;
 
-        await openSampleDetails(page, result.id);
-        const directLimsEvidence = await captureFilterEvidence(
-            page,
-            "direct sample-LIMS filter",
-            /Send seqmeta_id_sample_lims to search filter/i,
-            "seqmeta-direct-lims-filter-repro.png",
-        );
+        const context = await browser.newContext();
+        await installResultsAuthCookie(context);
+        await context.tracing.start({ screenshots: true, snapshots: true });
+        const page = await context.newPage();
 
-        await context.tracing.stop({ path: tracePath });
+        try {
+            await openSampleDetails(page, result.id);
+            const titleEvidence = await captureFilterEvidence(
+                page,
+                "title sample-name filter",
+                /Send seqmeta_sample_name to search filter/i,
+                "seqmeta-title-filter-repro.png",
+            );
 
-        const evidence = {
-            resultId: result.id,
-            tracePath,
-            filters: [
-                titleEvidence,
-                directSupplierEvidence,
-                directLimsEvidence,
-            ],
-        };
-        await fs.writeFile(evidencePath, JSON.stringify(evidence, null, 2));
+            await openSampleDetails(page, result.id);
+            const directSupplierEvidence = await captureFilterEvidence(
+                page,
+                "direct supplier-name filter",
+                /Send seqmeta_supplier_name to search filter/i,
+                "seqmeta-direct-supplier-filter-repro.png",
+            );
 
-        deleteResult(result.id);
-        cleanupNeeded = false;
+            await openSampleDetails(page, result.id);
+            const directLimsEvidence = await captureFilterEvidence(
+                page,
+                "direct sample-LIMS filter",
+                /Send seqmeta_id_sample_lims to search filter/i,
+                "seqmeta-direct-lims-filter-repro.png",
+            );
 
-        expect(titleEvidence.millisUntilSearchResults).not.toBeNull();
-        expect(directSupplierEvidence.millisUntilSearchResults).not.toBeNull();
-        expect(directLimsEvidence.millisUntilSearchResults).not.toBeNull();
-        expect(titleEvidence.resultRows).toBeGreaterThanOrEqual(1);
-        expect(directSupplierEvidence.resultRows).toBeGreaterThanOrEqual(1);
-        expect(directLimsEvidence.resultRows).toBeGreaterThanOrEqual(1);
-        expect(new URL(titleEvidence.finalUrl).searchParams.get("sample")).toBe(
-            "7607STDY14643771",
-        );
-        expect(
-            new URL(directSupplierEvidence.finalUrl).searchParams.get("sample"),
-        ).toBe("Supplier Sample 7607");
-        expect(
-            new URL(directLimsEvidence.finalUrl).searchParams.get(
-                "seqmeta_id_sample_lims",
-            ),
-        ).toBe("SMP7607-0000");
-        expect(directSupplierEvidence.renderingSampleCount).toBe(0);
-        expect(directLimsEvidence.renderingSampleCount).toBe(0);
-        expect(
-            Math.max(
-                directSupplierEvidence.millisUntilSearchResults ?? Infinity,
-                directLimsEvidence.millisUntilSearchResults ?? Infinity,
-            ),
-        ).toBeLessThanOrEqual(
-            (titleEvidence.millisUntilSearchResults ?? 0) + 1_000,
-        );
-    } finally {
-        if (cleanupNeeded) {
+            await context.tracing.stop({ path: tracePath });
+
+            const evidence = {
+                resultId: result.id,
+                tracePath,
+                filters: [
+                    titleEvidence,
+                    directSupplierEvidence,
+                    directLimsEvidence,
+                ],
+            };
+            await fs.writeFile(evidencePath, JSON.stringify(evidence, null, 2));
+
             deleteResult(result.id);
-        }
+            cleanupNeeded = false;
 
-        await context.close();
-    }
+            expect(titleEvidence.millisUntilSearchResults).not.toBeNull();
+            expect(
+                directSupplierEvidence.millisUntilSearchResults,
+            ).not.toBeNull();
+            expect(directLimsEvidence.millisUntilSearchResults).not.toBeNull();
+            expect(titleEvidence.resultRows).toBeGreaterThanOrEqual(1);
+            expect(directSupplierEvidence.resultRows).toBeGreaterThanOrEqual(1);
+            expect(directLimsEvidence.resultRows).toBeGreaterThanOrEqual(1);
+            expect(
+                new URL(titleEvidence.finalUrl).searchParams.get("sample"),
+            ).toBe("7607STDY14643771");
+            expect(
+                new URL(directSupplierEvidence.finalUrl).searchParams.get(
+                    "sample",
+                ),
+            ).toBe("Supplier Sample 7607");
+            expect(
+                new URL(directLimsEvidence.finalUrl).searchParams.get(
+                    "seqmeta_id_sample_lims",
+                ),
+            ).toBe("SMP7607-0000");
+            expect(directSupplierEvidence.renderingSampleCount).toBe(0);
+            expect(directLimsEvidence.renderingSampleCount).toBe(0);
+            expect(
+                Math.max(
+                    directSupplierEvidence.millisUntilSearchResults ?? Infinity,
+                    directLimsEvidence.millisUntilSearchResults ?? Infinity,
+                ),
+            ).toBeLessThanOrEqual(
+                (titleEvidence.millisUntilSearchResults ?? 0) + 1_000,
+            );
+        } finally {
+            if (cleanupNeeded) {
+                deleteResult(result.id);
+            }
+
+            await context.close();
+        }
+    });
 });

@@ -1148,6 +1148,41 @@ try {
   );
 
   run(
+    `INSERT INTO study_mirror(
+      id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name,
+      accession_number, study_title, faculty_sponsor, state,
+      data_release_strategy, data_access_group, programme, reference_genome,
+      ethically_approved, study_type, contains_human_dna,
+      contaminated_human_dna, study_visibility, ega_dac_accession_number,
+      ega_policy_accession_number, data_release_timing, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      2,
+      "SQSCP",
+      "7607",
+      "11111111-2222-3333-4444-555555557607",
+      "7607",
+      "ERP7607",
+      "Seqmeta rendering repro study",
+      "Dr Repro",
+      "active",
+      "managed",
+      "seqmeta",
+      "Performance",
+      "GRCh38",
+      1,
+      "Whole Genome Sequencing",
+      1,
+      0,
+      "Always Open",
+      "EGAC7607",
+      "EGAP7607",
+      "Immediate",
+      syncedAt,
+    ],
+  );
+
+  run(
     `INSERT INTO sample_mirror(
       id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
       sanger_sample_id, supplier_name, accession_number, donor_id,
@@ -1171,8 +1206,56 @@ try {
   );
 
   run(
+    `INSERT INTO sample_mirror(
+      id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name,
+      sanger_sample_id, supplier_name, accession_number, donor_id,
+      taxon_id, common_name, description, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      2,
+      "SQSCP",
+      "SMP7607-0000",
+      "22222222-2222-3333-4444-555555557607",
+      "7607STDY14643771",
+      "7607STDY14643771",
+      "Supplier Sample 7607",
+      "SAMEA76070000",
+      "DONOR7607",
+      9606,
+      "Human",
+      "run-dev seqmeta validation fixture sample",
+      syncedAt,
+    ],
+  );
+
+  run(
     "INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)",
     ["Chromium single cell 3 prime v3", 1, "6568", "71046409", "SQPP-71046409-G:A1"],
+  );
+
+  run(
+    "INSERT INTO library_samples(pipeline_id_lims, id_sample_tmp, id_study_lims, library_id, id_library_lims) VALUES (?, ?, ?, ?, ?)",
+    ["Custom", 2, "7607", "71046409", "LIB7607-71046409"],
+  );
+
+  run(
+    `INSERT INTO iseq_product_metrics_mirror(
+      id_iseq_product, id_iseq_flowcell_tmp, id_run, position, tag_index,
+      id_sample_tmp, id_study_lims, qc, qc_lib, qc_seq, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      "7607-48522-1-1",
+      2,
+      48522,
+      1,
+      1,
+      2,
+      "7607",
+      1,
+      1,
+      1,
+      syncedAt,
+    ],
   );
 
   db.exec("COMMIT");

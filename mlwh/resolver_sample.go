@@ -46,6 +46,7 @@ type sampleResolution struct {
 var resolveSampleTextSteps = []sampleLookupStep{
 	{kind: KindSangerSampleName, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
 	{kind: KindSangerSampleID, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
+	{kind: KindSampleLimsID, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
 	{kind: KindSupplierName, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
 	{kind: KindSampleAccession, query: `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`},
 }

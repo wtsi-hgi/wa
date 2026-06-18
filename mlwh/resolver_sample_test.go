@@ -39,12 +39,13 @@ import (
 )
 
 var (
-	sampleUUIDQuery      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE uuid_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleLimsIDQuery    = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
-	sampleNameQuery      = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
-	sampleSangerIDQuery  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
-	sampleSupplierQuery  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
-	sampleAccessionQuery = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleUUIDQuery       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE uuid_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
+	sampleLimsIDQuery     = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' LIMIT 1`
+	sampleNameQuery       = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleSangerIDQuery   = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleTextLimsIDQuery = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleSupplierQuery   = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
+	sampleAccessionQuery  = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP' ORDER BY sample_mirror.id_sample_tmp LIMIT 2`
 )
 
 func TestResolveSampleUUIDMatch(t *testing.T) {
@@ -84,6 +85,27 @@ func TestResolveSampleLimsIDFallsBackAfterUUIDMiss(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(match.Kind, convey.ShouldEqual, KindSampleLimsID)
 		convey.So(match.Canonical, convey.ShouldEqual, "7607STDY14643771")
+	})
+}
+
+func TestResolveSampleTextLimsIDMatch(t *testing.T) {
+	convey.Convey("Given an alphanumeric sample identifier matching id_sample_lims in cache", t, func() {
+		client, _, cleanup := newResolverSampleTestClient(t)
+		defer cleanup()
+
+		const raw = "SMP7607-0000"
+		seedSampleMirrorRow(t, client.cache.DB(), 5, "7607STDY14643771", "supplier-5", "donor-5", time.Date(2026, time.May, 6, 14, 0, 0, 0, time.UTC))
+		_, err := client.cache.DB().Exec(`UPDATE sample_mirror SET id_sample_lims = ?, uuid_sample_lims = ? WHERE id_sample_tmp = ?`, raw, "sample-uuid-5", 5)
+		convey.So(err, convey.ShouldBeNil)
+		seedSyncState(t, client.cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 14, 1, 0, 0, time.UTC))
+
+		match, err := client.ResolveSample(context.Background(), raw)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(match.Kind, convey.ShouldEqual, KindSampleLimsID)
+		convey.So(match.Canonical, convey.ShouldEqual, "7607STDY14643771")
+		convey.So(match.Sample, convey.ShouldNotBeNil)
+		convey.So(match.Sample.IDSampleLims, convey.ShouldEqual, raw)
 	})
 }
 
@@ -293,6 +315,9 @@ func TestResolveSampleFixtureShapedSupplierNameFallbackWhenIndexesAvailable(t *t
 		roMock.ExpectQuery(regexp.QuoteMeta(sampleSangerIDQuery)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
+		roMock.ExpectQuery(regexp.QuoteMeta(sampleTextLimsIDQuery)).
+			WithArgs(raw).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
 		roMock.ExpectQuery(regexp.QuoteMeta(sampleSupplierQuery)).
 			WithArgs(raw).
 			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).AddRow(
@@ -331,6 +356,7 @@ func TestResolveSampleWarmCacheMissForMySQLCacheReturnsNotFoundWithoutNegativeCa
 			for _, query := range []string{
 				sampleNameQuery,
 				sampleSangerIDQuery,
+				sampleTextLimsIDQuery,
 				sampleSupplierQuery,
 				sampleAccessionQuery,
 			} {
