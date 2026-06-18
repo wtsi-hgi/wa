@@ -332,7 +332,11 @@ export async function ResultDetailPageContent({
                 </div>
             </section>
 
-            <ResultDetailFiles files={files} resultId={result.id} />
+            <ResultDetailFiles
+                files={files}
+                filterStorageKey={`pipeline:${result.pipeline_name}`}
+                resultId={result.id}
+            />
         </main>
     );
 }

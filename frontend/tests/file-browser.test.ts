@@ -3,6 +3,7 @@
 import { createElement, type ReactNode, useState } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { FileEntry } from "@/lib/contracts";
@@ -38,6 +39,7 @@ describe("N1 file browser", () => {
     beforeEach(() => {
         container = document.createElement("div");
         document.body.appendChild(container);
+        window.localStorage.clear();
         root = createRoot(container);
     });
 
@@ -225,6 +227,142 @@ describe("N1 file browser", () => {
 
         expect(resultsButton).toBeTruthy();
         expect(resultsButton?.textContent).toContain("/results");
+    });
+
+    it("filters files and keeps only directories containing glob matches", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                        buildFile("/demo/logs/alpha-run.log", "output"),
+                        buildFile("/demo/metrics/alpha-qc.json", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const filterInput = container.querySelector(
+            'input[aria-label="Filter files by glob"]',
+        ) as HTMLInputElement | null;
+
+        expect(filterInput).toBeTruthy();
+
+        await act(async () => {
+            if (!filterInput) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(filterInput, {
+                target: { value: "**/*.tsv" },
+            });
+        });
+
+        expect(filterInput?.value).toBe("**/*.tsv");
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/demo/reports"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector('button[data-file-path$=".tsv"]'),
+        ).toBeTruthy();
+        expect(
+            container.querySelector('button[data-directory-path="/demo/logs"]'),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/demo/metrics"]',
+            ),
+        ).toBeNull();
+        expect(container.textContent).toContain("alpha-summary.tsv");
+        expect(container.textContent).not.toContain("alpha-run.log");
+        expect(container.textContent).not.toContain("alpha-qc.json");
+    });
+
+    it("saves glob filters per storage key and clears when a new key has no saved value", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const storageKey = "wa:file-browser:glob-filter:pipeline-alpha";
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                        buildFile("/demo/logs/alpha-run.log", "output"),
+                    ],
+                    filterStorageKey: "pipeline-alpha",
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const filterInput = () =>
+            container.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+        const saveButton = () =>
+            container.querySelector(
+                'button[aria-label="Save file glob filter"]',
+            ) as HTMLButtonElement | null;
+
+        expect(filterInput()).toBeTruthy();
+        expect(saveButton()).toBeTruthy();
+
+        await act(async () => {
+            const input = filterInput();
+
+            if (!input) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(input, {
+                target: { value: "*.tsv" },
+            });
+        });
+        await click(saveButton());
+
+        expect(window.localStorage.getItem(storageKey)).toBe("*.tsv");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                        buildFile("/demo/logs/alpha-run.log", "output"),
+                    ],
+                    filterStorageKey: "pipeline-beta",
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        expect(filterInput()?.value).toBe("");
+        expect(container.textContent).toContain("alpha-run.log");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                        buildFile("/demo/logs/alpha-run.log", "output"),
+                    ],
+                    filterStorageKey: "pipeline-alpha",
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        expect(filterInput()?.value).toBe("*.tsv");
+        expect(container.textContent).toContain("alpha-summary.tsv");
+        expect(container.textContent).not.toContain("alpha-run.log");
     });
 
     it("renders expanded nested directory contents inside the directory row box", async () => {
@@ -852,6 +990,34 @@ describe("N1 file browser", () => {
             "/out/a",
             "/out/m",
             "/out/z",
+        ]);
+    });
+
+    it("matches glob filters against basenames and nested paths", async () => {
+        const { filePathMatchesGlobPattern, filterFilesByGlobPattern } =
+            await import("@/lib/file-glob-filter");
+        const files = [
+            buildFile("/out/reports/alpha-summary.tsv", "output"),
+            buildFile("/out/reports/alpha-summary.txt", "output"),
+            buildFile("/out/logs/alpha-run.log", "output"),
+        ];
+
+        expect(filePathMatchesGlobPattern(files[0]?.path ?? "", "*.tsv")).toBe(
+            true,
+        );
+        expect(
+            filePathMatchesGlobPattern(
+                files[0]?.path ?? "",
+                "reports/alpha-[!q]*.tsv",
+            ),
+        ).toBe(true);
+        expect(
+            filterFilesByGlobPattern(files, "**/*-summary.t??").map(
+                (file) => file.path,
+            ),
+        ).toEqual([
+            "/out/reports/alpha-summary.tsv",
+            "/out/reports/alpha-summary.txt",
         ]);
     });
 

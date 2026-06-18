@@ -22,6 +22,11 @@ import {
     type FilePreviewError,
 } from "@/components/file-preview";
 import type { FileEntry } from "@/lib/contracts";
+import {
+    fileBrowserGlobFilterStorageKey,
+    filterFilesByGlobPattern,
+    readSavedFileBrowserGlobFilter,
+} from "@/lib/file-glob-filter";
 
 export type RegisteredFileEntry = FileEntry & {
     resultId?: string;
@@ -29,6 +34,7 @@ export type RegisteredFileEntry = FileEntry & {
 
 type ResultDetailFilesProps = {
     directoryFileOverrides?: Record<string, RegisteredFileEntry[]>;
+    filterStorageKey?: string;
     files: RegisteredFileEntry[];
     initialSelectedDirectory?: string;
     renderDirectoryAction?: (node: DirectoryTreeNode) => ReactNode;
@@ -251,6 +257,21 @@ function parentDirectory(path: string): string {
     return normalized.slice(0, index);
 }
 
+function directoryContainsFile(
+    directoryPath: string,
+    files: FileEntry[],
+): boolean {
+    if (directoryPath === "/") {
+        return files.length > 0;
+    }
+
+    return files.some(
+        (file) =>
+            parentDirectory(file.path) === directoryPath ||
+            file.path.startsWith(`${directoryPath}/`),
+    );
+}
+
 function resolveDirectorySelection(
     directoryPath: string,
     currentSelectedDirectory: string | undefined,
@@ -378,6 +399,7 @@ function areGalleryPreviewRowPropsEqual(
 
 export function ResultDetailFiles({
     directoryFileOverrides,
+    filterStorageKey,
     files,
     initialSelectedDirectory: preferredInitialSelectedDirectory,
     renderDirectoryAction,
@@ -394,14 +416,47 @@ export function ResultDetailFiles({
         (file: FileEntry): string => resultIdsByPath.get(file.path) ?? resultId,
         [resultIdsByPath, resultId],
     );
-    const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
-    const initialSelectedDirectory = useMemo(
-        () =>
-            preferredInitialSelectedDirectory ??
-            findInitialSubdirPreviewDirectory(files) ??
-            directoryGroups[0]?.path,
-        [directoryGroups, files, preferredInitialSelectedDirectory],
+    const resolvedFilterStorageKey = useMemo(
+        () => fileBrowserGlobFilterStorageKey(filterStorageKey),
+        [filterStorageKey],
     );
+    const savedFileFilter = useMemo(
+        () => readSavedFileBrowserGlobFilter(filterStorageKey),
+        [filterStorageKey],
+    );
+    const [fileFilterState, setFileFilterState] = useState<{
+        storageKey: string | undefined;
+        value: string;
+    } | null>(null);
+    const fileFilterValue =
+        fileFilterState &&
+        fileFilterState.storageKey === resolvedFilterStorageKey
+            ? fileFilterState.value
+            : savedFileFilter;
+    const filteredFiles = useMemo(
+        () => filterFilesByGlobPattern(files, fileFilterValue),
+        [fileFilterValue, files],
+    );
+    const directoryGroups = useMemo(
+        () => buildDirectoryGroups(filteredFiles),
+        [filteredFiles],
+    );
+    const initialSelectedDirectory = useMemo(() => {
+        if (
+            preferredInitialSelectedDirectory &&
+            directoryContainsFile(
+                preferredInitialSelectedDirectory,
+                filteredFiles,
+            )
+        ) {
+            return preferredInitialSelectedDirectory;
+        }
+
+        return (
+            findInitialSubdirPreviewDirectory(filteredFiles) ??
+            directoryGroups[0]?.path
+        );
+    }, [directoryGroups, filteredFiles, preferredInitialSelectedDirectory]);
     const initialSelectedFile = useMemo(
         () =>
             directoryGroups.find(
@@ -427,8 +482,13 @@ export function ResultDetailFiles({
         isLoading: false,
         path: null,
     });
-    const effectiveSelectedDirectory =
+    const requestedSelectedDirectory =
         selectedDirectory ?? initialSelectedDirectory;
+    const effectiveSelectedDirectory =
+        requestedSelectedDirectory &&
+        directoryContainsFile(requestedSelectedDirectory, filteredFiles)
+            ? requestedSelectedDirectory
+            : initialSelectedDirectory;
     const selectedGroup = useMemo(
         () =>
             directoryGroups.find(
@@ -436,15 +496,20 @@ export function ResultDetailFiles({
             ),
         [directoryGroups, effectiveSelectedDirectory],
     );
-    const selectedDirectoryFiles = useMemo(
-        () =>
-            (effectiveSelectedDirectory
-                ? directoryFileOverrides?.[effectiveSelectedDirectory]
-                : undefined) ??
-            selectedGroup?.files ??
-            [],
-        [directoryFileOverrides, effectiveSelectedDirectory, selectedGroup],
-    );
+    const selectedDirectoryFiles = useMemo(() => {
+        const overrideFiles = effectiveSelectedDirectory
+            ? directoryFileOverrides?.[effectiveSelectedDirectory]
+            : undefined;
+
+        return overrideFiles
+            ? filterFilesByGlobPattern(overrideFiles, fileFilterValue)
+            : (selectedGroup?.files ?? []);
+    }, [
+        directoryFileOverrides,
+        effectiveSelectedDirectory,
+        fileFilterValue,
+        selectedGroup,
+    ]);
     const effectiveSelectedFile = useMemo(() => {
         if (!selectedFile) {
             return selectedDirectoryFiles[0] ?? null;
@@ -464,6 +529,16 @@ export function ResultDetailFiles({
     const visiblePreviewFiles = selectedDirectoryFiles.slice(
         (effectivePreviewPage - 1) * thumbnailsPerPage,
         effectivePreviewPage * thumbnailsPerPage,
+    );
+    const handleFileFilterChange = useCallback(
+        (value: string) => {
+            setFileFilterState({
+                storageKey: resolvedFilterStorageKey,
+                value,
+            });
+            setPreviewPage(1);
+        },
+        [resolvedFilterStorageKey],
     );
 
     useEffect(() => {
@@ -656,7 +731,10 @@ export function ResultDetailFiles({
     return (
         <FileBrowser
             activeFiles={selectedDirectoryFiles}
+            fileFilterValue={fileFilterValue}
+            filterStorageKey={filterStorageKey}
             files={files}
+            onFileFilterChange={handleFileFilterChange}
             onPreviewHeightChange={setPreviewHeight}
             onPreviewModeChange={(nextMode) => {
                 setPreviewMode(nextMode);

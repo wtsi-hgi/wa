@@ -21,6 +21,7 @@ import {
     Eye,
     FolderTree,
     ListFilter,
+    Save,
 } from "lucide-react";
 
 import {
@@ -32,6 +33,12 @@ import {
 } from "@/components/box-title-section";
 import { PreviewPagination } from "@/components/preview-pagination";
 import { type FileEntry } from "@/lib/contracts";
+import {
+    fileBrowserGlobFilterStorageKey,
+    filterFilesByGlobPattern,
+    readSavedFileBrowserGlobFilter,
+    saveFileBrowserGlobFilter,
+} from "@/lib/file-glob-filter";
 import { cn, formatBytes } from "@/lib/utils";
 
 export type PreviewMode = "single" | "grid";
@@ -330,7 +337,10 @@ function clampPreviewHeight(value: number): number {
 
 type FileBrowserProps = {
     activeFiles?: FileEntry[];
+    filterStorageKey?: string;
     files: FileEntry[];
+    fileFilterValue?: string;
+    onFileFilterChange?: (value: string) => void;
     onPreviewHeightChange?: (value: number) => void;
     onPreviewModeChange?: (mode: PreviewMode) => void;
     onPreviewPageChange?: (page: number) => void;
@@ -459,7 +469,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass: "-mx-0.5 flex min-h-9 items-start pb-4",
+    headerClass: "-mx-0.5 relative flex min-h-9 items-start pb-4",
     headerIconClass: boxTitleIconClass,
     headerTitleClass: boxTitleTextClass,
     id: "inline",
@@ -716,6 +726,21 @@ function parentDirectory(path: string): string {
     }
 
     return normalized.slice(0, index);
+}
+
+function directoryContainsFile(
+    directoryPath: string,
+    files: FileEntry[],
+): boolean {
+    if (directoryPath === "/") {
+        return files.length > 0;
+    }
+
+    return files.some(
+        (file) =>
+            parentDirectory(file.path) === directoryPath ||
+            file.path.startsWith(`${directoryPath}/`),
+    );
 }
 
 function fileName(path: string): string {
@@ -1016,7 +1041,10 @@ export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
 
 export function FileBrowser({
     activeFiles: activeFilesOverride,
+    filterStorageKey,
     files,
+    fileFilterValue,
+    onFileFilterChange,
     onPreviewHeightChange,
     onPreviewModeChange,
     onPreviewPageChange,
@@ -1035,6 +1063,46 @@ export function FileBrowser({
     visibleFiles,
 }: FileBrowserProps) {
     const activeDesign = activeFileBrowserDesign;
+    const resolvedFilterStorageKey = useMemo(
+        () => fileBrowserGlobFilterStorageKey(filterStorageKey),
+        [filterStorageKey],
+    );
+    const savedFileFilter = useMemo(
+        () => readSavedFileBrowserGlobFilter(filterStorageKey),
+        [filterStorageKey],
+    );
+    const [uncontrolledFileFilter, setUncontrolledFileFilter] = useState<{
+        storageKey: string | undefined;
+        value: string;
+    } | null>(null);
+    const effectiveUncontrolledFileFilter =
+        uncontrolledFileFilter &&
+        uncontrolledFileFilter.storageKey === resolvedFilterStorageKey
+            ? uncontrolledFileFilter.value
+            : savedFileFilter;
+    const effectiveFileFilter =
+        fileFilterValue ?? effectiveUncontrolledFileFilter;
+    const filteredFiles = useMemo(
+        () => filterFilesByGlobPattern(files, effectiveFileFilter),
+        [effectiveFileFilter, files],
+    );
+    const filteredActiveFilesOverride = useMemo(
+        () =>
+            activeFilesOverride
+                ? filterFilesByGlobPattern(
+                      activeFilesOverride,
+                      effectiveFileFilter,
+                  )
+                : undefined,
+        [activeFilesOverride, effectiveFileFilter],
+    );
+    const filteredVisibleFiles = useMemo(
+        () =>
+            visibleFiles
+                ? filterFilesByGlobPattern(visibleFiles, effectiveFileFilter)
+                : undefined,
+        [effectiveFileFilter, visibleFiles],
+    );
     const [uncontrolledDirectory, setUncontrolledDirectory] = useState<
         string | undefined
     >(selectedDirectory);
@@ -1050,30 +1118,44 @@ export function FileBrowser({
                 ancestorPaths(
                     selectedDirectory ??
                         (renderGridPreview
-                            ? findInitialSubdirPreviewDirectory(files)
+                            ? findInitialSubdirPreviewDirectory(filteredFiles)
                             : undefined) ??
-                        parentDirectory(files[0]?.path ?? "/"),
+                        parentDirectory(filteredFiles[0]?.path ?? "/"),
                 ),
             ),
     );
     const initialDirectoryNotificationRef = useRef<string | undefined>(
         undefined,
     );
-    const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
-    const directoryTree = useMemo(() => buildDirectoryTree(files), [files]);
-    const initialSubdirPreviewDirectory = useMemo(
-        () => findInitialSubdirPreviewDirectory(files),
-        [files],
+    const directoryGroups = useMemo(
+        () => buildDirectoryGroups(filteredFiles),
+        [filteredFiles],
     );
-    const preferredDirectory =
+    const directoryTree = useMemo(
+        () => buildDirectoryTree(filteredFiles),
+        [filteredFiles],
+    );
+    const initialSubdirPreviewDirectory = useMemo(
+        () => findInitialSubdirPreviewDirectory(filteredFiles),
+        [filteredFiles],
+    );
+    const requestedDirectory =
         selectedDirectory ??
         uncontrolledDirectory ??
+        (renderGridPreview ? initialSubdirPreviewDirectory : undefined);
+    const fallbackDirectory =
         (renderGridPreview ? initialSubdirPreviewDirectory : undefined) ??
         directoryGroups[0]?.path;
+    const preferredDirectory =
+        requestedDirectory &&
+        directoryContainsFile(requestedDirectory, filteredFiles)
+            ? requestedDirectory
+            : fallbackDirectory;
     const activeDirectory = directoryGroups.find(
         (group) => group.path === preferredDirectory,
     );
-    const activeFiles = activeFilesOverride ?? activeDirectory?.files ?? [];
+    const activeFiles =
+        filteredActiveFilesOverride ?? activeDirectory?.files ?? [];
     const effectiveSelectedDirectory = preferredDirectory;
     const [uncontrolledPreviewHeight, setUncontrolledPreviewHeight] =
         useState(previewHeight);
@@ -1121,11 +1203,24 @@ export function FileBrowser({
         activeFiles.find((file) => file.path === preferredSelectedPath) ??
         activeFiles[0];
     const effectiveSelectedPath = activeFile?.path;
-    const displayedFiles = visibleFiles ?? activeFiles;
+    const displayedFiles = filteredVisibleFiles ?? activeFiles;
     const previewableDisplayedFiles = displayedFiles.filter((file) =>
         fileMatchesPreviewKinds(file, selectedPreviewKinds),
     );
     const hasPreviewableActiveFiles = previewableActiveFiles.length > 0;
+    const updateFileFilter = useCallback(
+        (value: string) => {
+            setUncontrolledFileFilter({
+                storageKey: resolvedFilterStorageKey,
+                value,
+            });
+            onFileFilterChange?.(value);
+        },
+        [onFileFilterChange, resolvedFilterStorageKey],
+    );
+    const handleSaveFileFilter = useCallback(() => {
+        saveFileBrowserGlobFilter(filterStorageKey, effectiveFileFilter);
+    }, [effectiveFileFilter, filterStorageKey]);
 
     const visibleExpandedDirectories = useMemo(() => {
         const next = new Set(expandedDirectories);
@@ -2237,6 +2332,33 @@ export function FileBrowser({
                     <p className={activeDesign.headerTitleClass}>
                         File Browser
                     </p>
+                    <div
+                        className="mt-3 flex w-full min-w-0 max-w-full items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 sm:mt-0 sm:w-auto"
+                        data-file-browser-filter-controls="true"
+                    >
+                        <input
+                            aria-label="Filter files by glob"
+                            className="h-8 w-full max-w-[min(16rem,52vw)] rounded-md border border-border/80 bg-background px-2.5 font-mono text-sm text-foreground shadow-sm transition placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 sm:w-44"
+                            data-file-browser-glob-filter="true"
+                            onChange={(event) =>
+                                updateFileFilter(event.target.value)
+                            }
+                            placeholder="Glob filter"
+                            type="search"
+                            value={effectiveFileFilter}
+                        />
+                        <button
+                            aria-label="Save file glob filter"
+                            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/80 bg-background text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 disabled:cursor-not-allowed disabled:opacity-45"
+                            data-file-browser-glob-filter-save="true"
+                            disabled={!resolvedFilterStorageKey}
+                            onClick={handleSaveFileFilter}
+                            title="Save glob filter"
+                            type="button"
+                        >
+                            <Save className="size-4" aria-hidden="true" />
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -2246,7 +2368,16 @@ export function FileBrowser({
                 </div>
             ) : null}
 
-            {files.length > 0 && previewMode === "single" ? (
+            {files.length > 0 && filteredFiles.length === 0 ? (
+                <div
+                    className={activeDesign.emptyStateClass}
+                    data-file-browser-empty-filter="true"
+                >
+                    No files match
+                </div>
+            ) : null}
+
+            {filteredFiles.length > 0 && previewMode === "single" ? (
                 <div
                     className={activeDesign.treeShellClass}
                     data-preview-mode="single"
@@ -2256,7 +2387,7 @@ export function FileBrowser({
                     </div>
                 </div>
             ) : null}
-            {files.length > 0 && previewMode !== "single" ? (
+            {filteredFiles.length > 0 && previewMode !== "single" ? (
                 <div
                     className={activeDesign.treeShellClass}
                     data-preview-mode="grid"
