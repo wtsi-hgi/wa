@@ -1347,14 +1347,6 @@ elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
     printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
     printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
   else
-    printf 'Warming MLWH cache with wa mlwh sync before starting MLWH server\n'
-    mlwh_sync_args=(mlwh sync)
-    if ! "${BIN_PATH}" "${mlwh_sync_args[@]}" >>"$SEQMETA_LOG" 2>&1; then
-      printf 'MLWH cache sync failed before starting MLWH server. See %s\n' "$SEQMETA_LOG" >&2
-      print_service_log_tail "$SEQMETA_LOG"
-      exit 1
-    fi
-
     printf 'Starting MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
     mlwh_args=(mlwh serve --port "$seqmeta_port")
     "${BIN_PATH}" "${mlwh_args[@]}" >>"$SEQMETA_LOG" 2>&1 &

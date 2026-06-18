@@ -73,8 +73,8 @@ type runDevEnvSnapshot struct {
 	AllowedDevOrigins string `json:"WA_DEV_ALLOWED_ORIGINS"`
 }
 
-func TestRunDevAutoManagedMLWHBackendUsesMLWHServe(t *testing.T) {
-	convey.Convey("run-dev.sh syncs the MLWH cache before serving it when it auto-manages the backend", t, func() {
+func TestRunDevAutoManagedMLWHBackendDoesNotSyncBeforeMLWHServe(t *testing.T) {
+	convey.Convey("run-dev.sh serves MLWH without syncing the cache when it auto-manages the backend", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -110,13 +110,13 @@ func TestRunDevAutoManagedMLWHBackendUsesMLWHServe(t *testing.T) {
 		})
 
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
-		invocations := waitForRunDevStepsForTest(t, invocationsPath, 3)
+		invocations := waitForRunDevStepsForTest(t, invocationsPath, 2)
 		invocationText := strings.Join(invocations, "\n")
 
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		convey.So(invocations[0], convey.ShouldContainSubstring, "results serve")
-		convey.So(invocations[1], convey.ShouldEqual, "mlwh sync")
-		convey.So(invocations[2], convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
+		convey.So(invocations[1], convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
+		convey.So(invocationText, convey.ShouldNotContainSubstring, "mlwh sync")
 		convey.So(invocationText, convey.ShouldNotContainSubstring, "mlwhdiff serve")
 		convey.So(
 			process.stdout.String(),
