@@ -60,8 +60,7 @@ Implement `mlwh/server.go`: `NewServer(q Queryer, opts...) *Server` and
 For each `Registry` entry, register a per-entry closure handler that
 extracts unescaped path params and `limit`/`offset`+filters, calls the
 `Queryer` method, and writes JSON 200 or the error envelope
-(`{code, message}`). `limit`/`offset` default to the fetch-all limit and
-0. Handlers hold no cache of their own (the only closed-over state is the
+(`{code, message}`). `limit`/`offset` default to the fetch-all limit and 0. Handlers hold no cache of their own (the only closed-over state is the
 `Queryer`). Also implement the sentinel <-> status/code mapping in
 `mlwh/errors_http.go`. Tests in `mlwh/server_test.go`. Covering all 8
 acceptance tests from B2.

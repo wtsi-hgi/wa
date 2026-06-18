@@ -103,8 +103,8 @@ change-tracking layer on top of `mlwh`.
     - the diff machinery (`diff.go`),
     - the `/diff/study/{id}` and `/diff/sample/{id}` routes,
     - the `wa mlwhdiff diff` and `wa mlwhdiff serve` commands.
-  It loses `enrich`, `validate`, and the current-state list/sample
-  routes and their backing code, which move to `mlwh`.
+      It loses `enrich`, `validate`, and the current-state list/sample
+      routes and their backing code, which move to `mlwh`.
 - `mlwhdiff`'s public API and naming must make it obvious it is a narrow
   change-tracking system layered on `mlwh`, which already does its own
   caching. `mlwhdiff` must not define its own MLWH domain shapes; it
@@ -140,10 +140,10 @@ change-tracking layer on top of `mlwh`.
       `ErrCacheNeverSynced`, `ErrAmbiguous`, `ErrUnsupportedIdentifier`,
       `ErrUpstreamImpaired`) round-tripped over HTTP via status codes and
       a typed error envelope.
-  `results`, `mlwhdiff`, and the CLI depend on `mlwh.Queryer`, not on a
-  concrete type, so each can be wired to a local `Client` or a remote
-  server by configuration alone. This interface IS the "direct
-  correlation between REST endpoints and public methods" made concrete.
+      `results`, `mlwhdiff`, and the CLI depend on `mlwh.Queryer`, not on a
+      concrete type, so each can be wired to a local `Client` or a remote
+      server by configuration alone. This interface IS the "direct
+      correlation between REST endpoints and public methods" made concrete.
 - **Caching lives inside the `mlwh` package layer, never in the HTTP
   handlers**, so direct Go callers and the server benefit identically.
   The server must not add a caching layer that in-process callers would
@@ -229,7 +229,7 @@ comment) that an LLM can follow start to finish.
 - No backwards-compatibility shims for the removed `seqmeta`
   current-state routes; delete them outright.
 - Tests follow project conventions (GoConvey; `sqlmock` + `modernc.org/
-  sqlite` for `mlwh`; both cache dialects via the existing matrix
+sqlite` for `mlwh`; both cache dialects via the existing matrix
   harness). Add: `mlwh` REST server handler tests; a `RemoteClient`↔
   `Client` parity test proving both implementations of `mlwh.Queryer`
   return identical results against the same cache and round-trip the

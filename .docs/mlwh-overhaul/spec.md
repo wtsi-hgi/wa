@@ -135,41 +135,41 @@ type Endpoint struct {
 var Registry = []Endpoint{ ... } // one entry per Queryer method
 ```
 
-| Queryer method            | Verb | Path                              | Query params (+limit,offset) | Response type      |
-| ------------------------- | ---- | --------------------------------- | ---------------------------- | ------------------ |
-| ClassifyIdentifier        | GET  | /classify/:id                     | -                            | Match              |
-| ResolveSample             | GET  | /resolve/sample/:id               | -                            | Match              |
-| ResolveSampleName         | GET  | /resolve/sample-name/:id          | -                            | Match              |
-| ResolveStudy              | GET  | /resolve/study/:id                | -                            | Match              |
-| ResolveRun                | GET  | /resolve/run/:id                  | -                            | Match              |
-| ResolveLibrary            | GET  | /resolve/library/:id              | -                            | Match              |
-| ResolveLibraryIdentifier  | GET  | /resolve/library-identifier/:id   | -                            | Match              |
-| AllStudies                | GET  | /studies                          | limit, offset                | []Study            |
-| SamplesForStudy           | GET  | /study/:id/samples                | limit, offset                | []Sample           |
-| SamplesForRun             | GET  | /run/:id/samples                  | limit, offset                | []Sample           |
-| SamplesForLibrary         | GET  | /library/:pipeline/study/:study/samples | limit, offset          | []Sample           |
-| SamplesForLibraryID       | GET  | /library-id/:id/samples           | limit, offset                | []Sample           |
-| SamplesForLibraryLimsID   | GET  | /library-lims-id/:id/samples      | limit, offset                | []Sample           |
-| SamplesForLibraryType     | GET  | /library-type/:id/samples         | limit, offset                | []Sample           |
-| LibrariesForStudy         | GET  | /study/:id/libraries              | limit, offset                | []Library          |
-| RunsForStudy              | GET  | /study/:id/runs                   | limit, offset                | []Run              |
-| LanesForSample            | GET  | /sample/:id/lanes                 | limit, offset                | []Lane             |
-| IRODSPathsForSample       | GET  | /sample/:id/irods                 | limit, offset                | []IRODSPath        |
-| IRODSPathsForStudy        | GET  | /study/:id/irods                  | limit, offset                | []IRODSPath        |
-| StudiesForSample          | GET  | /sample/:id/studies               | -                            | []Study            |
-| FindSamplesBySangerID     | GET  | /find/sample/sanger-id/:id        | -                            | []Sample           |
-| FindSamplesByIDSampleLims | GET  | /find/sample/lims-id/:id          | -                            | []Sample           |
-| FindSamplesByAccessionNumber | GET | /find/sample/accession/:id       | -                            | []Sample           |
-| FindSamplesBySupplierName | GET  | /find/sample/supplier-name/:id    | -                            | []Sample           |
-| FindSamplesByLibraryType  | GET  | /find/sample/library-type/:id     | -                            | []Sample           |
-| ExpandIdentifier          | GET  | /expand/:kind/:id                 | -                            | []TaggedID         |
-| ExpandSearchValues        | GET  | /expand-search/:kind/:id          | -                            | SearchValues       |
-| ExpandSampleSearchValues  | GET  | /expand-sample-search/:kind/:id   | -                            | []string           |
-| Enrich                    | GET  | /enrich/:id                       | -                            | EnrichmentResult   |
-| SampleDetail              | GET  | /sample/:id/detail                | -                            | SampleDetail       |
-| StudyDetail               | GET  | /study/:id/detail                 | -                            | StudyDetail        |
-| RunDetail                 | GET  | /run/:id/detail                   | -                            | RunDetail          |
-| LibraryDetail             | GET  | /library/:pipeline/study/:study/detail | -                       | LibraryDetail      |
+| Queryer method               | Verb | Path                                    | Query params (+limit,offset) | Response type    |
+| ---------------------------- | ---- | --------------------------------------- | ---------------------------- | ---------------- |
+| ClassifyIdentifier           | GET  | /classify/:id                           | -                            | Match            |
+| ResolveSample                | GET  | /resolve/sample/:id                     | -                            | Match            |
+| ResolveSampleName            | GET  | /resolve/sample-name/:id                | -                            | Match            |
+| ResolveStudy                 | GET  | /resolve/study/:id                      | -                            | Match            |
+| ResolveRun                   | GET  | /resolve/run/:id                        | -                            | Match            |
+| ResolveLibrary               | GET  | /resolve/library/:id                    | -                            | Match            |
+| ResolveLibraryIdentifier     | GET  | /resolve/library-identifier/:id         | -                            | Match            |
+| AllStudies                   | GET  | /studies                                | limit, offset                | []Study          |
+| SamplesForStudy              | GET  | /study/:id/samples                      | limit, offset                | []Sample         |
+| SamplesForRun                | GET  | /run/:id/samples                        | limit, offset                | []Sample         |
+| SamplesForLibrary            | GET  | /library/:pipeline/study/:study/samples | limit, offset                | []Sample         |
+| SamplesForLibraryID          | GET  | /library-id/:id/samples                 | limit, offset                | []Sample         |
+| SamplesForLibraryLimsID      | GET  | /library-lims-id/:id/samples            | limit, offset                | []Sample         |
+| SamplesForLibraryType        | GET  | /library-type/:id/samples               | limit, offset                | []Sample         |
+| LibrariesForStudy            | GET  | /study/:id/libraries                    | limit, offset                | []Library        |
+| RunsForStudy                 | GET  | /study/:id/runs                         | limit, offset                | []Run            |
+| LanesForSample               | GET  | /sample/:id/lanes                       | limit, offset                | []Lane           |
+| IRODSPathsForSample          | GET  | /sample/:id/irods                       | limit, offset                | []IRODSPath      |
+| IRODSPathsForStudy           | GET  | /study/:id/irods                        | limit, offset                | []IRODSPath      |
+| StudiesForSample             | GET  | /sample/:id/studies                     | -                            | []Study          |
+| FindSamplesBySangerID        | GET  | /find/sample/sanger-id/:id              | -                            | []Sample         |
+| FindSamplesByIDSampleLims    | GET  | /find/sample/lims-id/:id                | -                            | []Sample         |
+| FindSamplesByAccessionNumber | GET  | /find/sample/accession/:id              | -                            | []Sample         |
+| FindSamplesBySupplierName    | GET  | /find/sample/supplier-name/:id          | -                            | []Sample         |
+| FindSamplesByLibraryType     | GET  | /find/sample/library-type/:id           | -                            | []Sample         |
+| ExpandIdentifier             | GET  | /expand/:kind/:id                       | -                            | []TaggedID       |
+| ExpandSearchValues           | GET  | /expand-search/:kind/:id                | -                            | SearchValues     |
+| ExpandSampleSearchValues     | GET  | /expand-sample-search/:kind/:id         | -                            | []string         |
+| Enrich                       | GET  | /enrich/:id                             | -                            | EnrichmentResult |
+| SampleDetail                 | GET  | /sample/:id/detail                      | -                            | SampleDetail     |
+| StudyDetail                  | GET  | /study/:id/detail                       | -                            | StudyDetail      |
+| RunDetail                    | GET  | /run/:id/detail                         | -                            | RunDetail        |
+| LibraryDetail                | GET  | /library/:pipeline/study/:study/detail  | -                            | LibraryDetail    |
 
 Path identifiers are URL-path-escaped by the `RemoteClient` and unescaped by
 the handler (matching today's `decodeWildcardIdentifier`). `kind` is the
@@ -182,13 +182,13 @@ slice (unchanged); `ExpandSearchValues` returns a single named struct
 `errors_http.go`. Every error response carries
 `{"code": "<stable-string>", "message": "<text>"}`.
 
-| Sentinel                   | Status | code                    |
-| -------------------------- | ------ | ----------------------- |
-| ErrNotFound                | 404    | not_found               |
-| ErrAmbiguous               | 409    | ambiguous               |
-| ErrUnsupportedIdentifier   | 422    | unsupported_identifier  |
-| ErrCacheNeverSynced        | 503    | cache_never_synced      |
-| ErrUpstreamImpaired        | 502    | upstream_impaired       |
+| Sentinel                 | Status | code                   |
+| ------------------------ | ------ | ---------------------- |
+| ErrNotFound              | 404    | not_found              |
+| ErrAmbiguous             | 409    | ambiguous              |
+| ErrUnsupportedIdentifier | 422    | unsupported_identifier |
+| ErrCacheNeverSynced      | 503    | cache_never_synced     |
+| ErrUpstreamImpaired      | 502    | upstream_impaired      |
 
 The handler maps the sentinel (via `errors.Is`) to status+code. The
 `RemoteClient` maps `code` back to the exact sentinel and wraps it
@@ -312,14 +312,14 @@ are deleted outright.
 
 ### Config surface
 
-| Env var / flag           | Mode    | Purpose                                                      |
-| ------------------------ | ------- | ----------------------------------------------------------- |
-| WA_MLWH_SERVER_URL / --mlwh-server-url | both | When set, consumers build a RemoteClient; when unset, OpenCacheOnly a local Client. |
-| WA_MLWH_CACHE_PATH       | local   | Cache backend path/DSN. Required only in local mode.        |
-| WA_MLWH_CACHE_PASSWORD   | local   | Cache MySQL/SQLCipher password.                             |
-| WA_MLWH_DSN/PASSWORD     | sync    | Upstream MLWH for `wa mlwh sync` only (unchanged).          |
-| WA_MLWHDIFF_BACKEND_URL  | frontend| Only if the frontend makes change-tracking calls (else dropped). |
-| WA_MLWH_BACKEND_URL      | frontend| Replaces WA_SEQMETA_BACKEND_URL (dropped). Frontend -> mlwh server. |
+| Env var / flag                         | Mode     | Purpose                                                                             |
+| -------------------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| WA_MLWH_SERVER_URL / --mlwh-server-url | both     | When set, consumers build a RemoteClient; when unset, OpenCacheOnly a local Client. |
+| WA_MLWH_CACHE_PATH                     | local    | Cache backend path/DSN. Required only in local mode.                                |
+| WA_MLWH_CACHE_PASSWORD                 | local    | Cache MySQL/SQLCipher password.                                                     |
+| WA_MLWH_DSN/PASSWORD                   | sync     | Upstream MLWH for `wa mlwh sync` only (unchanged).                                  |
+| WA_MLWHDIFF_BACKEND_URL                | frontend | Only if the frontend makes change-tracking calls (else dropped).                    |
+| WA_MLWH_BACKEND_URL                    | frontend | Replaces WA_SEQMETA_BACKEND_URL (dropped). Frontend -> mlwh server.                 |
 
 `wa mlwh serve` flags mirror `wa results serve` security flags
 (`--cert`, `--key`, `--server-token`, `--url`/`--port`) plus `--mlwh-cache`.
@@ -664,7 +664,7 @@ assembly as the old `seqmeta.Enrich`, composing the C1 detail methods. Returns
 
 1. Given study `6568` with 2 libraries, 5 samples, 2 runs, when
    `Enrich(ctx,"6568")` runs, then `Graph.StudyDetail.Study.IDStudyLims ==
-   "6568"`, `len(Graph.StudyDetail.Libraries) == 2`, total samples 5,
+"6568"`, `len(Graph.StudyDetail.Libraries) == 2`, total samples 5,
    `Partial == false`.
 2. Given sample `7607STDY14643771` with 3 lanes, when `Enrich` on it runs, then
    `Graph.SampleDetail.Lanes` has length 3 and the JSON has no `project`/`users`
@@ -910,7 +910,7 @@ file may stay `seqmeta-keys.ts`. Imports updated repo-wide.
 1. Given the renamed files, when `npx tsc --noEmit` runs, then there are zero
    unresolved-import errors.
 2. Given a `grep -rn "seqmeta-cache\|seqmeta-enrichment\|seqmeta-badge"
-   frontend/` (excluding `.next/`), when run, then there are zero matches.
+frontend/` (excluding `.next/`), when run, then there are zero matches.
 3. Given the enrichment vitest fixtures, when run against the renamed module,
    then they pass unchanged.
 
@@ -995,10 +995,10 @@ parallel unless noted.
 - **The persisted `seqmeta_*` metadata-key prefix is intentionally NOT
   renamed.** These keys (`seqmeta_id_study_lims`, `seqmeta_sample_name`, ...)
   are a stable on-disk (results store) and on-the-wire (search/filter) contract
-  for MLWH-derived registration metadata, not the seqmeta *service*. They are
+  for MLWH-derived registration metadata, not the seqmeta _service_. They are
   current-state, not change-tracking, but renaming them would require a results
   DB data migration and a coordinated search/filter contract change that none
-  of the 5 goals require. The `seqmeta` *service*, package, CLI, env var, store
+  of the 5 goals require. The `seqmeta` _service_, package, CLI, env var, store
   file, and frontend client files are all renamed; the metadata-key naming
   convention and `frontend/lib/seqmeta-keys.ts` are out of scope. This is the
   one place "seqmeta" survives that is neither change-tracking nor the service.
