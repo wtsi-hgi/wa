@@ -27,6 +27,10 @@ import {
     filterFilesByGlobPattern,
     readSavedFileBrowserGlobFilter,
 } from "@/lib/file-glob-filter";
+import {
+    isBitmapPreviewFile,
+    shouldFetchInlinePreviewContent,
+} from "@/lib/preview-file-types";
 
 export type RegisteredFileEntry = FileEntry & {
     resultId?: string;
@@ -66,57 +70,6 @@ type FileUrlOptions = {
 const thumbnailsPerPage = 100;
 const defaultPreviewHeight = 220;
 const thumbnailRenderHeight = 420;
-const compressedExtensions = new Set(["gz"]);
-const imageExtensions = new Set([
-    "avif",
-    "bmp",
-    "gif",
-    "jpeg",
-    "jpg",
-    "png",
-    "tif",
-    "tiff",
-    "webp",
-]);
-const proxyOnlyExtensions = new Set([
-    "avif",
-    "bam",
-    "bmp",
-    "cram",
-    "gif",
-    "h5",
-    "hdf5",
-    "htm",
-    "html",
-    "jpeg",
-    "jpg",
-    "pdf",
-    "png",
-    "tif",
-    "tiff",
-    "webp",
-]);
-
-function effectiveExtensionFromPath(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    const extensions = name
-        .split(".")
-        .slice(1)
-        .map((extension) => extension.toLowerCase())
-        .filter((extension) => extension.length > 0);
-
-    if (extensions.length === 0) {
-        return "";
-    }
-
-    const lastExtension = extensions.at(-1) ?? "";
-
-    if (compressedExtensions.has(lastExtension) && extensions.length > 1) {
-        return extensions.at(-2) ?? lastExtension;
-    }
-
-    return lastExtension;
-}
 
 class PreviewRequestError extends Error {
     constructor(
@@ -181,15 +134,11 @@ function buildFileUrl(
 }
 
 function shouldFetchInlinePreview(path: string): boolean {
-    const extension = effectiveExtensionFromPath(path);
-
-    return !proxyOnlyExtensions.has(extension);
+    return shouldFetchInlinePreviewContent(path);
 }
 
 function isImageFile(path: string): boolean {
-    const extension = effectiveExtensionFromPath(path);
-
-    return imageExtensions.has(extension);
+    return isBitmapPreviewFile(path);
 }
 
 function buildPreviewState(file: FileEntry | null): PreviewState {

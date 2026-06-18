@@ -7,6 +7,7 @@ import { fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { FileEntry } from "@/lib/contracts";
+import { previewFileTypeOptions } from "@/lib/preview-file-types";
 
 function buildFile(
     path: string,
@@ -1199,7 +1200,7 @@ describe("N1 file browser", () => {
             folderControls?.querySelector(
                 '[data-file-browser-control-current="file-types"]',
             ),
-        ).toHaveProperty("textContent", "5 file types");
+        ).toHaveProperty("textContent", "All file types");
     });
 
     it("keeps inline controls in the active folder name area", async () => {
@@ -2138,7 +2139,7 @@ describe("N1 file browser", () => {
             folderControls?.querySelectorAll(
                 "input[data-subdir-preview-kind]:checked",
             ),
-        ).toHaveLength(5);
+        ).toHaveLength(previewFileTypeOptions.length);
         expect(
             container.querySelector('[data-testid="single-preview"]')
                 ?.textContent,
@@ -2160,27 +2161,47 @@ describe("N1 file browser", () => {
 
         await click(disclosureTrigger);
 
+        const optionLabels = [
+            ...(folderControls?.querySelectorAll(
+                "[data-subdir-preview-kind-options] label",
+            ) ?? []),
+        ].map((label) => label.textContent?.trim() ?? "");
+        const optionGrid = folderControls?.querySelector(
+            "[data-subdir-preview-kind-options]",
+        ) as HTMLElement | null;
         const imageCheckbox = container.querySelector(
             'input[data-subdir-preview-kind="image"]',
         ) as HTMLInputElement | null;
-        const tableCheckbox = container.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const csvCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="csv"]',
         ) as HTMLInputElement | null;
-        const markdownCheckbox = container.querySelector(
-            'input[data-subdir-preview-kind="markdown"]',
+        const mdCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="md"]',
         ) as HTMLInputElement | null;
-        const codeCheckbox = container.querySelector(
-            'input[data-subdir-preview-kind="code"]',
+        const txtCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="txt"]',
         ) as HTMLInputElement | null;
 
+        expect(optionLabels).toEqual(
+            previewFileTypeOptions.map((option) => option.label),
+        );
+        expect(optionLabels).not.toEqual(
+            expect.arrayContaining([
+                "Tables",
+                "Markdown",
+                "Text & code",
+                "Documents",
+            ]),
+        );
+        expect(optionGrid?.className).toContain("grid-cols");
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(true);
-        expect(markdownCheckbox?.checked).toBe(true);
-        expect(codeCheckbox?.checked).toBe(true);
+        expect(csvCheckbox?.checked).toBe(true);
+        expect(mdCheckbox?.checked).toBe(true);
+        expect(txtCheckbox?.checked).toBe(true);
 
-        await click(tableCheckbox);
-        await click(markdownCheckbox);
-        await click(codeCheckbox);
+        await click(csvCheckbox);
+        await click(mdCheckbox);
+        await click(txtCheckbox);
 
         expect(
             container.querySelector(
@@ -2673,7 +2694,7 @@ describe("N1 file browser", () => {
         );
         await click(
             demoControls()?.querySelector(
-                'input[data-subdir-preview-kind="table"]',
+                'input[data-subdir-preview-kind="tsv"]',
             ) ?? null,
         );
 
@@ -2757,11 +2778,11 @@ describe("N1 file browser", () => {
             ),
         );
 
-        const lanesTableCheckbox = lanesControls()?.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const lanesTsvCheckbox = lanesControls()?.querySelector(
+            'input[data-subdir-preview-kind="tsv"]',
         ) as HTMLInputElement | null;
 
-        expect(lanesTableCheckbox?.checked).toBe(true);
+        expect(lanesTsvCheckbox?.checked).toBe(true);
         expect(
             container.querySelector(
                 '[data-subdir-preview-row="/demo/sample-a/lanes/lane-1"]',
@@ -2928,12 +2949,12 @@ describe("N1 file browser", () => {
         const imageCheckbox = controls?.querySelector(
             'input[data-subdir-preview-kind="image"]',
         ) as HTMLInputElement | null;
-        const tableCheckbox = controls?.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const csvCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="csv"]',
         ) as HTMLInputElement | null;
 
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(true);
+        expect(csvCheckbox?.checked).toBe(true);
 
         await click(toggle);
 
@@ -2997,7 +3018,7 @@ describe("N1 file browser", () => {
         expect(cardA?.className).toMatch(/(?:^|\s)shrink-0/);
 
         // Narrowing away from tables removes csv previews on the row.
-        await click(tableCheckbox);
+        await click(csvCheckbox);
 
         expect(
             rowA?.querySelector(
@@ -3346,14 +3367,14 @@ describe("N1 file browser", () => {
         const imageCheckbox = controls?.querySelector(
             'input[data-subdir-preview-kind="image"]',
         ) as HTMLInputElement | null;
-        const tableCheckbox = controls?.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const csvCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="csv"]',
         ) as HTMLInputElement | null;
 
         expect(controls).toBeTruthy();
         expect(toggle).toBeTruthy();
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(true);
+        expect(csvCheckbox?.checked).toBe(true);
 
         await click(toggle);
         expect(
@@ -3769,17 +3790,17 @@ describe("N1 file browser", () => {
         const toggle = controls?.querySelector(
             'input[aria-label="Subfolder previews"]',
         ) as HTMLInputElement | null;
-        const imageCheckbox = controls?.querySelector(
-            'input[data-subdir-preview-kind="image"]',
+        const svgCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="svg"]',
         ) as HTMLInputElement | null;
-        const tableCheckbox = controls?.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const tsvCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="tsv"]',
         ) as HTMLInputElement | null;
 
         expect(controls).toBeTruthy();
         expect(toggle).toBeTruthy();
-        expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(true);
+        expect(svgCheckbox?.checked).toBe(true);
+        expect(tsvCheckbox?.checked).toBe(true);
 
         await click(toggle);
 
@@ -3791,7 +3812,7 @@ describe("N1 file browser", () => {
         expect(imageFrame?.className).not.toContain("border");
         expect(imageFrame?.className).not.toContain("rounded-[1.25rem]");
 
-        await click(imageCheckbox);
+        await click(svgCheckbox);
 
         const tableFrame = container.querySelector(
             '[data-subdir-preview-frame="/demo/lanes/lane-1/lane-1-notes.tsv"]',

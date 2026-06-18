@@ -39,6 +39,12 @@ import {
     readSavedFileBrowserGlobFilter,
     saveFileBrowserGlobFilter,
 } from "@/lib/file-glob-filter";
+import {
+    allPreviewFileTypeIds,
+    previewFileTypeForPath,
+    previewFileTypeOptions,
+    type PreviewFileTypeId,
+} from "@/lib/preview-file-types";
 import { cn, formatBytes } from "@/lib/utils";
 
 export type PreviewMode = "single" | "grid";
@@ -70,112 +76,18 @@ const fileKindOrder: Record<FileEntry["kind"], number> = {
     pipeline: 2,
 };
 
-export type SubdirPreviewKind =
-    | "image"
-    | "table"
-    | "markdown"
-    | "code"
-    | "document";
-
-const subdirPreviewKindGroups: ReadonlyArray<{
-    extensions: ReadonlyArray<string>;
-    id: SubdirPreviewKind;
-    label: string;
-}> = [
-    {
-        extensions: [
-            "avif",
-            "bmp",
-            "gif",
-            "jpeg",
-            "jpg",
-            "png",
-            "svg",
-            "tif",
-            "tiff",
-            "webp",
-        ],
-        id: "image",
-        label: "Images",
-    },
-    {
-        extensions: ["csv", "tsv"],
-        id: "table",
-        label: "Tables",
-    },
-    {
-        extensions: ["markdown", "md"],
-        id: "markdown",
-        label: "Markdown",
-    },
-    {
-        extensions: [
-            "htm",
-            "html",
-            "json",
-            "log",
-            "py",
-            "txt",
-            "xml",
-            "yaml",
-            "yml",
-        ],
-        id: "code",
-        label: "Text & code",
-    },
-    {
-        extensions: ["pdf"],
-        id: "document",
-        label: "Documents",
-    },
-];
+export type SubdirPreviewKind = PreviewFileTypeId;
 
 const SUBDIR_PREVIEW_PAGE_SIZE = 20;
 const PREVIEW_HEIGHT_MIN = 120;
 const PREVIEW_HEIGHT_MAX = 420;
-const compressedExtensions = new Set(["gz"]);
-const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(
-    subdirPreviewKindGroups.map((group) => group.id),
-);
+const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(allPreviewFileTypeIds);
 const defaultSubdirPreviewKinds = new Set<SubdirPreviewKind>(
     allSubdirPreviewKinds,
 );
 
-function effectiveExtension(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    const parts = name
-        .split(".")
-        .slice(1)
-        .map((part) => part.toLowerCase())
-        .filter((part) => part.length > 0);
-
-    if (parts.length === 0) {
-        return "";
-    }
-
-    const last = parts.at(-1) ?? "";
-
-    if (compressedExtensions.has(last) && parts.length > 1) {
-        return parts.at(-2) ?? last;
-    }
-
-    return last;
-}
-
 function previewKindForPath(path: string): SubdirPreviewKind | null {
-    const extension = effectiveExtension(path);
-
-    for (const group of subdirPreviewKindGroups) {
-        if (group.extensions.includes(extension)) {
-            return group.id;
-        }
-    }
-
-    return null;
-}
-
-function pathSupportsFilePreview(path: string): boolean {
-    return previewKindForPath(path) !== null;
+    return previewFileTypeForPath(path);
 }
 
 export function findInitialSubdirPreviewDirectory(
@@ -280,19 +192,23 @@ function previewableFilesForKinds(
 function summarizeSubdirPreviewKinds(
     kinds: ReadonlySet<SubdirPreviewKind>,
 ): string {
-    const selectedGroups = subdirPreviewKindGroups.filter((group) =>
-        kinds.has(group.id),
+    const selectedOptions = previewFileTypeOptions.filter((option) =>
+        kinds.has(option.id),
     );
 
-    if (selectedGroups.length === 0) {
+    if (selectedOptions.length === 0) {
         return "No file types";
     }
 
-    if (selectedGroups.length === 1) {
-        return selectedGroups[0]?.label ?? "1 file type";
+    if (selectedOptions.length === previewFileTypeOptions.length) {
+        return "All file types";
     }
 
-    return `${selectedGroups.length} file types`;
+    if (selectedOptions.length === 1) {
+        return selectedOptions[0]?.label ?? "1 file type";
+    }
+
+    return `${selectedOptions.length} file types`;
 }
 
 function summarizePreviewModes(
@@ -1683,7 +1599,7 @@ export function FileBrowser({
                             <div
                                 className={cn(
                                     activeDesign.controlMenuClass,
-                                    "right-0 left-auto min-w-52",
+                                    "right-0 left-auto w-[min(28rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
                                 )}
                                 data-subdir-preview-kinds={directoryPath}
                             >
@@ -1694,22 +1610,24 @@ export function FileBrowser({
                                 >
                                     File types
                                 </div>
-                                <div className="space-y-2">
-                                    {subdirPreviewKindGroups.map((group) => (
+                                <div
+                                    className="grid grid-cols-[repeat(auto-fit,minmax(5.6rem,1fr))] gap-1"
+                                    data-subdir-preview-kind-options={
+                                        directoryPath
+                                    }
+                                >
+                                    {previewFileTypeOptions.map((option) => (
                                         <label
-                                            key={group.id}
-                                            className={
-                                                activeDesign.controlLabelClass
-                                            }
+                                            key={option.id}
+                                            className="inline-flex min-w-0 cursor-pointer items-center justify-start gap-1.5 rounded-md border border-border/70 bg-background px-2 py-1 text-xs font-medium text-foreground hover:border-primary/45 hover:bg-muted/55"
                                         >
-                                            <span>{group.label}</span>
                                             <input
                                                 checked={subdirPreviewKinds.has(
-                                                    group.id,
+                                                    option.id,
                                                 )}
                                                 className="size-3.5 accent-primary"
                                                 data-subdir-preview-kind={
-                                                    group.id
+                                                    option.id
                                                 }
                                                 onChange={(event) => {
                                                     setSubdirPreviewKindsByPath(
@@ -1727,11 +1645,11 @@ export function FileBrowser({
                                                                     .checked
                                                             ) {
                                                                 nextKinds.add(
-                                                                    group.id,
+                                                                    option.id,
                                                                 );
                                                             } else {
                                                                 nextKinds.delete(
-                                                                    group.id,
+                                                                    option.id,
                                                                 );
                                                             }
 
@@ -1751,6 +1669,9 @@ export function FileBrowser({
                                                 }}
                                                 type="checkbox"
                                             />
+                                            <span className="truncate">
+                                                {option.label}
+                                            </span>
                                         </label>
                                     ))}
                                 </div>
@@ -1868,15 +1789,17 @@ export function FileBrowser({
                 >
                     {previewableFiles.map((file) =>
                         (() => {
-                            const isImageSubdirPreview =
-                                previewKindForPath(file.path) === "image";
+                            const previewKind = previewKindForPath(file.path);
+                            const isVisualSubdirPreview =
+                                previewKind === "image" ||
+                                previewKind === "svg";
 
                             return (
                                 <div
                                     key={file.path}
                                     className={cn(
                                         activeDesign.subdirCardBaseClass,
-                                        isImageSubdirPreview
+                                        isVisualSubdirPreview
                                             ? activeDesign.subdirImageCardClass
                                             : activeDesign.subdirTextCardClass,
                                     )}
@@ -1897,7 +1820,7 @@ export function FileBrowser({
                                     <ResizablePreviewFrame
                                         className={cn(
                                             activeDesign.subdirFrameBaseClass,
-                                            isImageSubdirPreview
+                                            isVisualSubdirPreview
                                                 ? activeDesign.subdirImageFrameClass
                                                 : activeDesign.subdirTextFrameClass,
                                         )}
