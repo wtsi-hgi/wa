@@ -516,6 +516,29 @@ func (t *resultsServeRealTicker) Stop() {
 	t.ticker.Stop()
 }
 
+type resultsRegisterMetadataFlagValue struct {
+	values *[]string
+	prefix string
+}
+
+func (v resultsRegisterMetadataFlagValue) Set(value string) error {
+	*v.values = append(*v.values, v.prefix+value)
+
+	return nil
+}
+
+func (v resultsRegisterMetadataFlagValue) String() string {
+	if v.values == nil {
+		return ""
+	}
+
+	return strings.Join(*v.values, ",")
+}
+
+func (v resultsRegisterMetadataFlagValue) Type() string {
+	return "stringArray"
+}
+
 func newResultsAuthClientWithServerToken(
 	serverURL string,
 	certPath string,
@@ -1161,6 +1184,7 @@ Metadata:
     donor ID.
   --library accepts exact pipeline_id_lims, library_id, or id_library_lims
     values.
+  --project is a shortcut for --meta project=value.
   --meta adds literal key=value metadata; repeat it to keep multiple values.
 
 Server:
@@ -1215,7 +1239,8 @@ Server:
 	command.Flags().StringArrayVar(&lookupValues.Study, "study", nil, "MLWH study lookup (LIMS ID, accession, UUID, or name); repeat as needed")
 	command.Flags().StringArrayVar(&lookupValues.Sample, "sample", nil, "MLWH sample lookup (Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID); repeat as needed")
 	command.Flags().StringArrayVar(&lookupValues.Library, "library", nil, "MLWH library lookup (pipeline_id_lims, library_id, or id_library_lims); repeat as needed")
-	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Literal metadata as key=value; repeat to keep multiple values")
+	command.Flags().Var(resultsRegisterMetadataFlagValue{values: &metaValues, prefix: "project="}, "project", "Shortcut for --meta project=value; repeat to keep multiple values")
+	command.Flags().Var(resultsRegisterMetadataFlagValue{values: &metaValues}, "meta", "Literal metadata as key=value; repeat to keep multiple values")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read complete registration JSON from stdin instead of scanning output-dir")
 	command.Flags().StringVar(&workflowReference, "nextflow-workflow", "", "Deprecated alias for --workflow")
 	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
