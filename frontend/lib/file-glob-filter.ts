@@ -147,6 +147,21 @@ function compileGlobPattern(pattern: string): RegExp[] {
         .filter((regex): regex is RegExp => regex !== null);
 }
 
+function filePathMatchesCompiledGlobPattern(
+    path: string,
+    regexes: readonly RegExp[],
+): boolean {
+    if (regexes.length === 0) {
+        return true;
+    }
+
+    const candidates = pathCandidates(path);
+
+    return regexes.some((regex) =>
+        candidates.some((candidate) => regex.test(candidate)),
+    );
+}
+
 export function fileBrowserGlobFilterStorageKey(
     storageScope: string | undefined,
 ): string | undefined {
@@ -231,26 +246,20 @@ export function filePathMatchesGlobPattern(
 ): boolean {
     const regexes = compileGlobPattern(pattern);
 
-    if (regexes.length === 0) {
-        return true;
-    }
-
-    const candidates = pathCandidates(path);
-
-    return regexes.some((regex) =>
-        candidates.some((candidate) => regex.test(candidate)),
-    );
+    return filePathMatchesCompiledGlobPattern(path, regexes);
 }
 
 export function filterFilesByGlobPattern(
     files: FileEntry[],
     pattern: string,
 ): FileEntry[] {
-    if (!pattern.trim()) {
+    const regexes = compileGlobPattern(pattern);
+
+    if (regexes.length === 0) {
         return files;
     }
 
     return files.filter((file) =>
-        filePathMatchesGlobPattern(file.path, pattern),
+        filePathMatchesCompiledGlobPattern(file.path, regexes),
     );
 }

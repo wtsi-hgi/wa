@@ -1161,6 +1161,38 @@ describe("N1 file browser", () => {
         ]);
     });
 
+    it("compiles glob filters once for each file filter operation", async () => {
+        const { filterFilesByGlobPattern } =
+            await import("@/lib/file-glob-filter");
+        const realRegExp = globalThis.RegExp;
+        const regexpConstructor = vi.fn(
+            (pattern: string, flags?: string): RegExp =>
+                new realRegExp(pattern, flags),
+        );
+        const files = [
+            buildFile("/out/reports/alpha-summary.tsv", "output"),
+            buildFile("/out/reports/beta-summary.tsv", "output"),
+            buildFile("/out/logs/alpha-run.log", "output"),
+            buildFile("/out/metrics/alpha-qc.json", "output"),
+        ];
+
+        vi.stubGlobal("RegExp", regexpConstructor);
+
+        expect(
+            filterFilesByGlobPattern(files, "**/*-summary.tsv").map(
+                (file) => file.path,
+            ),
+        ).toEqual([
+            "/out/reports/alpha-summary.tsv",
+            "/out/reports/beta-summary.tsv",
+        ]);
+        expect(regexpConstructor).toHaveBeenCalledTimes(1);
+
+        filterFilesByGlobPattern(files.slice(0, 1), "**/*-summary.tsv");
+
+        expect(regexpConstructor).toHaveBeenCalledTimes(2);
+    });
+
     it("does not show a visible preview height control in the browser controls", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
