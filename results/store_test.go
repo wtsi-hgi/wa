@@ -1170,6 +1170,22 @@ func TestStoreSearchSuggestions(t *testing.T) {
 		})
 	})
 
+	convey.Convey("Given metadata keyed like a scalar suggestion field, SearchSuggestions returns it as metadata", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-metadata-user-collision", func(reg *Registration) {
+			reg.Metadata = map[string]string{"user": "metadata-user-needle-260618"}
+		}))
+
+		suggestions, err := store.SearchSuggestions(ctx, "metadata-user-needle-260618", 10)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(suggestionValuesByFieldForTest(suggestions), convey.ShouldResemble, map[string][]string{
+			"meta_user": {"metadata-user-needle-260618"},
+		})
+	})
+
 	convey.Convey("SearchSuggestions returns an empty slice for a blank query", t, func() {
 		store := newSQLiteStoreForTest(t)
 

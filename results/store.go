@@ -331,7 +331,7 @@ func isMissingPrimaryKeyError(err error) bool {
 
 func appendSearchSuggestionQueryPart(parts []string, args []any, source searchSuggestionSource, term string) ([]string, []any) {
 	parts = append(parts, fmt.Sprintf(
-		`SELECT %d AS field_order, ? AS field_key, %s AS match_value
+		`SELECT %d AS field_order, 0 AS is_metadata, ? AS field_key, %s AS match_value
 		 FROM result_sets
 		 WHERE instr(lower(%s), lower(?)) > 0`,
 		source.order,
@@ -1199,10 +1199,12 @@ func expandRunKeySearchValues(values []string) []string {
 	return expanded
 }
 
-func searchSuggestionFieldKey(rawFieldKey string) string {
-	for _, source := range searchSuggestionSources {
-		if rawFieldKey == source.fieldKey {
-			return rawFieldKey
+func searchSuggestionFieldKey(rawFieldKey string, isMetadata bool) string {
+	if !isMetadata {
+		for _, source := range searchSuggestionSources {
+			if rawFieldKey == source.fieldKey {
+				return rawFieldKey
+			}
 		}
 	}
 
@@ -1403,17 +1405,17 @@ func (s *Store) SearchSuggestions(ctx context.Context, query string, limit int) 
 		queryParts, args = appendSearchSuggestionQueryPart(queryParts, args, source, term)
 	}
 
-	queryParts = append(queryParts, `SELECT 100 AS field_order, meta_key AS field_key, value AS match_value
+	queryParts = append(queryParts, `SELECT 100 AS field_order, 1 AS is_metadata, meta_key AS field_key, value AS match_value
 		FROM result_metadata
 		WHERE instr(lower(value), lower(?)) > 0`)
 	args = append(args, term, limit*4)
 
 	rows, err := s.db.QueryContext(
 		ctx,
-		fmt.Sprintf(`SELECT field_key, match_value
+		fmt.Sprintf(`SELECT field_key, is_metadata, match_value
 			FROM (%s) matches
 			WHERE match_value <> ''
-			GROUP BY field_key, match_value
+			GROUP BY field_key, is_metadata, match_value
 			ORDER BY MIN(field_order), lower(match_value)
 			LIMIT ?`, strings.Join(queryParts, " UNION ALL ")),
 		args...,
@@ -1429,13 +1431,14 @@ func (s *Store) SearchSuggestions(ctx context.Context, query string, limit int) 
 	seen := map[SearchSuggestion]struct{}{}
 	for rows.Next() {
 		var rawFieldKey string
+		var isMetadata int
 		var value string
-		if err := rows.Scan(&rawFieldKey, &value); err != nil {
+		if err := rows.Scan(&rawFieldKey, &isMetadata, &value); err != nil {
 			return nil, fmt.Errorf("scan search suggestion: %w", err)
 		}
 
 		suggestion := SearchSuggestion{
-			FieldKey: searchSuggestionFieldKey(rawFieldKey),
+			FieldKey: searchSuggestionFieldKey(rawFieldKey, isMetadata != 0),
 			Value:    value,
 		}
 		if _, ok := seen[suggestion]; ok {

@@ -7,7 +7,7 @@ import { renderToString } from "react-dom/server";
 import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { FileEntry } from "@/lib/contracts";
+import type { FileEntry, ResultSet } from "@/lib/contracts";
 import { previewFileTypeOptions } from "@/lib/preview-file-types";
 
 const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
@@ -33,6 +33,27 @@ function buildFile(
         mtime,
         path,
         size,
+    };
+}
+
+function buildResultSet(pipelineName: string, index: number): ResultSet {
+    const day = String((index % 9) + 1).padStart(2, "0");
+
+    return {
+        command: `nextflow run workflow-${index}.nf`,
+        created_at: `2026-04-${day}T10:00:00Z`,
+        id: `result-${index}`,
+        metadata: {
+            seqmeta_sampleid: `SANG${index}`,
+        },
+        operator: "operator-1",
+        output_directory: `/demo/pipeline-${index}`,
+        pipeline_identifier: `gh://repo/workflow-${index}.nf`,
+        pipeline_name: pipelineName,
+        pipeline_version: `1.${index}.0`,
+        requester: "alice",
+        run_key: `runid=${1000 + index}`,
+        updated_at: `2026-04-${day}T10:30:00Z`,
     };
 }
 
@@ -379,6 +400,94 @@ describe("N1 file browser", () => {
         expect(filterInput()?.value).toBe("*.tsv");
         expect(container.textContent).toContain("alpha-summary.tsv");
         expect(container.textContent).not.toContain("alpha-run.log");
+    });
+
+    it("keeps combined-browser glob filter storage keys distinct when pipeline names contain delimiters", async () => {
+        const { SearchCombinedFileBrowser } =
+            await import("@/components/search-combined-file-browser");
+        const files = [
+            {
+                ...buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                resultId: "result-1",
+            },
+            {
+                ...buildFile("/demo/logs/alpha-run.log", "output"),
+                resultId: "result-2",
+            },
+        ];
+        const renderCombinedBrowser = async (pipelineNames: string[]) => {
+            await act(async () => {
+                root.render(
+                    createElement(SearchCombinedFileBrowser, {
+                        files,
+                        mode: "combined",
+                        onModeChange: vi.fn(),
+                        registrations: pipelineNames.map(
+                            (pipelineName, index) => ({
+                                fileCount: 1,
+                                result: buildResultSet(pipelineName, index + 1),
+                            }),
+                        ),
+                    }),
+                );
+            });
+        };
+        const filterInput = () =>
+            container.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+        const saveButton = () =>
+            container.querySelector(
+                'button[aria-label="Save file glob filter"]',
+            ) as HTMLButtonElement | null;
+
+        await renderCombinedBrowser(["a|b", "c"]);
+
+        await act(async () => {
+            const input = filterInput();
+
+            if (!input) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(input, {
+                target: { value: "*.tsv" },
+            });
+        });
+        await click(saveButton());
+
+        await renderCombinedBrowser(["a", "b|c"]);
+
+        expect(filterInput()?.value).toBe("");
+        expect(
+            container.querySelector('button[data-directory-path="/demo/logs"]'),
+        ).toBeTruthy();
+
+        await act(async () => {
+            const input = filterInput();
+
+            if (!input) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(input, {
+                target: { value: "*.log" },
+            });
+        });
+        await click(saveButton());
+
+        const savedGlobFilters = Object.entries(window.localStorage).filter(
+            ([key]) => key.startsWith("wa:file-browser:glob-filter:pipelines:"),
+        );
+
+        expect(savedGlobFilters).toHaveLength(2);
+        expect(savedGlobFilters.map(([key]) => key).sort()[0]).not.toBe(
+            savedGlobFilters.map(([key]) => key).sort()[1],
+        );
+        expect(savedGlobFilters.map(([, value]) => value).sort()).toEqual([
+            "*.log",
+            "*.tsv",
+        ]);
     });
 
     it("hydrates saved glob filters after the first client render without mismatches", async () => {

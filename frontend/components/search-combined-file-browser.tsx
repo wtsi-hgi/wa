@@ -40,6 +40,10 @@ function directoryName(path: string): string {
     return path.split("/").filter(Boolean).at(-1) ?? path;
 }
 
+function encodePipelineNameForStorageKey(pipelineName: string): string {
+    return pipelineName.replaceAll("%", "%25").replaceAll("|", "%7C");
+}
+
 function parentDirectory(path: string): string {
     const index = path.lastIndexOf("/");
 
@@ -271,7 +275,7 @@ export function SearchCombinedFileBrowser({
         ].sort((left, right) => left.localeCompare(right));
 
         return pipelineNames.length > 0
-            ? `pipelines:${pipelineNames.join("|")}`
+            ? `pipelines:${pipelineNames.map(encodePipelineNameForStorageKey).join("|")}`
             : undefined;
     }, [registrations]);
     const initialDirectory = useMemo(
