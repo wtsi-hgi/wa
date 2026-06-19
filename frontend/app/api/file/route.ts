@@ -112,7 +112,94 @@ async function readErrorBody(
     return { error: text.trim() || "unexpected error" };
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
+function buildPassthroughHeaders(
+    response: Response,
+    options: { sandbox: boolean },
+): Headers {
+    const headers = new Headers();
+    const contentType = response.headers.get("content-type");
+    const contentDisposition = response.headers.get("content-disposition");
+    const previewTruncated = response.headers.get("x-preview-truncated");
+
+    if (contentType) {
+        headers.set("content-type", contentType);
+    }
+
+    if (contentDisposition) {
+        headers.set("content-disposition", contentDisposition);
+    }
+
+    if (previewTruncated) {
+        headers.set("x-preview-truncated", previewTruncated);
+    }
+
+    if (options.sandbox) {
+        headers.set("content-security-policy", "sandbox");
+    }
+
+    return headers;
+}
+
+type ResultsFileRequestOptions = {
+    jwt?: string | null;
+    method?: "HEAD";
+};
+
+async function cancelResponseBody(response: Response): Promise<void> {
+    const body = response.body;
+
+    if (!body) {
+        return;
+    }
+
+    await body.cancel().catch(() => undefined);
+}
+
+async function fetchResultsFile(
+    path: string,
+    options: ResultsFileRequestOptions,
+): Promise<Response> {
+    const requestOptions: { jwt?: string; method?: "HEAD" } = {};
+
+    if (options.jwt) {
+        requestOptions.jwt = options.jwt;
+    }
+
+    if (options.method) {
+        requestOptions.method = options.method;
+    }
+
+    return Object.keys(requestOptions).length > 0
+        ? resultsRaw(path, requestOptions)
+        : resultsRaw(path);
+}
+
+async function fetchFileResponse(
+    path: string,
+    options: { includeBody: boolean; jwt?: string | null },
+): Promise<Response> {
+    if (options.includeBody) {
+        return fetchResultsFile(path, { jwt: options.jwt });
+    }
+
+    const headResponse = await fetchResultsFile(path, {
+        jwt: options.jwt,
+        method: "HEAD",
+    });
+
+    if (headResponse.status !== 405) {
+        return headResponse;
+    }
+
+    await cancelResponseBody(headResponse);
+
+    return fetchResultsFile(path, { jwt: options.jwt });
+}
+
+async function handleFileRequest(
+    request: NextRequest,
+    options: { includeBody: boolean },
+): Promise<NextResponse> {
     const id = request.nextUrl.searchParams.get("id")?.trim();
     const path = request.nextUrl.searchParams.get("path")?.trim();
     const download = request.nextUrl.searchParams.get("download");
@@ -153,12 +240,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     try {
         const publicBackendPath = `/rest/v1/results/${encodeURIComponent(id)}/file?${query.toString()}`;
         const backendPath = `${resultsPath}/${encodeURIComponent(id)}/file?${query.toString()}`;
-        response = jwt
-            ? await resultsRaw(backendPath, { jwt })
-            : await resultsRaw(backendPath);
+        response = await fetchFileResponse(backendPath, {
+            includeBody: options.includeBody,
+            jwt,
+        });
 
         if (jwt && response.status === 401) {
-            response = await resultsRaw(publicBackendPath);
+            await cancelResponseBody(response);
+            response = await fetchFileResponse(publicBackendPath, {
+                includeBody: options.includeBody,
+            });
         }
     } catch {
         return NextResponse.json(
@@ -185,6 +276,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         });
     }
 
+    if (!options.includeBody) {
+        const headers = buildPassthroughHeaders(response, {
+            sandbox: download !== "true",
+        });
+
+        await cancelResponseBody(response);
+
+        return new NextResponse(null, {
+            status: response.status,
+            headers,
+        });
+    }
+
     if (thumbnail === "true" && download !== "true") {
         const thumbnailResponse = await buildThumbnailResponse(
             response.clone(),
@@ -197,29 +301,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
     }
 
-    const headers = new Headers();
-    const contentType = response.headers.get("content-type");
-    const contentDisposition = response.headers.get("content-disposition");
-    const previewTruncated = response.headers.get("x-preview-truncated");
-
-    if (contentType) {
-        headers.set("content-type", contentType);
-    }
-
-    if (contentDisposition) {
-        headers.set("content-disposition", contentDisposition);
-    }
-
-    if (previewTruncated) {
-        headers.set("x-preview-truncated", previewTruncated);
-    }
-
-    if (download !== "true") {
-        headers.set("content-security-policy", "sandbox");
-    }
-
     return new NextResponse(response.body, {
         status: response.status,
-        headers,
+        headers: buildPassthroughHeaders(response, {
+            sandbox: download !== "true",
+        }),
     });
+}
+
+export async function GET(request: NextRequest): Promise<NextResponse> {
+    return handleFileRequest(request, { includeBody: true });
+}
+
+export async function HEAD(request: NextRequest): Promise<NextResponse> {
+    return handleFileRequest(request, { includeBody: false });
 }

@@ -88,10 +88,12 @@ vi.mock("@/components/file-browser", () => ({
         return siblingDirectories.size > 1 ? parentDirectory : undefined;
     },
     FileBrowser: ({
+        fileFilterValue,
         files,
         onPreviewHeightChange,
         onPreviewModeChange,
         onPreviewPageChange,
+        onFileFilterChange,
         onSelectDirectory,
         onSelectFile,
         previewHeight,
@@ -105,7 +107,9 @@ vi.mock("@/components/file-browser", () => ({
         selectedPath,
         visibleFiles,
     }: {
+        fileFilterValue?: string;
         files: FileEntry[];
+        onFileFilterChange?: (value: string) => void;
         onPreviewHeightChange?: (value: number) => void;
         onPreviewModeChange?: (mode: "single" | "grid") => void;
         onPreviewPageChange?: (page: number) => void;
@@ -125,6 +129,7 @@ vi.mock("@/components/file-browser", () => ({
         selectedPath?: string;
         visibleFiles?: FileEntry[];
     }) => {
+        const displayedFiles = visibleFiles ?? files;
         const directoryPaths = [
             ...new Set(
                 files.map(
@@ -150,8 +155,19 @@ vi.mock("@/components/file-browser", () => ({
                 "data-preview-summary": previewSummary ?? "",
                 "data-selected-directory": selectedDirectory ?? "",
                 "data-selected-path": selectedPath ?? "",
+                "data-file-filter-value": fileFilterValue ?? "",
+                "data-tree-file-paths": files
+                    .map((file) => file.path)
+                    .join("\n"),
             },
             createElement("h2", { key: "title" }, "File Browser"),
+            createElement("input", {
+                "aria-label": "Filter files by glob",
+                key: "glob-filter",
+                onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+                    onFileFilterChange?.(event.target.value),
+                value: fileFilterValue ?? "",
+            }),
             directoryPaths.map((directoryPath) =>
                 createElement(
                     "button",
@@ -192,7 +208,7 @@ vi.mock("@/components/file-browser", () => ({
                     `collapse:${directoryPath}`,
                 ),
             ]),
-            (visibleFiles ?? files).map((file) =>
+            displayedFiles.map((file) =>
                 createElement(
                     "button",
                     {
@@ -260,7 +276,7 @@ vi.mock("@/components/file-browser", () => ({
                   )
                 : null,
             ...(previewMode === "grid"
-                ? (visibleFiles ?? files).map((file) =>
+                ? displayedFiles.map((file) =>
                       createElement(
                           "div",
                           {
@@ -298,9 +314,11 @@ vi.mock("@/components/file-preview", () => ({
             file.path,
         ),
     FilePreview: ({
+        content,
         file,
         proxyUrl,
     }: {
+        content?: { content: string; contentType: string; truncated?: boolean };
         file: FileEntry;
         proxyUrl: string;
     }) => {
@@ -311,7 +329,10 @@ vi.mock("@/components/file-preview", () => ({
 
         return createElement(
             "div",
-            { "data-preview-url": proxyUrl },
+            {
+                "data-preview-content-type": content?.contentType ?? "",
+                "data-preview-url": proxyUrl,
+            },
             `preview:${file.path}`,
         );
     },
@@ -330,6 +351,7 @@ afterEach(() => {
     cleanup();
     fetchMock.mockReset();
     filePreviewRenderCounts.clear();
+    window.localStorage.clear();
 });
 
 describe("O1 result detail file integration", () => {
@@ -669,6 +691,46 @@ describe("O1 result detail file integration", () => {
         });
     });
 
+    it("passes the saved filtered file list to the browser while preserving the visible filter value", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        window.localStorage.setItem(
+            "wa:file-browser:glob-filter:detail-filter-scope",
+            "*.html",
+        );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [
+                    buildFile("/tmp/results/a/report.html"),
+                    buildFile("/tmp/results/a/plot.png"),
+                ],
+                filterStorageKey: "detail-filter-scope",
+                resultId: "result-1",
+            }),
+        );
+
+        const fileBrowser = screen.getByText("File Browser").parentElement;
+
+        expect(fileBrowser?.getAttribute("data-file-filter-value")).toBe(
+            "*.html",
+        );
+        expect(fileBrowser?.getAttribute("data-tree-file-paths")).toBe(
+            "/tmp/results/a/report.html",
+        );
+        expect(
+            screen.getByRole("button", {
+                name: "/tmp/results/a/report.html",
+            }),
+        ).toBeTruthy();
+        expect(
+            screen.queryByRole("button", {
+                name: "/tmp/results/a/plot.png",
+            }),
+        ).toBeNull();
+    });
+
     it("requests inline-mode previews for line-readable text files", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
@@ -902,13 +964,13 @@ describe("O1 result detail file integration", () => {
         ).toBeTruthy();
     });
 
-    it("uses fetched content type instead of the svg path extension for preview selection", async () => {
+    it("keeps normal svg previews URL-rendered after probing the content type", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
 
         fetchMock.mockResolvedValue(
-            new Response("plain text payload", {
-                headers: { "content-type": "text/plain" },
+            new Response(null, {
+                headers: { "content-type": "image/svg+xml" },
                 status: 200,
             }),
         );
@@ -923,6 +985,54 @@ describe("O1 result detail file integration", () => {
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg&mode=inline",
+                { method: "HEAD" },
+            );
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("preview:/tmp/results/plot.svg")).toBeTruthy();
+        expect(
+            screen
+                .getByText("preview:/tmp/results/plot.svg")
+                .getAttribute("data-preview-content-type"),
+        ).toBe("");
+    });
+
+    it("uses fetched content type instead of the svg path extension for preview selection", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        fetchMock
+            .mockResolvedValueOnce(
+                new Response(null, {
+                    headers: { "content-type": "text/plain" },
+                    status: 200,
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response("plain text payload", {
+                    headers: { "content-type": "text/plain" },
+                    status: 200,
+                }),
+            );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/plot.svg")],
+                resultId: "result-1",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg&mode=inline",
+                { method: "HEAD" },
+            );
+        });
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg&mode=inline",
             );
         });
 
@@ -930,6 +1040,11 @@ describe("O1 result detail file integration", () => {
             expect(
                 screen.getByText("preview:/tmp/results/plot.svg"),
             ).toBeTruthy();
+            expect(
+                screen
+                    .getByText("preview:/tmp/results/plot.svg")
+                    .getAttribute("data-preview-content-type"),
+            ).toBe("text/plain");
         });
     });
 

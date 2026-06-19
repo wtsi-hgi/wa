@@ -43,6 +43,12 @@ export const searchResultSchema = z.object({
 });
 export type SearchResult = z.input<typeof searchResultSchema>;
 
+export const searchSuggestionSchema = z.object({
+    field_key: z.string(),
+    value: z.string(),
+});
+export type SearchSuggestion = z.infer<typeof searchSuggestionSchema>;
+
 export const dailyCountSchema = z.object({
     date: z.string(),
     count: z.number(),

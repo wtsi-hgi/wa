@@ -28,6 +28,24 @@ describe("K1 search parameter utilities", () => {
         expect(query.toString()).toBe("");
     });
 
+    it("canonicalizes the legacy output directory prefix query key", () => {
+        const filters = parseSearchFilters(
+            new URLSearchParams(
+                "output_dir_prefix=shared-run&output_directory=other-run",
+            ),
+        );
+
+        expect(filters).toEqual({
+            output_directory: ["shared-run", "other-run"],
+        });
+
+        const query = buildSearchQuery({
+            output_dir_prefix: ["shared-run"],
+        });
+
+        expect(query.toString()).toBe("output_directory=shared-run");
+    });
+
     it("preserves metadata-style filter keys when parsing", () => {
         const filters = parseSearchFilters(
             new URLSearchParams("meta_library=exon&seqmeta_sampleid=SANG1"),

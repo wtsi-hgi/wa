@@ -474,10 +474,9 @@ async function collectBoxTitleSpacingSnapshot(
         const targets: Target[] = [
             {
                 boxSelector: '[data-search-builder="true"]',
-                contentSelector:
-                    '[data-search-builder-permanent-fields="true"]',
+                contentSelector: '[data-generic-search-input="true"]',
                 key: "search",
-                rightButtonText: "Add filter",
+                rightButtonText: "Add specific field to filter",
                 title: "Search",
                 titleSectionSelector:
                     '[data-search-builder="true"] > div > div:first-child',
@@ -1402,7 +1401,7 @@ test.describe("search combined file browser repro", () => {
         );
         expect(
             Math.abs(comparisons.searchRightButtonCenterDeltaFromTitleRow ?? 0),
-            "Add filter should stay vertically centered on the Search title row",
+            "Add specific field control should stay vertically centered on the Search title row",
         ).toBeLessThanOrEqual(1);
         expect(
             Math.abs(

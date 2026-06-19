@@ -20,6 +20,20 @@ function makeRequest(query: string, cookie?: string): NextRequest {
     );
 }
 
+function makeCancellableResponse(init?: ResponseInit) {
+    const cancel = vi.fn<(reason?: unknown) => void>();
+
+    return {
+        cancel,
+        response: new Response(
+            new ReadableStream<Uint8Array>({
+                cancel,
+            }),
+            init,
+        ),
+    };
+}
+
 describe("P1 file content streaming API route", () => {
     afterEach(() => {
         vi.clearAllMocks();
@@ -140,6 +154,111 @@ describe("P1 file content streaming API route", () => {
             'attachment; filename="data.csv.gz"',
         );
         expect(response.headers.get("content-security-policy")).toBeNull();
+    });
+
+    it("returns file metadata without a response body for HEAD probes", async () => {
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: {
+                "content-type": "image/svg+xml",
+                "x-preview-truncated": "true",
+            },
+        });
+        resultsRawMock.mockResolvedValue(upstream.response);
+
+        const { HEAD } = await import("@/app/api/file/route");
+
+        const response = await HEAD(
+            makeRequest("id=abc&path=%2Fout%2Fplot.svg&mode=inline"),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            "/rest/v1/results/abc/file?path=%2Fout%2Fplot.svg&mode=inline",
+            { method: "HEAD" },
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/svg+xml");
+        expect(response.headers.get("x-preview-truncated")).toBe("true");
+        expect(response.headers.get("content-security-policy")).toBe("sandbox");
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+        await expect(response.text()).resolves.toBe("");
+    });
+
+    it("falls back to GET when the backend does not support HEAD probes", async () => {
+        const unsupportedHead = new Response("method not allowed", {
+            status: 405,
+        });
+        const fallback = makeCancellableResponse({
+            status: 200,
+            headers: { "content-type": "text/plain" },
+        });
+        resultsRawMock
+            .mockResolvedValueOnce(unsupportedHead)
+            .mockResolvedValueOnce(fallback.response);
+
+        const { HEAD } = await import("@/app/api/file/route");
+
+        const response = await HEAD(
+            makeRequest("id=abc&path=%2Fout%2Flegacy.txt"),
+        );
+
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            1,
+            "/rest/v1/results/abc/file?path=%2Fout%2Flegacy.txt",
+            { method: "HEAD" },
+        );
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            2,
+            "/rest/v1/results/abc/file?path=%2Fout%2Flegacy.txt",
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("text/plain");
+        expect(fallback.cancel).toHaveBeenCalledTimes(1);
+        await expect(response.text()).resolves.toBe("");
+    });
+
+    it("uses the public HEAD fallback path when an authenticated HEAD probe has a stale JWT", async () => {
+        const staleAuth = new Response("authentication required", {
+            status: 401,
+        });
+        const unsupportedPublicHead = new Response("method not allowed", {
+            status: 405,
+        });
+        const fallback = makeCancellableResponse({
+            status: 200,
+            headers: { "content-type": "text/plain" },
+        });
+        resultsRawMock
+            .mockResolvedValueOnce(staleAuth)
+            .mockResolvedValueOnce(unsupportedPublicHead)
+            .mockResolvedValueOnce(fallback.response);
+
+        const { HEAD } = await import("@/app/api/file/route");
+
+        const response = await HEAD(
+            makeRequest(
+                "id=abc&path=%2Fout%2Flegacy.txt",
+                "wa_results_jwt=stale",
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            1,
+            "/rest/v1/auth/results/abc/file?path=%2Fout%2Flegacy.txt",
+            { jwt: "stale", method: "HEAD" },
+        );
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            2,
+            "/rest/v1/results/abc/file?path=%2Fout%2Flegacy.txt",
+            { method: "HEAD" },
+        );
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            3,
+            "/rest/v1/results/abc/file?path=%2Fout%2Flegacy.txt",
+        );
+        expect(response.status).toBe(200);
+        expect(fallback.cancel).toHaveBeenCalledTimes(1);
+        await expect(response.text()).resolves.toBe("");
     });
 
     it("passes through the original image when it is already smaller than the requested thumbnail", async () => {

@@ -1653,6 +1653,43 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(registration.MetadataValues["assay"], convey.ShouldResemble, []string{"RNA", "WGS"})
 	})
 
+	convey.Convey("Bug 260618-4: Given --project, register sends it as project metadata", t, func() {
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--project", "atlas",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(registration.Metadata["project"], convey.ShouldEqual, "atlas")
+		convey.So(registration.MetadataValues["project"], convey.ShouldResemble, []string{"atlas"})
+	})
+
+	convey.Convey("Bug 260618-4: Given --project and --meta project values, register preserves repeated metadata semantics", t, func() {
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--meta", "project=pilot",
+			"--project", "atlas",
+			"--meta", "project=pilot",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(registration.Metadata["project"], convey.ShouldEqual, "pilot")
+		convey.So(registration.MetadataValues["project"], convey.ShouldResemble, []string{"pilot", "atlas"})
+	})
+
+	convey.Convey("Bug 260618-4: Given --project before --meta project values, register preserves flag occurrence order", t, func() {
+		registration, stderr, err := runResultsRegisterAndCaptureRegistrationForTest(t,
+			"--project", "atlas",
+			"--meta", "project=pilot",
+			"--project", "atlas",
+		)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldBeBlank)
+		convey.So(registration.Metadata["project"], convey.ShouldEqual, "atlas")
+		convey.So(registration.MetadataValues["project"], convey.ShouldResemble, []string{"atlas", "pilot"})
+	})
+
 	convey.Convey("Given --sample is a canonical Sanger sample name, register uses the exact sample-name resolver before the broad sample cascade", t, func() {
 		outputDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -2005,6 +2042,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--study",
 			"--sample",
 			"--library",
+			"--project",
 			"--meta",
 			"Server:",
 			"--server",
@@ -2028,6 +2066,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 			"--study stringArray",
 			"--sample stringArray",
 			"--library stringArray",
+			"--project stringArray",
 			"--meta stringArray",
 		)
 		convey.So(globalFlags, convey.ShouldContainSubstring, "--server string")

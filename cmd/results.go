@@ -516,6 +516,29 @@ func (t *resultsServeRealTicker) Stop() {
 	t.ticker.Stop()
 }
 
+type resultsRegisterMetadataFlagValue struct {
+	values *[]string
+	prefix string
+}
+
+func (v resultsRegisterMetadataFlagValue) Set(value string) error {
+	*v.values = append(*v.values, v.prefix+value)
+
+	return nil
+}
+
+func (v resultsRegisterMetadataFlagValue) String() string {
+	if v.values == nil {
+		return ""
+	}
+
+	return strings.Join(*v.values, ",")
+}
+
+func (v resultsRegisterMetadataFlagValue) Type() string {
+	return "stringArray"
+}
+
 func newResultsAuthClientWithServerToken(
 	serverURL string,
 	certPath string,
@@ -1161,6 +1184,7 @@ Metadata:
     donor ID.
   --library accepts exact pipeline_id_lims, library_id, or id_library_lims
     values.
+  --project is a shortcut for --meta project=value.
   --meta adds literal key=value metadata; repeat it to keep multiple values.
 
 Server:
@@ -1215,7 +1239,8 @@ Server:
 	command.Flags().StringArrayVar(&lookupValues.Study, "study", nil, "MLWH study lookup (LIMS ID, accession, UUID, or name); repeat as needed")
 	command.Flags().StringArrayVar(&lookupValues.Sample, "sample", nil, "MLWH sample lookup (Sanger name, supplier name, id_sample_lims, sample UUID, or donor ID); repeat as needed")
 	command.Flags().StringArrayVar(&lookupValues.Library, "library", nil, "MLWH library lookup (pipeline_id_lims, library_id, or id_library_lims); repeat as needed")
-	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Literal metadata as key=value; repeat to keep multiple values")
+	command.Flags().Var(resultsRegisterMetadataFlagValue{values: &metaValues, prefix: "project="}, "project", "Shortcut for --meta project=value; repeat to keep multiple values")
+	command.Flags().Var(resultsRegisterMetadataFlagValue{values: &metaValues}, "meta", "Literal metadata as key=value; repeat to keep multiple values")
 	command.Flags().BoolVar(&useJSON, "json", false, "Read complete registration JSON from stdin instead of scanning output-dir")
 	command.Flags().StringVar(&workflowReference, "nextflow-workflow", "", "Deprecated alias for --workflow")
 	command.Flags().StringVar(&legacyRunID, "runid", "", "Deprecated alias for --unique")
@@ -1414,7 +1439,7 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 	var pipelineIdentifier string
 	var unique string
 	var legacyRunKey string
-	var outputDirPrefix string
+	var outputDirectory string
 	var metaValues []string
 
 	command := &cobra.Command{
@@ -1426,7 +1451,7 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 				return err
 			}
 
-			query, err := buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, uniqueValue, outputDirPrefix, metaValues)
+			query, err := buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, uniqueValue, outputDirectory, metaValues)
 			if err != nil {
 				return err
 			}
@@ -1455,8 +1480,10 @@ func newResultsSearchCommand(options *resultsCommandOptions) *cobra.Command {
 	command.Flags().StringVar(&unique, "unique", "", "Unique key filter")
 	command.Flags().StringVar(&legacyRunKey, "run-key", "", "Deprecated alias for --unique")
 	command.Flags().StringArrayVar(&metaValues, "meta", nil, "Metadata filter in key=value form")
-	command.Flags().StringVar(&outputDirPrefix, "output-dir-prefix", "", "Output directory prefix filter")
+	command.Flags().StringVar(&outputDirectory, "output-directory", "", "Output directory filter")
+	command.Flags().StringVar(&outputDirectory, "output-dir-prefix", "", "Deprecated alias for --output-directory")
 	_ = command.Flags().MarkHidden("run-key")
+	_ = command.Flags().MarkHidden("output-dir-prefix")
 
 	return command
 }
@@ -1476,7 +1503,7 @@ func resultsSearchUniqueValue(unique, legacyRunKey string) (string, error) {
 	return trimmedLegacyRunKey, nil
 }
 
-func buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, runKey, outputDirPrefix string, metaValues []string) (url.Values, error) {
+func buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion, pipelineIdentifier, runKey, outputDirectory string, metaValues []string) (url.Values, error) {
 	query := url.Values{}
 	if requester != "" {
 		query.Set("user", requester)
@@ -1502,8 +1529,8 @@ func buildResultsSearchQuery(requester, operator, pipelineName, pipelineVersion,
 		query.Set("run_key", runKey)
 	}
 
-	if outputDirPrefix != "" {
-		query.Set("output_dir_prefix", outputDirPrefix)
+	if outputDirectory != "" {
+		query.Set("output_directory", outputDirectory)
 	}
 
 	metadata, err := parseResultsMetadataFilters(metaValues)

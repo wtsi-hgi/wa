@@ -502,9 +502,9 @@ test("reproduces title text spacing mismatch against the file browser baseline",
     ).toHaveAttribute("data-search-file-mode", "combined");
     const combinedFiles = await collectTitleTextSpacingSnapshot(page, [
         {
-            actionText: "Add filter",
+            actionText: "Add specific field to filter",
             boxSelector: '[data-search-builder="true"]',
-            contentSelector: '[data-search-builder-permanent-fields="true"]',
+            contentSelector: '[data-generic-search-input="true"]',
             key: "search",
             title: "Search",
             titleSectionSelector:
@@ -532,9 +532,9 @@ test("reproduces title text spacing mismatch against the file browser baseline",
     ).toBeVisible();
     const resultSets = await collectTitleTextSpacingSnapshot(page, [
         {
-            actionText: "Add filter",
+            actionText: "Add specific field to filter",
             boxSelector: '[data-search-builder="true"]',
-            contentSelector: '[data-search-builder-permanent-fields="true"]',
+            contentSelector: '[data-generic-search-input="true"]',
             key: "search",
             title: "Search",
             titleSectionSelector:

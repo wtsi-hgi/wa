@@ -17,35 +17,25 @@ type RectMetric = {
     width: number;
 };
 
-type PermanentFieldMetric = {
+type GenericSearchMetric = {
     button: RectMetric;
     buttonCenterDeltaFromControl: {
         x: number;
         y: number;
     };
     control: RectMetric;
-    field: RectMetric;
+    form: RectMetric;
+    hasPermanentGrid: boolean;
     icon: RectMetric;
     iconCenterDeltaFromButton: {
         x: number;
         y: number;
     };
     input: RectMetric;
-    key: string;
-    label: string;
 };
 
 type SearchLayoutMetric = {
-    compactColumnWidth: number;
-    columnGap: number;
-    fieldCount: number;
-    fields: PermanentFieldMetric[];
-    grid: RectMetric;
-    rowCount: number;
-    rows: Array<{
-        fieldCount: number;
-        top: number;
-    }>;
+    genericSearch: GenericSearchMetric;
     viewport: {
         height: number;
         width: number;
@@ -76,83 +66,58 @@ async function collectSearchLayoutMetric(
             x: rect.left + rect.width / 2,
             y: rect.top + rect.height / 2,
         });
-        const searchGrid = document.querySelector<HTMLElement>(
-            '[data-search-builder-permanent-fields="true"]',
+        const input = document.querySelector<HTMLInputElement>(
+            '[data-generic-search-input="true"]',
         );
 
-        if (!searchGrid) {
-            throw new Error("Missing permanent search fields grid");
+        if (!input) {
+            throw new Error("Missing generic search input");
         }
 
-        const fields: PermanentFieldMetric[] = Array.from(
-            searchGrid.querySelectorAll("form"),
-        ).map((form) => {
-            const input = form.querySelector<HTMLInputElement>(
-                "[data-permanent-filter-input]",
-            );
-            const button = form.querySelector<HTMLButtonElement>(
-                'button[type="submit"]',
-            );
-            const label = form.querySelector("label");
-            const control = input?.parentElement;
-            const icon = button?.querySelector("svg");
+        const form = input.closest("form");
+        const control = input.parentElement;
+        const button = form?.querySelector<HTMLButtonElement>(
+            'button[aria-label="Add generic search match"]',
+        );
+        const icon = button?.querySelector("svg");
 
-            if (
-                !input ||
-                !button ||
-                !label ||
-                !(control instanceof HTMLElement) ||
-                !(icon instanceof SVGElement)
-            ) {
-                throw new Error("Missing permanent field measurement target");
-            }
+        if (
+            !(form instanceof HTMLElement) ||
+            !(control instanceof HTMLElement) ||
+            !(button instanceof HTMLButtonElement) ||
+            !(icon instanceof SVGElement)
+        ) {
+            throw new Error("Missing generic search measurement target");
+        }
 
-            const buttonRect = toBrowserRect(button);
-            const controlRect = toBrowserRect(control);
-            const iconRect = toBrowserRect(icon);
-            const buttonCenter = center(buttonRect);
-            const controlCenter = center(controlRect);
-            const iconCenter = center(iconRect);
+        const buttonRect = toBrowserRect(button);
+        const controlRect = toBrowserRect(control);
+        const iconRect = toBrowserRect(icon);
+        const buttonCenter = center(buttonRect);
+        const controlCenter = center(controlRect);
+        const iconCenter = center(iconRect);
 
-            return {
+        return {
+            genericSearch: {
                 button: buttonRect,
                 buttonCenterDeltaFromControl: {
                     x: Number((buttonCenter.x - controlCenter.x).toFixed(3)),
                     y: Number((buttonCenter.y - controlCenter.y).toFixed(3)),
                 },
                 control: controlRect,
-                field: toBrowserRect(form),
+                form: toBrowserRect(form),
+                hasPermanentGrid: Boolean(
+                    document.querySelector(
+                        '[data-search-builder-permanent-fields="true"]',
+                    ),
+                ),
                 icon: iconRect,
                 iconCenterDeltaFromButton: {
                     x: Number((iconCenter.x - buttonCenter.x).toFixed(3)),
                     y: Number((iconCenter.y - buttonCenter.y).toFixed(3)),
                 },
                 input: toBrowserRect(input),
-                key: input.dataset.permanentFilterInput ?? "",
-                label: label.textContent?.trim() ?? "",
-            };
-        });
-        const rowTops = [
-            ...new Set(fields.map((field) => Math.round(field.field.top))),
-        ].sort((left, right) => left - right);
-        const rows = rowTops.map((top) => ({
-            fieldCount: fields.filter(
-                (field) => Math.round(field.field.top) === top,
-            ).length,
-            top,
-        }));
-        const gridStyles = window.getComputedStyle(searchGrid);
-        const columnGap = Number.parseFloat(gridStyles.columnGap) || 0;
-
-        return {
-            compactColumnWidth:
-                (searchGrid.getBoundingClientRect().width - columnGap * 4) / 5,
-            columnGap,
-            fieldCount: fields.length,
-            fields,
-            grid: toBrowserRect(searchGrid),
-            rowCount: rowTops.length,
-            rows,
+            },
             viewport: {
                 height: window.innerHeight,
                 width: window.innerWidth,
@@ -161,7 +126,7 @@ async function collectSearchLayoutMetric(
     });
 }
 
-test("keeps seeded dashboard permanent search fields compact at narrow tablet widths", async ({
+test("keeps seeded dashboard generic search compact at narrow tablet widths", async ({
     page,
 }) => {
     const metrics: SearchLayoutMetric[] = [];
@@ -194,22 +159,25 @@ test("keeps seeded dashboard permanent search fields compact at narrow tablet wi
         );
         metrics.push(metric);
 
-        expect.soft(metric.fieldCount).toBe(5);
-        expect.soft(metric.compactColumnWidth).toBeGreaterThanOrEqual(112);
-        expect.soft(metric.rowCount).toBe(1);
-        expect.soft(metric.rows.map((row) => row.fieldCount)).toEqual([5]);
-
-        for (const field of metric.fields) {
-            expect
-                .soft(Math.abs(field.iconCenterDeltaFromButton.x))
-                .toBeLessThanOrEqual(0.25);
-            expect
-                .soft(Math.abs(field.iconCenterDeltaFromButton.y))
-                .toBeLessThanOrEqual(0.25);
-            expect
-                .soft(Math.abs(field.buttonCenterDeltaFromControl.y))
-                .toBeLessThanOrEqual(0.25);
-        }
+        expect.soft(metric.genericSearch.hasPermanentGrid).toBe(false);
+        expect
+            .soft(metric.genericSearch.control.width)
+            .toBeGreaterThanOrEqual(300);
+        expect
+            .soft(metric.genericSearch.control.height)
+            .toBeGreaterThanOrEqual(40);
+        expect
+            .soft(metric.genericSearch.control.height)
+            .toBeLessThanOrEqual(48);
+        expect
+            .soft(Math.abs(metric.genericSearch.iconCenterDeltaFromButton.x))
+            .toBeLessThanOrEqual(0.25);
+        expect
+            .soft(Math.abs(metric.genericSearch.iconCenterDeltaFromButton.y))
+            .toBeLessThanOrEqual(0.25);
+        expect
+            .soft(Math.abs(metric.genericSearch.buttonCenterDeltaFromControl.y))
+            .toBeLessThanOrEqual(0.25);
     }
 
     writeFileSync(

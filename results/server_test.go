@@ -48,6 +48,15 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+func (m *mockSearchExpander) ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error) {
+	m.classifyCalls = append(m.classifyCalls, raw)
+	if m.classifyFunc != nil {
+		return m.classifyFunc(ctx, raw)
+	}
+
+	return mlwh.Match{}, mlwh.ErrUnsupportedIdentifier
+}
+
 func newStaticMLWHSearchResolverForTest(responses map[mlwh.IdentifierKind]map[string]mlwh.SearchValues) *MLWHSearchResolver {
 	return NewMLWHSearchResolver(&mockSearchExpander{
 		searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
@@ -283,6 +292,8 @@ func assertLockedResponseForTest(t *testing.T, response *httptest.ResponseRecord
 type mockSearchExpander struct {
 	expandCalls           int
 	sampleOnlyCalls       int
+	classifyCalls         []string
+	classifyFunc          func(context.Context, string) (mlwh.Match, error)
 	searchValuesFunc      func(context.Context, mlwh.IdentifierKind, string) (mlwh.SearchValues, error)
 	sampleNamesFunc       func(context.Context, mlwh.IdentifierKind, string) ([]string, error)
 	sampleNameFunc        func(context.Context, string) (mlwh.Match, error)
@@ -1647,17 +1658,38 @@ func TestServerGetResults(t *testing.T) {
 		convey.So(results[0].Metadata, convey.ShouldResemble, map[string]string{"library": "exon", "study": "alpha"})
 	})
 
-	convey.Convey("E2.3: Given GET /results?output_dir_prefix=/lustre/scratch, then only result sets whose output_directory starts with that prefix are returned", t, func() {
+	convey.Convey("E2.3: Given GET /results?output_directory=project-a, then only result sets whose output_directory contains that substring are returned", t, func() {
 		store := newSQLiteStoreForTest(t)
-		seedResultSetForTest(t, store, searchRegistrationForTest("run-prefix-match", func(reg *Registration) {
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-output-directory-match", func(reg *Registration) {
 			reg.OutputDirectory = "/lustre/scratch/project-a/run-1"
 		}))
-		seedResultSetForTest(t, store, searchRegistrationForTest("run-prefix-miss", func(reg *Registration) {
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-output-directory-miss", func(reg *Registration) {
 			reg.PipelineIdentifier = "pipe-2"
 			reg.OutputDirectory = "/lustre/archive/project-b/run-2"
 		}))
 
-		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?output_dir_prefix=/lustre/scratch", nil)
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?output_directory=project-a", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var results []ResultSet
+		decodeJSONResponseForTest(t, response, &results)
+
+		convey.So(results, convey.ShouldHaveLength, 1)
+		convey.So(results[0].OutputDirectory, convey.ShouldEqual, "/lustre/scratch/project-a/run-1")
+	})
+
+	convey.Convey("Given GET /results?output_dir_prefix=project-a, then the legacy output directory query parameter remains supported", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-legacy-output-directory-match", func(reg *Registration) {
+			reg.OutputDirectory = "/lustre/scratch/project-a/run-1"
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-legacy-output-directory-miss", func(reg *Registration) {
+			reg.PipelineIdentifier = "pipe-2"
+			reg.OutputDirectory = "/lustre/archive/project-b/run-2"
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results?output_dir_prefix=project-a", nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 
@@ -2961,6 +2993,123 @@ func TestServerGetMetaKeys(t *testing.T) {
 		var keys []string
 		decodeJSONResponseForTest(t, response, &keys)
 		convey.So(keys, convey.ShouldResemble, []string{"library"})
+	})
+}
+
+func TestServerGetSearchSuggestions(t *testing.T) {
+	convey.Convey("Given registered values, GET /results/search-suggestions returns typed substring matches", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-suggestion", func(reg *Registration) {
+			reg.Requester = "requester-needle-260618"
+			reg.Metadata = map[string]string{
+				"assay_tag":        "alpha-needle-260618-omega",
+				"seqmeta_sampleid": "SAMPLE-needle-260618",
+			}
+		}))
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/search-suggestions?q=needle-260618", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/json")
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(suggestionValuesByFieldForTest(suggestions), convey.ShouldResemble, map[string][]string{
+			"meta_assay_tag": {"alpha-needle-260618-omega"},
+			"sample":         {"SAMPLE-needle-260618"},
+			"user":           {"requester-needle-260618"},
+		})
+	})
+
+	convey.Convey("Bug 260618-5 item 2: Given a registered sample and an MLWH supplier-name lookup, GET /results/search-suggestions offers a Sample filter for the supplier name", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-supplier-generic-suggestion", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "7607STDY14643771"}
+		}))
+
+		expander := &mockSearchExpander{
+			classifyFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "Hek_R1" {
+					return mlwh.Match{
+						Kind:      mlwh.KindSupplierName,
+						Canonical: "7607STDY14643771",
+						Sample: &mlwh.Sample{
+							Name:         "7607STDY14643771",
+							SupplierName: raw,
+						},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleNameFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "7607STDY14643771" {
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: raw,
+						Sample: &mlwh.Sample{
+							Name:         raw,
+							SupplierName: "Hek_R1",
+						},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			sampleFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "Hek_R1" {
+					return mlwh.Match{
+						Kind:      mlwh.KindSupplierName,
+						Canonical: "7607STDY14643771",
+						Sample: &mlwh.Sample{
+							Name:         "7607STDY14643771",
+							SupplierName: raw,
+						},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			searchValuesFunc: func(_ context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
+				if kind == mlwh.KindSupplierName && canonical == "Hek_R1" {
+					return mlwh.SearchValues{Samples: []string{"7607STDY14643771"}}, nil
+				}
+
+				return mlwh.SearchValues{}, mlwh.ErrNotFound
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=Hek_R1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(expander.classifyCalls, convey.ShouldResemble, []string{"Hek_R1"})
+		convey.So(suggestionValuesByFieldForTest(suggestions)["sample"], convey.ShouldContain, "Hek_R1")
+	})
+
+	convey.Convey("GET /results/search-suggestions skips store and MLWH suggestions for one-character generic queries", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-short-suggestion", func(reg *Registration) {
+			reg.Requester = "alice"
+		}))
+		expander := &mockSearchExpander{}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=a", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Body.String(), convey.ShouldEqual, "[]\n")
+		convey.So(expander.classifyCalls, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("GET /results/search-suggestions rejects invalid limits", t, func() {
+		store := newSQLiteStoreForTest(t)
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, nil).Handler(), http.MethodGet, "/results/search-suggestions?q=needle&limit=-1", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadRequest)
+		convey.So(errorResponseBodyForTest(t, response), convey.ShouldEqual, "invalid limit query parameter")
 	})
 }
 

@@ -2,6 +2,7 @@ import { ArrowUpDown, LockKeyhole } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 
 import type { ResultSet, SearchResult } from "@/lib/contracts";
+import { resultProjectName } from "@/lib/result-display";
 import { formatRegistrationUnique } from "@/lib/result-identity";
 import { cn, formatUtcDate } from "@/lib/utils";
 
@@ -11,6 +12,22 @@ export type ResultsTableRow = {
     matchedSamples: string[];
     searchResult: boolean;
 };
+
+const defaultHiddenColumnIds = [
+    "pipeline_name",
+    "operator",
+    "command",
+    "pipeline_version",
+    "pipeline_identifier",
+    "run_key",
+    "id",
+];
+
+export function defaultResultsColumnVisibility(): Record<string, boolean> {
+    return Object.fromEntries(
+        defaultHiddenColumnIds.map((columnId) => [columnId, false]),
+    );
+}
 
 type SortableHeaderProps = {
     columnId: string;
@@ -151,6 +168,28 @@ export function getResultsColumns(
     returnHref = "/",
 ): ColumnDef<ResultsTableRow>[] {
     const columns: ColumnDef<ResultsTableRow>[] = [
+        {
+            accessorKey: "project",
+            id: "project",
+            accessorFn: (row) => resultProjectName(row.result),
+            header: ({ column }) => (
+                <SortableHeader
+                    columnId="project"
+                    label="Project"
+                    onSort={() =>
+                        column.toggleSorting(column.getIsSorted() === "asc")
+                    }
+                />
+            ),
+            cell: ({ row }) =>
+                resultCell(
+                    row.original,
+                    resultProjectName(row.original.result),
+                    "font-medium text-foreground transition hover:text-primary",
+                    returnHref,
+                    { showLock: true },
+                ),
+        },
         {
             accessorKey: "pipeline_name",
             id: "pipeline_name",

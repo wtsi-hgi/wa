@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
     type ColumnDef,
@@ -28,6 +28,7 @@ import {
     boxTitleTextClass,
 } from "@/components/box-title-section";
 import {
+    defaultResultsColumnVisibility,
     getResultsColumns,
     isResultsTableRowLocked,
     toResultsTableRows,
@@ -49,15 +50,6 @@ export type ResultsTableProps = {
     mode?: "recent" | "search";
     returnHref?: string;
     studyActive?: boolean;
-};
-
-const defaultHiddenColumns: Record<string, boolean> = {
-    operator: false,
-    command: false,
-    pipeline_version: false,
-    pipeline_identifier: false,
-    run_key: false,
-    id: false,
 };
 
 function columnVisibilityLabel(columnId: string): string {
@@ -95,12 +87,23 @@ export function ResultsTable({
         [returnHref, showMatchedSamples],
     );
     const [sorting, setSorting] = useState<SortingState>([]);
-    const [columnVisibility, setColumnVisibility] =
-        useState<Record<string, boolean>>(defaultHiddenColumns);
+    const [columnVisibility, setColumnVisibility] = useState<
+        Record<string, boolean>
+    >(() => defaultResultsColumnVisibility());
+    const previousMode = useRef(mode);
     const [pagination, setPagination] = useState({
         pageIndex: 0,
         pageSize: 10,
     });
+
+    useEffect(() => {
+        if (previousMode.current === mode) {
+            return;
+        }
+
+        previousMode.current = mode;
+        setColumnVisibility(defaultResultsColumnVisibility());
+    }, [mode]);
 
     // TanStack Table's hook currently triggers a React Compiler compatibility lint false positive.
     // eslint-disable-next-line react-hooks/incompatible-library

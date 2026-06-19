@@ -112,6 +112,7 @@ describe("O1 result detail hydration", () => {
 
     afterEach(() => {
         document.body.innerHTML = "";
+        window.localStorage.clear();
         vi.clearAllMocks();
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
@@ -177,6 +178,61 @@ describe("O1 result detail hydration", () => {
             ).toBeNull();
         });
 
+        expect(recoverableErrors).toHaveLength(0);
+
+        await act(async () => {
+            root?.unmount();
+        });
+    });
+
+    it("hydrates a saved file glob filter after mount without changing the first client render", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+        const files = [
+            buildFile("/results/a/sample.bam"),
+            buildFile("/results/a/sample.cram"),
+        ];
+        const tree = createElement(ResultDetailFiles, {
+            files,
+            filterStorageKey: "pipeline-alpha",
+            resultId: "result-1",
+        });
+        const container = document.createElement("div");
+        const recoverableErrors: unknown[] = [];
+
+        window.localStorage.setItem(
+            "wa:file-browser:glob-filter:pipeline-alpha",
+            "*.bam",
+        );
+        document.body.appendChild(container);
+
+        const serverMarkup = renderToString(tree);
+
+        expect(serverMarkup).toContain("sample.bam");
+        expect(serverMarkup).toContain("sample.cram");
+
+        container.innerHTML = serverMarkup;
+
+        let root: ReturnType<typeof hydrateRoot> | null = null;
+
+        await act(async () => {
+            root = hydrateRoot(container, tree, {
+                onRecoverableError: (error) => {
+                    recoverableErrors.push(error);
+                },
+            });
+        });
+
+        await waitFor(() => {
+            const input = container.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+
+            expect(input?.value).toBe("*.bam");
+        });
+
+        expect(container.textContent).toContain("sample.bam");
+        expect(container.textContent).not.toContain("sample.cram");
         expect(recoverableErrors).toHaveLength(0);
 
         await act(async () => {
@@ -380,6 +436,78 @@ describe("O1 result detail hydration", () => {
         ).toBeNull();
         expect(markup).not.toMatch(/>Registration</);
         expect(markup).not.toMatch(/>Result metadata</);
+    });
+
+    it("titles the result detail page with project metadata and falls back to pipeline name", async () => {
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
+        const Page = pageModule.ResultDetailPageContent;
+        const renderHeading = async (result: ResultSet) => {
+            fetchFilesMock.mockResolvedValue([
+                buildFile("/results/a/report.csv"),
+            ]);
+            fetchResultMock.mockResolvedValue(result);
+            enrichSeqmetaMetadataBatchMock.mockResolvedValue({
+                enrichments: {},
+                errors: {},
+            });
+            buildCachedEnrichmentStateMock.mockReturnValue({
+                enrichments: {},
+                errors: {},
+            });
+            collectSeqmetaValuesMock.mockReturnValue([]);
+            hasUsableMLWHCacheEntryMock.mockReturnValue(false);
+            mergeSeqmetaEnrichmentStateMock.mockImplementation(
+                (base, override) => ({
+                    enrichments: {
+                        ...base.enrichments,
+                        ...override?.enrichments,
+                    },
+                    errors: {
+                        ...base.errors,
+                        ...override?.errors,
+                    },
+                }),
+            );
+
+            const markup = renderToStaticMarkup(
+                await Page({
+                    id: result.id,
+                }),
+            );
+            const container = document.createElement("div");
+
+            container.innerHTML = markup;
+
+            const heading = container.querySelector("h1");
+            const unique = heading?.querySelector("span");
+
+            return {
+                text: heading?.textContent ?? "",
+                uniqueText: unique?.textContent ?? "",
+            };
+        };
+        const projectHeading = await renderHeading({
+            ...buildResultSet(),
+            metadata: {
+                project: "Atlas cohort",
+            },
+        });
+        const fallbackHeading = await renderHeading({
+            ...buildResultSet(),
+            id: "result-with-blank-project",
+            metadata: {
+                project: "   ",
+            },
+        });
+
+        expect(projectHeading.text).toContain("Atlas cohort");
+        expect(projectHeading.text).toContain("1001");
+        expect(projectHeading.text).not.toContain("nf-core/rnaseq");
+        expect(projectHeading.uniqueText).toBe("1001");
+        expect(fallbackHeading.text).toContain("nf-core/rnaseq");
+        expect(fallbackHeading.text).toContain("1001");
+        expect(fallbackHeading.uniqueText).toBe("1001");
     });
 
     it("keeps the raw stored run key out of the Run details popover while preserving Unique", async () => {

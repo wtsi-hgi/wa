@@ -2,10 +2,25 @@
 
 import { createElement, type ReactNode, useState } from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { FileEntry } from "@/lib/contracts";
+import type { FileEntry, ResultSet } from "@/lib/contracts";
+import { previewFileTypeOptions } from "@/lib/preview-file-types";
+
+const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
+    toastErrorMock: vi.fn(),
+    toastSuccessMock: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+    toast: {
+        error: toastErrorMock,
+        success: toastSuccessMock,
+    },
+}));
 
 function buildFile(
     path: string,
@@ -18,6 +33,27 @@ function buildFile(
         mtime,
         path,
         size,
+    };
+}
+
+function buildResultSet(pipelineName: string, index: number): ResultSet {
+    const day = String((index % 9) + 1).padStart(2, "0");
+
+    return {
+        command: `nextflow run workflow-${index}.nf`,
+        created_at: `2026-04-${day}T10:00:00Z`,
+        id: `result-${index}`,
+        metadata: {
+            seqmeta_sampleid: `SANG${index}`,
+        },
+        operator: "operator-1",
+        output_directory: `/demo/pipeline-${index}`,
+        pipeline_identifier: `gh://repo/workflow-${index}.nf`,
+        pipeline_name: pipelineName,
+        pipeline_version: `1.${index}.0`,
+        requester: "alice",
+        run_key: `runid=${1000 + index}`,
+        updated_at: `2026-04-${day}T10:30:00Z`,
     };
 }
 
@@ -38,6 +74,7 @@ describe("N1 file browser", () => {
     beforeEach(() => {
         container = document.createElement("div");
         document.body.appendChild(container);
+        window.localStorage.clear();
         root = createRoot(container);
     });
 
@@ -46,6 +83,8 @@ describe("N1 file browser", () => {
             root.unmount();
         });
         container.remove();
+        vi.clearAllMocks();
+        vi.unstubAllGlobals();
     });
 
     it("renders a single tree-view pane with expandable directory rows", async () => {
@@ -225,6 +264,285 @@ describe("N1 file browser", () => {
 
         expect(resultsButton).toBeTruthy();
         expect(resultsButton?.textContent).toContain("/results");
+    });
+
+    it("filters files and keeps only directories containing glob matches", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                        buildFile("/demo/logs/alpha-run.log", "output"),
+                        buildFile("/demo/metrics/alpha-qc.json", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const filterInput = container.querySelector(
+            'input[aria-label="Filter files by glob"]',
+        ) as HTMLInputElement | null;
+
+        expect(filterInput).toBeTruthy();
+
+        await act(async () => {
+            if (!filterInput) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(filterInput, {
+                target: { value: "**/*.tsv" },
+            });
+        });
+
+        expect(filterInput?.value).toBe("**/*.tsv");
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/demo/reports"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector('button[data-file-path$=".tsv"]'),
+        ).toBeTruthy();
+        expect(
+            container.querySelector('button[data-directory-path="/demo/logs"]'),
+        ).toBeNull();
+        expect(
+            container.querySelector(
+                'button[data-directory-path="/demo/metrics"]',
+            ),
+        ).toBeNull();
+        expect(container.textContent).toContain("alpha-summary.tsv");
+        expect(container.textContent).not.toContain("alpha-run.log");
+        expect(container.textContent).not.toContain("alpha-qc.json");
+    });
+
+    it("saves glob filters per storage key and clears when a new key has no saved value", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const storageKey = "wa:file-browser:glob-filter:pipeline-alpha";
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                        buildFile("/demo/logs/alpha-run.log", "output"),
+                    ],
+                    filterStorageKey: "pipeline-alpha",
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const filterInput = () =>
+            container.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+        const saveButton = () =>
+            container.querySelector(
+                'button[aria-label="Save file glob filter"]',
+            ) as HTMLButtonElement | null;
+
+        expect(filterInput()).toBeTruthy();
+        expect(saveButton()).toBeTruthy();
+
+        await act(async () => {
+            const input = filterInput();
+
+            if (!input) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(input, {
+                target: { value: "*.tsv" },
+            });
+        });
+        await click(saveButton());
+
+        expect(window.localStorage.getItem(storageKey)).toBe("*.tsv");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                        buildFile("/demo/logs/alpha-run.log", "output"),
+                    ],
+                    filterStorageKey: "pipeline-beta",
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        expect(filterInput()?.value).toBe("");
+        expect(container.textContent).toContain("alpha-run.log");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                        buildFile("/demo/logs/alpha-run.log", "output"),
+                    ],
+                    filterStorageKey: "pipeline-alpha",
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        expect(filterInput()?.value).toBe("*.tsv");
+        expect(container.textContent).toContain("alpha-summary.tsv");
+        expect(container.textContent).not.toContain("alpha-run.log");
+    });
+
+    it("keeps combined-browser glob filter storage keys distinct when pipeline names contain delimiters", async () => {
+        const { SearchCombinedFileBrowser } =
+            await import("@/components/search-combined-file-browser");
+        const files = [
+            {
+                ...buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                resultId: "result-1",
+            },
+            {
+                ...buildFile("/demo/logs/alpha-run.log", "output"),
+                resultId: "result-2",
+            },
+        ];
+        const renderCombinedBrowser = async (pipelineNames: string[]) => {
+            await act(async () => {
+                root.render(
+                    createElement(SearchCombinedFileBrowser, {
+                        files,
+                        mode: "combined",
+                        onModeChange: vi.fn(),
+                        registrations: pipelineNames.map(
+                            (pipelineName, index) => ({
+                                fileCount: 1,
+                                result: buildResultSet(pipelineName, index + 1),
+                            }),
+                        ),
+                    }),
+                );
+            });
+        };
+        const filterInput = () =>
+            container.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+        const saveButton = () =>
+            container.querySelector(
+                'button[aria-label="Save file glob filter"]',
+            ) as HTMLButtonElement | null;
+
+        await renderCombinedBrowser(["a|b", "c"]);
+
+        await act(async () => {
+            const input = filterInput();
+
+            if (!input) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(input, {
+                target: { value: "*.tsv" },
+            });
+        });
+        await click(saveButton());
+
+        await renderCombinedBrowser(["a", "b|c"]);
+
+        expect(filterInput()?.value).toBe("");
+        expect(
+            container.querySelector('button[data-directory-path="/demo/logs"]'),
+        ).toBeTruthy();
+
+        await act(async () => {
+            const input = filterInput();
+
+            if (!input) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(input, {
+                target: { value: "*.log" },
+            });
+        });
+        await click(saveButton());
+
+        const savedGlobFilters = Object.entries(window.localStorage).filter(
+            ([key]) => key.startsWith("wa:file-browser:glob-filter:pipelines:"),
+        );
+
+        expect(savedGlobFilters).toHaveLength(2);
+        expect(savedGlobFilters.map(([key]) => key).sort()[0]).not.toBe(
+            savedGlobFilters.map(([key]) => key).sort()[1],
+        );
+        expect(savedGlobFilters.map(([, value]) => value).sort()).toEqual([
+            "*.log",
+            "*.tsv",
+        ]);
+    });
+
+    it("hydrates saved glob filters after the first client render without mismatches", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const hydrationContainer = document.createElement("div");
+        const storageScope = "pipeline-alpha";
+        const storageKey = "wa:file-browser:glob-filter:pipeline-alpha";
+        const files = [
+            buildFile("/demo/alpha-summary.tsv", "output"),
+            buildFile("/demo/alpha-run.log", "output"),
+        ];
+        const tree = createElement(FileBrowser, {
+            files,
+            filterStorageKey: storageScope,
+            onSelectDirectory: vi.fn(),
+            onSelectFile: vi.fn(),
+        });
+        const recoverableErrors: unknown[] = [];
+
+        window.localStorage.setItem(storageKey, "*.tsv");
+        document.body.appendChild(hydrationContainer);
+
+        const serverMarkup = renderToString(tree);
+
+        expect(serverMarkup).toContain("alpha-summary.tsv");
+        expect(serverMarkup).toContain("alpha-run.log");
+
+        hydrationContainer.innerHTML = serverMarkup;
+
+        let hydrationRoot: ReturnType<typeof hydrateRoot> | null = null;
+
+        await act(async () => {
+            hydrationRoot = hydrateRoot(hydrationContainer, tree, {
+                onRecoverableError: (error) => {
+                    recoverableErrors.push(error);
+                },
+            });
+        });
+
+        await waitFor(() => {
+            const input = hydrationContainer.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+
+            expect(input?.value).toBe("*.tsv");
+        });
+
+        expect(hydrationContainer.textContent).toContain("alpha-summary.tsv");
+        expect(hydrationContainer.textContent).not.toContain("alpha-run.log");
+        expect(recoverableErrors).toHaveLength(0);
+
+        await act(async () => {
+            hydrationRoot?.unmount();
+        });
+        hydrationContainer.remove();
     });
 
     it("renders expanded nested directory contents inside the directory row box", async () => {
@@ -820,6 +1138,75 @@ describe("N1 file browser", () => {
         expect(handleSelectFile).toHaveBeenCalledWith(file);
     });
 
+    it("copies full file and directory paths without selecting or expanding rows", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const writeTextMock = vi.fn().mockResolvedValue(undefined);
+        const handleSelectDirectory = vi.fn();
+        const handleSelectFile = vi.fn();
+        const file = buildFile("/results/root/report.txt", "output");
+        const nestedFile = buildFile(
+            "/results/root/nested/table.tsv",
+            "output",
+        );
+
+        vi.stubGlobal("navigator", {
+            clipboard: {
+                writeText: writeTextMock,
+            },
+        });
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [file, nestedFile],
+                    onSelectDirectory: handleSelectDirectory,
+                    onSelectFile: handleSelectFile,
+                }),
+            );
+        });
+
+        handleSelectDirectory.mockClear();
+        handleSelectFile.mockClear();
+
+        const fileRow = container.querySelector(
+            '[data-file-path="/results/root/report.txt"]',
+        );
+        const directoryButton = container.querySelector(
+            'button[data-directory-path="/results/root/nested"]',
+        );
+        const directoryCopyButton = container.querySelector(
+            '[aria-label="Copy directory full path /results/root/nested"]',
+        );
+        const fileCopyButton = fileRow?.querySelector(
+            '[aria-label="Copy file full path /results/root/report.txt"]',
+        );
+
+        expect(fileRow).toBeTruthy();
+        expect(directoryButton).toBeTruthy();
+        expect(fileCopyButton).toBeTruthy();
+        expect(directoryCopyButton).toBeTruthy();
+        expect(fileCopyButton).not.toBe(fileRow);
+        expect(directoryCopyButton).not.toBe(directoryButton);
+        expect(directoryButton?.getAttribute("data-directory-expanded")).toBe(
+            "false",
+        );
+
+        await click(directoryCopyButton);
+
+        expect(writeTextMock).toHaveBeenCalledWith("/results/root/nested");
+        expect(handleSelectDirectory).not.toHaveBeenCalled();
+        expect(directoryButton?.getAttribute("data-directory-expanded")).toBe(
+            "false",
+        );
+
+        await click(fileCopyButton);
+
+        expect(writeTextMock).toHaveBeenCalledWith("/results/root/report.txt");
+        expect(handleSelectFile).not.toHaveBeenCalled();
+        expect(toastSuccessMock).toHaveBeenCalledWith("Path copied");
+        expect(toastErrorMock).not.toHaveBeenCalled();
+    });
+
     it("renders human-readable file sizes", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
 
@@ -853,6 +1240,93 @@ describe("N1 file browser", () => {
             "/out/m",
             "/out/z",
         ]);
+    });
+
+    it("matches glob filters against basenames and nested paths", async () => {
+        const { filePathMatchesGlobPattern, filterFilesByGlobPattern } =
+            await import("@/lib/file-glob-filter");
+        const files = [
+            buildFile("/out/reports/alpha-summary.tsv", "output"),
+            buildFile("/out/reports/alpha-summary.txt", "output"),
+            buildFile("/out/logs/alpha-run.log", "output"),
+        ];
+
+        expect(filePathMatchesGlobPattern(files[0]?.path ?? "", "*.tsv")).toBe(
+            true,
+        );
+        expect(
+            filePathMatchesGlobPattern(
+                files[0]?.path ?? "",
+                "reports/alpha-[!q]*.tsv",
+            ),
+        ).toBe(true);
+        expect(
+            filterFilesByGlobPattern(files, "**/*-summary.t??").map(
+                (file) => file.path,
+            ),
+        ).toEqual([
+            "/out/reports/alpha-summary.tsv",
+            "/out/reports/alpha-summary.txt",
+        ]);
+    });
+
+    it("treats unmatched glob brackets as literal characters", async () => {
+        const { filePathMatchesGlobPattern, filterFilesByGlobPattern } =
+            await import("@/lib/file-glob-filter");
+        const files = [
+            buildFile("/out/reports/sample[abc.txt", "output"),
+            buildFile("/out/reports/sample]abc.txt", "output"),
+            buildFile("/out/reports/unrelated.txt", "output"),
+        ];
+
+        expect(
+            filterFilesByGlobPattern(files, "sample[abc.txt").map(
+                (file) => file.path,
+            ),
+        ).toEqual(["/out/reports/sample[abc.txt"]);
+        expect(
+            filterFilesByGlobPattern(files, "sample]abc.txt").map(
+                (file) => file.path,
+            ),
+        ).toEqual(["/out/reports/sample]abc.txt"]);
+        expect(
+            filePathMatchesGlobPattern(
+                "/out/reports/unrelated.txt",
+                "sample[abc.txt",
+            ),
+        ).toBe(false);
+    });
+
+    it("compiles glob filters once for each file filter operation", async () => {
+        const { filterFilesByGlobPattern } =
+            await import("@/lib/file-glob-filter");
+        const realRegExp = globalThis.RegExp;
+        const regexpConstructor = vi.fn(
+            (pattern: string, flags?: string): RegExp =>
+                new realRegExp(pattern, flags),
+        );
+        const files = [
+            buildFile("/out/reports/alpha-summary.tsv", "output"),
+            buildFile("/out/reports/beta-summary.tsv", "output"),
+            buildFile("/out/logs/alpha-run.log", "output"),
+            buildFile("/out/metrics/alpha-qc.json", "output"),
+        ];
+
+        vi.stubGlobal("RegExp", regexpConstructor);
+
+        expect(
+            filterFilesByGlobPattern(files, "**/*-summary.tsv").map(
+                (file) => file.path,
+            ),
+        ).toEqual([
+            "/out/reports/alpha-summary.tsv",
+            "/out/reports/beta-summary.tsv",
+        ]);
+        expect(regexpConstructor).toHaveBeenCalledTimes(1);
+
+        filterFilesByGlobPattern(files.slice(0, 1), "**/*-summary.tsv");
+
+        expect(regexpConstructor).toHaveBeenCalledTimes(2);
     });
 
     it("does not show a visible preview height control in the browser controls", async () => {
@@ -1033,7 +1507,7 @@ describe("N1 file browser", () => {
             folderControls?.querySelector(
                 '[data-file-browser-control-current="file-types"]',
             ),
-        ).toHaveProperty("textContent", "5 file types");
+        ).toHaveProperty("textContent", "All file types");
     });
 
     it("keeps inline controls in the active folder name area", async () => {
@@ -1972,7 +2446,7 @@ describe("N1 file browser", () => {
             folderControls?.querySelectorAll(
                 "input[data-subdir-preview-kind]:checked",
             ),
-        ).toHaveLength(5);
+        ).toHaveLength(previewFileTypeOptions.length);
         expect(
             container.querySelector('[data-testid="single-preview"]')
                 ?.textContent,
@@ -1994,27 +2468,56 @@ describe("N1 file browser", () => {
 
         await click(disclosureTrigger);
 
+        const optionLabels = [
+            ...(folderControls?.querySelectorAll(
+                "[data-subdir-preview-kind-options] label",
+            ) ?? []),
+        ].map((label) => label.textContent?.trim() ?? "");
+        const optionGrid = folderControls?.querySelector(
+            "[data-subdir-preview-kind-options]",
+        ) as HTMLElement | null;
         const imageCheckbox = container.querySelector(
             'input[data-subdir-preview-kind="image"]',
         ) as HTMLInputElement | null;
-        const tableCheckbox = container.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const csvCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="csv"]',
         ) as HTMLInputElement | null;
-        const markdownCheckbox = container.querySelector(
-            'input[data-subdir-preview-kind="markdown"]',
+        const mdCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="md"]',
         ) as HTMLInputElement | null;
-        const codeCheckbox = container.querySelector(
-            'input[data-subdir-preview-kind="code"]',
+        const txtCheckbox = container.querySelector(
+            'input[data-subdir-preview-kind="txt"]',
         ) as HTMLInputElement | null;
+        const getDeselectAllButton = () =>
+            container.querySelector(
+                'button[data-subdir-preview-kind-clear="/demo"]',
+            ) as HTMLButtonElement | null;
+        const getFileTypeMenu = () =>
+            container.querySelector(
+                '[data-subdir-preview-kinds="/demo"]',
+            ) as HTMLElement | null;
 
+        expect(optionLabels).toEqual(
+            previewFileTypeOptions.map((option) => option.label),
+        );
+        expect(optionLabels).not.toEqual(
+            expect.arrayContaining([
+                "Tables",
+                "Markdown",
+                "Text & code",
+                "Documents",
+            ]),
+        );
+        expect(optionGrid?.className).toContain("grid-cols");
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(true);
-        expect(markdownCheckbox?.checked).toBe(true);
-        expect(codeCheckbox?.checked).toBe(true);
+        expect(csvCheckbox?.checked).toBe(true);
+        expect(mdCheckbox?.checked).toBe(true);
+        expect(txtCheckbox?.checked).toBe(true);
+        expect(getDeselectAllButton()?.textContent).toContain("Deselect all");
 
-        await click(tableCheckbox);
-        await click(markdownCheckbox);
-        await click(codeCheckbox);
+        await click(csvCheckbox);
+        await click(mdCheckbox);
+        await click(txtCheckbox);
 
         expect(
             container.querySelector(
@@ -2032,6 +2535,120 @@ describe("N1 file browser", () => {
             )?.textContent,
         ).toBe("");
         expect(subfolderToggle?.checked).toBe(false);
+
+        await click(getDeselectAllButton());
+
+        const selectedFileTypeInputs = [
+            ...(getFileTypeMenu()?.querySelectorAll<HTMLInputElement>(
+                "input[data-subdir-preview-kind]",
+            ) ?? []),
+        ];
+
+        expect(selectedFileTypeInputs).toHaveLength(
+            previewFileTypeOptions.length,
+        );
+        expect(selectedFileTypeInputs.every((input) => !input.checked)).toBe(
+            true,
+        );
+        expect(
+            container.querySelector(
+                '[data-file-browser-control-current="file-types"]',
+            )?.textContent,
+        ).toBe("No file types");
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/demo/photo.png"]',
+            ),
+        ).toBeNull();
+    });
+
+    it("keeps direct-file-only file type controls after deselecting all so a type can be reselected", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/results/plots/plot-001.png", "output"),
+            buildFile("/results/plots/plot-002.png", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onPreviewModeChange: vi.fn(),
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    previewMode: "grid",
+                    renderGridPreview: (file: FileEntry): ReactNode =>
+                        createElement(
+                            "div",
+                            { "data-testid": `grid-preview-${file.path}` },
+                            file.path,
+                        ),
+                    selectedDirectory: "/results/plots",
+                    visibleFiles: files,
+                }),
+            );
+        });
+
+        const controls = () =>
+            container.querySelector(
+                '[data-file-browser-folder-controls="/results/plots"]',
+            ) as HTMLElement | null;
+        const menu = () =>
+            container.querySelector(
+                '[data-subdir-preview-kinds="/results/plots"]',
+            ) as HTMLElement | null;
+        const summary = () =>
+            controls()?.querySelector(
+                'summary[aria-label="File types"]',
+            ) as HTMLElement | null;
+        const selectedSummary = () =>
+            controls()?.querySelector(
+                '[data-file-browser-control-current="file-types"]',
+            )?.textContent ?? null;
+        const imageCheckbox = () =>
+            menu()?.querySelector(
+                'input[data-subdir-preview-kind="image"]',
+            ) as HTMLInputElement | null;
+
+        expect(controls()).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/results/plots/plot-001.png"]',
+            ),
+        ).toBeTruthy();
+
+        await click(summary());
+        await click(
+            menu()?.querySelector(
+                'button[data-subdir-preview-kind-clear="/results/plots"]',
+            ) ?? null,
+        );
+
+        expect(controls()).toBeTruthy();
+        expect(summary()).toBeTruthy();
+        expect(selectedSummary()).toBe("No file types");
+        expect(imageCheckbox()?.checked).toBe(false);
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/results/plots/plot-001.png"]',
+            ),
+        ).toBeNull();
+
+        await click(imageCheckbox());
+
+        expect(controls()).toBeTruthy();
+        expect(selectedSummary()).toBe("Images");
+        expect(imageCheckbox()?.checked).toBe(true);
+        expect(
+            container.querySelector(
+                '[data-file-browser-grid-row="/results/plots/plot-001.png"]',
+            ),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-testid="grid-preview-/results/plots/plot-001.png"]',
+            ),
+        ).toBeTruthy();
     });
 
     it("keeps preview mode summaries and toggles aligned when selection moves from a parent folder to a subfolder", async () => {
@@ -2507,7 +3124,7 @@ describe("N1 file browser", () => {
         );
         await click(
             demoControls()?.querySelector(
-                'input[data-subdir-preview-kind="table"]',
+                'input[data-subdir-preview-kind="tsv"]',
             ) ?? null,
         );
 
@@ -2591,11 +3208,11 @@ describe("N1 file browser", () => {
             ),
         );
 
-        const lanesTableCheckbox = lanesControls()?.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const lanesTsvCheckbox = lanesControls()?.querySelector(
+            'input[data-subdir-preview-kind="tsv"]',
         ) as HTMLInputElement | null;
 
-        expect(lanesTableCheckbox?.checked).toBe(true);
+        expect(lanesTsvCheckbox?.checked).toBe(true);
         expect(
             container.querySelector(
                 '[data-subdir-preview-row="/demo/sample-a/lanes/lane-1"]',
@@ -2762,12 +3379,12 @@ describe("N1 file browser", () => {
         const imageCheckbox = controls?.querySelector(
             'input[data-subdir-preview-kind="image"]',
         ) as HTMLInputElement | null;
-        const tableCheckbox = controls?.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const csvCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="csv"]',
         ) as HTMLInputElement | null;
 
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(true);
+        expect(csvCheckbox?.checked).toBe(true);
 
         await click(toggle);
 
@@ -2819,11 +3436,15 @@ describe("N1 file browser", () => {
         const cardAFilename = rowA?.querySelector(
             '[data-subdir-preview-filename="/demo/sample-a/img-1.png"]',
         );
+        const cardACopyPathControl = cardA?.querySelector(
+            '[aria-label="Copy file full path /demo/sample-a/img-1.png"]',
+        );
 
         expect(galleryStripA).toBeTruthy();
         expect(rowAHeading).toBeTruthy();
         expect(cardA).toBeTruthy();
         expect(cardAFilename?.textContent).toBe("img-1.png");
+        expect(cardACopyPathControl).toBeTruthy();
         expect(rowA?.className).not.toMatch(/lg:grid-cols-\[/);
         expect(galleryStripA?.className).toMatch(/(?:^|\s)flex/);
         expect(galleryStripA?.className).toMatch(/(?:^|\s)w-full/);
@@ -2831,7 +3452,7 @@ describe("N1 file browser", () => {
         expect(cardA?.className).toMatch(/(?:^|\s)shrink-0/);
 
         // Narrowing away from tables removes csv previews on the row.
-        await click(tableCheckbox);
+        await click(csvCheckbox);
 
         expect(
             rowA?.querySelector(
@@ -3180,14 +3801,14 @@ describe("N1 file browser", () => {
         const imageCheckbox = controls?.querySelector(
             'input[data-subdir-preview-kind="image"]',
         ) as HTMLInputElement | null;
-        const tableCheckbox = controls?.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const csvCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="csv"]',
         ) as HTMLInputElement | null;
 
         expect(controls).toBeTruthy();
         expect(toggle).toBeTruthy();
         expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(true);
+        expect(csvCheckbox?.checked).toBe(true);
 
         await click(toggle);
         expect(
@@ -3603,17 +4224,17 @@ describe("N1 file browser", () => {
         const toggle = controls?.querySelector(
             'input[aria-label="Subfolder previews"]',
         ) as HTMLInputElement | null;
-        const imageCheckbox = controls?.querySelector(
-            'input[data-subdir-preview-kind="image"]',
+        const svgCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="svg"]',
         ) as HTMLInputElement | null;
-        const tableCheckbox = controls?.querySelector(
-            'input[data-subdir-preview-kind="table"]',
+        const tsvCheckbox = controls?.querySelector(
+            'input[data-subdir-preview-kind="tsv"]',
         ) as HTMLInputElement | null;
 
         expect(controls).toBeTruthy();
         expect(toggle).toBeTruthy();
-        expect(imageCheckbox?.checked).toBe(true);
-        expect(tableCheckbox?.checked).toBe(true);
+        expect(svgCheckbox?.checked).toBe(true);
+        expect(tsvCheckbox?.checked).toBe(true);
 
         await click(toggle);
 
@@ -3625,7 +4246,7 @@ describe("N1 file browser", () => {
         expect(imageFrame?.className).not.toContain("border");
         expect(imageFrame?.className).not.toContain("rounded-[1.25rem]");
 
-        await click(imageCheckbox);
+        await click(svgCheckbox);
 
         const tableFrame = container.querySelector(
             '[data-subdir-preview-frame="/demo/lanes/lane-1/lane-1-notes.tsv"]',

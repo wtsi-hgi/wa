@@ -28,15 +28,20 @@ package results
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 const enableForeignKeysSQL = `PRAGMA foreign_keys = ON`
+
+const minSearchSuggestionQueryLength = 2
 
 const createResultSetsTableSQL = `
 CREATE TABLE IF NOT EXISTS result_sets (
@@ -95,6 +100,22 @@ CREATE INDEX IF NOT EXISTS idx_result_metadata_meta_key_value
 const createResultMetadataMetaKeyValueIndexMySQLSQL = `
 CREATE INDEX idx_result_metadata_meta_key_value
 	ON result_metadata(meta_key, value(255));`
+
+type searchSuggestionSource struct {
+	fieldKey string
+	column   string
+	order    int
+}
+
+var searchSuggestionSources = []searchSuggestionSource{
+	{fieldKey: "pipeline_name", column: "pipeline_name", order: 10},
+	{fieldKey: "run_key", column: "run_key", order: 20},
+	{fieldKey: "user", column: "requester", order: 30},
+	{fieldKey: "operator", column: "operator", order: 40},
+	{fieldKey: "pipeline_version", column: "pipeline_version", order: 50},
+	{fieldKey: "pipeline_identifier", column: "pipeline_identifier", order: 60},
+	{fieldKey: "output_directory", column: "output_directory", order: 70},
+}
 
 // OutputDirectoryGID returns the Unix group ID for an output directory.
 func OutputDirectoryGID(path string) (*int64, error) {
@@ -311,6 +332,20 @@ func isMissingPrimaryKeyError(err error) bool {
 		strings.Contains(message, "does not exist")
 }
 
+func appendSearchSuggestionQueryPart(parts []string, args []any, source searchSuggestionSource, term string) ([]string, []any) {
+	parts = append(parts, fmt.Sprintf(
+		`SELECT %d AS field_order, 0 AS is_metadata, ? AS field_key, %s AS match_value
+		 FROM result_sets
+		 WHERE instr(lower(%s), lower(?)) > 0`,
+		source.order,
+		source.column,
+		source.column,
+	))
+	args = append(args, source.fieldKey, term)
+
+	return parts, args
+}
+
 // NewStore enables foreign keys and creates the SQL schema on demand.
 func NewStore(db *sql.DB) (*Store, error) {
 	if db == nil {
@@ -417,6 +452,12 @@ func isDuplicateColumnError(err error) bool {
 	message := strings.ToLower(err.Error())
 
 	return strings.Contains(message, "duplicate column") || strings.Contains(message, "already exists")
+}
+
+func normalizedSearchSuggestionQuery(query string) (string, bool) {
+	term := strings.TrimSpace(query)
+
+	return term, utf8.RuneCountInString(term) >= minSearchSuggestionQueryLength
 }
 
 func upsertResultSetRow(ctx context.Context, tx *sql.Tx, id string, reg *Registration) (time.Time, time.Time, error) {
@@ -1031,31 +1072,12 @@ func appendMultiValueSearchFilter(filters []string, args []any, field string, va
 		return filters, args
 	}
 
-	if len(values) == 1 {
-		return append(filters, field+" = ?"), append(args, values[0])
-	}
-
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
-	filters = append(filters, fmt.Sprintf("%s IN (%s)", field, placeholders))
-
-	for _, value := range values {
-		args = append(args, value)
-	}
-
-	return filters, args
-}
-
-func appendMultiPrefixFilter(filters []string, args []any, field string, values []string) ([]string, []any) {
-	values = nonEmptySearchValues(values)
-	if len(values) == 0 {
-		return filters, args
-	}
-
 	clauses := make([]string, 0, len(values))
 
 	for _, value := range values {
-		clauses = append(clauses, fmt.Sprintf("substr(%s, 1, length(?)) = ?", field))
-		args = append(args, value, value)
+		// Search filters use substring matching so typed values and autocomplete values share semantics.
+		clauses = append(clauses, fmt.Sprintf("instr(lower(%s), lower(?)) > 0", field))
+		args = append(args, value)
 	}
 
 	if len(clauses) == 1 {
@@ -1072,25 +1094,18 @@ func appendMultiMetadataSearchFilters(filters []string, args []any, metadata map
 			continue
 		}
 
-		if len(values) == 1 {
-			filters = append(filters, `EXISTS (
-				SELECT 1 FROM result_metadata rm
-				WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value = ?
-			)`)
-			args = append(args, key, values[0])
-
-			continue
+		filterArgs := []any{key}
+		valueClauses := make([]string, 0, len(values))
+		for _, value := range values {
+			valueClauses = append(valueClauses, "instr(lower(rm.value), lower(?)) > 0")
+			filterArgs = append(filterArgs, value)
 		}
-		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
+
 		filters = append(filters, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM result_metadata rm
-			WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value IN (%s)
-		)`, placeholders))
-		args = append(args, key)
-
-		for _, value := range values {
-			args = append(args, value)
-		}
+			WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND (%s)
+		)`, strings.Join(valueClauses, " OR ")))
+		args = append(args, filterArgs...)
 	}
 
 	return filters, args
@@ -1122,20 +1137,13 @@ func appendOrMetaSearchFilter(filters []string, args []any, orMeta []map[string]
 				continue
 			}
 
-			if len(values) == 1 {
-				clauses = append(clauses, `EXISTS (SELECT 1 FROM result_metadata rm WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value = ?)`)
-				args = append(args, key, values[0])
-
-				continue
-			}
-
-			placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
-			clauses = append(clauses, fmt.Sprintf(`EXISTS (SELECT 1 FROM result_metadata rm WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND rm.value IN (%s))`, placeholders))
+			valueClauses := make([]string, 0, len(values))
 			args = append(args, key)
-
-			for _, v := range values {
-				args = append(args, v)
+			for _, value := range values {
+				valueClauses = append(valueClauses, "instr(lower(rm.value), lower(?)) > 0")
+				args = append(args, value)
 			}
+			clauses = append(clauses, fmt.Sprintf(`EXISTS (SELECT 1 FROM result_metadata rm WHERE rm.result_id = result_sets.id AND rm.meta_key = ? AND (%s))`, strings.Join(valueClauses, " OR ")))
 		}
 	}
 
@@ -1201,6 +1209,37 @@ func expandRunKeySearchValues(values []string) []string {
 	return expanded
 }
 
+func searchSuggestionFieldKey(rawFieldKey string, isMetadata bool) string {
+	if !isMetadata {
+		for _, source := range searchSuggestionSources {
+			if rawFieldKey == source.fieldKey {
+				return rawFieldKey
+			}
+		}
+	}
+
+	switch {
+	case slices.Contains(combinedStudyMetaKeys, rawFieldKey):
+		return "study"
+	case slices.Contains(combinedSampleMetaKeys, rawFieldKey):
+		return "sample"
+	case slices.Contains(libraryTypeMetaKeys, rawFieldKey):
+		return "library"
+	case slices.Contains(libraryIDMetaKeys, rawFieldKey):
+		return SeqmetaLibraryIDKey
+	case slices.Contains(libraryLimsMetaKeys, rawFieldKey):
+		return SeqmetaIDLibraryLimsKey
+	case slices.Contains(combinedRunMetaKeys, rawFieldKey):
+		return "run"
+	case slices.Contains(combinedLaneMetaKeys, rawFieldKey):
+		return rawFieldKey
+	case strings.HasPrefix(rawFieldKey, "seqmeta_"):
+		return rawFieldKey
+	default:
+		return "meta_" + rawFieldKey
+	}
+}
+
 func multiSearchParamsFromSingle(params SearchParams) MultiSearchParams {
 	multi := MultiSearchParams{
 		Meta: map[string][]string{},
@@ -1230,8 +1269,8 @@ func multiSearchParamsFromSingle(params SearchParams) MultiSearchParams {
 		multi.RunKey = []string{params.RunKey}
 	}
 
-	if params.OutputDirPrefix != "" {
-		multi.OutputDirPrefix = []string{params.OutputDirPrefix}
+	if params.OutputDirectory != "" {
+		multi.OutputDirectory = []string{params.OutputDirectory}
 	}
 
 	for key, value := range params.Meta {
@@ -1352,11 +1391,120 @@ func (s *Store) SearchMulti(ctx context.Context, params MultiSearchParams) ([]Re
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_version", params.PipelineVersion)
 	filters, args = appendMultiValueSearchFilter(filters, args, "pipeline_identifier", params.PipelineIdentifier)
 	filters, args = appendMultiValueSearchFilter(filters, args, "run_key", expandRunKeySearchValues(params.RunKey))
-	filters, args = appendMultiPrefixFilter(filters, args, "output_directory", params.OutputDirPrefix)
+	filters, args = appendMultiValueSearchFilter(filters, args, "output_directory", params.OutputDirectory)
 	filters, args = appendMultiMetadataSearchFilters(filters, args, params.Meta)
 	filters, args = appendOrMetaSearchFilter(filters, args, params.OrMeta)
 
 	return querySearchResults(ctx, conn, filters, args)
+}
+
+// SearchSuggestions returns field/value substring matches from registered result data.
+func (s *Store) SearchSuggestions(ctx context.Context, query string, limit int) ([]SearchSuggestion, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
+	}
+
+	term, ok := normalizedSearchSuggestionQuery(query)
+	if !ok || limit <= 0 {
+		return []SearchSuggestion{}, nil
+	}
+
+	queryParts := make([]string, 0, len(searchSuggestionSources)+1)
+	args := make([]any, 0, len(searchSuggestionSources)*2+2)
+	for _, source := range searchSuggestionSources {
+		queryParts, args = appendSearchSuggestionQueryPart(queryParts, args, source, term)
+	}
+
+	queryParts = append(queryParts, `SELECT 100 AS field_order, 1 AS is_metadata, meta_key AS field_key, value AS match_value
+		FROM result_metadata
+		WHERE instr(lower(value), lower(?)) > 0`)
+	args = append(args, term, limit)
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		fmt.Sprintf(`SELECT field_key, is_metadata, match_value
+			FROM (%s) matches
+			WHERE match_value <> ''
+			GROUP BY field_key, is_metadata, match_value
+			ORDER BY MIN(field_order), lower(match_value)
+			LIMIT ?`, strings.Join(queryParts, " UNION ALL ")),
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query search suggestions: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	suggestions := []SearchSuggestion{}
+	seen := map[SearchSuggestion]struct{}{}
+	for rows.Next() {
+		var rawFieldKey string
+		var isMetadata int
+		var value string
+		if err := rows.Scan(&rawFieldKey, &isMetadata, &value); err != nil {
+			return nil, fmt.Errorf("scan search suggestion: %w", err)
+		}
+
+		suggestion := SearchSuggestion{
+			FieldKey: searchSuggestionFieldKey(rawFieldKey, isMetadata != 0),
+			Value:    value,
+		}
+		if _, ok := seen[suggestion]; ok {
+			continue
+		}
+
+		seen[suggestion] = struct{}{}
+		suggestions = append(suggestions, suggestion)
+		if len(suggestions) >= limit {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate search suggestions: %w", err)
+	}
+
+	return suggestions, nil
+}
+
+func (s *Store) hasExactMetadataValue(ctx context.Context, keys []string, values []string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("%w: nil store", ErrInvalidInput)
+	}
+
+	keys = nonEmptySearchValues(keys)
+	values = nonEmptySearchValues(values)
+	if len(keys) == 0 || len(values) == 0 {
+		return false, nil
+	}
+
+	keyPlaceholders := strings.TrimSuffix(strings.Repeat("?, ", len(keys)), ", ")
+	args := make([]any, 0, len(keys)+len(values))
+	for _, key := range keys {
+		args = append(args, key)
+	}
+
+	valueClauses := make([]string, 0, len(values))
+	for _, value := range values {
+		valueClauses = append(valueClauses, "lower(value) = lower(?)")
+		args = append(args, value)
+	}
+
+	var exists int
+	err := s.db.QueryRowContext(
+		ctx,
+		fmt.Sprintf(`SELECT 1 FROM result_metadata WHERE meta_key IN (%s) AND (%s) LIMIT 1`, keyPlaceholders, strings.Join(valueClauses, " OR ")),
+		args...,
+	).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query exact metadata value: %w", err)
+	}
+
+	return true, nil
 }
 
 // DistinctMetadataValues returns sorted distinct metadata values for any of the supplied keys.

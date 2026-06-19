@@ -230,8 +230,11 @@ test("truncates larger result metadata only when the full strip would overflow",
             waitUntil: "domcontentloaded",
         });
         await expect(page.getByRole("heading", { level: 1 })).toContainText(
-            "seqmeta/rendering-repro",
+            "rna-expression",
             { timeout: 30000 },
+        );
+        await expect(page.getByRole("heading", { level: 1 })).not.toContainText(
+            "seqmeta/rendering-repro",
         );
 
         const summary = page.locator('[data-result-detail-summary="true"]');

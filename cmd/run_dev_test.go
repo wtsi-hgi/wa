@@ -201,6 +201,26 @@ func runDevUnsetSeqmetaEnvForTest() []string {
 	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL"}
 }
 
+func runDevSeedFixtureCountForTest(t *testing.T, repoRoot string) int {
+	t.Helper()
+
+	body, err := os.ReadFile(filepath.Join(repoRoot, ".docs", "results-web", "fixtures", "seed.json"))
+	if err != nil {
+		t.Fatalf("read results web seed fixture: %v", err)
+	}
+
+	var fixtures []json.RawMessage
+	if err := json.Unmarshal(body, &fixtures); err != nil {
+		t.Fatalf("decode results web seed fixture: %v", err)
+	}
+
+	if len(fixtures) == 0 {
+		t.Fatal("results web seed fixture is empty")
+	}
+
+	return len(fixtures)
+}
+
 func TestRunDevHelpDocumentsProdRefusedEnvironment(t *testing.T) {
 	convey.Convey("run-dev.sh --help documents the prod-mode refused environment variables", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
@@ -1096,6 +1116,7 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 		seqmetaSentinelPath := filepath.Join(t.TempDir(), "seqmeta-started.txt")
 		resultsDBPath := filepath.Join(t.TempDir(), "results-dev.sqlite")
 		stateDir := t.TempDir()
+		expectedFixtureCount := runDevSeedFixtureCountForTest(t, repoRoot)
 		var seededResultsMu sync.Mutex
 		seededResults := 0
 
@@ -1148,7 +1169,7 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 		convey.So(resultsURL, convey.ShouldEqual, fmt.Sprintf("https://127.0.0.1:%d", resultsPort))
 		convey.So(mlwhURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		seededResultsMu.Lock()
-		convey.So(seededResults, convey.ShouldEqual, 6)
+		convey.So(seededResults, convey.ShouldEqual, expectedFixtureCount)
 		seededResultsMu.Unlock()
 		convey.So(runDevPathExistsWithinForTest(frontendSentinelPath, 2*time.Second), convey.ShouldBeFalse)
 		convey.So(runDevPathExistsWithinForTest(seqmetaSentinelPath, 2*time.Second), convey.ShouldBeFalse)
@@ -1285,11 +1306,12 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
-	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds three fixtures, skips MLWH when no command or MLWH config is present, and cleans up on SIGINT", t, func() {
+	convey.Convey("R1.1/R1.2/R1.3/R1.5: run-dev.sh builds wa, seeds the fixture set, skips MLWH when no command or MLWH config is present, and cleans up on SIGINT", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		expectedFixtureCount := runDevSeedFixtureCountForTest(t, repoRoot)
 
 		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
 			frontendPort: frontendPort,
@@ -1307,11 +1329,11 @@ func TestRunDevScript(t *testing.T) {
 		})
 
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
-		resultsList := waitForSeededResultsForTest(t, resultsPort)
+		resultsList := waitForSeededResultsForTest(t, resultsPort, expectedFixtureCount)
 		fixtureSummary := summarizeRunDevFixturesForTest(t, repoRoot, resultsPort, resultsList)
 
 		convey.So(runDevPathExistsForTest(filepath.Join(repoRoot, ".tmp", "wa")), convey.ShouldBeTrue)
-		convey.So(resultsList, convey.ShouldHaveLength, 6)
+		convey.So(resultsList, convey.ShouldHaveLength, expectedFixtureCount)
 		convey.So(fixtureSummary.nestedDirectoryCount, convey.ShouldBeGreaterThanOrEqualTo, 3)
 		convey.So(fixtureSummary.hasSiblingDirectories, convey.ShouldBeTrue)
 		convey.So(fixtureSummary.hasRepeatedFileTypes, convey.ShouldBeTrue)
@@ -2233,7 +2255,7 @@ func TestStartRunDevForTestAutoCleanup(t *testing.T) {
 		})
 
 		_ = waitForRunDevSnapshotForTest(t, process, snapshotPath)
-		_ = waitForSeededResultsForTest(t, resultsPort)
+		_ = waitForSeededResultsForTest(t, resultsPort, runDevSeedFixtureCountForTest(t, repoRoot))
 		if process.Command.Process == nil {
 			t.Fatal("run-dev.sh did not start a process")
 		}
@@ -2561,7 +2583,7 @@ func waitForRunDevSnapshotForTest(t *testing.T, process *runDevProcess, snapshot
 	return runDevEnvSnapshot{}
 }
 
-func waitForSeededResultsForTest(t *testing.T, resultsPort int) []results.ResultSet {
+func waitForSeededResultsForTest(t *testing.T, resultsPort int, expectedCount int) []results.ResultSet {
 	t.Helper()
 
 	endpoint := fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results", resultsPort)
@@ -2583,7 +2605,7 @@ func waitForSeededResultsForTest(t *testing.T, resultsPort int) []results.Result
 				}
 			}()
 
-			if len(stored) == 6 {
+			if len(stored) == expectedCount {
 				resultsCopy := make([]results.ResultSet, len(stored))
 				copy(resultsCopy, stored)
 

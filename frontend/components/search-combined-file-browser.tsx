@@ -40,6 +40,10 @@ function directoryName(path: string): string {
     return path.split("/").filter(Boolean).at(-1) ?? path;
 }
 
+function encodePipelineNameForStorageKey(pipelineName: string): string {
+    return pipelineName.replaceAll("%", "%25").replaceAll("|", "%7C");
+}
+
 function parentDirectory(path: string): string {
     const index = path.lastIndexOf("/");
 
@@ -259,6 +263,21 @@ export function SearchCombinedFileBrowser({
             ),
         [registrations],
     );
+    const filterStorageKey = useMemo(() => {
+        const pipelineNames = [
+            ...new Set(
+                registrations
+                    .map((registration) =>
+                        registration.result.pipeline_name.trim(),
+                    )
+                    .filter(Boolean),
+            ),
+        ].sort((left, right) => left.localeCompare(right));
+
+        return pipelineNames.length > 0
+            ? `pipelines:${pipelineNames.map(encodePipelineNameForStorageKey).join("|")}`
+            : undefined;
+    }, [registrations]);
     const initialDirectory = useMemo(
         () => commonDirectory(files.map((file) => file.path)),
         [files],
@@ -319,6 +338,7 @@ export function SearchCombinedFileBrowser({
                     {files.length > 0 ? (
                         <ResultDetailFiles
                             files={files}
+                            filterStorageKey={filterStorageKey}
                             initialSelectedDirectory={initialDirectory}
                             renderDirectoryAction={renderDirectoryAction}
                             resultId={files[0]?.resultId ?? ""}

@@ -12,6 +12,7 @@ import {
     type LockedResponse,
     type ResultSet,
 } from "@/lib/contracts";
+import { resultProjectName } from "@/lib/result-display";
 import { formatRegistrationUnique } from "@/lib/result-identity";
 import { formatBytes } from "@/lib/utils";
 
@@ -277,6 +278,7 @@ export async function ResultDetailPageContent({
     }
 
     const fileSummary = summarizeFiles(files);
+    const title = resultProjectName(result);
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-[84rem] flex-col gap-5 px-4 py-6 sm:px-8 lg:py-8">
@@ -289,7 +291,7 @@ export async function ResultDetailPageContent({
                     <div className="min-w-0 space-y-3">
                         <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-baseline lg:justify-between">
                             <h1 className="min-w-0 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-                                {result.pipeline_name}
+                                {title}
                                 <span className="ml-3 align-baseline font-mono text-base font-medium text-muted-foreground sm:text-lg">
                                     {formatRegistrationUnique(result.run_key)}
                                 </span>
@@ -332,7 +334,11 @@ export async function ResultDetailPageContent({
                 </div>
             </section>
 
-            <ResultDetailFiles files={files} resultId={result.id} />
+            <ResultDetailFiles
+                files={files}
+                filterStorageKey={`pipeline:${result.pipeline_name}`}
+                resultId={result.id}
+            />
         </main>
     );
 }

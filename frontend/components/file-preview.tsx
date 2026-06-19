@@ -22,6 +22,11 @@ import {
 } from "@/components/ui/table";
 import { PreviewPagination } from "@/components/preview-pagination";
 import type { FileEntry } from "@/lib/contracts";
+import {
+    effectivePreviewExtension,
+    nonPreviewableBinaryExtensions,
+    previewBitmapImageExtensions,
+} from "@/lib/preview-file-types";
 import { cn, formatBytes } from "@/lib/utils";
 
 hljs.registerLanguage("json", json);
@@ -30,8 +35,9 @@ hljs.registerLanguage("plaintext", plaintext);
 hljs.registerLanguage("python", python);
 hljs.registerLanguage("xml", xml);
 
-const nonPreviewableExtensions = new Set(["bam", "cram", "h5", "hdf5"]);
-const compressedExtensions = new Set(["gz"]);
+const nonPreviewableExtensions: ReadonlySet<string> = new Set(
+    nonPreviewableBinaryExtensions,
+);
 const STABLE_THUMBNAIL_HEIGHT = 420;
 const STABLE_THUMBNAIL_WIDTH = Math.max(
     320,
@@ -40,17 +46,9 @@ const STABLE_THUMBNAIL_WIDTH = Math.max(
 const EXPANDED_TABLE_PAGE_SIZE = 1000;
 const INLINE_TABLE_HEADER_HEIGHT = 48;
 const INLINE_TABLE_ROW_HEIGHT = 44;
-const imageExtensions = new Set([
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "webp",
-    "bmp",
-    "tif",
-    "tiff",
-    "avif",
-]);
+const imageExtensions: ReadonlySet<string> = new Set(
+    previewBitmapImageExtensions,
+);
 
 export type PreviewRenderer =
     | "image"
@@ -183,40 +181,8 @@ function normalizeContentType(contentType: string): string {
     );
 }
 
-function extensionFromPath(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    const index = name.lastIndexOf(".");
-
-    if (index === -1 || index === name.length - 1) {
-        return "";
-    }
-
-    return name.slice(index + 1).toLowerCase();
-}
-
-function effectiveExtensionFromPath(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    const extensions = name
-        .split(".")
-        .slice(1)
-        .map((extension) => extension.toLowerCase())
-        .filter((extension) => extension.length > 0);
-
-    if (extensions.length === 0) {
-        return "";
-    }
-
-    const lastExtension = extensions.at(-1) ?? "";
-
-    if (compressedExtensions.has(lastExtension) && extensions.length > 1) {
-        return extensions.at(-2) ?? lastExtension;
-    }
-
-    return lastExtension;
-}
-
 function guessRendererFromPath(path: string): PreviewRenderer {
-    const extension = effectiveExtensionFromPath(path);
+    const extension = effectivePreviewExtension(path);
 
     if (extension === "svg") {
         return "svg";
@@ -244,7 +210,7 @@ function guessRendererFromPath(path: string): PreviewRenderer {
 function isPreviewable(renderer: PreviewRenderer, path: string): boolean {
     return (
         renderer !== "binary" &&
-        !nonPreviewableExtensions.has(effectiveExtensionFromPath(path))
+        !nonPreviewableExtensions.has(effectivePreviewExtension(path))
     );
 }
 

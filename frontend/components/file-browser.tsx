@@ -18,10 +18,14 @@ import {
 import {
     ChevronDown,
     ChevronRight,
+    Copy,
     Eye,
     FolderTree,
     ListFilter,
+    Save,
+    X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import {
     boxPanelInsetClass,
@@ -32,6 +36,18 @@ import {
 } from "@/components/box-title-section";
 import { PreviewPagination } from "@/components/preview-pagination";
 import { type FileEntry } from "@/lib/contracts";
+import {
+    fileBrowserGlobFilterStorageKey,
+    filterFilesByGlobPattern,
+    saveFileBrowserGlobFilter,
+    useSavedFileBrowserGlobFilter,
+} from "@/lib/file-glob-filter";
+import {
+    allPreviewFileTypeIds,
+    previewFileTypeForPath,
+    previewFileTypeOptions,
+    type PreviewFileTypeId,
+} from "@/lib/preview-file-types";
 import { cn, formatBytes } from "@/lib/utils";
 
 export type PreviewMode = "single" | "grid";
@@ -63,112 +79,18 @@ const fileKindOrder: Record<FileEntry["kind"], number> = {
     pipeline: 2,
 };
 
-export type SubdirPreviewKind =
-    | "image"
-    | "table"
-    | "markdown"
-    | "code"
-    | "document";
-
-const subdirPreviewKindGroups: ReadonlyArray<{
-    extensions: ReadonlyArray<string>;
-    id: SubdirPreviewKind;
-    label: string;
-}> = [
-    {
-        extensions: [
-            "avif",
-            "bmp",
-            "gif",
-            "jpeg",
-            "jpg",
-            "png",
-            "svg",
-            "tif",
-            "tiff",
-            "webp",
-        ],
-        id: "image",
-        label: "Images",
-    },
-    {
-        extensions: ["csv", "tsv"],
-        id: "table",
-        label: "Tables",
-    },
-    {
-        extensions: ["markdown", "md"],
-        id: "markdown",
-        label: "Markdown",
-    },
-    {
-        extensions: [
-            "htm",
-            "html",
-            "json",
-            "log",
-            "py",
-            "txt",
-            "xml",
-            "yaml",
-            "yml",
-        ],
-        id: "code",
-        label: "Text & code",
-    },
-    {
-        extensions: ["pdf"],
-        id: "document",
-        label: "Documents",
-    },
-];
+export type SubdirPreviewKind = PreviewFileTypeId;
 
 const SUBDIR_PREVIEW_PAGE_SIZE = 20;
 const PREVIEW_HEIGHT_MIN = 120;
 const PREVIEW_HEIGHT_MAX = 420;
-const compressedExtensions = new Set(["gz"]);
-const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(
-    subdirPreviewKindGroups.map((group) => group.id),
-);
+const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(allPreviewFileTypeIds);
 const defaultSubdirPreviewKinds = new Set<SubdirPreviewKind>(
     allSubdirPreviewKinds,
 );
 
-function effectiveExtension(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    const parts = name
-        .split(".")
-        .slice(1)
-        .map((part) => part.toLowerCase())
-        .filter((part) => part.length > 0);
-
-    if (parts.length === 0) {
-        return "";
-    }
-
-    const last = parts.at(-1) ?? "";
-
-    if (compressedExtensions.has(last) && parts.length > 1) {
-        return parts.at(-2) ?? last;
-    }
-
-    return last;
-}
-
 function previewKindForPath(path: string): SubdirPreviewKind | null {
-    const extension = effectiveExtension(path);
-
-    for (const group of subdirPreviewKindGroups) {
-        if (group.extensions.includes(extension)) {
-            return group.id;
-        }
-    }
-
-    return null;
-}
-
-function pathSupportsFilePreview(path: string): boolean {
-    return previewKindForPath(path) !== null;
+    return previewFileTypeForPath(path);
 }
 
 export function findInitialSubdirPreviewDirectory(
@@ -273,19 +195,23 @@ function previewableFilesForKinds(
 function summarizeSubdirPreviewKinds(
     kinds: ReadonlySet<SubdirPreviewKind>,
 ): string {
-    const selectedGroups = subdirPreviewKindGroups.filter((group) =>
-        kinds.has(group.id),
+    const selectedOptions = previewFileTypeOptions.filter((option) =>
+        kinds.has(option.id),
     );
 
-    if (selectedGroups.length === 0) {
+    if (selectedOptions.length === 0) {
         return "No file types";
     }
 
-    if (selectedGroups.length === 1) {
-        return selectedGroups[0]?.label ?? "1 file type";
+    if (selectedOptions.length === previewFileTypeOptions.length) {
+        return "All file types";
     }
 
-    return `${selectedGroups.length} file types`;
+    if (selectedOptions.length === 1) {
+        return selectedOptions[0]?.label ?? "1 file type";
+    }
+
+    return `${selectedOptions.length} file types`;
 }
 
 function summarizePreviewModes(
@@ -330,7 +256,12 @@ function clampPreviewHeight(value: number): number {
 
 type FileBrowserProps = {
     activeFiles?: FileEntry[];
+    /** True when files, activeFiles, and visibleFiles already reflect fileFilterValue. */
+    fileFilterApplied?: boolean;
+    filterStorageKey?: string;
     files: FileEntry[];
+    fileFilterValue?: string;
+    onFileFilterChange?: (value: string) => void;
     onPreviewHeightChange?: (value: number) => void;
     onPreviewModeChange?: (mode: PreviewMode) => void;
     onPreviewPageChange?: (page: number) => void;
@@ -349,6 +280,7 @@ type FileBrowserProps = {
     renderSinglePreview?: (file: FileEntry | null) => ReactNode;
     selectedDirectory?: string;
     selectedPath?: string;
+    unfilteredFileCount?: number;
     visibleFiles?: FileEntry[];
 };
 
@@ -459,7 +391,7 @@ const activeFileBrowserDesign: FileBrowserDesign = {
     gridPreviewCellClass: "min-w-0",
     gridRowClass:
         "grid gap-2 grid-cols-[minmax(18rem,0.86fr)_minmax(0,1.14fr)] items-start",
-    headerClass: "-mx-0.5 flex min-h-9 items-start pb-4",
+    headerClass: "-mx-0.5 relative flex min-h-9 items-start pb-4",
     headerIconClass: boxTitleIconClass,
     headerTitleClass: boxTitleTextClass,
     id: "inline",
@@ -718,8 +650,114 @@ function parentDirectory(path: string): string {
     return normalized.slice(0, index);
 }
 
+function directoryContainsFile(
+    directoryPath: string,
+    files: FileEntry[],
+): boolean {
+    if (directoryPath === "/") {
+        return files.length > 0;
+    }
+
+    return files.some(
+        (file) =>
+            parentDirectory(file.path) === directoryPath ||
+            file.path.startsWith(`${directoryPath}/`),
+    );
+}
+
 function fileName(path: string): string {
     return path.split("/").pop() ?? path;
+}
+
+function fallbackCopyText(value: string): boolean {
+    if (
+        typeof document === "undefined" ||
+        typeof document.execCommand !== "function"
+    ) {
+        return false;
+    }
+
+    const textarea = document.createElement("textarea");
+
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+        return document.execCommand("copy");
+    } finally {
+        document.body.removeChild(textarea);
+    }
+}
+
+async function copyText(value: string): Promise<boolean> {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(value);
+            return true;
+        } catch {
+            return fallbackCopyText(value);
+        }
+    }
+
+    return fallbackCopyText(value);
+}
+
+function CopyPathControl({
+    kind,
+    path,
+}: {
+    kind: "directory" | "file";
+    path: string;
+}) {
+    const handleCopy = async () => {
+        const copied = await copyText(path);
+
+        if (copied) {
+            toast.success("Path copied");
+            return;
+        }
+
+        toast.error("Could not copy path");
+    };
+    const handleClick = (event: ReactMouseEvent<HTMLSpanElement>): void => {
+        event.preventDefault();
+        event.stopPropagation();
+        void handleCopy();
+    };
+    const handleKeyDown = (
+        event: ReactKeyboardEvent<HTMLSpanElement>,
+    ): void => {
+        event.stopPropagation();
+
+        if (event.key !== "Enter" && event.key !== " ") {
+            return;
+        }
+
+        event.preventDefault();
+        void handleCopy();
+    };
+
+    return (
+        <span
+            aria-label={`Copy ${kind} full path ${path}`}
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+            data-copy-path-control={kind}
+            onClick={handleClick}
+            onKeyDown={handleKeyDown}
+            role="button"
+            tabIndex={0}
+            title="Copy full path"
+        >
+            <Copy className="size-3.5" aria-hidden="true" />
+        </span>
+    );
 }
 
 function directoryLabel(path: string): string {
@@ -1016,7 +1054,11 @@ export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
 
 export function FileBrowser({
     activeFiles: activeFilesOverride,
+    fileFilterApplied = false,
+    filterStorageKey,
     files,
+    fileFilterValue,
+    onFileFilterChange,
     onPreviewHeightChange,
     onPreviewModeChange,
     onPreviewPageChange,
@@ -1032,9 +1074,51 @@ export function FileBrowser({
     renderSinglePreview,
     selectedDirectory,
     selectedPath,
+    unfilteredFileCount,
     visibleFiles,
 }: FileBrowserProps) {
     const activeDesign = activeFileBrowserDesign;
+    const resolvedFilterStorageKey = useMemo(
+        () => fileBrowserGlobFilterStorageKey(filterStorageKey),
+        [filterStorageKey],
+    );
+    const savedFileFilter = useSavedFileBrowserGlobFilter(filterStorageKey);
+    const [uncontrolledFileFilter, setUncontrolledFileFilter] = useState<{
+        storageKey: string | undefined;
+        value: string;
+    } | null>(null);
+    const effectiveUncontrolledFileFilter =
+        uncontrolledFileFilter &&
+        uncontrolledFileFilter.storageKey === resolvedFilterStorageKey
+            ? uncontrolledFileFilter.value
+            : savedFileFilter;
+    const effectiveFileFilter =
+        fileFilterValue ?? effectiveUncontrolledFileFilter;
+    const filteredFiles = useMemo(
+        () =>
+            fileFilterApplied
+                ? files
+                : filterFilesByGlobPattern(files, effectiveFileFilter),
+        [effectiveFileFilter, fileFilterApplied, files],
+    );
+    const filteredActiveFilesOverride = useMemo(
+        () =>
+            activeFilesOverride && !fileFilterApplied
+                ? filterFilesByGlobPattern(
+                      activeFilesOverride,
+                      effectiveFileFilter,
+                  )
+                : activeFilesOverride,
+        [activeFilesOverride, effectiveFileFilter, fileFilterApplied],
+    );
+    const filteredVisibleFiles = useMemo(
+        () =>
+            visibleFiles && !fileFilterApplied
+                ? filterFilesByGlobPattern(visibleFiles, effectiveFileFilter)
+                : visibleFiles,
+        [effectiveFileFilter, fileFilterApplied, visibleFiles],
+    );
+    const registeredFileCount = unfilteredFileCount ?? files.length;
     const [uncontrolledDirectory, setUncontrolledDirectory] = useState<
         string | undefined
     >(selectedDirectory);
@@ -1050,30 +1134,44 @@ export function FileBrowser({
                 ancestorPaths(
                     selectedDirectory ??
                         (renderGridPreview
-                            ? findInitialSubdirPreviewDirectory(files)
+                            ? findInitialSubdirPreviewDirectory(filteredFiles)
                             : undefined) ??
-                        parentDirectory(files[0]?.path ?? "/"),
+                        parentDirectory(filteredFiles[0]?.path ?? "/"),
                 ),
             ),
     );
     const initialDirectoryNotificationRef = useRef<string | undefined>(
         undefined,
     );
-    const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
-    const directoryTree = useMemo(() => buildDirectoryTree(files), [files]);
-    const initialSubdirPreviewDirectory = useMemo(
-        () => findInitialSubdirPreviewDirectory(files),
-        [files],
+    const directoryGroups = useMemo(
+        () => buildDirectoryGroups(filteredFiles),
+        [filteredFiles],
     );
-    const preferredDirectory =
+    const directoryTree = useMemo(
+        () => buildDirectoryTree(filteredFiles),
+        [filteredFiles],
+    );
+    const initialSubdirPreviewDirectory = useMemo(
+        () => findInitialSubdirPreviewDirectory(filteredFiles),
+        [filteredFiles],
+    );
+    const requestedDirectory =
         selectedDirectory ??
         uncontrolledDirectory ??
+        (renderGridPreview ? initialSubdirPreviewDirectory : undefined);
+    const fallbackDirectory =
         (renderGridPreview ? initialSubdirPreviewDirectory : undefined) ??
         directoryGroups[0]?.path;
+    const preferredDirectory =
+        requestedDirectory &&
+        directoryContainsFile(requestedDirectory, filteredFiles)
+            ? requestedDirectory
+            : fallbackDirectory;
     const activeDirectory = directoryGroups.find(
         (group) => group.path === preferredDirectory,
     );
-    const activeFiles = activeFilesOverride ?? activeDirectory?.files ?? [];
+    const activeFiles =
+        filteredActiveFilesOverride ?? activeDirectory?.files ?? [];
     const effectiveSelectedDirectory = preferredDirectory;
     const [uncontrolledPreviewHeight, setUncontrolledPreviewHeight] =
         useState(previewHeight);
@@ -1112,6 +1210,9 @@ export function FileBrowser({
     const previewableActiveFiles = activeFiles.filter((file) =>
         fileMatchesPreviewKinds(file, selectedPreviewKinds),
     );
+    const hasSupportedPreviewableActiveFiles = activeFiles.some((file) =>
+        fileMatchesPreviewKinds(file, allSubdirPreviewKinds),
+    );
     const preferredSelectedPath = selectedPath ?? uncontrolledPath;
     const activeFile =
         previewableActiveFiles.find(
@@ -1121,11 +1222,40 @@ export function FileBrowser({
         activeFiles.find((file) => file.path === preferredSelectedPath) ??
         activeFiles[0];
     const effectiveSelectedPath = activeFile?.path;
-    const displayedFiles = visibleFiles ?? activeFiles;
+    const displayedFiles = filteredVisibleFiles ?? activeFiles;
     const previewableDisplayedFiles = displayedFiles.filter((file) =>
         fileMatchesPreviewKinds(file, selectedPreviewKinds),
     );
     const hasPreviewableActiveFiles = previewableActiveFiles.length > 0;
+    const updateFileFilter = useCallback(
+        (value: string) => {
+            setUncontrolledFileFilter({
+                storageKey: resolvedFilterStorageKey,
+                value,
+            });
+            onFileFilterChange?.(value);
+        },
+        [onFileFilterChange, resolvedFilterStorageKey],
+    );
+    const handleSaveFileFilter = useCallback(() => {
+        saveFileBrowserGlobFilter(filterStorageKey, effectiveFileFilter);
+    }, [effectiveFileFilter, filterStorageKey]);
+    const updateSubdirPreviewKinds = useCallback(
+        (
+            directoryPath: string,
+            kinds: ReadonlySet<SubdirPreviewKind>,
+        ): void => {
+            setSubdirPreviewKindsByPath((current) => ({
+                ...current,
+                [directoryPath]: new Set(kinds),
+            }));
+            setSubdirPreviewPages((current) => ({
+                ...current,
+                [directoryPath]: 1,
+            }));
+        },
+        [],
+    );
 
     const visibleExpandedDirectories = useMemo(() => {
         const next = new Set(expandedDirectories);
@@ -1277,9 +1407,12 @@ export function FileBrowser({
         compact = false,
         style?: CSSProperties,
     ) => {
+        const name = fileName(file.path);
+
         return (
             <button
                 type="button"
+                aria-label={`Select file ${name}`}
                 key={file.path}
                 className={cn(
                     activeDesign.fileButtonBaseClass,
@@ -1305,8 +1438,16 @@ export function FileBrowser({
                     {file.kind.slice(0, 1)}
                 </span>
                 <span className="min-w-0 flex-1">
-                    <span className={activeDesign.fileNameClass}>
-                        {fileName(file.path)}
+                    <span className="flex min-w-0 items-center gap-1.5">
+                        <span
+                            className={cn(
+                                activeDesign.fileNameClass,
+                                "min-w-0 flex-1",
+                            )}
+                        >
+                            {name}
+                        </span>
+                        <CopyPathControl kind="file" path={file.path} />
                     </span>
                     <span className={activeDesign.fileMetaClass}>
                         {renderMetaItems([
@@ -1588,74 +1729,83 @@ export function FileBrowser({
                             <div
                                 className={cn(
                                     activeDesign.controlMenuClass,
-                                    "right-0 left-auto min-w-52",
+                                    "right-0 left-auto w-[min(28rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
                                 )}
                                 data-subdir-preview-kinds={directoryPath}
                             >
                                 <div
-                                    className={
-                                        activeDesign.controlMenuHeadingClass
+                                    className={cn(
+                                        activeDesign.controlMenuHeadingClass,
+                                        "flex items-center justify-between gap-2",
+                                    )}
+                                >
+                                    <span>File types</span>
+                                    <button
+                                        aria-label="Deselect all file types"
+                                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 py-0.5 text-[11px] font-medium normal-case tracking-normal text-muted-foreground transition hover:border-primary/45 hover:bg-muted/70 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                                        data-subdir-preview-kind-clear={
+                                            directoryPath
+                                        }
+                                        disabled={subdirPreviewKinds.size === 0}
+                                        onClick={() => {
+                                            updateSubdirPreviewKinds(
+                                                directoryPath,
+                                                new Set<SubdirPreviewKind>(),
+                                            );
+                                        }}
+                                        type="button"
+                                    >
+                                        <X
+                                            aria-hidden="true"
+                                            className="size-3"
+                                        />
+                                        <span>Deselect all</span>
+                                    </button>
+                                </div>
+                                <div
+                                    className="grid grid-cols-[repeat(auto-fit,minmax(5.6rem,1fr))] gap-1"
+                                    data-subdir-preview-kind-options={
+                                        directoryPath
                                     }
                                 >
-                                    File types
-                                </div>
-                                <div className="space-y-2">
-                                    {subdirPreviewKindGroups.map((group) => (
+                                    {previewFileTypeOptions.map((option) => (
                                         <label
-                                            key={group.id}
-                                            className={
-                                                activeDesign.controlLabelClass
-                                            }
+                                            key={option.id}
+                                            className="inline-flex min-w-0 cursor-pointer items-center justify-start gap-1.5 rounded-md border border-border/70 bg-background px-2 py-1 text-xs font-medium text-foreground hover:border-primary/45 hover:bg-muted/55"
                                         >
-                                            <span>{group.label}</span>
                                             <input
                                                 checked={subdirPreviewKinds.has(
-                                                    group.id,
+                                                    option.id,
                                                 )}
                                                 className="size-3.5 accent-primary"
                                                 data-subdir-preview-kind={
-                                                    group.id
+                                                    option.id
                                                 }
                                                 onChange={(event) => {
-                                                    setSubdirPreviewKindsByPath(
-                                                        (current) => {
-                                                            const next = {
-                                                                ...current,
-                                                            };
-                                                            const nextKinds =
-                                                                new Set(
-                                                                    subdirPreviewKinds,
-                                                                );
-
-                                                            if (
-                                                                event.target
-                                                                    .checked
-                                                            ) {
-                                                                nextKinds.add(
-                                                                    group.id,
-                                                                );
-                                                            } else {
-                                                                nextKinds.delete(
-                                                                    group.id,
-                                                                );
-                                                            }
-
-                                                            next[
-                                                                directoryPath
-                                                            ] = nextKinds;
-
-                                                            return next;
-                                                        },
+                                                    const nextKinds = new Set(
+                                                        subdirPreviewKinds,
                                                     );
-                                                    setSubdirPreviewPages(
-                                                        (current) => ({
-                                                            ...current,
-                                                            [directoryPath]: 1,
-                                                        }),
+
+                                                    if (event.target.checked) {
+                                                        nextKinds.add(
+                                                            option.id,
+                                                        );
+                                                    } else {
+                                                        nextKinds.delete(
+                                                            option.id,
+                                                        );
+                                                    }
+
+                                                    updateSubdirPreviewKinds(
+                                                        directoryPath,
+                                                        nextKinds,
                                                     );
                                                 }}
                                                 type="checkbox"
                                             />
+                                            <span className="truncate">
+                                                {option.label}
+                                            </span>
                                         </label>
                                     ))}
                                 </div>
@@ -1773,15 +1923,17 @@ export function FileBrowser({
                 >
                     {previewableFiles.map((file) =>
                         (() => {
-                            const isImageSubdirPreview =
-                                previewKindForPath(file.path) === "image";
+                            const previewKind = previewKindForPath(file.path);
+                            const isVisualSubdirPreview =
+                                previewKind === "image" ||
+                                previewKind === "svg";
 
                             return (
                                 <div
                                     key={file.path}
                                     className={cn(
                                         activeDesign.subdirCardBaseClass,
-                                        isImageSubdirPreview
+                                        isVisualSubdirPreview
                                             ? activeDesign.subdirImageCardClass
                                             : activeDesign.subdirTextCardClass,
                                     )}
@@ -1790,19 +1942,28 @@ export function FileBrowser({
                                         maxWidth: `calc(var(--subdir-preview-height) * 1.8)`,
                                     }}
                                 >
-                                    <p
-                                        className={
-                                            activeDesign.subdirFilenameClass
-                                        }
-                                        data-subdir-preview-filename={file.path}
-                                        title={fileName(file.path)}
-                                    >
-                                        {fileName(file.path)}
-                                    </p>
+                                    <div className="flex min-w-0 items-center gap-1.5">
+                                        <p
+                                            className={cn(
+                                                activeDesign.subdirFilenameClass,
+                                                "min-w-0 flex-1",
+                                            )}
+                                            data-subdir-preview-filename={
+                                                file.path
+                                            }
+                                            title={fileName(file.path)}
+                                        >
+                                            {fileName(file.path)}
+                                        </p>
+                                        <CopyPathControl
+                                            kind="file"
+                                            path={file.path}
+                                        />
+                                    </div>
                                     <ResizablePreviewFrame
                                         className={cn(
                                             activeDesign.subdirFrameBaseClass,
-                                            isImageSubdirPreview
+                                            isVisualSubdirPreview
                                                 ? activeDesign.subdirImageFrameClass
                                                 : activeDesign.subdirTextFrameClass,
                                         )}
@@ -1859,7 +2020,7 @@ export function FileBrowser({
                 isStructurallyExpanded &&
                 isSelected &&
                 activeFiles.length > 0 &&
-                hasPreviewableActiveFiles &&
+                hasSupportedPreviewableActiveFiles &&
                 Boolean(renderGridPreview || renderSinglePreview);
             const showFilePreviewWidgets =
                 node.path === effectiveSelectedDirectory &&
@@ -1909,6 +2070,11 @@ export function FileBrowser({
             const folderControlsInNameArea =
                 controlPlacement === "name-area" && Boolean(folderControls);
             const directoryAction = renderDirectoryAction?.(node) ?? null;
+            const directoryDisplayLabel = visibleDirectoryLabel(
+                node.path,
+                node.label,
+                depth,
+            );
             const headingSideContent =
                 folderControlsInNameArea || directoryAction ? (
                     <div
@@ -1922,6 +2088,7 @@ export function FileBrowser({
             const renderDirectoryButton = () => (
                 <button
                     type="button"
+                    aria-label={`Toggle directory ${directoryDisplayLabel}`}
                     className={activeDesign.directoryButtonClass}
                     data-depth={depth}
                     data-directory-expanded={String(isExpanded)}
@@ -1996,17 +2163,22 @@ export function FileBrowser({
                             className="block truncate text-base font-medium text-foreground"
                             title={node.path}
                         >
-                            {visibleDirectoryLabel(
-                                node.path,
-                                node.label,
-                                depth,
-                            )}
+                            {directoryDisplayLabel}
                         </span>
-                        <span
-                            className={activeDesign.directoryMetaClass}
-                            data-directory-meta={node.path}
-                        >
-                            {renderDirectoryMetaItems(node, hasChildren)}
+                        <span className="mt-1 flex min-w-0 items-start gap-1.5">
+                            <span
+                                className={cn(
+                                    activeDesign.directoryMetaClass,
+                                    "mt-0 min-w-0 flex-1",
+                                )}
+                                data-directory-meta={node.path}
+                            >
+                                {renderDirectoryMetaItems(node, hasChildren)}
+                            </span>
+                            <CopyPathControl
+                                kind="directory"
+                                path={node.path}
+                            />
                         </span>
                     </span>
                 </button>
@@ -2237,16 +2409,52 @@ export function FileBrowser({
                     <p className={activeDesign.headerTitleClass}>
                         File Browser
                     </p>
+                    <div
+                        className="mt-3 flex w-full min-w-0 max-w-full items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 sm:mt-0 sm:w-auto"
+                        data-file-browser-filter-controls="true"
+                    >
+                        <input
+                            aria-label="Filter files by glob"
+                            className="h-8 w-full max-w-[min(16rem,52vw)] rounded-md border border-border/80 bg-background px-2.5 font-mono text-sm text-foreground shadow-sm transition placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 sm:w-44"
+                            data-file-browser-glob-filter="true"
+                            onChange={(event) =>
+                                updateFileFilter(event.target.value)
+                            }
+                            placeholder="Glob filter"
+                            type="search"
+                            value={effectiveFileFilter}
+                        />
+                        <button
+                            aria-label="Save file glob filter"
+                            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/80 bg-background text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 disabled:cursor-not-allowed disabled:opacity-45"
+                            data-file-browser-glob-filter-save="true"
+                            disabled={!resolvedFilterStorageKey}
+                            onClick={handleSaveFileFilter}
+                            title="Save glob filter"
+                            type="button"
+                        >
+                            <Save className="size-4" aria-hidden="true" />
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            {files.length === 0 ? (
+            {registeredFileCount === 0 ? (
                 <div className={activeDesign.emptyStateClass}>
                     No registered files
                 </div>
             ) : null}
 
-            {files.length > 0 && previewMode === "single" ? (
+            {registeredFileCount > 0 && filteredFiles.length === 0 ? (
+                <div
+                    className={activeDesign.emptyStateClass}
+                    data-file-browser-empty-filter="true"
+                >
+                    No files match
+                </div>
+            ) : null}
+
+            {filteredFiles.length > 0 && previewMode === "single" ? (
                 <div
                     className={activeDesign.treeShellClass}
                     data-preview-mode="single"
@@ -2256,7 +2464,7 @@ export function FileBrowser({
                     </div>
                 </div>
             ) : null}
-            {files.length > 0 && previewMode !== "single" ? (
+            {filteredFiles.length > 0 && previewMode !== "single" ? (
                 <div
                     className={activeDesign.treeShellClass}
                     data-preview-mode="grid"

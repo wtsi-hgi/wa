@@ -5,7 +5,13 @@
 import { createElement } from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+} from "@testing-library/react";
 import {
     afterAll,
     afterEach,
@@ -17,6 +23,7 @@ import {
 } from "vitest";
 
 const pushMock = vi.fn();
+const fetchMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
     usePathname: () => "/",
@@ -35,6 +42,7 @@ beforeAll(() => {
     }
 
     vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    vi.stubGlobal("fetch", fetchMock);
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 
@@ -45,10 +53,11 @@ afterAll(() => {
 describe("K1 filter builder component", () => {
     afterEach(() => {
         cleanup();
+        fetchMock.mockReset();
         pushMock.mockReset();
     });
 
-    it("matches the file browser title treatment and keeps permanent field labels clean", async () => {
+    it("matches the file browser title treatment and shows a generic search entry", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
         const { container } = render(
@@ -77,31 +86,27 @@ describe("K1 filter builder component", () => {
         expect(title.className).toContain("tracking-[0.18em]");
         expect(title.className).toContain("text-muted-foreground");
 
-        for (const label of [
-            "Pipeline name",
-            "Unique",
-            "Study",
-            "Sample",
-            "Requester",
-        ]) {
-            expect(
-                screen.getByLabelText(new RegExp(`^${label}$`, "i")),
-            ).toBeTruthy();
-        }
+        const genericInput = screen.getByLabelText(/generic all-field search/i);
 
-        const permanentLabels = Array.from(
-            container.querySelectorAll(
-                '[data-search-builder-permanent-fields="true"] label',
+        expect(genericInput).toBeTruthy();
+        expect(genericInput.getAttribute("data-generic-search-input")).toBe(
+            "true",
+        );
+        expect(
+            screen.getByRole("button", {
+                name: /add generic search match/i,
+            }),
+        ).toBeTruthy();
+        expect(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        ).toBeTruthy();
+        expect(
+            container.querySelector(
+                '[data-search-builder-permanent-fields="true"]',
             ),
-        ).map((label) => label.textContent?.trim());
-
-        expect(permanentLabels).toEqual([
-            "Pipeline name",
-            "Unique",
-            "Study",
-            "Sample",
-            "Requester",
-        ]);
+        ).toBeNull();
         expect(screen.queryByLabelText(/pipeline name value/i)).toBeNull();
         expect(screen.queryByLabelText(/unique value/i)).toBeNull();
         expect(screen.queryByLabelText(/study value/i)).toBeNull();
@@ -109,7 +114,7 @@ describe("K1 filter builder component", () => {
         expect(screen.queryByLabelText(/requester value/i)).toBeNull();
     });
 
-    it("renders permanent search fields with suggestions and excludes them from add filter search", async () => {
+    it("pins common fields at the top of the specific field dropdown with suggestions", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
         const { container } = render(
@@ -132,7 +137,7 @@ describe("K1 filter builder component", () => {
         expect(screen.getByText("Search")).toBeTruthy();
         expect(screen.queryByText("Search builder")).toBeNull();
 
-        const permanentInputs = [
+        const pinnedInputs = [
             ["Pipeline name", "pipeline_name", "nf-core/rnaseq"],
             ["Unique", "run_key", "48522 / random_exon"],
             ["Study", "study", "6568"],
@@ -140,25 +145,11 @@ describe("K1 filter builder component", () => {
             ["Requester", "user", "alice"],
         ] as const;
 
-        for (const [label, key, suggestion] of permanentInputs) {
-            const input = screen.getByLabelText(new RegExp(`^${label}$`, "i"));
-
-            expect(input.getAttribute("list")).toBe(
-                `filter-suggestions-${key}`,
-            );
-            expect(
-                container.querySelector(
-                    `datalist#filter-suggestions-${key} option[value='${suggestion}']`,
-                ),
-            ).toBeTruthy();
-            expect(
-                screen.getByRole("button", {
-                    name: new RegExp(`add ${label} filter`, "i"),
-                }),
-            ).toBeTruthy();
-        }
-
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
 
         const filterPopover = container.querySelector(
             "[data-search-builder-popover='true']",
@@ -167,23 +158,48 @@ describe("K1 filter builder component", () => {
         expect(filterPopover).toBeTruthy();
         expect(screen.getByRole("option", { name: /^library$/i })).toBeTruthy();
 
-        for (const [label] of permanentInputs) {
-            expect(
-                screen.queryByRole("option", {
-                    name: new RegExp(`^${label}$`, "i"),
-                }),
-            ).toBeNull();
-        }
+        const optionLabels = Array.from(
+            container.querySelectorAll("[data-filter-field-option]"),
+        ).map((option) => option.textContent?.trim());
+
+        expect(optionLabels.slice(0, 5)).toEqual([
+            "Pipeline name",
+            "Unique",
+            "Study",
+            "Sample",
+            "Requester",
+        ]);
 
         fireEvent.change(screen.getByPlaceholderText("Find a field"), {
             target: { value: "unique" },
         });
 
-        expect(screen.queryByRole("option", { name: /^unique$/i })).toBeNull();
-        expect(screen.getByText("No matching fields.")).toBeTruthy();
+        expect(screen.getByRole("option", { name: /^unique$/i })).toBeTruthy();
+
+        fireEvent.click(screen.getByRole("option", { name: /^unique$/i }));
+
+        const valueInput = screen.getByLabelText(
+            /unique value/i,
+        ) as HTMLInputElement;
+
+        expect(valueInput.getAttribute("list")).toBe(
+            "filter-suggestions-run_key",
+        );
+        expect(
+            container.querySelector(
+                "datalist#filter-suggestions-run_key option[value='48522 / random_exon']",
+            ),
+        ).toBeTruthy();
+        expect(pinnedInputs.map(([, key]) => key)).toEqual([
+            "pipeline_name",
+            "run_key",
+            "study",
+            "sample",
+            "user",
+        ]);
     });
 
-    it("does not show suggested placeholders in empty permanent or add-filter value inputs", async () => {
+    it("does not show suggested placeholders in empty generic or add-filter value inputs", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
         const { container } = render(
@@ -205,32 +221,23 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        for (const label of [
-            "Pipeline name",
-            "Unique",
-            "Study",
-            "Sample",
-            "Requester",
-        ]) {
-            const input = screen.getByLabelText(
-                new RegExp(`^${label}$`, "i"),
-            ) as HTMLInputElement;
+        const genericInput = screen.getByLabelText(
+            /generic all-field search/i,
+        ) as HTMLInputElement;
 
-            expect(input.value).toBe("");
-            expect(input.getAttribute("placeholder")).toBeNull();
-            expect(input.getAttribute("list")).toMatch(/^filter-suggestions-/);
-        }
+        expect(genericInput.value).toBe("");
+        expect(genericInput.getAttribute("placeholder")).toBeNull();
+        expect(genericInput.getAttribute("list")).toBeNull();
 
         expect(
             screen.getByRole("button", { name: /nf-core\/rnaseq/i }),
         ).toBeTruthy();
-        expect(
-            container.querySelector(
-                "datalist#filter-suggestions-pipeline_name option[value='nf-core/sarek']",
-            ),
-        ).toBeTruthy();
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
         fireEvent.click(screen.getByRole("option", { name: /^library$/i }));
 
         const valueInput = screen.getByLabelText(
@@ -249,7 +256,7 @@ describe("K1 filter builder component", () => {
         ).toBeTruthy();
     });
 
-    it("updates the URL when a permanent field is added alongside an existing filter", async () => {
+    it("updates the URL when a pinned specific field is added alongside an existing filter", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
         render(
@@ -263,14 +270,18 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/^pipeline name$/i), {
-            target: { value: "nf" },
-        });
         fireEvent.click(
             screen.getByRole("button", {
-                name: /add pipeline name filter/i,
+                name: /add specific field to filter/i,
             }),
         );
+        fireEvent.click(
+            screen.getByRole("option", { name: /^pipeline name$/i }),
+        );
+        fireEvent.change(screen.getByLabelText(/pipeline name value/i), {
+            target: { value: "nf" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?user=alice&pipeline_name=nf");
     });
@@ -311,12 +322,16 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/^requester$/i), {
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
+        fireEvent.click(screen.getByRole("option", { name: /^requester$/i }));
+        fireEvent.change(screen.getByLabelText(/requester value/i), {
             target: { value: "bob" },
         });
-        fireEvent.click(
-            screen.getByRole("button", { name: /add requester filter/i }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?user=alice&user=bob");
     });
@@ -336,7 +351,14 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        const studyInput = await screen.findByLabelText(/^study$/i);
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
+        fireEvent.click(screen.getByRole("option", { name: /^study$/i }));
+
+        const studyInput = await screen.findByLabelText(/study value/i);
 
         fireEvent.change(studyInput, {
             target: { value: "656" },
@@ -354,9 +376,7 @@ describe("K1 filter builder component", () => {
         fireEvent.change(studyInput, {
             target: { value: "6568" },
         });
-        fireEvent.click(
-            screen.getByRole("button", { name: /add study filter/i }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?study=6568");
     });
@@ -380,12 +400,16 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/^sample$/i), {
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
+        fireEvent.click(screen.getByRole("option", { name: /^sample$/i }));
+        fireEvent.change(screen.getByLabelText(/sample value/i), {
             target: { value: "SMP1001" },
         });
-        fireEvent.click(
-            screen.getByRole("button", { name: /add sample filter/i }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?sample=SMP1001");
     });
@@ -405,7 +429,11 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
         fireEvent.click(screen.getByRole("option", { name: /^library$/i }));
         fireEvent.change(screen.getByLabelText(/library value/i), {
             target: { value: "RNA" },
@@ -430,12 +458,16 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/^unique$/i), {
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
+        fireEvent.click(screen.getByRole("option", { name: /^unique$/i }));
+        fireEvent.change(screen.getByLabelText(/unique value/i), {
             target: { value: "48522 / random_exon" },
         });
-        fireEvent.click(
-            screen.getByRole("button", { name: /add unique filter/i }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith(
             "/?run_key=48522+%2F+random_exon",
@@ -457,7 +489,11 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
         fireEvent.click(screen.getByRole("option", { name: /^library id$/i }));
         fireEvent.change(screen.getByLabelText(/library id value/i), {
             target: { value: "71046409" },
@@ -479,7 +515,11 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
         fireEvent.click(screen.getByRole("option", { name: /^library$/i }));
 
         const panel = screen.getByTestId("library-filter-help");
@@ -519,9 +559,14 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.change(screen.getByLabelText(/^pipeline name$/i), {
-            target: { value: "rna" },
-        });
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
+        fireEvent.click(
+            screen.getByRole("option", { name: /^pipeline name$/i }),
+        );
 
         const popover = container.querySelector(
             "[data-search-builder-popover='true']",
@@ -529,10 +574,14 @@ describe("K1 filter builder component", () => {
         const fieldList = container.querySelector(
             "[data-search-builder-field-list='true']",
         );
-        const valueInput = screen.getByLabelText(/^pipeline name$/i);
+        const valueInput = screen.getByLabelText(/pipeline name value/i);
 
-        expect(popover).toBeNull();
-        expect(fieldList).toBeNull();
+        fireEvent.change(valueInput, {
+            target: { value: "rna" },
+        });
+
+        expect(popover).toBeTruthy();
+        expect(fieldList).toBeTruthy();
         expect(
             screen.queryByRole("button", { name: /use nf-core\/rnaseq/i }),
         ).toBeNull();
@@ -548,18 +597,14 @@ describe("K1 filter builder component", () => {
         fireEvent.change(valueInput, {
             target: { value: "nf-core/rnaseq" },
         });
-        fireEvent.click(
-            screen.getByRole("button", {
-                name: /add pipeline name filter/i,
-            }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith(
             "/?pipeline_name=nf-core%2Frnaseq",
         );
     });
 
-    it("shows only friendly additional field names in the add filter dropdown", async () => {
+    it("shows friendly specific field names in the add filter dropdown", async () => {
         const { FilterBuilder } = await import("@/components/filter-builder");
 
         render(
@@ -571,7 +616,11 @@ describe("K1 filter builder component", () => {
             }),
         );
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
 
         const libraryOption = screen.getByRole("option", {
             name: /^library$/i,
@@ -579,8 +628,201 @@ describe("K1 filter builder component", () => {
 
         expect(libraryOption.textContent?.trim()).toBe("Library");
         expect(
-            screen.queryByRole("option", { name: /pipeline name/i }),
-        ).toBeNull();
+            screen.getByRole("option", { name: /pipeline name/i }),
+        ).toBeTruthy();
         expect(screen.queryByText("pipeline_name")).toBeNull();
+    });
+
+    it("fetches generic all-field suggestions, labels their field type, and adds the selected filter", async () => {
+        fetchMock.mockResolvedValue({
+            json: async () => [
+                {
+                    field_key: "meta_assay_tag",
+                    value: "alpha-exon_lib-omega",
+                },
+                {
+                    field_key: "user",
+                    value: "requester-exon_lib",
+                },
+                {
+                    field_key: "run_key",
+                    value: "runid=48522&unique=exon_lib",
+                },
+            ],
+            ok: true,
+        });
+
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["assay_tag"],
+                seqmetaAvailable: false,
+                studies: [],
+            }),
+        );
+
+        fireEvent.change(screen.getByLabelText(/generic all-field search/i), {
+            target: { value: "exon_lib" },
+        });
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/results/search-suggestions?q=exon_lib",
+                expect.objectContaining({ signal: expect.any(AbortSignal) }),
+            );
+        });
+
+        const assayOption = await screen.findByRole("option", {
+            name: /add assay tag filter alpha-exon_lib-omega/i,
+        });
+
+        expect(assayOption.textContent).toContain("Assay Tag");
+        expect(assayOption.textContent).toContain("alpha-exon_lib-omega");
+        expect(
+            screen.getByRole("option", {
+                name: /add requester filter requester-exon_lib/i,
+            }).textContent,
+        ).toContain("Requester");
+        const runKeyOption = screen.getByRole("option", {
+            name: /add unique filter 48522 \/ exon_lib/i,
+        });
+
+        expect(runKeyOption.textContent).toContain("Unique");
+        expect(runKeyOption.textContent).toContain("48522 / exon_lib");
+
+        fireEvent.click(runKeyOption);
+
+        expect(pushMock).toHaveBeenCalledWith(
+            "/?run_key=runid%3D48522%26unique%3Dexon_lib",
+        );
+    });
+
+    it("does not fetch generic suggestions for a one-character draft", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["assay_tag"],
+                seqmetaAvailable: false,
+                studies: [],
+            }),
+        );
+
+        fireEvent.change(screen.getByLabelText(/generic all-field search/i), {
+            target: { value: "n" },
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 160));
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByRole("listbox")).toBeNull();
+    });
+
+    it("clears generic all-field suggestions as soon as a non-empty query changes", async () => {
+        fetchMock
+            .mockResolvedValueOnce({
+                json: async () => [
+                    {
+                        field_key: "meta_assay_tag",
+                        value: "alpha-stale-beta-260618",
+                    },
+                ],
+                ok: true,
+            })
+            .mockReturnValue(new Promise(() => undefined));
+
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["assay_tag"],
+                seqmetaAvailable: false,
+                studies: [],
+            }),
+        );
+
+        const genericInput = screen.getByLabelText(/generic all-field search/i);
+
+        fireEvent.change(genericInput, {
+            target: { value: "alpha-stale" },
+        });
+
+        expect(
+            await screen.findByRole("option", {
+                name: /add assay tag filter alpha-stale-beta-260618/i,
+            }),
+        ).toBeTruthy();
+
+        fireEvent.change(genericInput, {
+            target: { value: "beta" },
+        });
+
+        expect(screen.queryByRole("listbox")).toBeNull();
+        expect(
+            screen.queryByRole("option", {
+                name: /add assay tag filter beta/i,
+            }),
+        ).toBeNull();
+    });
+
+    it("offers the typed generic substring for each matching field while keeping full values selectable", async () => {
+        fetchMock.mockResolvedValue({
+            json: async () => [
+                {
+                    field_key: "output_directory",
+                    value: "/tmp/shared/output-substring-260618/alpha",
+                },
+                {
+                    field_key: "output_directory",
+                    value: "/tmp/shared/output-substring-260618/beta",
+                },
+            ],
+            ok: true,
+        });
+
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: [],
+                seqmetaAvailable: false,
+                studies: [],
+            }),
+        );
+
+        fireEvent.change(screen.getByLabelText(/generic all-field search/i), {
+            target: { value: "output-substring-260618" },
+        });
+
+        const typedSubstringOption = await screen.findByRole("option", {
+            name: /add output directory filter output-substring-260618/i,
+        });
+
+        expect(typedSubstringOption.textContent).toContain(
+            "output-substring-260618",
+        );
+        expect(typedSubstringOption.textContent).toContain("Output directory");
+        expect(typedSubstringOption.textContent).not.toContain("prefix");
+        expect(
+            screen.getByRole("option", {
+                name: /add output directory filter \/tmp\/shared\/output-substring-260618\/alpha/i,
+            }).textContent,
+        ).toContain("/tmp/shared/output-substring-260618/alpha");
+        expect(
+            screen.getByRole("option", {
+                name: /add output directory filter \/tmp\/shared\/output-substring-260618\/beta/i,
+            }).textContent,
+        ).toContain("/tmp/shared/output-substring-260618/beta");
+
+        fireEvent.click(typedSubstringOption);
+
+        expect(pushMock).toHaveBeenCalledWith(
+            "/?output_directory=output-substring-260618",
+        );
     });
 });

@@ -34,6 +34,8 @@ const emptyStats: StatsResult = {
     pipelines: [],
 };
 const combinedSearchFileFetchConcurrency = 6;
+const latestResultSetsInitialPageSize = 10;
+const dashboardActivityDays = 30;
 
 type CombinedRegistrationFetch = {
     index: number;
@@ -182,7 +184,7 @@ function buildSuggestionValues(
         );
         appendSuggestion(
             suggestions,
-            "output_dir_prefix",
+            "output_directory",
             result.output_directory,
         );
 
@@ -376,6 +378,19 @@ function getErrorMessage(error: unknown, fallback: string): string {
     return fallback;
 }
 
+async function fetchLatestResultSetStats(): Promise<StatsResult> {
+    const stats = await fetchStats(
+        latestResultSetsInitialPageSize,
+        dashboardActivityDays,
+    );
+
+    if (stats.total <= stats.recent.length) {
+        return stats;
+    }
+
+    return fetchStats(stats.total, dashboardActivityDays);
+}
+
 export const dynamic = "force-dynamic";
 
 export default async function ResultsLandingPage({
@@ -394,7 +409,7 @@ export default async function ResultsLandingPage({
     let metaKeys: string[] = [];
     const studies: Study[] = [];
     const seqmetaAvailable = Boolean(process.env.WA_MLWH_BACKEND_URL?.trim());
-    const statsPromise = fetchStats(10, 30);
+    const statsPromise = fetchLatestResultSetStats();
     const metaKeysPromise = fetchMetaKeys();
 
     try {

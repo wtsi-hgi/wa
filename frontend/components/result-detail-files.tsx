@@ -22,6 +22,16 @@ import {
     type FilePreviewError,
 } from "@/components/file-preview";
 import type { FileEntry } from "@/lib/contracts";
+import {
+    fileBrowserGlobFilterStorageKey,
+    filterFilesByGlobPattern,
+    useSavedFileBrowserGlobFilter,
+} from "@/lib/file-glob-filter";
+import {
+    isBitmapPreviewFile,
+    shouldFetchInlinePreviewContent,
+    shouldProbeInlinePreviewContentType,
+} from "@/lib/preview-file-types";
 
 export type RegisteredFileEntry = FileEntry & {
     resultId?: string;
@@ -29,6 +39,7 @@ export type RegisteredFileEntry = FileEntry & {
 
 type ResultDetailFilesProps = {
     directoryFileOverrides?: Record<string, RegisteredFileEntry[]>;
+    filterStorageKey?: string;
     files: RegisteredFileEntry[];
     initialSelectedDirectory?: string;
     renderDirectoryAction?: (node: DirectoryTreeNode) => ReactNode;
@@ -60,57 +71,6 @@ type FileUrlOptions = {
 const thumbnailsPerPage = 100;
 const defaultPreviewHeight = 220;
 const thumbnailRenderHeight = 420;
-const compressedExtensions = new Set(["gz"]);
-const imageExtensions = new Set([
-    "avif",
-    "bmp",
-    "gif",
-    "jpeg",
-    "jpg",
-    "png",
-    "tif",
-    "tiff",
-    "webp",
-]);
-const proxyOnlyExtensions = new Set([
-    "avif",
-    "bam",
-    "bmp",
-    "cram",
-    "gif",
-    "h5",
-    "hdf5",
-    "htm",
-    "html",
-    "jpeg",
-    "jpg",
-    "pdf",
-    "png",
-    "tif",
-    "tiff",
-    "webp",
-]);
-
-function effectiveExtensionFromPath(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    const extensions = name
-        .split(".")
-        .slice(1)
-        .map((extension) => extension.toLowerCase())
-        .filter((extension) => extension.length > 0);
-
-    if (extensions.length === 0) {
-        return "";
-    }
-
-    const lastExtension = extensions.at(-1) ?? "";
-
-    if (compressedExtensions.has(lastExtension) && extensions.length > 1) {
-        return extensions.at(-2) ?? lastExtension;
-    }
-
-    return lastExtension;
-}
 
 class PreviewRequestError extends Error {
     constructor(
@@ -175,15 +135,19 @@ function buildFileUrl(
 }
 
 function shouldFetchInlinePreview(path: string): boolean {
-    const extension = effectiveExtensionFromPath(path);
+    return shouldFetchInlinePreviewContent(path);
+}
 
-    return !proxyOnlyExtensions.has(extension);
+function shouldProbeInlinePreview(path: string): boolean {
+    return shouldProbeInlinePreviewContentType(path);
+}
+
+function shouldRequestInlinePreview(path: string): boolean {
+    return shouldFetchInlinePreview(path) || shouldProbeInlinePreview(path);
 }
 
 function isImageFile(path: string): boolean {
-    const extension = effectiveExtensionFromPath(path);
-
-    return imageExtensions.has(extension);
+    return isBitmapPreviewFile(path);
 }
 
 function buildPreviewState(file: FileEntry | null): PreviewState {
@@ -229,6 +193,47 @@ async function fetchPreviewContent(
     };
 }
 
+async function fetchPreviewContentType(
+    resultId: string,
+    path: string,
+    mode: "inline" | "enlarged",
+): Promise<string> {
+    const response = await fetch(buildFileUrl(resultId, path, { mode }), {
+        method: "HEAD",
+    });
+
+    if (!response.ok) {
+        throw new PreviewRequestError(response.status, null);
+    }
+
+    return response.headers.get("content-type") ?? "application/octet-stream";
+}
+
+function isSvgContentType(contentType: string): boolean {
+    return contentType.split(";")[0]?.trim().toLowerCase() === "image/svg+xml";
+}
+
+async function resolvePreviewContent(
+    resultId: string,
+    path: string,
+    mode: "inline" | "enlarged",
+): Promise<
+    | { content: { content: string; contentType: string; truncated?: boolean } }
+    | { content?: undefined }
+> {
+    if (shouldProbeInlinePreview(path)) {
+        const contentType = await fetchPreviewContentType(resultId, path, mode);
+
+        if (isSvgContentType(contentType)) {
+            return {};
+        }
+    }
+
+    return {
+        content: await fetchPreviewContent(resultId, path, mode),
+    };
+}
+
 function pageSummary(total: number, page: number): string {
     if (total === 0) {
         return "No previews available";
@@ -249,6 +254,21 @@ function parentDirectory(path: string): string {
     }
 
     return normalized.slice(0, index);
+}
+
+function directoryContainsFile(
+    directoryPath: string,
+    files: FileEntry[],
+): boolean {
+    if (directoryPath === "/") {
+        return files.length > 0;
+    }
+
+    return files.some(
+        (file) =>
+            parentDirectory(file.path) === directoryPath ||
+            file.path.startsWith(`${directoryPath}/`),
+    );
 }
 
 function resolveDirectorySelection(
@@ -378,6 +398,7 @@ function areGalleryPreviewRowPropsEqual(
 
 export function ResultDetailFiles({
     directoryFileOverrides,
+    filterStorageKey,
     files,
     initialSelectedDirectory: preferredInitialSelectedDirectory,
     renderDirectoryAction,
@@ -394,14 +415,44 @@ export function ResultDetailFiles({
         (file: FileEntry): string => resultIdsByPath.get(file.path) ?? resultId,
         [resultIdsByPath, resultId],
     );
-    const directoryGroups = useMemo(() => buildDirectoryGroups(files), [files]);
-    const initialSelectedDirectory = useMemo(
-        () =>
-            preferredInitialSelectedDirectory ??
-            findInitialSubdirPreviewDirectory(files) ??
-            directoryGroups[0]?.path,
-        [directoryGroups, files, preferredInitialSelectedDirectory],
+    const resolvedFilterStorageKey = useMemo(
+        () => fileBrowserGlobFilterStorageKey(filterStorageKey),
+        [filterStorageKey],
     );
+    const savedFileFilter = useSavedFileBrowserGlobFilter(filterStorageKey);
+    const [fileFilterState, setFileFilterState] = useState<{
+        storageKey: string | undefined;
+        value: string;
+    } | null>(null);
+    const fileFilterValue =
+        fileFilterState &&
+        fileFilterState.storageKey === resolvedFilterStorageKey
+            ? fileFilterState.value
+            : savedFileFilter;
+    const filteredFiles = useMemo(
+        () => filterFilesByGlobPattern(files, fileFilterValue),
+        [fileFilterValue, files],
+    );
+    const directoryGroups = useMemo(
+        () => buildDirectoryGroups(filteredFiles),
+        [filteredFiles],
+    );
+    const initialSelectedDirectory = useMemo(() => {
+        if (
+            preferredInitialSelectedDirectory &&
+            directoryContainsFile(
+                preferredInitialSelectedDirectory,
+                filteredFiles,
+            )
+        ) {
+            return preferredInitialSelectedDirectory;
+        }
+
+        return (
+            findInitialSubdirPreviewDirectory(filteredFiles) ??
+            directoryGroups[0]?.path
+        );
+    }, [directoryGroups, filteredFiles, preferredInitialSelectedDirectory]);
     const initialSelectedFile = useMemo(
         () =>
             directoryGroups.find(
@@ -427,8 +478,13 @@ export function ResultDetailFiles({
         isLoading: false,
         path: null,
     });
-    const effectiveSelectedDirectory =
+    const requestedSelectedDirectory =
         selectedDirectory ?? initialSelectedDirectory;
+    const effectiveSelectedDirectory =
+        requestedSelectedDirectory &&
+        directoryContainsFile(requestedSelectedDirectory, filteredFiles)
+            ? requestedSelectedDirectory
+            : initialSelectedDirectory;
     const selectedGroup = useMemo(
         () =>
             directoryGroups.find(
@@ -436,15 +492,20 @@ export function ResultDetailFiles({
             ),
         [directoryGroups, effectiveSelectedDirectory],
     );
-    const selectedDirectoryFiles = useMemo(
-        () =>
-            (effectiveSelectedDirectory
-                ? directoryFileOverrides?.[effectiveSelectedDirectory]
-                : undefined) ??
-            selectedGroup?.files ??
-            [],
-        [directoryFileOverrides, effectiveSelectedDirectory, selectedGroup],
-    );
+    const selectedDirectoryFiles = useMemo(() => {
+        const overrideFiles = effectiveSelectedDirectory
+            ? directoryFileOverrides?.[effectiveSelectedDirectory]
+            : undefined;
+
+        return overrideFiles
+            ? filterFilesByGlobPattern(overrideFiles, fileFilterValue)
+            : (selectedGroup?.files ?? []);
+    }, [
+        directoryFileOverrides,
+        effectiveSelectedDirectory,
+        fileFilterValue,
+        selectedGroup,
+    ]);
     const effectiveSelectedFile = useMemo(() => {
         if (!selectedFile) {
             return selectedDirectoryFiles[0] ?? null;
@@ -465,12 +526,22 @@ export function ResultDetailFiles({
         (effectivePreviewPage - 1) * thumbnailsPerPage,
         effectivePreviewPage * thumbnailsPerPage,
     );
+    const handleFileFilterChange = useCallback(
+        (value: string) => {
+            setFileFilterState({
+                storageKey: resolvedFilterStorageKey,
+                value,
+            });
+            setPreviewPage(1);
+        },
+        [resolvedFilterStorageKey],
+    );
 
     useEffect(() => {
         if (
             previewMode === "grid" ||
             !effectiveSelectedFile ||
-            !shouldFetchInlinePreview(effectiveSelectedFile.path)
+            !shouldRequestInlinePreview(effectiveSelectedFile.path)
         ) {
             return;
         }
@@ -478,18 +549,18 @@ export function ResultDetailFiles({
         let cancelled = false;
         const selectedPath = effectiveSelectedFile.path;
 
-        void fetchPreviewContent(
+        void resolvePreviewContent(
             resultIdForFile(effectiveSelectedFile),
             selectedPath,
             "inline",
         )
-            .then((nextContent) => {
+            .then((nextPreview) => {
                 if (cancelled) {
                     return;
                 }
 
                 setPreviewState({
-                    content: nextContent,
+                    content: nextPreview.content,
                     error: undefined,
                     isLoading: false,
                     path: selectedPath,
@@ -566,8 +637,13 @@ export function ResultDetailFiles({
                     isLoading={isLoading}
                     maxHeight={previewHeight}
                     onEnlargeOpen={() => {
+                        const hasInlineContent =
+                            previewState.path === file.path &&
+                            previewState.content !== undefined;
+
                         if (
-                            !shouldFetchInlinePreview(file.path) ||
+                            (!shouldFetchInlinePreview(file.path) &&
+                                !hasInlineContent) ||
                             (enlargedState.path === file.path &&
                                 (enlargedState.content !== undefined ||
                                     enlargedState.isLoading))
@@ -656,7 +732,11 @@ export function ResultDetailFiles({
     return (
         <FileBrowser
             activeFiles={selectedDirectoryFiles}
-            files={files}
+            fileFilterApplied
+            fileFilterValue={fileFilterValue}
+            filterStorageKey={filterStorageKey}
+            files={filteredFiles}
+            onFileFilterChange={handleFileFilterChange}
             onPreviewHeightChange={setPreviewHeight}
             onPreviewModeChange={(nextMode) => {
                 setPreviewMode(nextMode);
@@ -752,6 +832,7 @@ export function ResultDetailFiles({
             renderSinglePreview={renderSinglePreview}
             selectedDirectory={effectiveSelectedDirectory}
             selectedPath={effectiveSelectedFile?.path}
+            unfilteredFileCount={files.length}
             visibleFiles={visiblePreviewFiles}
         />
     );

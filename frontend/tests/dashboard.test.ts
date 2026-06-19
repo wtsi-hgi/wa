@@ -129,6 +129,21 @@ function deferred<T>() {
     return { promise, resolve, reject };
 }
 
+function selectSpecificField(label: string): HTMLElement {
+    fireEvent.click(
+        screen.getByRole("button", {
+            name: /add specific field to filter/i,
+        }),
+    );
+    fireEvent.click(
+        screen.getByRole("option", {
+            name: new RegExp(`^${label}$`, "i"),
+        }),
+    );
+
+    return screen.getByLabelText(new RegExp(`${label} value`, "i"));
+}
+
 async function renderDashboard(
     searchParams?: Record<string, string | string[]>,
 ) {
@@ -221,7 +236,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(searchBuilder?.parentElement?.tagName).toBe("MAIN");
     });
 
-    it("hydrates the landing page without recoverable mismatches and keeps Add filter interactive", async () => {
+    it("hydrates the landing page without recoverable mismatches and keeps Add specific field interactive", async () => {
         fetchStatsMock.mockResolvedValue(
             buildStats({
                 recent: Array.from({ length: 3 }, (_, index) =>
@@ -262,7 +277,11 @@ describe("J1 dashboard with search builder and recent results", () => {
             }),
         ).toBeNull();
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
 
         expect(
             screen.getByRole("dialog", {
@@ -364,7 +383,7 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        const valueInput = screen.getByLabelText(/^pipeline name$/i);
+        const valueInput = selectSpecificField("pipeline name");
 
         fireEvent.change(valueInput, {
             target: { value: "rna" },
@@ -423,7 +442,7 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        const valueInput = screen.getByLabelText(/^requester$/i);
+        const valueInput = selectSpecificField("requester");
 
         fireEvent.change(valueInput, {
             target: { value: "car" },
@@ -440,9 +459,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         fireEvent.change(valueInput, {
             target: { value: "carol" },
         });
-        fireEvent.click(
-            screen.getByRole("button", { name: /add requester filter/i }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?user=carol");
 
@@ -479,7 +496,7 @@ describe("J1 dashboard with search builder and recent results", () => {
             root = hydrateRoot(container, serverTree);
         });
 
-        const valueInput = screen.getByLabelText(/^study$/i);
+        const valueInput = selectSpecificField("study");
 
         fireEvent.change(valueInput, {
             target: { value: "656" },
@@ -498,9 +515,7 @@ describe("J1 dashboard with search builder and recent results", () => {
         fireEvent.change(valueInput, {
             target: { value: "6568" },
         });
-        fireEvent.click(
-            screen.getByRole("button", { name: /add study filter/i }),
-        );
+        fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
         expect(pushMock).toHaveBeenCalledWith("/?study=6568");
 
@@ -551,7 +566,11 @@ describe("J1 dashboard with search builder and recent results", () => {
             });
         });
 
-        fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: /add specific field to filter/i,
+            }),
+        );
         expect(
             screen.getByRole("dialog", {
                 name: /search builder filter panel/i,
@@ -585,6 +604,35 @@ describe("J1 dashboard with search builder and recent results", () => {
 
         expect(searchResultsMock).not.toHaveBeenCalled();
         expect(countOccurrences(markup, 'data-result-row="true"')).toBe(10);
+    });
+
+    it("loads every latest result set when the stats total exceeds the first dashboard page", async () => {
+        fetchStatsMock
+            .mockResolvedValueOnce(
+                buildStats({
+                    total: 12,
+                    recent: Array.from({ length: 10 }, (_, index) =>
+                        buildResultSet(index + 1),
+                    ),
+                }),
+            )
+            .mockResolvedValueOnce(
+                buildStats({
+                    total: 12,
+                    recent: Array.from({ length: 12 }, (_, index) =>
+                        buildResultSet(index + 1),
+                    ),
+                }),
+            );
+        searchResultsMock.mockResolvedValue([]);
+
+        const markup = await renderDashboard();
+
+        expect(fetchStatsMock).toHaveBeenNthCalledWith(1, 10, 30);
+        expect(fetchStatsMock).toHaveBeenNthCalledWith(2, 12, 30);
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(10);
+        expect(markup).toContain("12 rows");
+        expect(markup).toContain("Page 1 of 2");
     });
 
     it("calls searchResults with repeated string arrays and shows search rows when params are present", async () => {

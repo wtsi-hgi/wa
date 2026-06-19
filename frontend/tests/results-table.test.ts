@@ -144,25 +144,28 @@ describe("L1 results table", () => {
         expect(container.textContent).not.toContain("bob");
     });
 
-    it("sorts by pipeline name ascending and descending when the header is clicked", async () => {
+    it("sorts by project ascending and descending when the header is clicked", async () => {
         const data = [
             buildResultSet(1),
             buildResultSet(2),
             buildResultSet(3),
         ].map((row, index) => ({
             ...row,
-            pipeline_name: ["gamma", "alpha", "beta"][index],
+            metadata: {
+                ...row.metadata,
+                project: ["gamma", "alpha", "beta"][index],
+            },
         }));
 
         await act(async () => {
             root.render(createElement(ResultsTable, { data }));
         });
 
-        const pipelineHeader = container.querySelector(
-            'button[data-column-sort="pipeline_name"]',
+        const projectHeader = container.querySelector(
+            'button[data-column-sort="project"]',
         );
 
-        await click(pipelineHeader);
+        await click(projectHeader);
 
         expect(
             getBodyRows(container).map((row) => row.textContent ?? "")[0],
@@ -171,7 +174,7 @@ describe("L1 results table", () => {
             getBodyRows(container).map((row) => row.textContent ?? "")[2],
         ).toContain("gamma");
 
-        await click(pipelineHeader);
+        await click(projectHeader);
 
         expect(
             getBodyRows(container).map((row) => row.textContent ?? "")[0],
@@ -310,23 +313,113 @@ describe("L1 results table", () => {
         expect(headers).not.toContain("ID");
     });
 
-    it("shows the formatted Unique column by default next to Pipeline Name", async () => {
+    it("shows Project first, Unique second, and leaves Pipeline Name optional for recent results", async () => {
         const result = {
             ...buildResultSet(1),
+            metadata: {
+                project: "atlas",
+                seqmeta_sampleid: "SANG1",
+            },
             run_key: "runid=48522&unique=random_exon",
+        };
+        const fallback = {
+            ...buildResultSet(2),
+            metadata: {},
         };
 
         await act(async () => {
-            root.render(createElement(ResultsTable, { data: [result] }));
+            root.render(
+                createElement(ResultsTable, { data: [result, fallback] }),
+            );
         });
 
         const headers = getHeaderLabels(container);
 
-        expect(headers.slice(0, 2)).toEqual(["Pipeline Name", "Unique"]);
+        expect(headers.slice(0, 2)).toEqual(["Project", "Unique"]);
+        expect(headers).not.toContain("Pipeline Name");
         expect(headers).not.toContain("Run Key");
+        expect(getBodyRows(container)[0].children[0].textContent).toContain(
+            "atlas",
+        );
+        expect(getBodyRows(container)[1].children[0].textContent).toContain(
+            fallback.pipeline_name,
+        );
         expect(getBodyRows(container)[0].children[1].textContent).toContain(
             "48522 / random_exon",
         );
+
+        await click(
+            container.querySelector(
+                'button[aria-label="Toggle column visibility"]',
+            ),
+        );
+
+        const pipelineToggle = container.querySelector(
+            'button[role="menuitemcheckbox"][data-column-id="pipeline_name"]',
+        );
+
+        expect(pipelineToggle?.getAttribute("aria-checked")).toBe("false");
+    });
+
+    it("uses the shared Project-first defaults when switching to search result sets", async () => {
+        const searchWithProject = {
+            ...buildResultSet(1),
+            metadata: {
+                project: "  atlas search  ",
+                seqmeta_sampleid: "SANG1",
+            },
+            run_key: "runid=48522&unique=search_project",
+        };
+        const searchFallback = {
+            ...buildResultSet(2),
+            metadata: {},
+            run_key: "runid=48523&unique=search_fallback",
+        };
+
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, { data: [buildResultSet(1)] }),
+            );
+        });
+
+        expect(getHeaderLabels(container)).toContain("Project");
+        expect(getHeaderLabels(container)).not.toContain("Pipeline Name");
+
+        await act(async () => {
+            root.render(
+                createElement(ResultsTable, {
+                    data: [
+                        { result_set: searchWithProject },
+                        { result_set: searchFallback },
+                    ],
+                    mode: "search",
+                }),
+            );
+        });
+
+        const headers = getHeaderLabels(container);
+
+        expect(container.textContent).toContain("Search results");
+        expect(headers.slice(0, 2)).toEqual(["Project", "Unique"]);
+        expect(headers).not.toContain("Pipeline Name");
+        expect(getBodyRows(container)[0].children[0].textContent).toContain(
+            "atlas search",
+        );
+        expect(getBodyRows(container)[1].children[0].textContent).toContain(
+            searchFallback.pipeline_name,
+        );
+
+        await click(
+            container.querySelector(
+                'button[aria-label="Toggle column visibility"]',
+            ),
+        );
+
+        const pipelineToggle = container.querySelector(
+            'button[role="menuitemcheckbox"][data-column-id="pipeline_name"]',
+        );
+
+        expect(pipelineToggle?.getAttribute("aria-checked")).toBe("false");
     });
 
     it("shows the matched samples column and values when studyActive is true for search results", async () => {

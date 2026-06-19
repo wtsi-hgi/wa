@@ -2441,27 +2441,27 @@ test.describe("File Browser single preview layout", () => {
         }
 
         await disclosure.evaluate((element) => {
-            const tableCheckbox = element.querySelector(
-                'input[data-subdir-preview-kind="table"]',
+            const tsvCheckbox = element.querySelector(
+                'input[data-subdir-preview-kind="tsv"]',
             );
-            const imageCheckbox = element.querySelector(
-                'input[data-subdir-preview-kind="image"]',
+            const svgCheckbox = element.querySelector(
+                'input[data-subdir-preview-kind="svg"]',
             );
 
-            if (!(tableCheckbox instanceof HTMLInputElement)) {
-                throw new Error("Missing table subdir kind checkbox");
+            if (!(tsvCheckbox instanceof HTMLInputElement)) {
+                throw new Error("Missing tsv subdir kind checkbox");
             }
 
-            if (!(imageCheckbox instanceof HTMLInputElement)) {
-                throw new Error("Missing image subdir kind checkbox");
+            if (!(svgCheckbox instanceof HTMLInputElement)) {
+                throw new Error("Missing svg subdir kind checkbox");
             }
 
-            if (!tableCheckbox.checked) {
-                tableCheckbox.click();
+            if (!tsvCheckbox.checked) {
+                tsvCheckbox.click();
             }
 
-            if (imageCheckbox.checked) {
-                imageCheckbox.click();
+            if (svgCheckbox.checked) {
+                svgCheckbox.click();
             }
         });
 
