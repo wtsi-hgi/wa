@@ -112,7 +112,38 @@ async function readErrorBody(
     return { error: text.trim() || "unexpected error" };
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
+function buildPassthroughHeaders(
+    response: Response,
+    options: { sandbox: boolean },
+): Headers {
+    const headers = new Headers();
+    const contentType = response.headers.get("content-type");
+    const contentDisposition = response.headers.get("content-disposition");
+    const previewTruncated = response.headers.get("x-preview-truncated");
+
+    if (contentType) {
+        headers.set("content-type", contentType);
+    }
+
+    if (contentDisposition) {
+        headers.set("content-disposition", contentDisposition);
+    }
+
+    if (previewTruncated) {
+        headers.set("x-preview-truncated", previewTruncated);
+    }
+
+    if (options.sandbox) {
+        headers.set("content-security-policy", "sandbox");
+    }
+
+    return headers;
+}
+
+async function handleFileRequest(
+    request: NextRequest,
+    options: { includeBody: boolean },
+): Promise<NextResponse> {
     const id = request.nextUrl.searchParams.get("id")?.trim();
     const path = request.nextUrl.searchParams.get("path")?.trim();
     const download = request.nextUrl.searchParams.get("download");
@@ -185,6 +216,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         });
     }
 
+    if (!options.includeBody) {
+        return new NextResponse(null, {
+            status: response.status,
+            headers: buildPassthroughHeaders(response, {
+                sandbox: download !== "true",
+            }),
+        });
+    }
+
     if (thumbnail === "true" && download !== "true") {
         const thumbnailResponse = await buildThumbnailResponse(
             response.clone(),
@@ -197,29 +237,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
     }
 
-    const headers = new Headers();
-    const contentType = response.headers.get("content-type");
-    const contentDisposition = response.headers.get("content-disposition");
-    const previewTruncated = response.headers.get("x-preview-truncated");
-
-    if (contentType) {
-        headers.set("content-type", contentType);
-    }
-
-    if (contentDisposition) {
-        headers.set("content-disposition", contentDisposition);
-    }
-
-    if (previewTruncated) {
-        headers.set("x-preview-truncated", previewTruncated);
-    }
-
-    if (download !== "true") {
-        headers.set("content-security-policy", "sandbox");
-    }
-
     return new NextResponse(response.body, {
         status: response.status,
-        headers,
+        headers: buildPassthroughHeaders(response, {
+            sandbox: download !== "true",
+        }),
     });
+}
+
+export async function GET(request: NextRequest): Promise<NextResponse> {
+    return handleFileRequest(request, { includeBody: true });
+}
+
+export async function HEAD(request: NextRequest): Promise<NextResponse> {
+    return handleFileRequest(request, { includeBody: false });
 }

@@ -30,6 +30,7 @@ import {
 import {
     isBitmapPreviewFile,
     shouldFetchInlinePreviewContent,
+    shouldProbeInlinePreviewContentType,
 } from "@/lib/preview-file-types";
 
 export type RegisteredFileEntry = FileEntry & {
@@ -137,6 +138,14 @@ function shouldFetchInlinePreview(path: string): boolean {
     return shouldFetchInlinePreviewContent(path);
 }
 
+function shouldProbeInlinePreview(path: string): boolean {
+    return shouldProbeInlinePreviewContentType(path);
+}
+
+function shouldRequestInlinePreview(path: string): boolean {
+    return shouldFetchInlinePreview(path) || shouldProbeInlinePreview(path);
+}
+
 function isImageFile(path: string): boolean {
     return isBitmapPreviewFile(path);
 }
@@ -181,6 +190,47 @@ async function fetchPreviewContent(
         content: await response.text(),
         contentType: response.headers.get("content-type") ?? "text/plain",
         truncated: response.headers.get("x-preview-truncated") === "true",
+    };
+}
+
+async function fetchPreviewContentType(
+    resultId: string,
+    path: string,
+    mode: "inline" | "enlarged",
+): Promise<string> {
+    const response = await fetch(buildFileUrl(resultId, path, { mode }), {
+        method: "HEAD",
+    });
+
+    if (!response.ok) {
+        throw new PreviewRequestError(response.status, null);
+    }
+
+    return response.headers.get("content-type") ?? "application/octet-stream";
+}
+
+function isSvgContentType(contentType: string): boolean {
+    return contentType.split(";")[0]?.trim().toLowerCase() === "image/svg+xml";
+}
+
+async function resolvePreviewContent(
+    resultId: string,
+    path: string,
+    mode: "inline" | "enlarged",
+): Promise<
+    | { content: { content: string; contentType: string; truncated?: boolean } }
+    | { content?: undefined }
+> {
+    if (shouldProbeInlinePreview(path)) {
+        const contentType = await fetchPreviewContentType(resultId, path, mode);
+
+        if (isSvgContentType(contentType)) {
+            return {};
+        }
+    }
+
+    return {
+        content: await fetchPreviewContent(resultId, path, mode),
     };
 }
 
@@ -491,7 +541,7 @@ export function ResultDetailFiles({
         if (
             previewMode === "grid" ||
             !effectiveSelectedFile ||
-            !shouldFetchInlinePreview(effectiveSelectedFile.path)
+            !shouldRequestInlinePreview(effectiveSelectedFile.path)
         ) {
             return;
         }
@@ -499,18 +549,18 @@ export function ResultDetailFiles({
         let cancelled = false;
         const selectedPath = effectiveSelectedFile.path;
 
-        void fetchPreviewContent(
+        void resolvePreviewContent(
             resultIdForFile(effectiveSelectedFile),
             selectedPath,
             "inline",
         )
-            .then((nextContent) => {
+            .then((nextPreview) => {
                 if (cancelled) {
                     return;
                 }
 
                 setPreviewState({
-                    content: nextContent,
+                    content: nextPreview.content,
                     error: undefined,
                     isLoading: false,
                     path: selectedPath,
@@ -587,8 +637,13 @@ export function ResultDetailFiles({
                     isLoading={isLoading}
                     maxHeight={previewHeight}
                     onEnlargeOpen={() => {
+                        const hasInlineContent =
+                            previewState.path === file.path &&
+                            previewState.content !== undefined;
+
                         if (
-                            !shouldFetchInlinePreview(file.path) ||
+                            (!shouldFetchInlinePreview(file.path) &&
+                                !hasInlineContent) ||
                             (enlargedState.path === file.path &&
                                 (enlargedState.content !== undefined ||
                                     enlargedState.isLoading))

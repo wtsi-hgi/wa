@@ -314,9 +314,11 @@ vi.mock("@/components/file-preview", () => ({
             file.path,
         ),
     FilePreview: ({
+        content,
         file,
         proxyUrl,
     }: {
+        content?: { content: string; contentType: string; truncated?: boolean };
         file: FileEntry;
         proxyUrl: string;
     }) => {
@@ -327,7 +329,10 @@ vi.mock("@/components/file-preview", () => ({
 
         return createElement(
             "div",
-            { "data-preview-url": proxyUrl },
+            {
+                "data-preview-content-type": content?.contentType ?? "",
+                "data-preview-url": proxyUrl,
+            },
             `preview:${file.path}`,
         );
     },
@@ -959,13 +964,13 @@ describe("O1 result detail file integration", () => {
         ).toBeTruthy();
     });
 
-    it("uses fetched content type instead of the svg path extension for preview selection", async () => {
+    it("keeps normal svg previews URL-rendered after probing the content type", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");
 
         fetchMock.mockResolvedValue(
-            new Response("plain text payload", {
-                headers: { "content-type": "text/plain" },
+            new Response(null, {
+                headers: { "content-type": "image/svg+xml" },
                 status: 200,
             }),
         );
@@ -980,6 +985,54 @@ describe("O1 result detail file integration", () => {
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg&mode=inline",
+                { method: "HEAD" },
+            );
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("preview:/tmp/results/plot.svg")).toBeTruthy();
+        expect(
+            screen
+                .getByText("preview:/tmp/results/plot.svg")
+                .getAttribute("data-preview-content-type"),
+        ).toBe("");
+    });
+
+    it("uses fetched content type instead of the svg path extension for preview selection", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        fetchMock
+            .mockResolvedValueOnce(
+                new Response(null, {
+                    headers: { "content-type": "text/plain" },
+                    status: 200,
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response("plain text payload", {
+                    headers: { "content-type": "text/plain" },
+                    status: 200,
+                }),
+            );
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/plot.svg")],
+                resultId: "result-1",
+            }),
+        );
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg&mode=inline",
+                { method: "HEAD" },
+            );
+        });
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.svg&mode=inline",
             );
         });
 
@@ -987,6 +1040,11 @@ describe("O1 result detail file integration", () => {
             expect(
                 screen.getByText("preview:/tmp/results/plot.svg"),
             ).toBeTruthy();
+            expect(
+                screen
+                    .getByText("preview:/tmp/results/plot.svg")
+                    .getAttribute("data-preview-content-type"),
+            ).toBe("text/plain");
         });
     });
 

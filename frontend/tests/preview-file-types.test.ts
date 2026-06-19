@@ -5,6 +5,7 @@ import {
     previewFileTypeForPath,
     previewFileTypeOptions,
     shouldFetchInlinePreviewContent,
+    shouldProbeInlinePreviewContentType,
 } from "@/lib/preview-file-types";
 
 describe("preview file types", () => {
@@ -54,7 +55,7 @@ describe("preview file types", () => {
         expect(effectivePreviewExtension("/results/no-extension")).toBe("");
     });
 
-    it("bypasses inline content fetching for preview types rendered from URLs", () => {
+    it("bypasses inline body fetching for URL-rendered previews", () => {
         expect(shouldFetchInlinePreviewContent("/results/plot.svg")).toBe(
             false,
         );
@@ -66,6 +67,18 @@ describe("preview file types", () => {
         );
         expect(shouldFetchInlinePreviewContent("/results/summary.md")).toBe(
             true,
+        );
+    });
+
+    it("probes svg content types before renderer selection", () => {
+        expect(shouldProbeInlinePreviewContentType("/results/plot.svg")).toBe(
+            true,
+        );
+        expect(shouldProbeInlinePreviewContentType("/results/plot.png")).toBe(
+            false,
+        );
+        expect(shouldProbeInlinePreviewContentType("/results/summary.md")).toBe(
+            false,
         );
     });
 });

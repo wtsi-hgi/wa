@@ -138,3 +138,7 @@ export function shouldFetchInlinePreviewContent(path: string): boolean {
         effectivePreviewExtension(path),
     );
 }
+
+export function shouldProbeInlinePreviewContentType(path: string): boolean {
+    return effectivePreviewExtension(path) === "svg";
+}

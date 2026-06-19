@@ -142,6 +142,33 @@ describe("P1 file content streaming API route", () => {
         expect(response.headers.get("content-security-policy")).toBeNull();
     });
 
+    it("returns file metadata without a response body for HEAD probes", async () => {
+        resultsRawMock.mockResolvedValue(
+            new Response("<svg />", {
+                status: 200,
+                headers: {
+                    "content-type": "image/svg+xml",
+                    "x-preview-truncated": "true",
+                },
+            }),
+        );
+
+        const { HEAD } = await import("@/app/api/file/route");
+
+        const response = await HEAD(
+            makeRequest("id=abc&path=%2Fout%2Fplot.svg&mode=inline"),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            "/rest/v1/results/abc/file?path=%2Fout%2Fplot.svg&mode=inline",
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/svg+xml");
+        expect(response.headers.get("x-preview-truncated")).toBe("true");
+        expect(response.headers.get("content-security-policy")).toBe("sandbox");
+        await expect(response.text()).resolves.toBe("");
+    });
+
     it("passes through the original image when it is already smaller than the requested thumbnail", async () => {
         resultsRawMock.mockResolvedValue(
             new Response(onePixelPng, {
