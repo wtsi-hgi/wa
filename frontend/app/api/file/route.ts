@@ -140,6 +140,62 @@ function buildPassthroughHeaders(
     return headers;
 }
 
+type ResultsFileRequestOptions = {
+    jwt?: string | null;
+    method?: "HEAD";
+};
+
+async function cancelResponseBody(response: Response): Promise<void> {
+    const body = response.body;
+
+    if (!body) {
+        return;
+    }
+
+    await body.cancel().catch(() => undefined);
+}
+
+async function fetchResultsFile(
+    path: string,
+    options: ResultsFileRequestOptions,
+): Promise<Response> {
+    const requestOptions: { jwt?: string; method?: "HEAD" } = {};
+
+    if (options.jwt) {
+        requestOptions.jwt = options.jwt;
+    }
+
+    if (options.method) {
+        requestOptions.method = options.method;
+    }
+
+    return Object.keys(requestOptions).length > 0
+        ? resultsRaw(path, requestOptions)
+        : resultsRaw(path);
+}
+
+async function fetchFileResponse(
+    path: string,
+    options: { includeBody: boolean; jwt?: string | null },
+): Promise<Response> {
+    if (options.includeBody) {
+        return fetchResultsFile(path, { jwt: options.jwt });
+    }
+
+    const headResponse = await fetchResultsFile(path, {
+        jwt: options.jwt,
+        method: "HEAD",
+    });
+
+    if (headResponse.status !== 405) {
+        return headResponse;
+    }
+
+    await cancelResponseBody(headResponse);
+
+    return fetchResultsFile(path, { jwt: options.jwt });
+}
+
 async function handleFileRequest(
     request: NextRequest,
     options: { includeBody: boolean },
@@ -184,12 +240,16 @@ async function handleFileRequest(
     try {
         const publicBackendPath = `/rest/v1/results/${encodeURIComponent(id)}/file?${query.toString()}`;
         const backendPath = `${resultsPath}/${encodeURIComponent(id)}/file?${query.toString()}`;
-        response = jwt
-            ? await resultsRaw(backendPath, { jwt })
-            : await resultsRaw(backendPath);
+        response = await fetchFileResponse(backendPath, {
+            includeBody: options.includeBody,
+            jwt,
+        });
 
         if (jwt && response.status === 401) {
-            response = await resultsRaw(publicBackendPath);
+            await cancelResponseBody(response);
+            response = await fetchFileResponse(publicBackendPath, {
+                includeBody: options.includeBody,
+            });
         }
     } catch {
         return NextResponse.json(
@@ -217,11 +277,15 @@ async function handleFileRequest(
     }
 
     if (!options.includeBody) {
+        const headers = buildPassthroughHeaders(response, {
+            sandbox: download !== "true",
+        });
+
+        await cancelResponseBody(response);
+
         return new NextResponse(null, {
             status: response.status,
-            headers: buildPassthroughHeaders(response, {
-                sandbox: download !== "true",
-            }),
+            headers,
         });
     }
 
