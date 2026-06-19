@@ -28,6 +28,7 @@ import {
     boxTitleTextClass,
 } from "@/components/box-title-section";
 import {
+    defaultResultsColumnVisibility,
     getResultsColumns,
     isResultsTableRowLocked,
     toResultsTableRows,
@@ -50,29 +51,6 @@ export type ResultsTableProps = {
     returnHref?: string;
     studyActive?: boolean;
 };
-
-const defaultHiddenColumns: Record<string, boolean> = {
-    operator: false,
-    command: false,
-    pipeline_version: false,
-    pipeline_identifier: false,
-    run_key: false,
-    id: false,
-};
-
-function defaultColumnVisibility(mode: ResultsTableProps["mode"]) {
-    if (mode === "search") {
-        return {
-            ...defaultHiddenColumns,
-            project: false,
-        };
-    }
-
-    return {
-        ...defaultHiddenColumns,
-        pipeline_name: false,
-    };
-}
 
 function columnVisibilityLabel(columnId: string): string {
     if (columnId === "id") {
@@ -111,7 +89,7 @@ export function ResultsTable({
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnVisibility, setColumnVisibility] = useState<
         Record<string, boolean>
-    >(() => defaultColumnVisibility(mode));
+    >(() => defaultResultsColumnVisibility());
     const previousMode = useRef(mode);
     const [pagination, setPagination] = useState({
         pageIndex: 0,
@@ -124,7 +102,7 @@ export function ResultsTable({
         }
 
         previousMode.current = mode;
-        setColumnVisibility(defaultColumnVisibility(mode));
+        setColumnVisibility(defaultResultsColumnVisibility());
     }, [mode]);
 
     // TanStack Table's hook currently triggers a React Compiler compatibility lint false positive.

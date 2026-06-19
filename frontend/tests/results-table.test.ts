@@ -361,7 +361,21 @@ describe("L1 results table", () => {
         expect(pipelineToggle?.getAttribute("aria-checked")).toBe("false");
     });
 
-    it("resets default column visibility when switching modes without remounting", async () => {
+    it("uses the shared Project-first defaults when switching to search result sets", async () => {
+        const searchWithProject = {
+            ...buildResultSet(1),
+            metadata: {
+                project: "  atlas search  ",
+                seqmeta_sampleid: "SANG1",
+            },
+            run_key: "runid=48522&unique=search_project",
+        };
+        const searchFallback = {
+            ...buildResultSet(2),
+            metadata: {},
+            run_key: "runid=48523&unique=search_fallback",
+        };
+
         await act(async () => {
             root.render(
                 createElement(ResultsTable, { data: [buildResultSet(1)] }),
@@ -374,7 +388,10 @@ describe("L1 results table", () => {
         await act(async () => {
             root.render(
                 createElement(ResultsTable, {
-                    data: [buildSearchResult(1)],
+                    data: [
+                        { result_set: searchWithProject },
+                        { result_set: searchFallback },
+                    ],
                     mode: "search",
                 }),
             );
@@ -383,8 +400,26 @@ describe("L1 results table", () => {
         const headers = getHeaderLabels(container);
 
         expect(container.textContent).toContain("Search results");
-        expect(headers).toContain("Pipeline Name");
-        expect(headers).not.toContain("Project");
+        expect(headers.slice(0, 2)).toEqual(["Project", "Unique"]);
+        expect(headers).not.toContain("Pipeline Name");
+        expect(getBodyRows(container)[0].children[0].textContent).toContain(
+            "atlas search",
+        );
+        expect(getBodyRows(container)[1].children[0].textContent).toContain(
+            searchFallback.pipeline_name,
+        );
+
+        await click(
+            container.querySelector(
+                'button[aria-label="Toggle column visibility"]',
+            ),
+        );
+
+        const pipelineToggle = container.querySelector(
+            'button[role="menuitemcheckbox"][data-column-id="pipeline_name"]',
+        );
+
+        expect(pipelineToggle?.getAttribute("aria-checked")).toBe("false");
     });
 
     it("shows the matched samples column and values when studyActive is true for search results", async () => {

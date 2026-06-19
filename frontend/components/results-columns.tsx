@@ -13,6 +13,22 @@ export type ResultsTableRow = {
     searchResult: boolean;
 };
 
+const defaultHiddenColumnIds = [
+    "pipeline_name",
+    "operator",
+    "command",
+    "pipeline_version",
+    "pipeline_identifier",
+    "run_key",
+    "id",
+];
+
+export function defaultResultsColumnVisibility(): Record<string, boolean> {
+    return Object.fromEntries(
+        defaultHiddenColumnIds.map((columnId) => [columnId, false]),
+    );
+}
+
 type SortableHeaderProps = {
     columnId: string;
     label: string;
