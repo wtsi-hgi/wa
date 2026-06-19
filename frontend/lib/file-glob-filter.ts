@@ -57,7 +57,10 @@ function classBodyFromGlobClass(globClass: string): string {
     return `[${negate ? "^" : ""}${escapedBody}]`;
 }
 
-function globPatternToRegexSource(pattern: string): string {
+function globPatternToRegexSource(
+    pattern: string,
+    options: { starMatchesSlash?: boolean } = {},
+): string {
     let source = "";
 
     for (let index = 0; index < pattern.length; index += 1) {
@@ -94,7 +97,7 @@ function globPatternToRegexSource(pattern: string): string {
                 continue;
             }
 
-            source += "[^/]*";
+            source += options.starMatchesSlash ? ".*" : "[^/]*";
             continue;
         }
 
@@ -121,6 +124,16 @@ function globPatternToRegexSource(pattern: string): string {
     return source;
 }
 
+function shouldAddPathWideGlob(pattern: string): boolean {
+    const normalizedPattern = normalizePath(pattern);
+
+    return (
+        !normalizedPattern.startsWith("/") &&
+        !normalizedPattern.includes("/") &&
+        normalizedPattern.includes("*")
+    );
+}
+
 function compileGlobPattern(pattern: string): RegExp[] {
     const trimmedPattern = pattern.trim();
 
@@ -128,17 +141,30 @@ function compileGlobPattern(pattern: string): RegExp[] {
         return [];
     }
 
-    const patterns = new Set([trimmedPattern]);
+    const patterns: Array<{
+        options?: { starMatchesSlash?: boolean };
+        pattern: string;
+    }> = [{ pattern: trimmedPattern }];
 
     if (!trimmedPattern.startsWith("/") && !trimmedPattern.startsWith("**/")) {
-        patterns.add(`**/${trimmedPattern}`);
+        patterns.push({ pattern: `**/${trimmedPattern}` });
     }
 
-    return [...patterns]
-        .map((candidatePattern) => {
+    if (shouldAddPathWideGlob(trimmedPattern)) {
+        patterns.push({
+            options: { starMatchesSlash: true },
+            pattern: trimmedPattern,
+        });
+    }
+
+    return patterns
+        .map(({ options, pattern: candidatePattern }) => {
             try {
                 return new RegExp(
-                    `^${globPatternToRegexSource(normalizePath(candidatePattern))}$`,
+                    `^${globPatternToRegexSource(
+                        normalizePath(candidatePattern),
+                        options ?? {},
+                    )}$`,
                 );
             } catch {
                 return null;

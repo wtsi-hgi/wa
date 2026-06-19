@@ -1249,11 +1249,21 @@ describe("N1 file browser", () => {
             buildFile("/out/reports/alpha-summary.tsv", "output"),
             buildFile("/out/reports/alpha-summary.txt", "output"),
             buildFile("/out/logs/alpha-run.log", "output"),
+            buildFile(
+                "/lustre/scratch127/gengen/projects_v2/dual_tf/MORF_10/Multiome/sc_analysis_MORF_v2/sc_analysis_BTLNCK/qc_outputs/HAP1_MORF10_BTLNECK2_1_A1_BTLNCK/HAP1_MORF10_BTLNECK2_1_A1_BTLNCK_py_inputs/atac/barcodes.tsv.gz",
+                "output",
+            ),
         ];
 
         expect(filePathMatchesGlobPattern(files[0]?.path ?? "", "*.tsv")).toBe(
             true,
         );
+        expect(
+            filePathMatchesGlobPattern(
+                files[3]?.path ?? "",
+                "*py_inputs*.tsv.gz",
+            ),
+        ).toBe(true);
         expect(
             filePathMatchesGlobPattern(
                 files[0]?.path ?? "",
@@ -1268,6 +1278,11 @@ describe("N1 file browser", () => {
             "/out/reports/alpha-summary.tsv",
             "/out/reports/alpha-summary.txt",
         ]);
+        expect(
+            filterFilesByGlobPattern(files, "*py_inputs*.tsv.gz").map(
+                (file) => file.path,
+            ),
+        ).toEqual([files[3]?.path]);
     });
 
     it("treats unmatched glob brackets as literal characters", async () => {
