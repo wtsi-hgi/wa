@@ -128,9 +128,12 @@ async function openResultDetailFileBrowser(page: Page): Promise<void> {
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/results/${registeredResult.id}`);
-    await expect(
-        page.getByRole("heading", { level: 1, name: pipelineName }),
-    ).toBeVisible({ timeout: 30000 });
+    const heading = page.getByRole("heading", { level: 1 });
+
+    await expect(heading).toContainText("copy-path-repro", {
+        timeout: 30000,
+    });
+    await expect(heading).not.toContainText(pipelineName);
 
     const fileBrowser = page.locator('[data-file-browser="true"]');
 

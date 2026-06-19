@@ -438,6 +438,78 @@ describe("O1 result detail hydration", () => {
         expect(markup).not.toMatch(/>Result metadata</);
     });
 
+    it("titles the result detail page with project metadata and falls back to pipeline name", async () => {
+        const pageModule =
+            await import("@/app/(results)/results/[id]/page-content");
+        const Page = pageModule.ResultDetailPageContent;
+        const renderHeading = async (result: ResultSet) => {
+            fetchFilesMock.mockResolvedValue([
+                buildFile("/results/a/report.csv"),
+            ]);
+            fetchResultMock.mockResolvedValue(result);
+            enrichSeqmetaMetadataBatchMock.mockResolvedValue({
+                enrichments: {},
+                errors: {},
+            });
+            buildCachedEnrichmentStateMock.mockReturnValue({
+                enrichments: {},
+                errors: {},
+            });
+            collectSeqmetaValuesMock.mockReturnValue([]);
+            hasUsableMLWHCacheEntryMock.mockReturnValue(false);
+            mergeSeqmetaEnrichmentStateMock.mockImplementation(
+                (base, override) => ({
+                    enrichments: {
+                        ...base.enrichments,
+                        ...override?.enrichments,
+                    },
+                    errors: {
+                        ...base.errors,
+                        ...override?.errors,
+                    },
+                }),
+            );
+
+            const markup = renderToStaticMarkup(
+                await Page({
+                    id: result.id,
+                }),
+            );
+            const container = document.createElement("div");
+
+            container.innerHTML = markup;
+
+            const heading = container.querySelector("h1");
+            const unique = heading?.querySelector("span");
+
+            return {
+                text: heading?.textContent ?? "",
+                uniqueText: unique?.textContent ?? "",
+            };
+        };
+        const projectHeading = await renderHeading({
+            ...buildResultSet(),
+            metadata: {
+                project: "Atlas cohort",
+            },
+        });
+        const fallbackHeading = await renderHeading({
+            ...buildResultSet(),
+            id: "result-with-blank-project",
+            metadata: {
+                project: "   ",
+            },
+        });
+
+        expect(projectHeading.text).toContain("Atlas cohort");
+        expect(projectHeading.text).toContain("1001");
+        expect(projectHeading.text).not.toContain("nf-core/rnaseq");
+        expect(projectHeading.uniqueText).toBe("1001");
+        expect(fallbackHeading.text).toContain("nf-core/rnaseq");
+        expect(fallbackHeading.text).toContain("1001");
+        expect(fallbackHeading.uniqueText).toBe("1001");
+    });
+
     it("keeps the raw stored run key out of the Run details popover while preserving Unique", async () => {
         const result = {
             ...buildResultSet(),

@@ -2,6 +2,7 @@ import { ArrowUpDown, LockKeyhole } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 
 import type { ResultSet, SearchResult } from "@/lib/contracts";
+import { resultProjectName } from "@/lib/result-display";
 import { formatRegistrationUnique } from "@/lib/result-identity";
 import { cn, formatUtcDate } from "@/lib/utils";
 
@@ -89,12 +90,6 @@ function LockedResultIndicator({ result }: { result: ResultSet }) {
     );
 }
 
-function projectName(result: ResultSet): string {
-    const project = result.metadata?.project?.trim();
-
-    return project || result.pipeline_name;
-}
-
 function resultCell(
     row: ResultsTableRow,
     value: string,
@@ -160,7 +155,7 @@ export function getResultsColumns(
         {
             accessorKey: "project",
             id: "project",
-            accessorFn: (row) => projectName(row.result),
+            accessorFn: (row) => resultProjectName(row.result),
             header: ({ column }) => (
                 <SortableHeader
                     columnId="project"
@@ -173,7 +168,7 @@ export function getResultsColumns(
             cell: ({ row }) =>
                 resultCell(
                     row.original,
-                    projectName(row.original.result),
+                    resultProjectName(row.original.result),
                     "font-medium text-foreground transition hover:text-primary",
                     returnHref,
                     { showLock: true },
