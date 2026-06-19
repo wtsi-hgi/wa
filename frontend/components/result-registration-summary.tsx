@@ -1,4 +1,5 @@
 import { Info } from "lucide-react";
+import type { ReactNode } from "react";
 
 import {
     Popover,
@@ -9,7 +10,7 @@ import {
 export type ResultRegistrationField = {
     label: string;
     mono?: boolean;
-    value: string;
+    value: ReactNode;
     wide?: boolean;
 };
 

@@ -34,6 +34,7 @@ import {
     boxTitleTextClass,
     boxTitleTopAlignedRowClass,
 } from "@/components/box-title-section";
+import { LocalTimestamp } from "@/components/local-timestamp";
 import { PreviewPagination } from "@/components/preview-pagination";
 import { type FileEntry } from "@/lib/contracts";
 import {
@@ -917,26 +918,6 @@ function collectTreePaths(node: DirectoryTreeNode): string[] {
     ];
 }
 
-function formatMtime(mtime: string | undefined): string {
-    if (!mtime) {
-        return "Unknown time";
-    }
-
-    const date = new Date(mtime);
-
-    if (Number.isNaN(date.getTime())) {
-        return mtime;
-    }
-
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(date.getUTCDate()).padStart(2, "0");
-    const hours = String(date.getUTCHours()).padStart(2, "0");
-    const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-
-    return `${year}-${month}-${day} ${hours}:${minutes} UTC`;
-}
-
 function toTypeKey(path: string): string {
     const name = fileName(path);
     const extensionIndex = name.lastIndexOf(".");
@@ -1452,7 +1433,11 @@ export function FileBrowser({
                     <span className={activeDesign.fileMetaClass}>
                         {renderMetaItems([
                             formatBytes(file.size),
-                            formatMtime(file.mtime),
+                            <LocalTimestamp
+                                format="fileDateTime"
+                                key="mtime"
+                                value={file.mtime}
+                            />,
                             <span data-file-kind={file.path} key="file-kind">
                                 {file.kind}
                             </span>,

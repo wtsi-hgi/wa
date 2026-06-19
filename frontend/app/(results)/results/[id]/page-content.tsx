@@ -1,6 +1,7 @@
 import { LockKeyhole } from "lucide-react";
 
 import { fetchFiles, fetchResult } from "@/app/(results)/actions";
+import { LocalTimestamp } from "@/components/local-timestamp";
 import { ResultDetailFiles } from "@/components/result-detail-files";
 import { ResultMetadataEnrichment } from "@/components/result-metadata-enrichment";
 import { ResultRegistrationSummary } from "@/components/result-registration-summary";
@@ -44,17 +45,6 @@ export async function resolveResultDetailPageProps({
         id,
         searchParams: (await searchParams) ?? {},
     };
-}
-
-function formatTimestamp(value: string): string {
-    return new Date(value).toLocaleString("en-GB", {
-        year: "numeric",
-        month: "short",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        timeZone: "UTC",
-    });
 }
 
 type FileSummary = {
@@ -150,8 +140,18 @@ function detailFields(
             mono: true,
             wide: true,
         },
-        { label: "Registered", value: formatTimestamp(result.created_at) },
-        { label: "Last updated", value: formatTimestamp(result.updated_at) },
+        {
+            label: "Registered",
+            value: (
+                <LocalTimestamp format="dateTime" value={result.created_at} />
+            ),
+        },
+        {
+            label: "Last updated",
+            value: (
+                <LocalTimestamp format="dateTime" value={result.updated_at} />
+            ),
+        },
         ...fileDetailFields(fileSummary),
         { label: "Command", value: result.command, mono: true, wide: true },
     ];
