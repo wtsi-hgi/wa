@@ -1075,6 +1075,7 @@ func appendMultiValueSearchFilter(filters []string, args []any, field string, va
 	clauses := make([]string, 0, len(values))
 
 	for _, value := range values {
+		// Search filters use substring matching so typed values and autocomplete values share semantics.
 		clauses = append(clauses, fmt.Sprintf("instr(lower(%s), lower(?)) > 0", field))
 		args = append(args, value)
 	}
