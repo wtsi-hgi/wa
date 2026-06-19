@@ -1195,6 +1195,22 @@ func TestStoreSearchSuggestions(t *testing.T) {
 		convey.So(suggestions, convey.ShouldResemble, []SearchSuggestion{})
 	})
 
+	convey.Convey("SearchSuggestions skips registration scans for one-character generic queries", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		store := &Store{db: db}
+
+		suggestions, err := store.SearchSuggestions(context.Background(), " a ", 10)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(suggestions, convey.ShouldResemble, []SearchSuggestion{})
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+
 	convey.Convey("Given registered metadata, hasExactMetadataValue matches exact values case-insensitively but not substrings", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()

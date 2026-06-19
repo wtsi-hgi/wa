@@ -5,7 +5,7 @@ import type { FileEntry } from "@/lib/contracts";
 export const fileBrowserGlobFilterStoragePrefix =
     "wa:file-browser:glob-filter:";
 
-const regexSpecialCharacters = /[\\^$+?.()|{}]/g;
+const regexSpecialCharacters = /[\\^$+?.()|{}\[\]]/g;
 
 function escapeRegexCharacter(character: string): string {
     return character.replace(regexSpecialCharacters, "\\$&");

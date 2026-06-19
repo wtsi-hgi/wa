@@ -3089,6 +3089,20 @@ func TestServerGetSearchSuggestions(t *testing.T) {
 		convey.So(suggestionValuesByFieldForTest(suggestions)["sample"], convey.ShouldContain, "Hek_R1")
 	})
 
+	convey.Convey("GET /results/search-suggestions skips store and MLWH suggestions for one-character generic queries", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-short-suggestion", func(reg *Registration) {
+			reg.Requester = "alice"
+		}))
+		expander := &mockSearchExpander{}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=a", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Body.String(), convey.ShouldEqual, "[]\n")
+		convey.So(expander.classifyCalls, convey.ShouldBeEmpty)
+	})
+
 	convey.Convey("GET /results/search-suggestions rejects invalid limits", t, func() {
 		store := newSQLiteStoreForTest(t)
 

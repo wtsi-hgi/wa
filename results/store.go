@@ -36,9 +36,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 const enableForeignKeysSQL = `PRAGMA foreign_keys = ON`
+
+const minSearchSuggestionQueryLength = 2
 
 const createResultSetsTableSQL = `
 CREATE TABLE IF NOT EXISTS result_sets (
@@ -449,6 +452,12 @@ func isDuplicateColumnError(err error) bool {
 	message := strings.ToLower(err.Error())
 
 	return strings.Contains(message, "duplicate column") || strings.Contains(message, "already exists")
+}
+
+func normalizedSearchSuggestionQuery(query string) (string, bool) {
+	term := strings.TrimSpace(query)
+
+	return term, utf8.RuneCountInString(term) >= minSearchSuggestionQueryLength
 }
 
 func upsertResultSetRow(ctx context.Context, tx *sql.Tx, id string, reg *Registration) (time.Time, time.Time, error) {
@@ -1394,8 +1403,8 @@ func (s *Store) SearchSuggestions(ctx context.Context, query string, limit int) 
 		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
 	}
 
-	term := strings.TrimSpace(query)
-	if term == "" || limit <= 0 {
+	term, ok := normalizedSearchSuggestionQuery(query)
+	if !ok || limit <= 0 {
 		return []SearchSuggestion{}, nil
 	}
 

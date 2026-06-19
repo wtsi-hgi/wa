@@ -1249,8 +1249,8 @@ func appendUniqueSearchSuggestions(existing []SearchSuggestion, incoming []Searc
 }
 
 func (s *Server) mlwhSearchSuggestions(ctx context.Context, query string, limit int) ([]SearchSuggestion, error) {
-	term := strings.TrimSpace(query)
-	if term == "" || limit <= 0 || s == nil || s.resolver == nil {
+	term, ok := normalizedSearchSuggestionQuery(query)
+	if !ok || limit <= 0 || s == nil || s.resolver == nil {
 		return []SearchSuggestion{}, nil
 	}
 

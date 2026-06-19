@@ -689,6 +689,28 @@ describe("K1 filter builder component", () => {
         );
     });
 
+    it("does not fetch generic suggestions for a one-character draft", async () => {
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: ["assay_tag"],
+                seqmetaAvailable: false,
+                studies: [],
+            }),
+        );
+
+        fireEvent.change(screen.getByLabelText(/generic all-field search/i), {
+            target: { value: "n" },
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 160));
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByRole("listbox")).toBeNull();
+    });
+
     it("clears generic all-field suggestions as soon as a non-empty query changes", async () => {
         fetchMock
             .mockResolvedValueOnce({

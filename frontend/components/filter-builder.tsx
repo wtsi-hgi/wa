@@ -307,6 +307,14 @@ function getVisibleGenericSuggestions(
     return visibleSuggestions.slice(0, 8);
 }
 
+const minimumGenericSuggestionQueryLength = 2;
+
+function hasMinimumGenericSuggestionQueryLength(query: string): boolean {
+    return (
+        Array.from(query.trim()).length >= minimumGenericSuggestionQueryLength
+    );
+}
+
 function searchSuggestionsPath(query: string): string {
     return `/api/results/search-suggestions?q=${encodeURIComponent(query)}`;
 }
@@ -355,7 +363,7 @@ export function FilterBuilder({
 
     useEffect(() => {
         const trimmedValue = genericDraftValue.trim();
-        if (!trimmedValue) {
+        if (!hasMinimumGenericSuggestionQueryLength(trimmedValue)) {
             return;
         }
 

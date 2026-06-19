@@ -1270,6 +1270,33 @@ describe("N1 file browser", () => {
         ]);
     });
 
+    it("treats unmatched glob brackets as literal characters", async () => {
+        const { filePathMatchesGlobPattern, filterFilesByGlobPattern } =
+            await import("@/lib/file-glob-filter");
+        const files = [
+            buildFile("/out/reports/sample[abc.txt", "output"),
+            buildFile("/out/reports/sample]abc.txt", "output"),
+            buildFile("/out/reports/unrelated.txt", "output"),
+        ];
+
+        expect(
+            filterFilesByGlobPattern(files, "sample[abc.txt").map(
+                (file) => file.path,
+            ),
+        ).toEqual(["/out/reports/sample[abc.txt"]);
+        expect(
+            filterFilesByGlobPattern(files, "sample]abc.txt").map(
+                (file) => file.path,
+            ),
+        ).toEqual(["/out/reports/sample]abc.txt"]);
+        expect(
+            filePathMatchesGlobPattern(
+                "/out/reports/unrelated.txt",
+                "sample[abc.txt",
+            ),
+        ).toBe(false);
+    });
+
     it("compiles glob filters once for each file filter operation", async () => {
         const { filterFilesByGlobPattern } =
             await import("@/lib/file-glob-filter");
