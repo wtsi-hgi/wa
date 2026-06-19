@@ -1417,7 +1417,7 @@ func (s *Store) SearchSuggestions(ctx context.Context, query string, limit int) 
 	queryParts = append(queryParts, `SELECT 100 AS field_order, 1 AS is_metadata, meta_key AS field_key, value AS match_value
 		FROM result_metadata
 		WHERE instr(lower(value), lower(?)) > 0`)
-	args = append(args, term, limit*4)
+	args = append(args, term, limit)
 
 	rows, err := s.db.QueryContext(
 		ctx,

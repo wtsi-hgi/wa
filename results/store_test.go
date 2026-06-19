@@ -28,6 +28,7 @@ package results
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
@@ -1211,6 +1212,33 @@ func TestStoreSearchSuggestions(t *testing.T) {
 		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
 	})
 
+	convey.Convey("SearchSuggestions passes the requested limit to the registration query", t, func() {
+		db, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			_ = db.Close()
+		}()
+
+		const (
+			query = "needle"
+			limit = 3
+		)
+		args := searchSuggestionArgsForTest(query, limit)
+		rows := sqlmock.NewRows([]string{"field_key", "is_metadata", "match_value"}).
+			AddRow("run_key", 0, "needle-run")
+		mock.ExpectQuery("SELECT field_key, is_metadata, match_value").
+			WithArgs(args...).
+			WillReturnRows(rows)
+
+		store := &Store{db: db}
+
+		suggestions, err := store.SearchSuggestions(context.Background(), query, limit)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(suggestions, convey.ShouldResemble, []SearchSuggestion{{FieldKey: "run_key", Value: "needle-run"}})
+		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+
 	convey.Convey("Given registered metadata, hasExactMetadataValue matches exact values case-insensitively but not substrings", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()
@@ -1243,6 +1271,15 @@ func suggestionValuesByFieldForTest(suggestions []SearchSuggestion) map[string][
 	}
 
 	return valuesByField
+}
+
+func searchSuggestionArgsForTest(query string, limit int) []driver.Value {
+	args := make([]driver.Value, 0, len(searchSuggestionSources)*2+2)
+	for _, source := range searchSuggestionSources {
+		args = append(args, source.fieldKey, query)
+	}
+
+	return append(args, query, limit)
 }
 
 func TestStoreGet(t *testing.T) {
