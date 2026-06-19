@@ -48,6 +48,7 @@ const inlinePreviewContentBypassExtensionSet: ReadonlySet<string> = new Set([
     "html",
     "htm",
     "pdf",
+    "svg",
 ]);
 
 export type PreviewSpecificFileExtension =

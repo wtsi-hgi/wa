@@ -4,6 +4,7 @@ import {
     effectivePreviewExtension,
     previewFileTypeForPath,
     previewFileTypeOptions,
+    shouldFetchInlinePreviewContent,
 } from "@/lib/preview-file-types";
 
 describe("preview file types", () => {
@@ -51,5 +52,20 @@ describe("preview file types", () => {
         expect(effectivePreviewExtension("/results/table.tsv.gz")).toBe("tsv");
         expect(effectivePreviewExtension("/results/archive.gz")).toBe("gz");
         expect(effectivePreviewExtension("/results/no-extension")).toBe("");
+    });
+
+    it("bypasses inline content fetching for preview types rendered from URLs", () => {
+        expect(shouldFetchInlinePreviewContent("/results/plot.svg")).toBe(
+            false,
+        );
+        expect(shouldFetchInlinePreviewContent("/results/plot.png")).toBe(
+            false,
+        );
+        expect(shouldFetchInlinePreviewContent("/results/report.pdf")).toBe(
+            false,
+        );
+        expect(shouldFetchInlinePreviewContent("/results/summary.md")).toBe(
+            true,
+        );
     });
 });
