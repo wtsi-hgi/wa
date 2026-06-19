@@ -638,11 +638,15 @@ describe("K1 filter builder component", () => {
             json: async () => [
                 {
                     field_key: "meta_assay_tag",
-                    value: "alpha-needle-260618-omega",
+                    value: "alpha-exon_lib-omega",
                 },
                 {
                     field_key: "user",
-                    value: "requester-needle-260618",
+                    value: "requester-exon_lib",
+                },
+                {
+                    field_key: "run_key",
+                    value: "runid=48522&unique=exon_lib",
                 },
             ],
             ok: true,
@@ -660,32 +664,38 @@ describe("K1 filter builder component", () => {
         );
 
         fireEvent.change(screen.getByLabelText(/generic all-field search/i), {
-            target: { value: "needle-260618" },
+            target: { value: "exon_lib" },
         });
 
         await waitFor(() => {
             expect(fetchMock).toHaveBeenCalledWith(
-                "/api/results/search-suggestions?q=needle-260618",
+                "/api/results/search-suggestions?q=exon_lib",
                 expect.objectContaining({ signal: expect.any(AbortSignal) }),
             );
         });
 
         const assayOption = await screen.findByRole("option", {
-            name: /add assay tag filter alpha-needle-260618-omega/i,
+            name: /add assay tag filter alpha-exon_lib-omega/i,
         });
 
         expect(assayOption.textContent).toContain("Assay Tag");
-        expect(assayOption.textContent).toContain("alpha-needle-260618-omega");
+        expect(assayOption.textContent).toContain("alpha-exon_lib-omega");
         expect(
             screen.getByRole("option", {
-                name: /add requester filter requester-needle-260618/i,
+                name: /add requester filter requester-exon_lib/i,
             }).textContent,
         ).toContain("Requester");
+        const runKeyOption = screen.getByRole("option", {
+            name: /add unique filter 48522 \/ exon_lib/i,
+        });
 
-        fireEvent.click(assayOption);
+        expect(runKeyOption.textContent).toContain("Unique");
+        expect(runKeyOption.textContent).toContain("48522 / exon_lib");
+
+        fireEvent.click(runKeyOption);
 
         expect(pushMock).toHaveBeenCalledWith(
-            "/?meta_assay_tag=alpha-needle-260618-omega",
+            "/?run_key=runid%3D48522%26unique%3Dexon_lib",
         );
     });
 

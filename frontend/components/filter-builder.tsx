@@ -259,7 +259,7 @@ function isSearchSuggestion(value: unknown): value is SearchSuggestion {
     );
 }
 
-function suggestionFilterValue(suggestion: SearchSuggestion): string {
+function suggestionDisplayValue(suggestion: SearchSuggestion): string {
     if (suggestion.field_key === "run_key") {
         return formatRegistrationUnique(suggestion.value);
     }
@@ -268,7 +268,7 @@ function suggestionFilterValue(suggestion: SearchSuggestion): string {
 }
 
 function genericSuggestionIdentity(suggestion: SearchSuggestion): string {
-    return `${canonicalSearchFilterKey(suggestion.field_key)}:${suggestionFilterValue(suggestion)}`;
+    return `${canonicalSearchFilterKey(suggestion.field_key)}:${suggestionDisplayValue(suggestion)}`;
 }
 
 function getVisibleGenericSuggestions(
@@ -426,7 +426,7 @@ export function FilterBuilder({
     function applyGenericSuggestion(suggestion: SearchSuggestion) {
         applyFilterValue(
             canonicalSearchFilterKey(suggestion.field_key),
-            suggestionFilterValue(suggestion),
+            suggestion.value.trim(),
         );
         setGenericDraftValue("");
         setGenericSuggestions([]);
@@ -694,7 +694,7 @@ export function FilterBuilder({
                             >
                                 {visibleGenericSuggestions.map((suggestion) => {
                                     const value =
-                                        suggestionFilterValue(suggestion);
+                                        suggestionDisplayValue(suggestion);
                                     const label = getFieldLabel(
                                         fieldOptions,
                                         suggestion.field_key,
