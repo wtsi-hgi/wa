@@ -764,7 +764,7 @@ function CopyPathControl({
 
 function SubdirPreviewLoadingCard({ count }: { count: number }) {
     return (
-        <div className="flex h-full w-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
+        <div className="flex h-full w-full box-border flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
             <span>Loading preview...</span>
             {count > 1 ? (
                 <span className="mt-1 text-xs">{count} files queued</span>
@@ -1170,6 +1170,8 @@ export function FileBrowser({
         useState(previewHeight);
     const [subdirPreviewEnabledByPath, setSubdirPreviewEnabledByPath] =
         useState<Record<string, boolean>>({});
+    const [subdirPreviewActivatingByPath, setSubdirPreviewActivatingByPath] =
+        useState<Record<string, boolean>>({});
     const [subdirPreviewReadyByPath, setSubdirPreviewReadyByPath] = useState<
         Record<string, boolean>
     >({});
@@ -1193,11 +1195,16 @@ export function FileBrowser({
     const scheduledSubdirPreviewRenderRef = useRef<Record<string, () => void>>(
         {},
     );
+    const scheduledSubdirPreviewActivationRef = useRef<
+        Record<string, () => void>
+    >({});
     const effectivePreviewHeight = clampPreviewHeight(
         onPreviewHeightChange ? previewHeight : uncontrolledPreviewHeight,
     );
     const subdirPreviewEnabledFor = (directoryPath: string): boolean =>
         subdirPreviewEnabledByPath[directoryPath] ?? false;
+    const subdirPreviewActivatingFor = (directoryPath: string): boolean =>
+        subdirPreviewActivatingByPath[directoryPath] ?? false;
     const subdirPreviewReadyFor = (directoryPath: string): boolean =>
         subdirPreviewReadyByPath[directoryPath] ?? false;
     const subdirPreviewKindsFor = (
@@ -1252,6 +1259,36 @@ export function FileBrowser({
 
             cancel();
             delete scheduledSubdirPreviewRenderRef.current[directoryPath];
+        },
+        [],
+    );
+    const cancelScheduledSubdirPreviewActivation = useCallback(
+        (directoryPath: string): void => {
+            const cancel =
+                scheduledSubdirPreviewActivationRef.current[directoryPath];
+
+            if (!cancel) {
+                return;
+            }
+
+            cancel();
+            delete scheduledSubdirPreviewActivationRef.current[directoryPath];
+        },
+        [],
+    );
+    const clearSubdirPreviewActivating = useCallback(
+        (directoryPath: string): void => {
+            setSubdirPreviewActivatingByPath((current) => {
+                if (!(directoryPath in current)) {
+                    return current;
+                }
+
+                const next = { ...current };
+
+                delete next[directoryPath];
+
+                return next;
+            });
         },
         [],
     );
@@ -1344,6 +1381,78 @@ export function FileBrowser({
             }));
         },
         [cancelScheduledSubdirPreviewRender, scheduleSubdirPreviewRender],
+    );
+    const enableSubdirPreview = useCallback(
+        (directoryPath: string, deferRender: boolean): void => {
+            cancelScheduledSubdirPreviewActivation(directoryPath);
+            clearSubdirPreviewActivating(directoryPath);
+            setSubdirPreviewEnabledByPath((current) => ({
+                ...current,
+                [directoryPath]: true,
+            }));
+            setSubdirPreviewPages((current) => ({
+                ...current,
+                [directoryPath]: 1,
+            }));
+            prepareSubdirPreviewRender(directoryPath, deferRender);
+        },
+        [
+            cancelScheduledSubdirPreviewActivation,
+            clearSubdirPreviewActivating,
+            prepareSubdirPreviewRender,
+        ],
+    );
+    const scheduleSubdirPreviewActivation = useCallback(
+        (directoryPath: string, deferRender: boolean): void => {
+            cancelScheduledSubdirPreviewActivation(directoryPath);
+            setSubdirPreviewActivatingByPath((current) => ({
+                ...current,
+                [directoryPath]: true,
+            }));
+            setSubdirPreviewPages((current) => ({
+                ...current,
+                [directoryPath]: 1,
+            }));
+
+            const activate = () => {
+                delete scheduledSubdirPreviewActivationRef.current[
+                    directoryPath
+                ];
+                enableSubdirPreview(directoryPath, deferRender);
+            };
+
+            if (
+                typeof window === "undefined" ||
+                typeof window.requestAnimationFrame !== "function"
+            ) {
+                if (typeof window === "undefined") {
+                    activate();
+                    return;
+                }
+
+                const timeout = window.setTimeout(activate, 0);
+
+                scheduledSubdirPreviewActivationRef.current[directoryPath] =
+                    () => {
+                        window.clearTimeout(timeout);
+                    };
+                return;
+            }
+
+            let secondFrame: number | null = null;
+            const firstFrame = window.requestAnimationFrame(() => {
+                secondFrame = window.requestAnimationFrame(activate);
+            });
+
+            scheduledSubdirPreviewActivationRef.current[directoryPath] = () => {
+                window.cancelAnimationFrame(firstFrame);
+
+                if (secondFrame !== null) {
+                    window.cancelAnimationFrame(secondFrame);
+                }
+            };
+        },
+        [cancelScheduledSubdirPreviewActivation, enableSubdirPreview],
     );
     const updateSubdirPreviewKinds = useCallback(
         (
@@ -1500,13 +1609,20 @@ export function FileBrowser({
     }, [openPreviewModeDisclosurePath]);
     useEffect(() => {
         const scheduledRenders = scheduledSubdirPreviewRenderRef.current;
+        const scheduledActivations =
+            scheduledSubdirPreviewActivationRef.current;
 
         return () => {
             for (const cancel of Object.values(scheduledRenders)) {
                 cancel();
             }
 
+            for (const cancel of Object.values(scheduledActivations)) {
+                cancel();
+            }
+
             scheduledSubdirPreviewRenderRef.current = {};
+            scheduledSubdirPreviewActivationRef.current = {};
         };
     }, []);
 
@@ -1644,6 +1760,16 @@ export function FileBrowser({
         } = options;
         const showPreviewPaging = previewPageCount > 1;
         const subdirPreviewEnabled = subdirPreviewEnabledFor(directoryPath);
+        const subdirPreviewActivating =
+            subdirPreviewActivatingFor(directoryPath);
+        const subdirPreviewModeActive =
+            subdirPreviewEnabled || subdirPreviewActivating;
+        const showSubdirPreviewLoadingStatus =
+            hasSubdirPreviewControls &&
+            (subdirPreviewActivating ||
+                (subdirPreviewEnabled &&
+                    deferSubdirPreviewRender &&
+                    !subdirPreviewReadyFor(directoryPath)));
         const subdirPreviewKinds = subdirPreviewKindsFor(directoryPath);
         const controlPlacement = inlineControlPlacement;
         const hasPreviewModeControls =
@@ -1714,7 +1840,7 @@ export function FileBrowser({
                                 >
                                     {summarizePreviewModes(
                                         previewMode,
-                                        subdirPreviewEnabled,
+                                        subdirPreviewModeActive,
                                         showGridToggle,
                                     )}
                                 </span>
@@ -1762,34 +1888,41 @@ export function FileBrowser({
                                         <span>Subfolder previews</span>
                                         <input
                                             aria-label="Subfolder previews"
-                                            checked={subdirPreviewEnabled}
+                                            checked={subdirPreviewModeActive}
                                             className="size-4 accent-primary"
                                             onChange={(event) => {
                                                 const nextEnabled =
                                                     event.target.checked;
 
-                                                setSubdirPreviewEnabledByPath(
-                                                    (current) => ({
-                                                        ...current,
-                                                        [directoryPath]:
-                                                            nextEnabled,
-                                                    }),
-                                                );
-                                                setSubdirPreviewPages(
-                                                    (current) => ({
-                                                        ...current,
-                                                        [directoryPath]: 1,
-                                                    }),
-                                                );
-
                                                 if (nextEnabled) {
-                                                    prepareSubdirPreviewRender(
-                                                        directoryPath,
-                                                        deferSubdirPreviewRender,
-                                                    );
+                                                    if (
+                                                        deferSubdirPreviewRender
+                                                    ) {
+                                                        scheduleSubdirPreviewActivation(
+                                                            directoryPath,
+                                                            deferSubdirPreviewRender,
+                                                        );
+                                                    } else {
+                                                        enableSubdirPreview(
+                                                            directoryPath,
+                                                            deferSubdirPreviewRender,
+                                                        );
+                                                    }
                                                 } else {
+                                                    cancelScheduledSubdirPreviewActivation(
+                                                        directoryPath,
+                                                    );
                                                     cancelScheduledSubdirPreviewRender(
                                                         directoryPath,
+                                                    );
+                                                    clearSubdirPreviewActivating(
+                                                        directoryPath,
+                                                    );
+                                                    setSubdirPreviewEnabledByPath(
+                                                        (current) => ({
+                                                            ...current,
+                                                            [directoryPath]: false,
+                                                        }),
                                                     );
                                                     clearSubdirPreviewReady(
                                                         directoryPath,
@@ -1803,6 +1936,17 @@ export function FileBrowser({
                             </div>
                         </div>
                     </details>
+                ) : null}
+
+                {showSubdirPreviewLoadingStatus ? (
+                    <span
+                        aria-live="polite"
+                        className="inline-flex items-center rounded-md border border-dashed border-border/70 bg-background/80 px-2 py-1 text-xs font-medium text-muted-foreground"
+                        data-subdir-preview-loading-status={directoryPath}
+                        role="status"
+                    >
+                        Loading previews...
+                    </span>
                 ) : null}
 
                 {hasFilePreviewControls || hasSubdirPreviewControls ? (

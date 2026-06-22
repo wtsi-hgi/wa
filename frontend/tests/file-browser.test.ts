@@ -3770,6 +3770,23 @@ describe("N1 file browser", () => {
         renderGridPreview.mockClear();
         await click(toggle);
 
+        expect(container.textContent).toContain("Loading previews...");
+        expect(
+            container.querySelectorAll("[data-subdir-preview-card]"),
+        ).toHaveLength(0);
+        expect(
+            container.querySelectorAll("[data-mounted-preview]"),
+        ).toHaveLength(0);
+        expect(renderGridPreview).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                    window.requestAnimationFrame(resolve),
+                ),
+            );
+        });
+
         expect(container.textContent).toContain("Loading preview...");
         expect(
             container.querySelectorAll("[data-subdir-preview-card]"),

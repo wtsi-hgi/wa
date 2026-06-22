@@ -1012,7 +1012,7 @@ export function FilePreview({
 
                 <div className="min-h-0 flex-1 overflow-hidden">
                     {isLoading ? (
-                        <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
+                        <div className="flex h-full w-full box-border items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
                             Loading preview...
                         </div>
                     ) : null}
