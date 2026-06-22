@@ -83,6 +83,7 @@ const fileKindOrder: Record<FileEntry["kind"], number> = {
 export type SubdirPreviewKind = PreviewFileTypeId;
 
 const SUBDIR_PREVIEW_PAGE_SIZE = 20;
+const DEFER_SUBDIR_PREVIEW_MOUNT_THRESHOLD = 80;
 const PREVIEW_HEIGHT_MIN = 120;
 const PREVIEW_HEIGHT_MAX = 420;
 const allSubdirPreviewKinds = new Set<SubdirPreviewKind>(allPreviewFileTypeIds);
@@ -761,6 +762,17 @@ function CopyPathControl({
     );
 }
 
+function SubdirPreviewLoadingCard({ count }: { count: number }) {
+    return (
+        <div className="flex h-full w-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
+            <span>Loading preview...</span>
+            {count > 1 ? (
+                <span className="mt-1 text-xs">{count} files queued</span>
+            ) : null}
+        </div>
+    );
+}
+
 function directoryLabel(path: string): string {
     return path === "/" ? "/" : path.slice(1);
 }
@@ -1158,6 +1170,9 @@ export function FileBrowser({
         useState(previewHeight);
     const [subdirPreviewEnabledByPath, setSubdirPreviewEnabledByPath] =
         useState<Record<string, boolean>>({});
+    const [subdirPreviewReadyByPath, setSubdirPreviewReadyByPath] = useState<
+        Record<string, boolean>
+    >({});
     const [subdirPreviewKindsByPath, setSubdirPreviewKindsByPath] = useState<
         Record<string, Set<SubdirPreviewKind>>
     >({});
@@ -1175,11 +1190,16 @@ export function FileBrowser({
     const openPreviewModeDisclosureRef = useRef<HTMLDetailsElement | null>(
         null,
     );
+    const scheduledSubdirPreviewRenderRef = useRef<Record<string, () => void>>(
+        {},
+    );
     const effectivePreviewHeight = clampPreviewHeight(
         onPreviewHeightChange ? previewHeight : uncontrolledPreviewHeight,
     );
     const subdirPreviewEnabledFor = (directoryPath: string): boolean =>
         subdirPreviewEnabledByPath[directoryPath] ?? false;
+    const subdirPreviewReadyFor = (directoryPath: string): boolean =>
+        subdirPreviewReadyByPath[directoryPath] ?? false;
     const subdirPreviewKindsFor = (
         directoryPath: string,
     ): Set<SubdirPreviewKind> =>
@@ -1221,10 +1241,115 @@ export function FileBrowser({
     const handleSaveFileFilter = useCallback(() => {
         saveFileBrowserGlobFilter(filterStorageKey, effectiveFileFilter);
     }, [effectiveFileFilter, filterStorageKey]);
+    const cancelScheduledSubdirPreviewRender = useCallback(
+        (directoryPath: string): void => {
+            const cancel =
+                scheduledSubdirPreviewRenderRef.current[directoryPath];
+
+            if (!cancel) {
+                return;
+            }
+
+            cancel();
+            delete scheduledSubdirPreviewRenderRef.current[directoryPath];
+        },
+        [],
+    );
+    const clearSubdirPreviewReady = useCallback(
+        (directoryPath: string): void => {
+            setSubdirPreviewReadyByPath((current) => {
+                if (!(directoryPath in current)) {
+                    return current;
+                }
+
+                const next = { ...current };
+
+                delete next[directoryPath];
+
+                return next;
+            });
+        },
+        [],
+    );
+    const scheduleSubdirPreviewRender = useCallback(
+        (directoryPath: string): void => {
+            cancelScheduledSubdirPreviewRender(directoryPath);
+            setSubdirPreviewReadyByPath((current) => ({
+                ...current,
+                [directoryPath]: false,
+            }));
+
+            if (
+                typeof window === "undefined" ||
+                typeof window.requestAnimationFrame !== "function"
+            ) {
+                if (typeof window === "undefined") {
+                    setSubdirPreviewReadyByPath((current) => ({
+                        ...current,
+                        [directoryPath]: true,
+                    }));
+                    return;
+                }
+
+                const timeout = window.setTimeout(() => {
+                    delete scheduledSubdirPreviewRenderRef.current[
+                        directoryPath
+                    ];
+                    setSubdirPreviewReadyByPath((current) => ({
+                        ...current,
+                        [directoryPath]: true,
+                    }));
+                }, 0);
+
+                scheduledSubdirPreviewRenderRef.current[directoryPath] = () => {
+                    window.clearTimeout(timeout);
+                };
+                return;
+            }
+
+            let secondFrame: number | null = null;
+            const firstFrame = window.requestAnimationFrame(() => {
+                secondFrame = window.requestAnimationFrame(() => {
+                    delete scheduledSubdirPreviewRenderRef.current[
+                        directoryPath
+                    ];
+                    setSubdirPreviewReadyByPath((current) => ({
+                        ...current,
+                        [directoryPath]: true,
+                    }));
+                });
+            });
+
+            scheduledSubdirPreviewRenderRef.current[directoryPath] = () => {
+                window.cancelAnimationFrame(firstFrame);
+
+                if (secondFrame !== null) {
+                    window.cancelAnimationFrame(secondFrame);
+                }
+            };
+        },
+        [cancelScheduledSubdirPreviewRender],
+    );
+    const prepareSubdirPreviewRender = useCallback(
+        (directoryPath: string, deferRender: boolean): void => {
+            if (deferRender) {
+                scheduleSubdirPreviewRender(directoryPath);
+                return;
+            }
+
+            cancelScheduledSubdirPreviewRender(directoryPath);
+            setSubdirPreviewReadyByPath((current) => ({
+                ...current,
+                [directoryPath]: true,
+            }));
+        },
+        [cancelScheduledSubdirPreviewRender, scheduleSubdirPreviewRender],
+    );
     const updateSubdirPreviewKinds = useCallback(
         (
             directoryPath: string,
             kinds: ReadonlySet<SubdirPreviewKind>,
+            deferRender: boolean,
         ): void => {
             setSubdirPreviewKindsByPath((current) => ({
                 ...current,
@@ -1234,8 +1359,12 @@ export function FileBrowser({
                 ...current,
                 [directoryPath]: 1,
             }));
+
+            if (subdirPreviewEnabledByPath[directoryPath]) {
+                prepareSubdirPreviewRender(directoryPath, deferRender);
+            }
         },
-        [],
+        [prepareSubdirPreviewRender, subdirPreviewEnabledByPath],
     );
 
     const visibleExpandedDirectories = useMemo(() => {
@@ -1369,6 +1498,17 @@ export function FileBrowser({
             document.removeEventListener("click", handleDocumentClick, true);
         };
     }, [openPreviewModeDisclosurePath]);
+    useEffect(() => {
+        const scheduledRenders = scheduledSubdirPreviewRenderRef.current;
+
+        return () => {
+            for (const cancel of Object.values(scheduledRenders)) {
+                cancel();
+            }
+
+            scheduledSubdirPreviewRenderRef.current = {};
+        };
+    }, []);
 
     const handlePreviewHeightCommit = useCallback(
         (value: number) => {
@@ -1486,6 +1626,7 @@ export function FileBrowser({
     const renderFolderControls = (
         directoryPath: string,
         options: {
+            deferSubdirPreviewRender: boolean;
             hasFilePreviewControls: boolean;
             hasSubdirPreviewControls: boolean;
             showGridToggle: boolean;
@@ -1494,6 +1635,7 @@ export function FileBrowser({
         },
     ) => {
         const {
+            deferSubdirPreviewRender,
             hasFilePreviewControls,
             hasSubdirPreviewControls,
             safeSubdirPreviewPage,
@@ -1623,12 +1765,14 @@ export function FileBrowser({
                                             checked={subdirPreviewEnabled}
                                             className="size-4 accent-primary"
                                             onChange={(event) => {
+                                                const nextEnabled =
+                                                    event.target.checked;
+
                                                 setSubdirPreviewEnabledByPath(
                                                     (current) => ({
                                                         ...current,
                                                         [directoryPath]:
-                                                            event.target
-                                                                .checked,
+                                                            nextEnabled,
                                                     }),
                                                 );
                                                 setSubdirPreviewPages(
@@ -1637,6 +1781,20 @@ export function FileBrowser({
                                                         [directoryPath]: 1,
                                                     }),
                                                 );
+
+                                                if (nextEnabled) {
+                                                    prepareSubdirPreviewRender(
+                                                        directoryPath,
+                                                        deferSubdirPreviewRender,
+                                                    );
+                                                } else {
+                                                    cancelScheduledSubdirPreviewRender(
+                                                        directoryPath,
+                                                    );
+                                                    clearSubdirPreviewReady(
+                                                        directoryPath,
+                                                    );
+                                                }
                                             }}
                                             type="checkbox"
                                         />
@@ -1736,6 +1894,7 @@ export function FileBrowser({
                                             updateSubdirPreviewKinds(
                                                 directoryPath,
                                                 new Set<SubdirPreviewKind>(),
+                                                deferSubdirPreviewRender,
                                             );
                                         }}
                                         type="button"
@@ -1784,6 +1943,7 @@ export function FileBrowser({
                                                     updateSubdirPreviewKinds(
                                                         directoryPath,
                                                         nextKinds,
+                                                        deferSubdirPreviewRender,
                                                     );
                                                 }}
                                                 type="checkbox"
@@ -1841,6 +2001,13 @@ export function FileBrowser({
                                     ...current,
                                     [directoryPath]: page,
                                 }));
+
+                                if (subdirPreviewEnabledFor(directoryPath)) {
+                                    prepareSubdirPreviewRender(
+                                        directoryPath,
+                                        deferSubdirPreviewRender,
+                                    );
+                                }
                             }}
                             page={safeSubdirPreviewPage}
                             pageCount={subdirPageCount}
@@ -1889,8 +2056,18 @@ export function FileBrowser({
     const renderSubdirPreviewStrip = (
         subdir: DirectoryTreeNode,
         kinds: ReadonlySet<SubdirPreviewKind>,
+        previewsReady: boolean,
     ): ReactNode => {
         const previewableFiles = previewableFilesForKinds(subdir, kinds);
+        const previewCards = previewsReady
+            ? previewableFiles.map((file) => ({
+                  file,
+                  isLoadingSummary: false,
+              }))
+            : previewableFiles.slice(0, 1).map((file) => ({
+                  file,
+                  isLoadingSummary: true,
+              }));
 
         return (
             <div
@@ -1906,23 +2083,26 @@ export function FileBrowser({
                         } as CSSProperties
                     }
                 >
-                    {previewableFiles.map((file) =>
+                    {previewCards.map(({ file, isLoadingSummary }) =>
                         (() => {
                             const previewKind = previewKindForPath(file.path);
                             const isVisualSubdirPreview =
                                 previewKind === "image" ||
                                 previewKind === "svg";
+                            const cardKey = isLoadingSummary
+                                ? `${subdir.path}::loading`
+                                : file.path;
 
                             return (
                                 <div
-                                    key={file.path}
+                                    key={cardKey}
                                     className={cn(
                                         activeDesign.subdirCardBaseClass,
                                         isVisualSubdirPreview
                                             ? activeDesign.subdirImageCardClass
                                             : activeDesign.subdirTextCardClass,
                                     )}
-                                    data-subdir-preview-card={file.path}
+                                    data-subdir-preview-card={cardKey}
                                     style={{
                                         maxWidth: `calc(var(--subdir-preview-height) * 1.8)`,
                                     }}
@@ -1934,16 +2114,26 @@ export function FileBrowser({
                                                 "min-w-0 flex-1",
                                             )}
                                             data-subdir-preview-filename={
-                                                file.path
+                                                isLoadingSummary
+                                                    ? cardKey
+                                                    : file.path
                                             }
-                                            title={fileName(file.path)}
+                                            title={
+                                                isLoadingSummary
+                                                    ? `${previewableFiles.length} previews queued`
+                                                    : fileName(file.path)
+                                            }
                                         >
-                                            {fileName(file.path)}
+                                            {isLoadingSummary
+                                                ? `${previewableFiles.length} previews queued`
+                                                : fileName(file.path)}
                                         </p>
-                                        <CopyPathControl
-                                            kind="file"
-                                            path={file.path}
-                                        />
+                                        {isLoadingSummary ? null : (
+                                            <CopyPathControl
+                                                kind="file"
+                                                path={file.path}
+                                            />
+                                        )}
                                     </div>
                                     <ResizablePreviewFrame
                                         className={cn(
@@ -1958,12 +2148,22 @@ export function FileBrowser({
                                         onHeightChange={
                                             handlePreviewHeightCommit
                                         }
-                                        path={file.path}
+                                        path={
+                                            isLoadingSummary
+                                                ? cardKey
+                                                : file.path
+                                        }
                                         style={{
                                             height: `var(--subdir-preview-height)`,
                                         }}
                                     >
-                                        {renderGridPreview?.(file) ?? null}
+                                        {isLoadingSummary ? (
+                                            <SubdirPreviewLoadingCard
+                                                count={previewableFiles.length}
+                                            />
+                                        ) : (
+                                            (renderGridPreview?.(file) ?? null)
+                                        )}
                                     </ResizablePreviewFrame>
                                 </div>
                             );
@@ -1998,6 +2198,15 @@ export function FileBrowser({
                 ),
             );
             const nodePreviewKinds = subdirPreviewKindsFor(node.path);
+            const visibleSubdirPreviewFileCount = visibleSubdirs.reduce(
+                (count, subdir) =>
+                    count +
+                    previewableFilesForKinds(subdir, nodePreviewKinds).length,
+                0,
+            );
+            const deferSubdirPreviewRender =
+                visibleSubdirPreviewFileCount >=
+                DEFER_SUBDIR_PREVIEW_MOUNT_THRESHOLD;
             const previewableNodeFiles = node.files.filter((file) =>
                 fileMatchesPreviewKinds(file, nodePreviewKinds),
             );
@@ -2026,6 +2235,9 @@ export function FileBrowser({
             const inlineSubdirPreviewKinds = parentNode
                 ? subdirPreviewKindsFor(parentNode.path)
                 : null;
+            const inlineSubdirPreviewsReady = parentNode
+                ? subdirPreviewReadyFor(parentNode.path)
+                : false;
             const showInlineSubdirPreview = Boolean(
                 parentNode &&
                 parentNode.path === effectiveSelectedDirectory &&
@@ -2036,6 +2248,7 @@ export function FileBrowser({
                 ),
             );
             const folderControls = renderFolderControls(node.path, {
+                deferSubdirPreviewRender,
                 hasFilePreviewControls,
                 hasSubdirPreviewControls,
                 showGridToggle,
@@ -2218,6 +2431,7 @@ export function FileBrowser({
                             ? renderSubdirPreviewStrip(
                                   node,
                                   inlineSubdirPreviewKinds,
+                                  inlineSubdirPreviewsReady,
                               )
                             : null}
                         {groupedContent}

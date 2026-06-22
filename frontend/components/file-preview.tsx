@@ -90,6 +90,7 @@ type LightboxImageProps = {
     fullSizeUrl: string;
     imageClassName?: string;
     maxHeightPx?: number;
+    minimumWidthPx?: number;
     sizes?: string;
     thumbnailHeight?: number;
     thumbnailUrl: string;
@@ -631,6 +632,7 @@ function LightboxImage({
     fullSizeUrl,
     imageClassName,
     maxHeightPx = 240,
+    minimumWidthPx,
     sizes = "320px",
     thumbnailHeight = 240,
     thumbnailUrl,
@@ -688,6 +690,10 @@ function LightboxImage({
                             height: `${maxHeightPx}px`,
                             maxHeight: `${maxHeightPx}px`,
                             maxWidth: `${thumbnailWidth}px`,
+                            minWidth:
+                                minimumWidthPx !== undefined
+                                    ? `${minimumWidthPx}px`
+                                    : undefined,
                             width: "auto",
                         }}
                     />
@@ -780,6 +786,7 @@ export const FileImageThumbnail = memo(
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}
                 maxHeightPx={height}
+                minimumWidthPx={160}
                 sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
                 thumbnailHeight={STABLE_THUMBNAIL_HEIGHT}
                 thumbnailUrl={thumbnailUrl}
@@ -856,7 +863,7 @@ export function FilePreview({
     const fileName = file.path.split("/").pop() ?? file.path;
     const previewable = isPreviewable(renderer, file.path);
     const highlightedContent = useMemo(() => {
-        if (renderer !== "code") {
+        if (renderer !== "code" || isLoading || !content) {
             return undefined;
         }
 
@@ -864,7 +871,7 @@ export function FilePreview({
             content?.content ?? "",
             content?.contentType ?? "text/plain",
         );
-    }, [content?.content, content?.contentType, renderer]);
+    }, [content, isLoading, renderer]);
 
     const dialogContent = enlargedContent ?? content;
     const inlineCsvParsed = useMemo(() => {
@@ -876,6 +883,10 @@ export function FilePreview({
     }, [content, renderer]);
     const dialogHighlightedContent = useMemo(() => {
         if (renderer !== "code") {
+            return undefined;
+        }
+
+        if (!dialogContent) {
             return undefined;
         }
 

@@ -3725,6 +3725,76 @@ describe("N1 file browser", () => {
         );
     });
 
+    it("shows subfolder preview loading cards before mounting large preview batches", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const subdirs = Array.from(
+            { length: 20 },
+            (_, index) => `batch-${String(index + 1).padStart(2, "0")}`,
+        );
+        const files = subdirs.flatMap((name) =>
+            Array.from({ length: 25 }, (_, index) =>
+                buildFile(
+                    `/demo/${name}/preview-${String(index + 1).padStart(2, "0")}.txt`,
+                    "output",
+                ),
+            ),
+        );
+        const renderGridPreview = vi.fn(
+            (file: FileEntry): ReactNode =>
+                createElement(
+                    "div",
+                    {
+                        "data-mounted-preview": file.path,
+                    },
+                    `preview:${file.path}`,
+                ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview,
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const toggle = container.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        );
+
+        renderGridPreview.mockClear();
+        await click(toggle);
+
+        expect(container.textContent).toContain("Loading preview...");
+        expect(
+            container.querySelectorAll("[data-subdir-preview-card]"),
+        ).toHaveLength(subdirs.length);
+        expect(container.textContent).toContain("25 files queued");
+        expect(
+            container.querySelectorAll("[data-mounted-preview]"),
+        ).toHaveLength(0);
+        expect(renderGridPreview).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                    window.requestAnimationFrame(resolve),
+                ),
+            );
+        });
+
+        await waitFor(() => {
+            expect(
+                container.querySelectorAll("[data-mounted-preview]"),
+            ).toHaveLength(500);
+        });
+    });
+
     it("hides the single-page widget for subfolder previews", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [
