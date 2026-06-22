@@ -3812,6 +3812,76 @@ describe("N1 file browser", () => {
         });
     });
 
+    it("avoids rescanning every visible subfolder while showing large preview loading summaries", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const pathReads = { count: 0 };
+        const subdirs = Array.from(
+            { length: 20 },
+            (_, index) => `batch-${String(index + 1).padStart(2, "0")}`,
+        );
+        const countedFile = (path: string): FileEntry => ({
+            ...buildFile(path, "output"),
+            get path() {
+                pathReads.count += 1;
+
+                return path;
+            },
+        });
+        const files = subdirs.flatMap((name) =>
+            Array.from({ length: 5 }, (_, index) =>
+                countedFile(
+                    `/demo/${name}/preview-${String(index + 1).padStart(2, "0")}.txt`,
+                ),
+            ),
+        );
+        const renderGridPreview = vi.fn(
+            (file: FileEntry): ReactNode =>
+                createElement(
+                    "div",
+                    {
+                        "data-mounted-preview": file.path,
+                    },
+                    `preview:${file.path}`,
+                ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview,
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const toggle = container.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        );
+
+        pathReads.count = 0;
+        await click(toggle);
+
+        await act(async () => {
+            await new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                    window.requestAnimationFrame(resolve),
+                ),
+            );
+        });
+
+        expect(container.textContent).toContain("Loading preview...");
+        expect(
+            container.querySelectorAll("[data-subdir-preview-card]"),
+        ).toHaveLength(subdirs.length);
+        expect(container.textContent).toContain("5 files queued");
+        expect(renderGridPreview).not.toHaveBeenCalled();
+        expect(pathReads.count).toBeLessThan(files.length * 10);
+    });
+
     it("keeps image loading summary cards on their real preview resize surface", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const subdirs = Array.from(

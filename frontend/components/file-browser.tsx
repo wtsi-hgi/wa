@@ -74,6 +74,19 @@ export type DirectoryTreeNode = {
     weight: number;
 };
 
+type SubdirPreviewEntry = {
+    previewableFiles: FileEntry[];
+    subdir: DirectoryTreeNode;
+};
+
+type SubdirPreviewState = {
+    available: boolean;
+    pageCount: number;
+    safePage: number;
+    visibleSubdirPreviewByPath: Map<string, SubdirPreviewEntry>;
+    visibleSubdirPreviewFileCount: number;
+};
+
 const fileKindOrder: Record<FileEntry["kind"], number> = {
     output: 0,
     input: 1,
@@ -109,7 +122,7 @@ function findInitialSubdirPreviewDirectoryInTree(
     kinds: ReadonlySet<SubdirPreviewKind>,
 ): string | undefined {
     for (const node of nodes) {
-        if (qualifyingSubdirsFor(node, kinds).length > 1) {
+        if (qualifyingSubdirPreviewsFor(node, kinds).length > 1) {
             return node.path;
         }
 
@@ -167,20 +180,32 @@ function pathMatchesNodeChain(
     return findTreeNodeByPath(node.children, path);
 }
 
-function qualifyingSubdirsFor(
+function qualifyingSubdirPreviewsFor(
     node: DirectoryTreeNode | undefined,
     kinds: ReadonlySet<SubdirPreviewKind>,
-): DirectoryTreeNode[] {
+): SubdirPreviewEntry[] {
     if (!node || kinds.size === 0) {
         return [];
     }
 
-    return node.children.filter(
-        (child) =>
-            (parentDirectory(child.path) === node.path ||
-                node.fileCount === 0) &&
-            previewableFilesForKinds(child, kinds).length > 0,
-    );
+    return node.children.flatMap((child) => {
+        if (parentDirectory(child.path) !== node.path && node.fileCount !== 0) {
+            return [];
+        }
+
+        const previewableFiles = previewableFilesForKinds(child, kinds);
+
+        if (previewableFiles.length === 0) {
+            return [];
+        }
+
+        return [
+            {
+                previewableFiles,
+                subdir: child,
+            },
+        ];
+    });
 }
 
 function previewableFilesForKinds(
@@ -191,6 +216,53 @@ function previewableFilesForKinds(
         const kind = previewKindForPath(file.path);
 
         return kind !== null && kinds.has(kind);
+    });
+}
+
+function subdirPreviewKindsEqual(
+    left: ReadonlySet<SubdirPreviewKind>,
+    right: ReadonlySet<SubdirPreviewKind>,
+): boolean {
+    if (left.size !== right.size) {
+        return false;
+    }
+
+    for (const kind of left) {
+        if (!right.has(kind)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function filterSubdirPreviewEntriesForKinds(
+    entries: SubdirPreviewEntry[],
+    kinds: ReadonlySet<SubdirPreviewKind>,
+): SubdirPreviewEntry[] {
+    if (kinds.size === 0) {
+        return [];
+    }
+
+    if (subdirPreviewKindsEqual(kinds, allSubdirPreviewKinds)) {
+        return entries;
+    }
+
+    return entries.flatMap((entry) => {
+        const previewableFiles = entry.previewableFiles.filter((file) =>
+            fileMatchesPreviewKinds(file, kinds),
+        );
+
+        if (previewableFiles.length === 0) {
+            return [];
+        }
+
+        return [
+            {
+                previewableFiles,
+                subdir: entry.subdir,
+            },
+        ];
     });
 }
 
@@ -2175,44 +2247,55 @@ export function FileBrowser({
         );
     };
 
-    const subdirPreviewStateFor = (node: DirectoryTreeNode) => {
+    const subdirPreviewStateFor = (
+        node: DirectoryTreeNode,
+    ): SubdirPreviewState => {
         const subdirPreviewKinds = subdirPreviewKindsFor(node.path);
-        const eligibleSubdirs = qualifyingSubdirsFor(
+        const eligibleSubdirPreviews = qualifyingSubdirPreviewsFor(
             node,
             allSubdirPreviewKinds,
         );
-        const qualifyingSubdirs = qualifyingSubdirsFor(
-            node,
+        const qualifyingSubdirPreviews = filterSubdirPreviewEntriesForKinds(
+            eligibleSubdirPreviews,
             subdirPreviewKinds,
         );
-        const available = eligibleSubdirs.length > 0;
+        const available = eligibleSubdirPreviews.length > 0;
         const pageCount = Math.max(
             1,
-            Math.ceil(qualifyingSubdirs.length / SUBDIR_PREVIEW_PAGE_SIZE),
+            Math.ceil(
+                qualifyingSubdirPreviews.length / SUBDIR_PREVIEW_PAGE_SIZE,
+            ),
         );
         const requestedPage = subdirPreviewPages[node.path] ?? 1;
         const safePage = Math.min(requestedPage, pageCount);
-        const visibleSubdirs = available
-            ? qualifyingSubdirs.slice(
+        const visibleSubdirPreviews = available
+            ? qualifyingSubdirPreviews.slice(
                   (safePage - 1) * SUBDIR_PREVIEW_PAGE_SIZE,
                   safePage * SUBDIR_PREVIEW_PAGE_SIZE,
               )
             : [];
+        const visibleSubdirPreviewFileCount = visibleSubdirPreviews.reduce(
+            (count, entry) => count + entry.previewableFiles.length,
+            0,
+        );
+        const visibleSubdirPreviewByPath = new Map(
+            visibleSubdirPreviews.map((entry) => [entry.subdir.path, entry]),
+        );
 
         return {
             available,
             pageCount,
             safePage,
-            visibleSubdirs,
+            visibleSubdirPreviewByPath,
+            visibleSubdirPreviewFileCount,
         };
     };
 
     const renderSubdirPreviewStrip = (
-        subdir: DirectoryTreeNode,
-        kinds: ReadonlySet<SubdirPreviewKind>,
+        entry: SubdirPreviewEntry,
         previewsReady: boolean,
     ): ReactNode => {
-        const previewableFiles = previewableFilesForKinds(subdir, kinds);
+        const { previewableFiles, subdir } = entry;
         const previewCards = previewsReady
             ? previewableFiles.map((file) => ({
                   file,
@@ -2328,6 +2411,7 @@ export function FileBrowser({
         nodes: DirectoryTreeNode[],
         depth = 0,
         parentPath?: string,
+        parentSubdirPreviewState?: SubdirPreviewState,
     ): ReactNode[] {
         return nodes.flatMap((node) => {
             const isStructurallyExpanded = visibleExpandedDirectories.has(
@@ -2336,24 +2420,19 @@ export function FileBrowser({
             const isSelected = node.path === effectiveSelectedDirectory;
             const hasChildren = node.children.length > 0;
             const hasFiles = node.descendantFileCount > 0;
+            const subdirPreviewState = subdirPreviewStateFor(node);
             const {
                 available: subdirPreviewAvailable,
                 pageCount: subdirPreviewPageCount,
                 safePage: safeSubdirPreviewPage,
-                visibleSubdirs,
-            } = subdirPreviewStateFor(node);
+                visibleSubdirPreviewFileCount,
+            } = subdirPreviewState;
             const hasExpandedDescendant = node.children.some((child) =>
                 collectTreePaths(child).some((path) =>
                     visibleExpandedDirectories.has(path),
                 ),
             );
             const nodePreviewKinds = subdirPreviewKindsFor(node.path);
-            const visibleSubdirPreviewFileCount = visibleSubdirs.reduce(
-                (count, subdir) =>
-                    count +
-                    previewableFilesForKinds(subdir, nodePreviewKinds).length,
-                0,
-            );
             const deferSubdirPreviewRender =
                 visibleSubdirPreviewFileCount >=
                 DEFER_SUBDIR_PREVIEW_MOUNT_THRESHOLD;
@@ -2378,24 +2457,19 @@ export function FileBrowser({
                 previewableNodeFiles.length > 1 &&
                 Boolean(renderGridPreview || renderSinglePreview) &&
                 (isSelected || previewMode === "grid");
-            const subdirPreviewKinds = nodePreviewKinds;
-            const parentNode = parentPath
-                ? findTreeNodeByPath(directoryTree, parentPath)
-                : undefined;
-            const inlineSubdirPreviewKinds = parentNode
-                ? subdirPreviewKindsFor(parentNode.path)
-                : null;
-            const inlineSubdirPreviewsReady = parentNode
-                ? subdirPreviewReadyFor(parentNode.path)
+            const parentSubdirPreviewEntry =
+                parentSubdirPreviewState?.visibleSubdirPreviewByPath.get(
+                    node.path,
+                );
+            const inlineSubdirPreviewsReady = parentPath
+                ? subdirPreviewReadyFor(parentPath)
                 : false;
             const showInlineSubdirPreview = Boolean(
-                parentNode &&
-                parentNode.path === effectiveSelectedDirectory &&
-                subdirPreviewEnabledFor(parentNode.path) &&
+                parentPath &&
+                parentPath === effectiveSelectedDirectory &&
+                subdirPreviewEnabledFor(parentPath) &&
                 !isStructurallyExpanded &&
-                subdirPreviewStateFor(parentNode).visibleSubdirs.some(
-                    (subdir) => subdir.path === node.path,
-                ),
+                parentSubdirPreviewEntry,
             );
             const folderControls = renderFolderControls(node.path, {
                 deferSubdirPreviewRender,
@@ -2577,10 +2651,9 @@ export function FileBrowser({
                             renderDirectoryButton()
                         )}
                         {!folderControlsInNameArea ? folderControls : null}
-                        {showInlineSubdirPreview && inlineSubdirPreviewKinds
+                        {showInlineSubdirPreview && parentSubdirPreviewEntry
                             ? renderSubdirPreviewStrip(
-                                  node,
-                                  inlineSubdirPreviewKinds,
+                                  parentSubdirPreviewEntry,
                                   inlineSubdirPreviewsReady,
                               )
                             : null}
@@ -2707,7 +2780,12 @@ export function FileBrowser({
 
             if (isStructurallyExpanded && hasChildren) {
                 contentRows.push(
-                    ...renderDirectoryRows(node.children, depth + 1, node.path),
+                    ...renderDirectoryRows(
+                        node.children,
+                        depth + 1,
+                        node.path,
+                        subdirPreviewState,
+                    ),
                 );
             }
 
