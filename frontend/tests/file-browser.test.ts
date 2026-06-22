@@ -3812,6 +3812,85 @@ describe("N1 file browser", () => {
         });
     });
 
+    it("keeps image loading summary cards on their real preview resize surface", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const subdirs = Array.from(
+            { length: 4 },
+            (_, index) => `batch-${String(index + 1).padStart(2, "0")}`,
+        );
+        const files = subdirs.flatMap((name) =>
+            Array.from({ length: 20 }, (_, index) =>
+                buildFile(
+                    `/demo/${name}/preview-${String(index + 1).padStart(2, "0")}.png`,
+                    "output",
+                ),
+            ),
+        );
+        const renderGridPreview = vi.fn(
+            (file: FileEntry): ReactNode =>
+                createElement(
+                    "div",
+                    {
+                        "data-mounted-preview": file.path,
+                    },
+                    `preview:${file.path}`,
+                ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview,
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        await click(
+            container.querySelector('input[aria-label="Subfolder previews"]'),
+        );
+
+        await act(async () => {
+            await new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                    window.requestAnimationFrame(resolve),
+                ),
+            );
+        });
+
+        const cardKey = "/demo/batch-01::loading";
+        const previewPath = "/demo/batch-01/preview-01.png";
+        const card = container.querySelector(
+            `[data-subdir-preview-card="${cardKey}"]`,
+        ) as HTMLElement | null;
+        const frame = card?.querySelector(
+            `[data-subdir-preview-frame="${previewPath}"]`,
+        ) as HTMLElement | null;
+        const surface = frame?.querySelector(
+            "[data-preview-resize-surface]",
+        ) as HTMLElement | null;
+
+        expect(card).toBeTruthy();
+        expect(card?.textContent).toContain("20 files queued");
+        expect(card?.getAttribute("data-subdir-preview-card")).toBe(cardKey);
+        expect(frame).toBeTruthy();
+        expect(frame?.getAttribute("data-preview-resize-frame")).toBe(
+            previewPath,
+        );
+        expect(surface).toBeTruthy();
+        expect(surface?.getAttribute("data-preview-resize-surface")).toBe(
+            previewPath,
+        );
+        expect(surface?.className).toContain("inline-flex");
+        expect(surface?.className).toContain("w-fit");
+        expect(surface?.className).not.toContain("flex w-full");
+        expect(renderGridPreview).not.toHaveBeenCalled();
+    });
+
     it("hides the single-page widget for subfolder previews", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const files = [

@@ -2292,11 +2292,7 @@ export function FileBrowser({
                                         onHeightChange={
                                             handlePreviewHeightCommit
                                         }
-                                        path={
-                                            isLoadingSummary
-                                                ? cardKey
-                                                : file.path
-                                        }
+                                        path={file.path}
                                         style={{
                                             height: `var(--subdir-preview-height)`,
                                         }}
