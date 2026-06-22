@@ -22,6 +22,7 @@ const projectName = "Subfolder preview loading repro";
 const subdirCount = 20;
 const filesPerSubdir = 25;
 const expectedPreviewFileCount = subdirCount * filesPerSubdir;
+const heldPreviewRequestLimit = 6;
 
 let registeredResult: ResultSet | null = null;
 
@@ -661,6 +662,7 @@ test("shows immediate loading indication when Subfolder previews queues hundreds
     test.setTimeout(180_000);
 
     registeredResult = registerLargeSubfolderPreviewResult();
+    const registeredResultId = registeredResult.id;
 
     const cdpSession = await context.newCDPSession(page);
     const beforeScreenshotPath = path.join(
@@ -703,16 +705,39 @@ test("shows immediate loading indication when Subfolder previews queues hundreds
     mkdirSync(evidenceDir, { recursive: true });
 
     await cdpSession.send("Emulation.setCPUThrottlingRate", { rate: 6 });
+    let shouldHoldSubfolderPreviewRequests = false;
+    let heldPreviewRequestCount = 0;
+    let releaseHeldPreviewRequests: () => void = () => undefined;
+    const heldPreviewRequestsReleased = new Promise<void>((resolve) => {
+        releaseHeldPreviewRequests = () => resolve();
+    });
+
     await page.route("**/api/file**", async (route) => {
-        if (route.request().method() === "GET") {
-            await new Promise((resolve) => setTimeout(resolve, 10000));
+        const request = route.request();
+        const canHoldRequest =
+            shouldHoldSubfolderPreviewRequests &&
+            request.method() === "GET" &&
+            heldPreviewRequestCount < heldPreviewRequestLimit;
+
+        if (canHoldRequest) {
+            const requestUrl = new URL(request.url());
+            const requestPath = requestUrl.searchParams.get("path") ?? "";
+            const isFixturePreviewRequest =
+                requestUrl.pathname.endsWith("/api/file") &&
+                requestUrl.searchParams.get("id") === registeredResultId &&
+                requestPath.startsWith(outputDirectory);
+
+            if (isFixturePreviewRequest) {
+                heldPreviewRequestCount += 1;
+                await heldPreviewRequestsReleased;
+            }
         }
 
         await route.continue();
     });
 
     try {
-        await page.goto(`/results/${registeredResult.id}`);
+        await page.goto(`/results/${registeredResultId}`);
         await expect(
             page.getByRole("heading", { level: 1, name: projectName }),
         ).toBeVisible({ timeout: 30_000 });
@@ -749,6 +774,7 @@ test("shows immediate loading indication when Subfolder previews queues hundreds
 
         await expect(checkbox).toBeVisible();
 
+        shouldHoldSubfolderPreviewRequests = true;
         const clickStartedAt = await page.evaluate(() => performance.now());
 
         await checkbox.evaluate((element) => {
@@ -861,6 +887,9 @@ test("shows immediate loading indication when Subfolder previews queues hundreds
                 2,
             )}\n`,
         );
+
+        shouldHoldSubfolderPreviewRequests = false;
+        releaseHeldPreviewRequests();
 
         await expect
             .poll(
@@ -1009,6 +1038,8 @@ test("shows immediate loading indication when Subfolder previews queues hundreds
             expectedPreviewFileCount,
         );
     } finally {
+        shouldHoldSubfolderPreviewRequests = false;
+        releaseHeldPreviewRequests();
         await cdpSession
             .send("Emulation.setCPUThrottlingRate", { rate: 1 })
             .catch(() => undefined);
