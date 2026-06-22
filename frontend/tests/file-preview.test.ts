@@ -903,6 +903,37 @@ describe("O1 file preview", () => {
         expect(highlightAutoMock).toHaveBeenCalledTimes(1);
     });
 
+    it("does not recompute syntax highlighting when unchanged code content is recreated", () => {
+        const file = buildFile({ path: "/tmp/results/report.log" });
+        const proxyUrl =
+            "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.log";
+        const rendered = render(
+            createElement(FilePreview, {
+                content: {
+                    content: '{"status":"ready"}',
+                    contentType: "text/plain",
+                },
+                file,
+                proxyUrl,
+            }),
+        );
+
+        expect(highlightAutoMock).toHaveBeenCalledTimes(1);
+
+        rendered.rerender(
+            createElement(FilePreview, {
+                content: {
+                    content: '{"status":"ready"}',
+                    contentType: "text/plain",
+                },
+                file,
+                proxyUrl,
+            }),
+        );
+
+        expect(highlightAutoMock).toHaveBeenCalledTimes(1);
+    });
+
     it("does not repeat the file name or render a 'Preview' eyebrow in the single preview header", () => {
         renderPreview({
             file: buildFile({ path: "/tmp/results/report.txt" }),

@@ -862,16 +862,25 @@ export function FilePreview({
     const downloadUrl = buildDownloadUrl(proxyUrl);
     const fileName = file.path.split("/").pop() ?? file.path;
     const previewable = isPreviewable(renderer, file.path);
+    const previewContent = content?.content;
+    const previewContentType = content?.contentType;
+    const hasPreviewContent = Boolean(content);
     const highlightedContent = useMemo(() => {
-        if (renderer !== "code" || isLoading || !content) {
+        if (renderer !== "code" || isLoading || !hasPreviewContent) {
             return undefined;
         }
 
         return highlightCode(
-            content?.content ?? "",
-            content?.contentType ?? "text/plain",
+            previewContent ?? "",
+            previewContentType ?? "text/plain",
         );
-    }, [content, isLoading, renderer]);
+    }, [
+        hasPreviewContent,
+        isLoading,
+        previewContent,
+        previewContentType,
+        renderer,
+    ]);
 
     const dialogContent = enlargedContent ?? content;
     const inlineCsvParsed = useMemo(() => {

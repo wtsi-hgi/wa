@@ -1308,6 +1308,19 @@ export function FileBrowser({
         },
         [],
     );
+    const disableSubdirPreview = useCallback((directoryPath: string): void => {
+        setSubdirPreviewEnabledByPath((current) => {
+            if (!(directoryPath in current)) {
+                return current;
+            }
+
+            const next = { ...current };
+
+            delete next[directoryPath];
+
+            return next;
+        });
+    }, []);
     const scheduleSubdirPreviewRender = useCallback(
         (directoryPath: string): void => {
             cancelScheduledSubdirPreviewRender(directoryPath);
@@ -1918,11 +1931,8 @@ export function FileBrowser({
                                                     clearSubdirPreviewActivating(
                                                         directoryPath,
                                                     );
-                                                    setSubdirPreviewEnabledByPath(
-                                                        (current) => ({
-                                                            ...current,
-                                                            [directoryPath]: false,
-                                                        }),
+                                                    disableSubdirPreview(
+                                                        directoryPath,
                                                     );
                                                     clearSubdirPreviewReady(
                                                         directoryPath,
