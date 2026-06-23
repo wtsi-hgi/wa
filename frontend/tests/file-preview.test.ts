@@ -15,6 +15,9 @@ const { highlightAutoMock } = vi.hoisted(() => ({
         value: `highlighted:${content}`,
     })),
 }));
+const fetchMock = vi.fn<typeof fetch>();
+
+vi.stubGlobal("fetch", fetchMock);
 
 vi.mock("highlight.js/lib/core", () => ({
     default: {
@@ -123,6 +126,7 @@ function fileNameFromPath(filePath: string): string {
 
 afterEach(() => {
     cleanup();
+    fetchMock.mockReset();
     highlightAutoMock.mockClear();
 });
 
@@ -248,6 +252,67 @@ describe("O1 file preview", () => {
         const image = screen.getByAltText("plot.png preview");
 
         expect(image.getAttribute("src")).toContain("thumb=true");
+    });
+
+    it("renders OME-TIFF previews with metadata-driven channel and Z controls over derived plane URLs", async () => {
+        fetchMock.mockResolvedValue(
+            Response.json({
+                channelCount: 4,
+                channels: [
+                    { index: 0, name: "ch1 - PhenoVue Fluor 488" },
+                    { index: 1, name: "ch2 - PhenoVue 641 Mito Stain" },
+                    { index: 2, name: "ch3 - PhenoVue Hoechst 33342" },
+                    { index: 3, name: "ch4 - PhenoVue Fluor 568" },
+                ],
+                depth: "ushort",
+                dimensionOrder: "XYZCT",
+                format: "tiff",
+                hasOmeMetadata: true,
+                height: 2160,
+                pageCount: 64,
+                pixelType: "uint16",
+                sizeT: 1,
+                sizeX: 2160,
+                sizeY: 2160,
+                sizeZ: 16,
+                width: 2160,
+            }),
+        );
+
+        renderPreview({
+            file: buildFile({
+                path: "/tmp/results/stack.ome.tiff",
+                size: 230_068_104,
+            }),
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff",
+        });
+
+        await screen.findByLabelText("Channel");
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff&ome=metadata",
+        );
+        expect(screen.getByText("4 channels")).toBeTruthy();
+        expect(screen.getByText("16 Z slices")).toBeTruthy();
+
+        const image = screen.getByAltText("stack.ome.tiff preview");
+        expect(image.getAttribute("src")).toContain("ome=plane");
+        expect(image.getAttribute("src")).toContain("channel=0");
+        expect(image.getAttribute("src")).toContain("z=0");
+        expect(image.getAttribute("src")).toContain("w=672");
+        expect(image.getAttribute("src")).toContain("h=420");
+
+        fireEvent.change(screen.getByLabelText("Channel"), {
+            target: { value: "2" },
+        });
+        fireEvent.change(screen.getByLabelText("Z slice"), {
+            target: { value: "3" },
+        });
+
+        expect(screen.getByText("Z 4 of 16")).toBeTruthy();
+        expect(image.getAttribute("src")).toContain("channel=2");
+        expect(image.getAttribute("src")).toContain("z=3");
     });
 
     it("uses a full-width thumbnail wrapper for row previews", async () => {

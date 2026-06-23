@@ -570,6 +570,38 @@ describe("O1 result detail file integration", () => {
         });
     });
 
+    it("uses derived first-plane URLs for TIFF grid thumbnails instead of the full stack URL", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+
+        render(
+            createElement(ResultDetailFiles, {
+                files: [buildFile("/tmp/results/a/stack.ome.tiff")],
+                resultId: "result-1",
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "show-grid" }));
+
+        await waitFor(() => {
+            expect(screen.getAllByTestId("thumbnail-preview")).toHaveLength(1);
+        });
+
+        const thumbnail = screen.getByTestId("thumbnail-preview");
+
+        expect(thumbnail.getAttribute("data-thumbnail-url")).toContain(
+            "ome=plane",
+        );
+        expect(thumbnail.getAttribute("data-thumbnail-url")).toContain(
+            "channel=0",
+        );
+        expect(thumbnail.getAttribute("data-thumbnail-url")).toContain("z=0");
+        expect(thumbnail.getAttribute("data-full-size-url")).toContain(
+            "ome=plane",
+        );
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it("keeps grid thumbnail sources stable when only the preview height changes", async () => {
         const { ResultDetailFiles } =
             await import("@/components/result-detail-files");

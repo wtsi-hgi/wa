@@ -23,6 +23,12 @@ import {
 import { PreviewPagination } from "@/components/preview-pagination";
 import type { FileEntry } from "@/lib/contracts";
 import {
+    buildOmeTiffMetadataUrl,
+    buildOmeTiffPlaneUrl,
+    isTiffPreviewPath,
+    type OmeTiffMetadata,
+} from "@/lib/ome-tiff";
+import {
     effectivePreviewExtension,
     nonPreviewableBinaryExtensions,
     previewBitmapImageExtensions,
@@ -771,6 +777,265 @@ function ImagePreview({
     );
 }
 
+function clampPreviewCoordinate(value: number, size: number): number {
+    if (size <= 0) {
+        return 0;
+    }
+
+    return Math.min(size - 1, Math.max(0, Math.round(value)));
+}
+
+function metadataSummary(metadata: OmeTiffMetadata): string[] {
+    const summary = [
+        `${metadata.width} x ${metadata.height}`,
+        metadata.hasOmeMetadata
+            ? `${metadata.channelCount} channels`
+            : `${metadata.pageCount} planes`,
+    ];
+
+    if (metadata.sizeZ > 1) {
+        summary.push(`${metadata.sizeZ} Z slices`);
+    }
+
+    if (metadata.sizeT > 1) {
+        summary.push(`${metadata.sizeT} timepoints`);
+    }
+
+    return summary;
+}
+
+function OmeTiffPreview({
+    fileName,
+    maxHeightPx,
+    proxyUrl,
+}: {
+    fileName: string;
+    maxHeightPx?: number;
+    proxyUrl: string;
+}) {
+    const [metadataState, setMetadataState] = useState<{
+        error: string | null;
+        metadata: OmeTiffMetadata | null;
+        proxyUrl: string;
+    }>({
+        error: null,
+        metadata: null,
+        proxyUrl: "",
+    });
+    const [channel, setChannel] = useState(0);
+    const [z, setZ] = useState(0);
+    const [t, setT] = useState(0);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        void fetch(buildOmeTiffMetadataUrl(proxyUrl))
+            .then(async (response) => {
+                if (!response.ok) {
+                    throw new Error("Unable to load TIFF metadata");
+                }
+
+                return (await response.json()) as OmeTiffMetadata;
+            })
+            .then((nextMetadata) => {
+                if (cancelled) {
+                    return;
+                }
+
+                setMetadataState({
+                    error: null,
+                    metadata: nextMetadata,
+                    proxyUrl,
+                });
+            })
+            .catch((metadataError: unknown) => {
+                if (cancelled) {
+                    return;
+                }
+
+                setMetadataState({
+                    error:
+                        metadataError instanceof Error
+                            ? metadataError.message
+                            : "Unable to load TIFF metadata",
+                    metadata: null,
+                    proxyUrl,
+                });
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [proxyUrl]);
+
+    const metadata =
+        metadataState.proxyUrl === proxyUrl ? metadataState.metadata : null;
+    const error =
+        metadataState.proxyUrl === proxyUrl ? metadataState.error : null;
+    const derivedHeight = maxHeightPx ?? STABLE_THUMBNAIL_HEIGHT;
+    const derivedWidth = Math.max(320, Math.round(derivedHeight * 1.6));
+    const downloadUrl = buildDownloadUrl(proxyUrl);
+
+    if (error) {
+        return (
+            <div className="relative h-full w-full rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+                <DownloadIconLink
+                    className="absolute right-4 top-4"
+                    href={downloadUrl}
+                />
+                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Preview unavailable
+                </p>
+                <h3 className="mt-3 text-xl font-semibold tracking-tight text-foreground">
+                    Unable to read TIFF metadata
+                </h3>
+                <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                    {error}
+                </p>
+            </div>
+        );
+    }
+
+    if (!metadata) {
+        return (
+            <div className="relative flex h-full w-full items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
+                <DownloadIconLink
+                    className="absolute right-4 top-4"
+                    href={downloadUrl}
+                />
+                Loading TIFF metadata...
+            </div>
+        );
+    }
+
+    const safeChannel = clampPreviewCoordinate(channel, metadata.channelCount);
+    const safeZ = clampPreviewCoordinate(z, metadata.sizeZ);
+    const safeT = clampPreviewCoordinate(t, metadata.sizeT);
+    const planeUrl = buildOmeTiffPlaneUrl(proxyUrl, {
+        channel: safeChannel,
+        height: derivedHeight,
+        t: safeT,
+        width: derivedWidth,
+        z: safeZ,
+    });
+    const fullPlaneUrl = buildOmeTiffPlaneUrl(proxyUrl, {
+        channel: safeChannel,
+        height: 1200,
+        t: safeT,
+        width: 1600,
+        z: safeZ,
+    });
+    const showChannelControl = metadata.channelCount > 1;
+    const showZControl = metadata.sizeZ > 1;
+    const showTControl = metadata.sizeT > 1;
+    const imageHeight = Math.max(
+        96,
+        maxHeightPx
+            ? maxHeightPx - (showChannelControl || showZControl ? 92 : 0)
+            : 260,
+    );
+
+    return (
+        <div className="flex h-full w-full max-w-full flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {metadataSummary(metadata).map((item) => (
+                    <span
+                        className="rounded-full border border-border/70 bg-background/75 px-2.5 py-1"
+                        key={item}
+                    >
+                        {item}
+                    </span>
+                ))}
+            </div>
+
+            {showChannelControl || showZControl || showTControl ? (
+                <div className="flex flex-wrap items-end gap-3">
+                    {showChannelControl ? (
+                        <label className="grid min-w-44 gap-1 text-xs font-medium text-muted-foreground">
+                            <span>
+                                {metadata.hasOmeMetadata ? "Channel" : "Plane"}
+                            </span>
+                            <select
+                                aria-label={
+                                    metadata.hasOmeMetadata
+                                        ? "Channel"
+                                        : "Plane"
+                                }
+                                className="h-9 rounded-md border border-border/80 bg-background px-2 text-sm text-foreground outline-none transition focus:border-primary"
+                                onChange={(event) =>
+                                    setChannel(Number(event.target.value))
+                                }
+                                value={safeChannel}
+                            >
+                                {metadata.channels.map((metadataChannel) => (
+                                    <option
+                                        key={metadataChannel.index}
+                                        value={metadataChannel.index}
+                                    >
+                                        {metadataChannel.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    ) : null}
+
+                    {showZControl ? (
+                        <label className="grid min-w-44 gap-1 text-xs font-medium text-muted-foreground">
+                            <span>
+                                Z {safeZ + 1} of {metadata.sizeZ}
+                            </span>
+                            <input
+                                aria-label="Z slice"
+                                className="accent-primary"
+                                max={metadata.sizeZ - 1}
+                                min={0}
+                                onChange={(event) =>
+                                    setZ(Number(event.target.value))
+                                }
+                                type="range"
+                                value={safeZ}
+                            />
+                        </label>
+                    ) : null}
+
+                    {showTControl ? (
+                        <label className="grid min-w-44 gap-1 text-xs font-medium text-muted-foreground">
+                            <span>
+                                T {safeT + 1} of {metadata.sizeT}
+                            </span>
+                            <input
+                                aria-label="Timepoint"
+                                className="accent-primary"
+                                max={metadata.sizeT - 1}
+                                min={0}
+                                onChange={(event) =>
+                                    setT(Number(event.target.value))
+                                }
+                                type="range"
+                                value={safeT}
+                            />
+                        </label>
+                    ) : null}
+                </div>
+            ) : null}
+
+            <div className="min-h-0 flex-1">
+                <LightboxImage
+                    buttonClassName="group relative inline-flex max-w-full cursor-zoom-in overflow-hidden rounded-[1.5rem]"
+                    downloadUrl={downloadUrl}
+                    fileName={fileName}
+                    fullSizeUrl={fullPlaneUrl}
+                    maxHeightPx={imageHeight}
+                    sizes="(min-width: 1280px) 32vw, 92vw"
+                    thumbnailHeight={derivedHeight}
+                    thumbnailUrl={planeUrl}
+                    thumbnailWidth={derivedWidth}
+                />
+            </div>
+        </div>
+    );
+}
+
 export const FileImageThumbnail = memo(
     function FileImageThumbnail({
         file,
@@ -923,6 +1188,11 @@ export function FilePreview({
         </div>
     ) : null;
     const isImagePreview = !isLoading && previewable && renderer === "image";
+    const isTiffPreview =
+        !isLoading &&
+        previewable &&
+        renderer === "image" &&
+        isTiffPreviewPath(file.path);
     const [markdownMeasureRef, markdownIsOverflowing] =
         useInlinePreviewOverflow<HTMLElement>(
             !isLoading && previewable && renderer === "markdown",
@@ -996,6 +1266,19 @@ export function FilePreview({
                         {error.message?.trim() || "Preview request failed"}
                     </p>
                 </div>
+            </section>
+        );
+    }
+
+    if (isTiffPreview) {
+        return (
+            <section className="h-full max-w-full">
+                <OmeTiffPreview
+                    fileName={fileName}
+                    key={proxyUrl}
+                    maxHeightPx={maxHeight}
+                    proxyUrl={proxyUrl}
+                />
             </section>
         );
     }

@@ -34,6 +34,7 @@ import {
     shouldFetchInlinePreviewContent,
     shouldProbeInlinePreviewContentType,
 } from "@/lib/preview-file-types";
+import { buildOmeTiffPlaneUrl, isTiffPreviewPath } from "@/lib/ome-tiff";
 
 export type RegisteredFileEntry = FileEntry & {
     resultId?: string;
@@ -134,6 +135,47 @@ function buildFileUrl(
     }
 
     return `/api/file?${query.toString()}`;
+}
+
+function buildGridFullSizeUrl(resultId: string, path: string): string {
+    const baseUrl = buildFileUrl(resultId, path);
+
+    if (!isTiffPreviewPath(path)) {
+        return baseUrl;
+    }
+
+    return buildOmeTiffPlaneUrl(baseUrl, {
+        channel: 0,
+        height: 1200,
+        t: 0,
+        width: 1600,
+        z: 0,
+    });
+}
+
+function buildGridThumbnailUrl(
+    resultId: string,
+    path: string,
+    height: number,
+): string {
+    const width = Math.max(320, Math.round(height * 1.6));
+    const baseUrl = buildFileUrl(resultId, path);
+
+    if (isTiffPreviewPath(path)) {
+        return buildOmeTiffPlaneUrl(baseUrl, {
+            channel: 0,
+            height,
+            t: 0,
+            width,
+            z: 0,
+        });
+    }
+
+    return buildFileUrl(resultId, path, {
+        height,
+        thumbnail: true,
+        width,
+    });
 }
 
 function shouldFetchInlinePreview(path: string): boolean {
@@ -851,22 +893,15 @@ export function ResultDetailFiles({
                 isImageFile(file.path) ? (
                     <FileImageThumbnail
                         file={file}
-                        fullSizeUrl={buildFileUrl(
+                        fullSizeUrl={buildGridFullSizeUrl(
                             resultIdForFile(file),
                             file.path,
                         )}
                         height={previewHeight}
-                        thumbnailUrl={buildFileUrl(
+                        thumbnailUrl={buildGridThumbnailUrl(
                             resultIdForFile(file),
                             file.path,
-                            {
-                                height: thumbnailRenderHeight,
-                                thumbnail: true,
-                                width: Math.max(
-                                    320,
-                                    Math.round(thumbnailRenderHeight * 1.6),
-                                ),
-                            },
+                            thumbnailRenderHeight,
                         )}
                     />
                 ) : (

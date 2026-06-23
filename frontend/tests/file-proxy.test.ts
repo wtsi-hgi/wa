@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import sharp from "sharp";
@@ -7,6 +11,7 @@ const onePixelPng = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7foAAAAASUVORK5CYII=",
     "base64",
 );
+const tempDirs: string[] = [];
 
 vi.mock("@/lib/backend-client", () => ({
     resultsAuthCookieName: "wa_results_jwt",
@@ -34,10 +39,32 @@ function makeCancellableResponse(init?: ResponseInit) {
     };
 }
 
+async function writeTinyTiffForTest(name = "stack.ome.tiff"): Promise<string> {
+    const directory = mkdtempSync(path.join(tmpdir(), "wa-ome-tiff-"));
+    tempDirs.push(directory);
+    const tiffPath = path.join(directory, name);
+
+    await sharp({
+        create: {
+            background: { alpha: 1, b: 32, g: 24, r: 16 },
+            channels: 4,
+            height: 8,
+            width: 8,
+        },
+    })
+        .tiff()
+        .toFile(tiffPath);
+
+    return tiffPath;
+}
+
 describe("P1 file content streaming API route", () => {
     afterEach(() => {
         vi.clearAllMocks();
         vi.resetModules();
+        for (const directory of tempDirs.splice(0)) {
+            rmSync(directory, { force: true, recursive: true });
+        }
     });
 
     it("streams binary file content and content type from the Go backend", async () => {
@@ -342,6 +369,97 @@ describe("P1 file content streaming API route", () => {
         expect(response.headers.get("content-type")).toBe("image/webp");
         expect(response.headers.get("content-security-policy")).toBe("sandbox");
         expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    });
+
+    it("returns TIFF stack metadata after an authenticated HEAD probe without fetching the file body from the backend", async () => {
+        const tiffPath = await writeTinyTiffForTest();
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: { "content-type": "image/tiff" },
+        });
+        resultsRawMock.mockResolvedValue(upstream.response);
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(tiffPath)}&ome=metadata`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledTimes(1);
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}`,
+            { method: "HEAD" },
+        );
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toContain(
+            "application/json",
+        );
+        await expect(response.json()).resolves.toMatchObject({
+            format: "tiff",
+            hasOmeMetadata: false,
+            height: 8,
+            pageCount: 1,
+            width: 8,
+        });
+    });
+
+    it("renders a derived TIFF plane image after an authenticated HEAD probe without downloading the full stack through the backend", async () => {
+        const tiffPath = await writeTinyTiffForTest();
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: { "content-type": "image/tiff" },
+        });
+        resultsRawMock.mockResolvedValue(upstream.response);
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(tiffPath)}&ome=plane&channel=0&z=0&t=0&w=64&h=64`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledTimes(1);
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}`,
+            { method: "HEAD" },
+        );
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/webp");
+        expect(response.headers.get("content-security-policy")).toBe("sandbox");
+        expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    });
+
+    it("does not fall back to a backend GET body fetch for OME metadata when HEAD is unsupported", async () => {
+        const tiffPath = await writeTinyTiffForTest();
+        resultsRawMock.mockResolvedValue(
+            new Response("method not allowed", {
+                status: 405,
+                headers: { "content-type": "text/plain" },
+            }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(tiffPath)}&ome=metadata`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledTimes(1);
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}`,
+            { method: "HEAD" },
+        );
+        expect(response.status).toBe(405);
+        await expect(response.json()).resolves.toEqual({
+            error: "method not allowed",
+        });
     });
 
     it("falls back to the original streamed response when thumbnail generation fails", async () => {
