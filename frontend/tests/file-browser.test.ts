@@ -1249,11 +1249,21 @@ describe("N1 file browser", () => {
             buildFile("/out/reports/alpha-summary.tsv", "output"),
             buildFile("/out/reports/alpha-summary.txt", "output"),
             buildFile("/out/logs/alpha-run.log", "output"),
+            buildFile(
+                "/lustre/scratch127/gengen/projects_v2/dual_tf/MORF_10/Multiome/sc_analysis_MORF_v2/sc_analysis_BTLNCK/qc_outputs/HAP1_MORF10_BTLNECK2_1_A1_BTLNCK/HAP1_MORF10_BTLNECK2_1_A1_BTLNCK_py_inputs/atac/barcodes.tsv.gz",
+                "output",
+            ),
         ];
 
         expect(filePathMatchesGlobPattern(files[0]?.path ?? "", "*.tsv")).toBe(
             true,
         );
+        expect(
+            filePathMatchesGlobPattern(
+                files[3]?.path ?? "",
+                "*py_inputs*.tsv.gz",
+            ),
+        ).toBe(true);
         expect(
             filePathMatchesGlobPattern(
                 files[0]?.path ?? "",
@@ -1268,6 +1278,11 @@ describe("N1 file browser", () => {
             "/out/reports/alpha-summary.tsv",
             "/out/reports/alpha-summary.txt",
         ]);
+        expect(
+            filterFilesByGlobPattern(files, "*py_inputs*.tsv.gz").map(
+                (file) => file.path,
+            ),
+        ).toEqual([files[3]?.path]);
     });
 
     it("treats unmatched glob brackets as literal characters", async () => {
@@ -3708,6 +3723,242 @@ describe("N1 file browser", () => {
         expect(strip?.style.getPropertyValue("--subdir-preview-height")).toBe(
             "260px",
         );
+    });
+
+    it("shows subfolder preview loading cards before mounting large preview batches", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const subdirs = Array.from(
+            { length: 20 },
+            (_, index) => `batch-${String(index + 1).padStart(2, "0")}`,
+        );
+        const files = subdirs.flatMap((name) =>
+            Array.from({ length: 25 }, (_, index) =>
+                buildFile(
+                    `/demo/${name}/preview-${String(index + 1).padStart(2, "0")}.txt`,
+                    "output",
+                ),
+            ),
+        );
+        const renderGridPreview = vi.fn(
+            (file: FileEntry): ReactNode =>
+                createElement(
+                    "div",
+                    {
+                        "data-mounted-preview": file.path,
+                    },
+                    `preview:${file.path}`,
+                ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview,
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const toggle = container.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        );
+
+        renderGridPreview.mockClear();
+        await click(toggle);
+
+        expect(container.textContent).toContain("Loading previews...");
+        expect(
+            container.querySelectorAll("[data-subdir-preview-card]"),
+        ).toHaveLength(0);
+        expect(
+            container.querySelectorAll("[data-mounted-preview]"),
+        ).toHaveLength(0);
+        expect(renderGridPreview).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                    window.requestAnimationFrame(resolve),
+                ),
+            );
+        });
+
+        expect(container.textContent).toContain("Loading preview...");
+        expect(
+            container.querySelectorAll("[data-subdir-preview-card]"),
+        ).toHaveLength(subdirs.length);
+        expect(container.textContent).toContain("25 files queued");
+        expect(
+            container.querySelectorAll("[data-mounted-preview]"),
+        ).toHaveLength(0);
+        expect(renderGridPreview).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                    window.requestAnimationFrame(resolve),
+                ),
+            );
+        });
+
+        await waitFor(() => {
+            expect(
+                container.querySelectorAll("[data-mounted-preview]"),
+            ).toHaveLength(500);
+        });
+    });
+
+    it("avoids rescanning every visible subfolder while showing large preview loading summaries", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const pathReads = { count: 0 };
+        const subdirs = Array.from(
+            { length: 20 },
+            (_, index) => `batch-${String(index + 1).padStart(2, "0")}`,
+        );
+        const countedFile = (path: string): FileEntry => ({
+            ...buildFile(path, "output"),
+            get path() {
+                pathReads.count += 1;
+
+                return path;
+            },
+        });
+        const files = subdirs.flatMap((name) =>
+            Array.from({ length: 5 }, (_, index) =>
+                countedFile(
+                    `/demo/${name}/preview-${String(index + 1).padStart(2, "0")}.txt`,
+                ),
+            ),
+        );
+        const renderGridPreview = vi.fn(
+            (file: FileEntry): ReactNode =>
+                createElement(
+                    "div",
+                    {
+                        "data-mounted-preview": file.path,
+                    },
+                    `preview:${file.path}`,
+                ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview,
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        const toggle = container.querySelector(
+            'input[aria-label="Subfolder previews"]',
+        );
+
+        pathReads.count = 0;
+        await click(toggle);
+
+        await act(async () => {
+            await new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                    window.requestAnimationFrame(resolve),
+                ),
+            );
+        });
+
+        expect(container.textContent).toContain("Loading preview...");
+        expect(
+            container.querySelectorAll("[data-subdir-preview-card]"),
+        ).toHaveLength(subdirs.length);
+        expect(container.textContent).toContain("5 files queued");
+        expect(renderGridPreview).not.toHaveBeenCalled();
+        expect(pathReads.count).toBeLessThan(files.length * 10);
+    });
+
+    it("keeps image loading summary cards on their real preview resize surface", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const subdirs = Array.from(
+            { length: 4 },
+            (_, index) => `batch-${String(index + 1).padStart(2, "0")}`,
+        );
+        const files = subdirs.flatMap((name) =>
+            Array.from({ length: 20 }, (_, index) =>
+                buildFile(
+                    `/demo/${name}/preview-${String(index + 1).padStart(2, "0")}.png`,
+                    "output",
+                ),
+            ),
+        );
+        const renderGridPreview = vi.fn(
+            (file: FileEntry): ReactNode =>
+                createElement(
+                    "div",
+                    {
+                        "data-mounted-preview": file.path,
+                    },
+                    `preview:${file.path}`,
+                ),
+        );
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                    renderGridPreview,
+                    selectedDirectory: "/demo",
+                    visibleFiles: [],
+                }),
+            );
+        });
+
+        await click(
+            container.querySelector('input[aria-label="Subfolder previews"]'),
+        );
+
+        await act(async () => {
+            await new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                    window.requestAnimationFrame(resolve),
+                ),
+            );
+        });
+
+        const cardKey = "/demo/batch-01::loading";
+        const previewPath = "/demo/batch-01/preview-01.png";
+        const card = container.querySelector(
+            `[data-subdir-preview-card="${cardKey}"]`,
+        ) as HTMLElement | null;
+        const frame = card?.querySelector(
+            `[data-subdir-preview-frame="${previewPath}"]`,
+        ) as HTMLElement | null;
+        const surface = frame?.querySelector(
+            "[data-preview-resize-surface]",
+        ) as HTMLElement | null;
+
+        expect(card).toBeTruthy();
+        expect(card?.textContent).toContain("20 files queued");
+        expect(card?.getAttribute("data-subdir-preview-card")).toBe(cardKey);
+        expect(frame).toBeTruthy();
+        expect(frame?.getAttribute("data-preview-resize-frame")).toBe(
+            previewPath,
+        );
+        expect(surface).toBeTruthy();
+        expect(surface?.getAttribute("data-preview-resize-surface")).toBe(
+            previewPath,
+        );
+        expect(surface?.className).toContain("inline-flex");
+        expect(surface?.className).toContain("w-fit");
+        expect(surface?.className).not.toContain("flex w-full");
+        expect(renderGridPreview).not.toHaveBeenCalled();
     });
 
     it("hides the single-page widget for subfolder previews", async () => {

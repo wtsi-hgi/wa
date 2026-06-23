@@ -90,6 +90,7 @@ type LightboxImageProps = {
     fullSizeUrl: string;
     imageClassName?: string;
     maxHeightPx?: number;
+    minimumWidthPx?: number;
     sizes?: string;
     thumbnailHeight?: number;
     thumbnailUrl: string;
@@ -631,6 +632,7 @@ function LightboxImage({
     fullSizeUrl,
     imageClassName,
     maxHeightPx = 240,
+    minimumWidthPx,
     sizes = "320px",
     thumbnailHeight = 240,
     thumbnailUrl,
@@ -688,6 +690,10 @@ function LightboxImage({
                             height: `${maxHeightPx}px`,
                             maxHeight: `${maxHeightPx}px`,
                             maxWidth: `${thumbnailWidth}px`,
+                            minWidth:
+                                minimumWidthPx !== undefined
+                                    ? `${minimumWidthPx}px`
+                                    : undefined,
                             width: "auto",
                         }}
                     />
@@ -780,6 +786,7 @@ export const FileImageThumbnail = memo(
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}
                 maxHeightPx={height}
+                minimumWidthPx={160}
                 sizes="(min-width: 1536px) 26vw, (min-width: 1280px) 30vw, 92vw"
                 thumbnailHeight={STABLE_THUMBNAIL_HEIGHT}
                 thumbnailUrl={thumbnailUrl}
@@ -855,16 +862,25 @@ export function FilePreview({
     const downloadUrl = buildDownloadUrl(proxyUrl);
     const fileName = file.path.split("/").pop() ?? file.path;
     const previewable = isPreviewable(renderer, file.path);
+    const previewContent = content?.content;
+    const previewContentType = content?.contentType;
+    const hasPreviewContent = Boolean(content);
     const highlightedContent = useMemo(() => {
-        if (renderer !== "code") {
+        if (renderer !== "code" || isLoading || !hasPreviewContent) {
             return undefined;
         }
 
         return highlightCode(
-            content?.content ?? "",
-            content?.contentType ?? "text/plain",
+            previewContent ?? "",
+            previewContentType ?? "text/plain",
         );
-    }, [content?.content, content?.contentType, renderer]);
+    }, [
+        hasPreviewContent,
+        isLoading,
+        previewContent,
+        previewContentType,
+        renderer,
+    ]);
 
     const dialogContent = enlargedContent ?? content;
     const inlineCsvParsed = useMemo(() => {
@@ -876,6 +892,10 @@ export function FilePreview({
     }, [content, renderer]);
     const dialogHighlightedContent = useMemo(() => {
         if (renderer !== "code") {
+            return undefined;
+        }
+
+        if (!dialogContent) {
             return undefined;
         }
 
@@ -1001,7 +1021,7 @@ export function FilePreview({
 
                 <div className="min-h-0 flex-1 overflow-hidden">
                     {isLoading ? (
-                        <div className="rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-sm text-muted-foreground">
+                        <div className="flex h-full w-full box-border items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
                             Loading preview...
                         </div>
                     ) : null}

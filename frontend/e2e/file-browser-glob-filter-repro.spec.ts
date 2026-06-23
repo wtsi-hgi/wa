@@ -1,5 +1,6 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
@@ -17,6 +18,13 @@ const fixtureRoot = path.join(evidenceDir, "file-browser-glob-filter-fixture");
 const reproToken = `glob-filter-${Date.now()}-${process.pid}`;
 const requester = `glob-filter-requester-${reproToken}`;
 const expectedGlobPattern = "**/*.tsv";
+const nestedPyInputsGlobPattern = "*py_inputs*.tsv.gz";
+const nestedPyInputsRelativePath = path.join(
+    "HAP1_MORF10_BTLNECK2_1_A1_BTLNCK",
+    "HAP1_MORF10_BTLNECK2_1_A1_BTLNCK_py_inputs",
+    "atac",
+    "barcodes.tsv.gz",
+);
 const pipelineNames = ["wa/glob-filter-alpha", "wa/glob-filter-beta"] as const;
 
 let registeredResults: ResultSet[] = [];
@@ -68,6 +76,12 @@ test.beforeAll(() => {
                     content: '{"sample":"alpha","pass":true}\n',
                     relativePath: path.join("metrics", "alpha-qc.json"),
                 },
+                {
+                    content: gzipSync(
+                        "barcode\nAAACGAAAGACAGACC-1\nAAACGAAAGATAGTCA-1\n",
+                    ),
+                    relativePath: nestedPyInputsRelativePath,
+                },
             ],
             pipelineName: pipelineNames[0],
             runKey: `runid=260618&unique=${reproToken}-alpha`,
@@ -112,7 +126,10 @@ function registerGlobFilterResult({
     runKey,
     sample,
 }: {
-    files: Array<{ content: string; relativePath: string }>;
+    files: Array<{
+        content: string | NodeJS.ArrayBufferView;
+        relativePath: string;
+    }>;
     pipelineName: string;
     runKey: string;
     sample: string;
@@ -399,6 +416,94 @@ async function writeRefreshErrorEvidence({
     };
 }
 
+async function writeNestedPyInputsEvidence(
+    page: Page,
+    label: string,
+    screenshotName: string,
+): Promise<FilterEvidence & { evidencePath: string; filterValue: string }> {
+    mkdirSync(evidenceDir, { recursive: true });
+
+    const screenshotPath = path.join(evidenceDir, screenshotName);
+    const evidencePath = screenshotPath.replace(/\.png$/, ".json");
+    const evidence = await page.evaluate(
+        ({ label, screenshotPath }) => {
+            const fileBrowser = document.querySelector<HTMLElement>(
+                '[data-file-browser="true"]',
+            );
+            const header = document.querySelector<HTMLElement>(
+                '[data-file-browser-header="true"]',
+            );
+            const filter = document.querySelector<HTMLInputElement>(
+                '[data-file-browser-glob-filter="true"]',
+            );
+
+            return {
+                directoryPaths: [
+                    ...document.querySelectorAll<HTMLElement>(
+                        "[data-directory-path]",
+                    ),
+                ].map(
+                    (element) =>
+                        element.dataset.directoryPath ??
+                        element.getAttribute("data-directory-path") ??
+                        "",
+                ),
+                filePaths: [
+                    ...document.querySelectorAll<HTMLElement>(
+                        "[data-file-path]",
+                    ),
+                ].map(
+                    (element) =>
+                        element.dataset.filePath ??
+                        element.getAttribute("data-file-path") ??
+                        "",
+                ),
+                filterValue: filter?.value ?? "",
+                headerControls: [],
+                headerSaveButtonCount:
+                    header?.querySelectorAll(
+                        '[data-file-browser-glob-filter-save="true"]',
+                    ).length ?? 0,
+                headerText: header?.innerText ?? null,
+                headerTextboxCount: filter ? 1 : 0,
+                label,
+                localStorageEntries: [],
+                screenshotPath,
+                visibleText: fileBrowser?.innerText.slice(0, 3000) ?? null,
+            };
+        },
+        { label, screenshotPath },
+    );
+
+    await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: screenshotPath,
+    });
+    writeFileSync(
+        evidencePath,
+        `${JSON.stringify(
+            {
+                ...evidence,
+                expected: {
+                    globPattern: nestedPyInputsGlobPattern,
+                    nestedPathSuffix: nestedPyInputsRelativePath.replaceAll(
+                        path.sep,
+                        "/",
+                    ),
+                    behavior:
+                        "The nested barcodes.tsv.gz path is visible without a filter and remains visible when the single-star py_inputs glob is applied.",
+                },
+                pageUrl: page.url(),
+            },
+            null,
+            2,
+        )}\n`,
+    );
+
+    return { ...evidence, evidencePath };
+}
+
 test("filters and persists a search-result file browser glob", async ({
     page,
 }) => {
@@ -545,6 +650,65 @@ test("filters and persists a result-detail file browser glob", async ({
     await page.reload();
     await expect(globInput).toHaveValue(expectedGlobPattern);
     await expect(page.locator('[data-directory-path$="/logs"]')).toHaveCount(0);
+});
+
+test("matches nested-directory glob filters across py_inputs TSV gzip paths", async ({
+    context,
+    page,
+}) => {
+    await openResultDetailFileBrowser(context, page);
+
+    const nestedDirectorySuffix = path
+        .dirname(nestedPyInputsRelativePath)
+        .replaceAll(path.sep, "/");
+    const nestedPathSuffix = nestedPyInputsRelativePath.replaceAll(
+        path.sep,
+        "/",
+    );
+    const nestedDirectory = page
+        .locator(`button[data-directory-path$="${nestedDirectorySuffix}"]`)
+        .first();
+    const nestedFile = page
+        .locator(`button[data-file-path$="${nestedPathSuffix}"]`)
+        .first();
+    const globInput = page.getByLabel("Filter files by glob");
+
+    await expect(globInput).toBeVisible();
+    await expect(nestedDirectory).toBeVisible();
+    await nestedDirectory.click();
+    await expect(nestedFile).toBeVisible();
+
+    const unfilteredEvidence = await writeNestedPyInputsEvidence(
+        page,
+        "result-detail nested py_inputs path before glob filter",
+        "file-browser-glob-filter-py-inputs-unfiltered-repro.png",
+    );
+
+    await globInput.fill(nestedPyInputsGlobPattern);
+    await expect(globInput).toHaveValue(nestedPyInputsGlobPattern);
+    await expect(
+        page.locator('[data-file-browser-empty-filter="true"]'),
+    ).toHaveCount(0);
+    await expect(nestedDirectory).toBeVisible();
+    await expect(nestedFile).toBeVisible();
+
+    const filteredEvidence = await writeNestedPyInputsEvidence(
+        page,
+        "result-detail nested py_inputs path after single-star glob filter",
+        "file-browser-glob-filter-py-inputs-postfix.png",
+    );
+
+    expect(
+        unfilteredEvidence.filePaths.some((filePath) =>
+            filePath.endsWith(nestedPathSuffix),
+        ),
+    ).toBe(true);
+    expect(
+        filteredEvidence.filePaths.some((filePath) =>
+            filePath.endsWith(nestedPathSuffix),
+        ),
+    ).toBe(true);
+    expect(filteredEvidence.visibleText).not.toContain("No files match");
 });
 
 test("does not emit a Next script-tag error after reloading a saved search file-browser glob", async ({

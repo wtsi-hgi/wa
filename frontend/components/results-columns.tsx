@@ -1,10 +1,12 @@
 import { ArrowUpDown, LockKeyhole } from "lucide-react";
+import type { ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 
+import { LocalTimestamp } from "@/components/local-timestamp";
 import type { ResultSet, SearchResult } from "@/lib/contracts";
 import { resultProjectName } from "@/lib/result-display";
 import { formatRegistrationUnique } from "@/lib/result-identity";
-import { cn, formatUtcDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export type ResultsTableRow = {
     id: string;
@@ -47,10 +49,6 @@ function SortableHeader({ columnId, label, onSort }: SortableHeaderProps) {
             <ArrowUpDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         </button>
     );
-}
-
-function formatRegisteredDate(value: string): string {
-    return formatUtcDate(value);
 }
 
 function detailHref(id: string, returnHref: string): string {
@@ -108,7 +106,7 @@ function LockedResultIndicator({ result }: { result: ResultSet }) {
 
 function resultCell(
     row: ResultsTableRow,
-    value: string,
+    value: ReactNode,
     className: string,
     returnHref: string,
     options: { showLock?: boolean } = {},
@@ -270,7 +268,10 @@ export function getResultsColumns(
             cell: ({ row }) =>
                 resultCell(
                     row.original,
-                    formatRegisteredDate(row.original.result.created_at),
+                    <LocalTimestamp
+                        format="date"
+                        value={row.original.result.created_at}
+                    />,
                     "text-muted-foreground",
                     returnHref,
                 ),
