@@ -75,10 +75,13 @@ against `WA_MLWH_CACHE_PATH`, and starts the Next.js dev server. SQLite files
 and parent directories are created if missing and never deleted on shutdown.
 Logs go to `logs/`.
 
-Development mode requires `WA_MLWH_DSN` in `.env.development.local` so it can
-run the MLWH-backed query server; the launcher refuses `make dev` without MLWH
-configured. `wa mlwh serve` is cache-only, so run `wa mlwh sync` when you need
-to seed or refresh the cache explicitly.
+Development mode requires an MLWH query source: `WA_MLWH_SERVER_URL` for an
+existing server, `WA_MLWH_CACHE_PATH` for a local cache-backed `wa mlwh serve`,
+or `WA_MLWH_DSN` / `WA_RUN_DEV_SEQMETA_CMD` for operator-managed local sources.
+`wa mlwh serve` is cache-only, so run `wa mlwh sync` when you need to seed or
+refresh the cache explicitly. Normal CLI users should query the server with
+`wa mlwh info --server ...` or `WA_MLWH_SERVER_URL`; they do not need local MLWH
+database or cache credentials.
 
 ## Make targets
 
@@ -174,7 +177,9 @@ is set, it falls back to `https://localhost:8080`.
 `results serve` when `--url` is unset; they are not client dial hosts.
 `wa results --cert` / `wa results serve --key` default from the TLS env vars.
 `run-dev.sh` uses the scenario ports to export `WA_RESULTS_BACKEND_URL` and
-`WA_MLWH_BACKEND_URL` for the frontend.
+`WA_MLWH_BACKEND_URL` for the frontend; `wa mlwh info` uses
+`WA_MLWH_SERVER_URL` first and keeps `WA_MLWH_BACKEND_URL` only as a
+lower-precedence compatibility default.
 The MLWH lookup flags on `wa results register` are resolved by the results
 server. Remote CLI users do not need `WA_MLWH_CACHE_PATH`,
 `WA_MLWH_CACHE_PASSWORD`, or MLWH cache credentials on their machine.
@@ -536,23 +541,23 @@ trusted by the system.
 
 ### Environment variables for production
 
-| Variable                       | Required                          | Description                                                                                          |
-| ------------------------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `WA_ENV`                       | For scenario CLI                  | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                    |
-| `WA_PROD_RESULTS_PORT`         | For server/CLI                    | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults      |
-| `WA_PROD_RESULTS_HOST`         | For server                        | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections        |
-| `WA_RESULTS_SERVER_URL`        | For remote CLI                    | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`        |
-| `WA_RESULTS_DB_PATH`           | For results                       | SQLite path, full DSN, or passwordless MySQL DSN                                                     |
-| `WA_RESULTS_DB_PASSWORD`       | Optional                          | MySQL password paired with a passwordless DSN                                                        |
-| `WA_MLWH_DSN`                  | For `wa mlwh sync`                | Passwordless MLWH DSN                                                                                |
-| `WA_MLWH_PASSWORD`             | Optional                          | MLWH password paired with a passwordless DSN                                                         |
-| `WA_MLWH_CACHE_PATH`           | For `wa mlwh` and local consumers | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                         |
-| `WA_MLWH_CACHE_PASSWORD`       | Optional                          | MLWH cache MySQL password                                                                            |
-| `WA_MLWH_SERVER_URL`           | For results/mlwhdiff clients      | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url`                                        |
-| `WA_RESULTS_SERVER_CERT`       | For results                       | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root     |
-| `WA_RESULTS_SERVER_KEY`        | For results                       | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root |
-| `WA_RESULTS_BACKEND_URL`       | For frontend                      | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility           |
-| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                          | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted       |
-| `WA_MLWH_BACKEND_URL`          | For frontend                      | MLWH query API URL (server-side only)                                                                |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | No                                | Study list cache TTL (default: 300)                                                                  |
-| `PORT`                         | No                                | Frontend listen port (default: 3000)                                                                 |
+| Variable                       | Required                                | Description                                                                                          |
+| ------------------------------ | --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `WA_ENV`                       | For scenario CLI                        | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                    |
+| `WA_PROD_RESULTS_PORT`         | For server/CLI                          | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults      |
+| `WA_PROD_RESULTS_HOST`         | For server                              | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections        |
+| `WA_RESULTS_SERVER_URL`        | For remote CLI                          | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`        |
+| `WA_RESULTS_DB_PATH`           | For results                             | SQLite path, full DSN, or passwordless MySQL DSN                                                     |
+| `WA_RESULTS_DB_PASSWORD`       | Optional                                | MySQL password paired with a passwordless DSN                                                        |
+| `WA_MLWH_DSN`                  | For `wa mlwh sync`                      | Passwordless MLWH DSN                                                                                |
+| `WA_MLWH_PASSWORD`             | Optional                                | MLWH password paired with a passwordless DSN                                                         |
+| `WA_MLWH_CACHE_PATH`           | For `wa mlwh serve` and local operators | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                         |
+| `WA_MLWH_CACHE_PASSWORD`       | Optional                                | MLWH cache MySQL password                                                                            |
+| `WA_MLWH_SERVER_URL`           | For results/mlwhdiff/mlwh info clients  | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url` / `wa mlwh info --server`              |
+| `WA_RESULTS_SERVER_CERT`       | For results                             | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root     |
+| `WA_RESULTS_SERVER_KEY`        | For results                             | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root |
+| `WA_RESULTS_BACKEND_URL`       | For frontend                            | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility           |
+| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                                | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted       |
+| `WA_MLWH_BACKEND_URL`          | For frontend / compatibility            | MLWH query API URL for the frontend and lower-precedence `wa mlwh info` default                      |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | No                                      | Study list cache TTL (default: 300)                                                                  |
+| `PORT`                         | No                                      | Frontend listen port (default: 3000)                                                                 |

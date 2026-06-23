@@ -150,6 +150,18 @@ wa mlwh sync
 wa mlwh serve --port 8091
 ```
 
+Normal CLI users can query that server without local MLWH database or cache
+credentials:
+
+```bash
+export WA_MLWH_SERVER_URL=http://host:8091
+wa mlwh info DN1234
+wa mlwh info 5901 --type study --json
+```
+
+When using the local development scenario, `wa --env development mlwh info
+DN1234` defaults to the MLWH API port from the scenario env file.
+
 ### Poll for metadata changes
 
 ```bash

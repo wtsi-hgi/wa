@@ -202,10 +202,11 @@ fi
 
 if [[ "$scenario" == "dev" ]] && \
    ! has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && \
+   ! has_nonblank_value "${WA_MLWH_CACHE_PATH:-}" && \
    ! has_nonblank_value "${WA_MLWH_DSN:-}" && \
    ! has_nonblank_value "${WA_RUN_DEV_SEQMETA_CMD:-}"; then
   printf 'run-dev.sh: --mode dev requires an MLWH query source to be set.\n' >&2
-  printf 'Set WA_MLWH_SERVER_URL for a remote MLWH server or WA_MLWH_DSN/WA_RUN_DEV_SEQMETA_CMD for a local managed server.\n' >&2
+  printf 'Set WA_MLWH_SERVER_URL for a remote MLWH server, WA_MLWH_CACHE_PATH for a local managed server, or WA_MLWH_DSN/WA_RUN_DEV_SEQMETA_CMD for operator-managed local sources.\n' >&2
   exit 1
 fi
 
@@ -982,7 +983,7 @@ ensure_port_available_or_reusable() {
 preflight_service_ports() {
   ensure_port_available_or_reusable "results" "results" "WA_${scenario_env_prefix}_RESULTS_PORT" "$results_port" "$RESULTS_HEALTH_URL" "$WA_RESULTS_BACKEND_CA_CERT"
 
-  if (( ! REMOTE_MLWH_SERVER_CONFIGURED )) && [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" ]]; then
+  if (( ! REMOTE_MLWH_SERVER_CONFIGURED )) && [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" || ( "$scenario" == "dev" && -n "${WA_MLWH_CACHE_PATH:-}" ) ]]; then
     ensure_port_available_or_reusable "MLWH" "seqmeta" "WA_${scenario_env_prefix}_SEQMETA_PORT" "$seqmeta_port" "$SEQMETA_HEALTH_URL"
   fi
 
@@ -1423,7 +1424,7 @@ elif [[ -n "$SEQMETA_CMD" ]]; then
     printf '\n'
     wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
-elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
+elif [[ -n "${WA_MLWH_DSN:-}" || ( "$scenario" == "dev" && -n "$MLWH_CACHE_PATH" ) ]]; then
   export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
@@ -1443,7 +1444,7 @@ elif [[ -n "${WA_MLWH_DSN:-}" ]]; then
     wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
 else
-	printf 'MLWH server skipped because no explicit command or MLWH DSN is set\n' >"$SEQMETA_LOG"
+	printf 'MLWH server skipped because no explicit command, MLWH DSN, or MLWH cache path is set\n' >"$SEQMETA_LOG"
 fi
 
 printf '\n[dev]\n' >>"$FRONTEND_LOG"
