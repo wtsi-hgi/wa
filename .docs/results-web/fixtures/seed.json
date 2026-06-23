@@ -154,6 +154,12 @@
                 "kind": "output"
             },
             {
+                "path": "reports/scripted-table.html",
+                "mtime": "2026-04-16T00:00:00Z",
+                "size": 0,
+                "kind": "output"
+            },
+            {
                 "path": "qc/images/image.png",
                 "mtime": "2026-04-16T00:00:00Z",
                 "size": 0,

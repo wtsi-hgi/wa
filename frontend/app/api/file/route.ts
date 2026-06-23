@@ -28,6 +28,12 @@ function canThumbnail(contentType: string | null): boolean {
     return normalized.startsWith("image/") && normalized !== "image/svg+xml";
 }
 
+function sandboxPolicyForContentType(contentType: string | null): string {
+    const normalized = contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+
+    return normalized === "text/html" ? "sandbox allow-scripts" : "sandbox";
+}
+
 async function buildThumbnailResponse(
     response: Response,
     width: number,
@@ -134,7 +140,10 @@ function buildPassthroughHeaders(
     }
 
     if (options.sandbox) {
-        headers.set("content-security-policy", "sandbox");
+        headers.set(
+            "content-security-policy",
+            sandboxPolicyForContentType(contentType),
+        );
     }
 
     return headers;

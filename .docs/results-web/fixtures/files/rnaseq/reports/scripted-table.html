@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Scripted Table Preview Fixture</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 16px;
+      }
+
+      table {
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        border: 1px solid #4b5563;
+        padding: 6px 10px;
+      }
+    </style>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        var slot = document.getElementById("table-slot");
+
+        if (!slot) {
+          return;
+        }
+
+        var table = document.createElement("table");
+        table.setAttribute("aria-label", "Script rendered QC table");
+        table.innerHTML =
+          "<thead><tr><th>Sample</th><th>Status</th></tr></thead>" +
+          "<tbody><tr><td>alpha</td><td>pass</td></tr>" +
+          "<tr><td>beta</td><td>pass</td></tr></tbody>";
+        slot.replaceChildren(table);
+      });
+    </script>
+  </head>
+  <body>
+    <h1>Scripted Table Preview Fixture</h1>
+    <div id="table-slot">
+      <p>Table is waiting for the report script.</p>
+    </div>
+  </body>
+</html>
