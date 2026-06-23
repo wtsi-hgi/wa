@@ -8,7 +8,7 @@ import {
     useState,
 } from "react";
 import { LogIn, LogOut, LockKeyhole } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -28,10 +28,13 @@ import {
     logoutAction,
     type CurrentSession,
 } from "@/app/(results)/auth/actions";
+import { showLockedResultsParam } from "@/lib/search-params";
 
 type AuthMenuProps = {
     initialSession: CurrentSession;
 };
+
+const accessFilterLabel = "Only show accessible result sets";
 
 function anonymousSession(): CurrentSession {
     return {
@@ -66,6 +69,8 @@ async function refreshFromBrowser(): Promise<CurrentSession> {
 
 export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
     const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
     const refreshRoute = router.refresh;
     const [session, setSession] = useState<CurrentSession>(initialSession);
     const [loginOpen, setLoginOpen] = useState(false);
@@ -189,41 +194,80 @@ export function AuthMenu({ initialSession }: AuthMenuProps): ReactNode {
         }
     }
 
+    function handleAccessFilterChange(checked: boolean): void {
+        const nextParams = new URLSearchParams(searchParams.toString());
+
+        if (checked) {
+            nextParams.delete(showLockedResultsParam);
+        } else {
+            nextParams.set(showLockedResultsParam, "1");
+        }
+
+        const query = nextParams.toString();
+
+        router.push(query ? `${pathname}?${query}` : pathname);
+    }
+
     if (session.authenticated) {
         const accountName = session.username ?? "Signed in";
+        const accessibleOnly = searchParams.get(showLockedResultsParam) !== "1";
 
         return (
-            <DropdownMenu>
-                <DropdownMenuTrigger
-                    aria-label={`${accountName} account`}
-                    className="inline-flex h-11 max-w-[min(16rem,calc(100vw-2rem))] items-center justify-center rounded-md border border-border bg-background/92 px-3 text-sm font-medium text-foreground shadow-sm transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
-                >
-                    <span className="truncate">{accountName}</span>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-64 rounded-md">
-                    <div className="px-3 py-2">
-                        <div className="truncate text-sm font-semibold text-foreground">
-                            {accountName}
-                        </div>
-                        <Badge className="mt-1 h-6 bg-muted text-muted-foreground">
-                            Signed in
-                        </Badge>
-                    </div>
-                    <div className="my-1 h-px bg-border" />
-                    <button
-                        type="button"
-                        role="menuitem"
-                        className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
-                        disabled={logoutPending}
-                        onClick={() => {
-                            void handleLogout();
-                        }}
+            <div className="flex min-w-0 items-center justify-end gap-2">
+                <DropdownMenu>
+                    <DropdownMenuTrigger
+                        aria-label={`${accountName} account`}
+                        className="inline-flex h-11 max-w-[min(16rem,calc(100vw-5rem))] items-center justify-center rounded-md border border-border bg-background/92 px-3 text-sm font-medium text-foreground shadow-sm transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
                     >
-                        <LogOut aria-hidden="true" className="h-4 w-4" />
-                        <span>Log out</span>
-                    </button>
-                </DropdownMenuContent>
-            </DropdownMenu>
+                        <span className="truncate">{accountName}</span>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="w-64 rounded-md">
+                        <div className="px-3 py-2">
+                            <div className="truncate text-sm font-semibold text-foreground">
+                                {accountName}
+                            </div>
+                            <Badge className="mt-1 h-6 bg-muted text-muted-foreground">
+                                Signed in
+                            </Badge>
+                        </div>
+                        <div className="my-1 h-px bg-border" />
+                        <button
+                            type="button"
+                            role="menuitem"
+                            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+                            disabled={logoutPending}
+                            onClick={() => {
+                                void handleLogout();
+                            }}
+                        >
+                            <LogOut aria-hidden="true" className="h-4 w-4" />
+                            <span>Log out</span>
+                        </button>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+                <label
+                    className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-background/92 text-muted-foreground shadow-sm transition hover:bg-muted"
+                    title={accessFilterLabel}
+                >
+                    <input
+                        aria-label={accessFilterLabel}
+                        checked={accessibleOnly}
+                        className="peer sr-only"
+                        onChange={(event) =>
+                            handleAccessFilterChange(event.target.checked)
+                        }
+                        type="checkbox"
+                    />
+                    <span
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md transition peer-checked:bg-primary peer-checked:text-primary-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background"
+                        data-access-filter-state={
+                            accessibleOnly ? "accessible" : "all"
+                        }
+                    >
+                        <LockKeyhole aria-hidden="true" className="h-4 w-4" />
+                    </span>
+                </label>
+            </div>
         );
     }
 

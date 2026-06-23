@@ -30,6 +30,7 @@ vi.mock("next/navigation", () => ({
     useRouter: () => ({
         push: pushMock,
     }),
+    useSearchParams: () => new URLSearchParams(),
 }));
 
 beforeAll(() => {

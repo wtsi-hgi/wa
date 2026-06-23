@@ -14,6 +14,7 @@ import {
     afterAll,
     afterEach,
     beforeAll,
+    beforeEach,
     describe,
     expect,
     it,
@@ -31,6 +32,7 @@ const fetchResultMock = vi.fn();
 const fetchFilesMock = vi.fn().mockResolvedValue([]);
 const fetchFileContentMock = vi.fn();
 const validateIdentifierMock = vi.fn();
+const currentSessionMock = vi.fn();
 const pushMock = vi.fn();
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -64,6 +66,7 @@ vi.mock("next/navigation", () => ({
     useRouter: () => ({
         push: pushMock,
     }),
+    useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/app/(results)/actions", () => ({
@@ -75,6 +78,9 @@ vi.mock("@/app/(results)/actions", () => ({
     fetchFiles: fetchFilesMock,
     fetchFileContent: fetchFileContentMock,
     validateIdentifier: validateIdentifierMock,
+}));
+vi.mock("@/app/(results)/auth/actions", () => ({
+    currentSession: currentSessionMock,
 }));
 
 afterAll(() => {
@@ -100,6 +106,17 @@ function buildResultSet(index: number): ResultSet {
         },
         created_at: `2026-04-${day}T10:00:00Z`,
         updated_at: `2026-04-${day}T10:30:00Z`,
+    };
+}
+
+function lockResultSet(result: ResultSet): ResultSet {
+    return {
+        ...result,
+        access: {
+            can_view: false,
+            locked: true,
+            reason: "forbidden",
+        },
     };
 }
 
@@ -156,6 +173,13 @@ async function renderDashboard(
 }
 
 describe("J1 dashboard with search builder and recent results", () => {
+    beforeEach(() => {
+        currentSessionMock.mockResolvedValue({
+            authenticated: false,
+            username: null,
+        });
+    });
+
     afterEach(() => {
         document.body.innerHTML = "";
         delete process.env.WA_MLWH_BACKEND_URL;
@@ -635,6 +659,70 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(markup).toContain("Page 1 of 2");
     });
 
+    it("shows only accessible latest result sets by default for signed-in users", async () => {
+        currentSessionMock.mockResolvedValue({
+            authenticated: true,
+            username: "alice",
+        });
+        const accessible = {
+            ...buildResultSet(41),
+            pipeline_name: "wa/access-visible-latest",
+        };
+        const locked = lockResultSet({
+            ...buildResultSet(42),
+            pipeline_name: "wa/access-locked-latest",
+        });
+
+        fetchStatsMock.mockResolvedValue(
+            buildStats({
+                recent: [accessible, locked],
+                total: 2,
+            }),
+        );
+        searchResultsMock.mockResolvedValue([]);
+
+        const markup = await renderDashboard();
+
+        expect(markup).toContain("wa/access-visible-latest");
+        expect(markup).not.toContain("wa/access-locked-latest");
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(1);
+        expect(countOccurrences(markup, 'data-result-row-locked="true"')).toBe(
+            0,
+        );
+    });
+
+    it("lets signed-in users opt out of the latest access filter and see locked rows", async () => {
+        currentSessionMock.mockResolvedValue({
+            authenticated: true,
+            username: "alice",
+        });
+        const accessible = {
+            ...buildResultSet(43),
+            pipeline_name: "wa/access-visible-latest-opt-out",
+        };
+        const locked = lockResultSet({
+            ...buildResultSet(44),
+            pipeline_name: "wa/access-locked-latest-opt-out",
+        });
+
+        fetchStatsMock.mockResolvedValue(
+            buildStats({
+                recent: [accessible, locked],
+                total: 2,
+            }),
+        );
+        searchResultsMock.mockResolvedValue([]);
+
+        const markup = await renderDashboard({ show_locked: "1" });
+
+        expect(markup).toContain("wa/access-visible-latest-opt-out");
+        expect(markup).toContain("wa/access-locked-latest-opt-out");
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
+        expect(countOccurrences(markup, 'data-result-row-locked="true"')).toBe(
+            1,
+        );
+    });
+
     it("calls searchResults with repeated string arrays and shows search rows when params are present", async () => {
         fetchStatsMock.mockResolvedValue(
             buildStats({
@@ -658,6 +746,66 @@ describe("J1 dashboard with search builder and recent results", () => {
         expect(markup).toContain("Search results");
         expect(markup).not.toContain("Showing search results");
         expect(markup).not.toContain("Matching result sets");
+    });
+
+    it("shows only accessible search result sets by default for signed-in users", async () => {
+        currentSessionMock.mockResolvedValue({
+            authenticated: true,
+            username: "alice",
+        });
+        fetchStatsMock.mockResolvedValue(buildStats());
+        const accessible = {
+            ...buildResultSet(45),
+            pipeline_name: "wa/access-visible-search",
+        };
+        const locked = lockResultSet({
+            ...buildResultSet(46),
+            pipeline_name: "wa/access-locked-search",
+        });
+
+        searchResultsMock.mockResolvedValue([
+            accessible,
+            { result_set: locked } satisfies SearchResult,
+        ]);
+
+        const markup = await renderDashboard({ user: "alice" });
+
+        expect(searchResultsMock).toHaveBeenCalledWith({ user: ["alice"] });
+        expect(markup).toContain("wa/access-visible-search");
+        expect(markup).not.toContain("wa/access-locked-search");
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(1);
+        expect(markup).not.toContain("File access locked");
+    });
+
+    it("keeps the search query clean when signed-in users opt out of the access filter", async () => {
+        currentSessionMock.mockResolvedValue({
+            authenticated: true,
+            username: "alice",
+        });
+        fetchStatsMock.mockResolvedValue(buildStats());
+        const accessible = {
+            ...buildResultSet(47),
+            pipeline_name: "wa/access-visible-search-opt-out",
+        };
+        const locked = lockResultSet({
+            ...buildResultSet(48),
+            pipeline_name: "wa/access-locked-search-opt-out",
+        });
+
+        searchResultsMock.mockResolvedValue([
+            accessible,
+            { result_set: locked } satisfies SearchResult,
+        ]);
+
+        const markup = await renderDashboard({
+            show_locked: "1",
+            user: "alice",
+        });
+
+        expect(searchResultsMock).toHaveBeenCalledWith({ user: ["alice"] });
+        expect(markup).toContain("/tmp/results/48");
+        expect(markup).toContain("File access locked");
+        expect(markup).toContain("Locked");
     });
 
     it("renders the combined search file browser by default for viewable matching result files", async () => {

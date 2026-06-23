@@ -24,7 +24,10 @@ const authActionMocks = vi.hoisted(() => ({
     logoutAction: vi.fn(),
 }));
 const navigationMocks = vi.hoisted(() => ({
+    pathname: "/",
+    push: vi.fn(),
     refresh: vi.fn(),
+    searchParams: new URLSearchParams(),
 }));
 
 vi.mock("@/app/(results)/auth/actions", () => ({
@@ -33,12 +36,17 @@ vi.mock("@/app/(results)/auth/actions", () => ({
     logoutAction: authActionMocks.logoutAction,
 }));
 vi.mock("next/navigation", () => ({
+    usePathname: () => navigationMocks.pathname,
     useRouter: () => ({
+        push: navigationMocks.push,
         refresh: navigationMocks.refresh,
     }),
+    useSearchParams: () => navigationMocks.searchParams,
 }));
 
 beforeEach(() => {
+    navigationMocks.pathname = "/";
+    navigationMocks.searchParams = new URLSearchParams();
     vi.stubGlobal("matchMedia", () => ({
         addEventListener: vi.fn(),
         addListener: vi.fn(),
@@ -143,6 +151,13 @@ describe("E3 auth menu", () => {
         expect(
             document.querySelector('[data-slot="avatar-fallback"]'),
         ).toBeNull();
+        expect(
+            (
+                screen.getByRole("checkbox", {
+                    name: "Only show accessible result sets",
+                }) as HTMLInputElement
+            ).checked,
+        ).toBe(true);
 
         fireEvent.click(accountButton);
 
@@ -156,6 +171,60 @@ describe("E3 auth menu", () => {
         expect(
             document.querySelector('[data-slot="avatar-fallback"]'),
         ).toBeNull();
+    });
+
+    it("keeps the access filter enabled by default and preserves search params when disabled", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                Response.json({
+                    authenticated: true,
+                    username: "alice",
+                }),
+            ),
+        );
+        navigationMocks.searchParams = new URLSearchParams("user=alice");
+
+        await renderAuthMenu({ authenticated: true, username: "alice" });
+
+        const accessToggle = screen.getByRole("checkbox", {
+            name: "Only show accessible result sets",
+        });
+
+        expect((accessToggle as HTMLInputElement).checked).toBe(true);
+
+        fireEvent.click(accessToggle);
+
+        expect(navigationMocks.push).toHaveBeenCalledWith(
+            "/?user=alice&show_locked=1",
+        );
+    });
+
+    it("removes only the access opt-out flag when the signed-in toggle is re-enabled", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                Response.json({
+                    authenticated: true,
+                    username: "alice",
+                }),
+            ),
+        );
+        navigationMocks.searchParams = new URLSearchParams(
+            "user=alice&show_locked=1",
+        );
+
+        await renderAuthMenu({ authenticated: true, username: "alice" });
+
+        const accessToggle = screen.getByRole("checkbox", {
+            name: "Only show accessible result sets",
+        });
+
+        expect((accessToggle as HTMLInputElement).checked).toBe(false);
+
+        fireEvent.click(accessToggle);
+
+        expect(navigationMocks.push).toHaveBeenCalledWith("/?user=alice");
     });
 
     it("refreshes an authenticated session through the browser on access", async () => {
