@@ -62,6 +62,7 @@ describe("P1 file content streaming API route", () => {
     afterEach(() => {
         vi.clearAllMocks();
         vi.resetModules();
+        vi.unstubAllEnvs();
         for (const directory of tempDirs.splice(0)) {
             rmSync(directory, { force: true, recursive: true });
         }
@@ -432,6 +433,39 @@ describe("P1 file content streaming API route", () => {
         expect(response.headers.get("content-type")).toBe("image/webp");
         expect(response.headers.get("content-security-policy")).toBe("sandbox");
         expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    });
+
+    it("rejects OME-TIFF previews above the configured pixel safety limit after the authenticated HEAD probe", async () => {
+        vi.stubEnv("WA_OME_TIFF_MAX_INPUT_PIXELS", "63");
+        const tiffPath = await writeTinyTiffForTest();
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: { "content-type": "image/tiff" },
+        });
+        resultsRawMock.mockResolvedValue(upstream.response);
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(tiffPath)}&ome=plane&channel=0&z=0&t=0&w=64&h=64`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledTimes(1);
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}`,
+            { method: "HEAD" },
+        );
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(422);
+        expect(response.headers.get("content-type")).toContain(
+            "application/json",
+        );
+        expect(response.headers.get("content-type")).not.toBe("image/webp");
+        await expect(response.json()).resolves.toMatchObject({
+            error: expect.stringMatching(/^unable to (read|render) TIFF/),
+        });
     });
 
     it("does not fall back to a backend GET body fetch for OME metadata when HEAD is unsupported", async () => {

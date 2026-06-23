@@ -8,7 +8,7 @@ import {
     render,
     screen,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const { highlightAutoMock } = vi.hoisted(() => ({
     highlightAutoMock: vi.fn((content: string) => ({
@@ -128,6 +128,10 @@ afterEach(() => {
     cleanup();
     fetchMock.mockReset();
     highlightAutoMock.mockClear();
+});
+
+afterAll(() => {
+    vi.unstubAllGlobals();
 });
 
 describe("O1 file preview", () => {
