@@ -240,6 +240,58 @@ describe("O1 result detail hydration", () => {
         });
     });
 
+    it("applies default glob wildcard toggles before rendering result-detail files", async () => {
+        const { ResultDetailFiles } =
+            await import("@/components/result-detail-files");
+        const files = [
+            buildFile("/results/a/barcodes.bam"),
+            buildFile("/results/a/raw-barcodes.bam"),
+            buildFile("/results/a/metrics.bam"),
+        ];
+        const { container } = render(
+            createElement(ResultDetailFiles, {
+                files,
+                resultId: "result-1",
+            }),
+        );
+        const input = container.querySelector(
+            'input[aria-label="Filter files by glob"]',
+        ) as HTMLInputElement | null;
+        const leadingWildcardButton = container.querySelector(
+            'button[aria-label="Include leading wildcard"]',
+        ) as HTMLButtonElement | null;
+
+        expect(input).toBeTruthy();
+        expect(leadingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "true",
+        );
+
+        await act(async () => {
+            if (!input) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(input, {
+                target: { value: "barcodes" },
+            });
+        });
+
+        await waitFor(() => {
+            expect(container.textContent).toContain("barcodes.bam");
+            expect(container.textContent).toContain("raw-barcodes.bam");
+        });
+        expect(container.textContent).not.toContain("metrics.bam");
+
+        await act(async () => {
+            leadingWildcardButton?.click();
+        });
+
+        await waitFor(() => {
+            expect(container.textContent).toContain("barcodes.bam");
+            expect(container.textContent).not.toContain("raw-barcodes.bam");
+        });
+    });
+
     it("hydrates the result detail page without mismatches and keeps directory switching interactive when locale formatting differs", async () => {
         const files = [
             buildFile("/results/a/sample.bam"),

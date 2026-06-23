@@ -23,9 +23,11 @@ import {
 } from "@/components/file-preview";
 import type { FileEntry } from "@/lib/contracts";
 import {
+    applyFileBrowserGlobWildcards,
     fileBrowserGlobFilterStorageKey,
     filterFilesByGlobPattern,
     useSavedFileBrowserGlobFilter,
+    useSavedFileBrowserGlobWildcards,
 } from "@/lib/file-glob-filter";
 import {
     isBitmapPreviewFile,
@@ -420,18 +422,35 @@ export function ResultDetailFiles({
         [filterStorageKey],
     );
     const savedFileFilter = useSavedFileBrowserGlobFilter(filterStorageKey);
+    const savedFileFilterWildcards =
+        useSavedFileBrowserGlobWildcards(filterStorageKey);
     const [fileFilterState, setFileFilterState] = useState<{
         storageKey: string | undefined;
         value: string;
+    } | null>(null);
+    const [fileFilterWildcardState, setFileFilterWildcardState] = useState<{
+        leading: boolean;
+        storageKey: string | undefined;
+        trailing: boolean;
     } | null>(null);
     const fileFilterValue =
         fileFilterState &&
         fileFilterState.storageKey === resolvedFilterStorageKey
             ? fileFilterState.value
             : savedFileFilter;
+    const fileFilterWildcards =
+        fileFilterWildcardState &&
+        fileFilterWildcardState.storageKey === resolvedFilterStorageKey
+            ? fileFilterWildcardState
+            : savedFileFilterWildcards;
+    const appliedFileFilter = useMemo(
+        () =>
+            applyFileBrowserGlobWildcards(fileFilterValue, fileFilterWildcards),
+        [fileFilterValue, fileFilterWildcards],
+    );
     const filteredFiles = useMemo(
-        () => filterFilesByGlobPattern(files, fileFilterValue),
-        [fileFilterValue, files],
+        () => filterFilesByGlobPattern(files, appliedFileFilter),
+        [appliedFileFilter, files],
     );
     const directoryGroups = useMemo(
         () => buildDirectoryGroups(filteredFiles),
@@ -498,12 +517,12 @@ export function ResultDetailFiles({
             : undefined;
 
         return overrideFiles
-            ? filterFilesByGlobPattern(overrideFiles, fileFilterValue)
+            ? filterFilesByGlobPattern(overrideFiles, appliedFileFilter)
             : (selectedGroup?.files ?? []);
     }, [
+        appliedFileFilter,
         directoryFileOverrides,
         effectiveSelectedDirectory,
-        fileFilterValue,
         selectedGroup,
     ]);
     const effectiveSelectedFile = useMemo(() => {
@@ -535,6 +554,28 @@ export function ResultDetailFiles({
             setPreviewPage(1);
         },
         [resolvedFilterStorageKey],
+    );
+    const handleLeadingFileFilterWildcardChange = useCallback(
+        (enabled: boolean) => {
+            setFileFilterWildcardState({
+                leading: enabled,
+                storageKey: resolvedFilterStorageKey,
+                trailing: fileFilterWildcards.trailing,
+            });
+            setPreviewPage(1);
+        },
+        [fileFilterWildcards.trailing, resolvedFilterStorageKey],
+    );
+    const handleTrailingFileFilterWildcardChange = useCallback(
+        (enabled: boolean) => {
+            setFileFilterWildcardState({
+                leading: fileFilterWildcards.leading,
+                storageKey: resolvedFilterStorageKey,
+                trailing: enabled,
+            });
+            setPreviewPage(1);
+        },
+        [fileFilterWildcards.leading, resolvedFilterStorageKey],
     );
 
     useEffect(() => {
@@ -733,10 +774,18 @@ export function ResultDetailFiles({
         <FileBrowser
             activeFiles={selectedDirectoryFiles}
             fileFilterApplied
+            fileFilterLeadingWildcard={fileFilterWildcards.leading}
+            fileFilterTrailingWildcard={fileFilterWildcards.trailing}
             fileFilterValue={fileFilterValue}
             filterStorageKey={filterStorageKey}
             files={filteredFiles}
             onFileFilterChange={handleFileFilterChange}
+            onFileFilterLeadingWildcardChange={
+                handleLeadingFileFilterWildcardChange
+            }
+            onFileFilterTrailingWildcardChange={
+                handleTrailingFileFilterWildcardChange
+            }
             onPreviewHeightChange={setPreviewHeight}
             onPreviewModeChange={(nextMode) => {
                 setPreviewMode(nextMode);

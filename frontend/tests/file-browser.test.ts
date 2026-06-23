@@ -321,6 +321,84 @@ describe("N1 file browser", () => {
         expect(container.textContent).not.toContain("alpha-qc.json");
     });
 
+    it("treats plain glob text as a contains match by default and supports anchored wildcard toggles", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile("/demo/reports/barcodes.tsv.gz", "output"),
+                        buildFile("/demo/reports/raw-barcodes", "output"),
+                        buildFile(
+                            "/demo/reports/raw-barcodes.tsv.gz",
+                            "output",
+                        ),
+                        buildFile("/demo/reports/metrics.tsv.gz", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const filterInput = container.querySelector(
+            'input[aria-label="Filter files by glob"]',
+        ) as HTMLInputElement | null;
+        const leadingWildcardButton = container.querySelector(
+            'button[aria-label="Include leading wildcard"]',
+        ) as HTMLButtonElement | null;
+        const trailingWildcardButton = container.querySelector(
+            'button[aria-label="Include trailing wildcard"]',
+        ) as HTMLButtonElement | null;
+
+        expect(filterInput).toBeTruthy();
+        expect(leadingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "true",
+        );
+        expect(trailingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "true",
+        );
+
+        await act(async () => {
+            if (!filterInput) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(filterInput, {
+                target: { value: "barcodes" },
+            });
+        });
+
+        expect(filterInput?.value).toBe("barcodes");
+        expect(container.textContent).toContain("barcodes.tsv.gz");
+        expect(container.textContent).toContain("raw-barcodes");
+        expect(container.textContent).toContain("raw-barcodes.tsv.gz");
+        expect(container.textContent).not.toContain("metrics.tsv.gz");
+
+        await click(leadingWildcardButton);
+
+        expect(leadingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "false",
+        );
+        expect(container.textContent).toContain("barcodes.tsv.gz");
+        expect(container.textContent).not.toContain("raw-barcodes");
+        expect(container.textContent).not.toContain("raw-barcodes.tsv.gz");
+
+        await click(leadingWildcardButton);
+        await click(trailingWildcardButton);
+
+        expect(leadingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "true",
+        );
+        expect(trailingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "false",
+        );
+        expect(container.textContent).toContain("raw-barcodes");
+        expect(container.textContent).not.toContain("barcodes.tsv.gz");
+        expect(container.textContent).not.toContain("raw-barcodes.tsv.gz");
+    });
+
     it("saves glob filters per storage key and clears when a new key has no saved value", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const storageKey = "wa:file-browser:glob-filter:pipeline-alpha";
@@ -402,6 +480,83 @@ describe("N1 file browser", () => {
         expect(container.textContent).not.toContain("alpha-run.log");
     });
 
+    it("persists disabled wildcard toggles with saved glob filter text", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const files = [
+            buildFile("/demo/reports/barcodes.tsv.gz", "output"),
+            buildFile("/demo/reports/raw-barcodes", "output"),
+            buildFile("/demo/reports/metrics.tsv.gz", "output"),
+        ];
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    filterStorageKey: "pipeline-alpha",
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const filterInput = () =>
+            container.querySelector(
+                'input[aria-label="Filter files by glob"]',
+            ) as HTMLInputElement | null;
+        const trailingWildcardButton = () =>
+            container.querySelector(
+                'button[aria-label="Include trailing wildcard"]',
+            ) as HTMLButtonElement | null;
+        const saveButton = () =>
+            container.querySelector(
+                'button[aria-label="Save file glob filter"]',
+            ) as HTMLButtonElement | null;
+
+        await act(async () => {
+            const input = filterInput();
+
+            if (!input) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(input, {
+                target: { value: "barcodes" },
+            });
+        });
+        await click(trailingWildcardButton());
+        await click(saveButton());
+
+        expect(
+            window.localStorage.getItem(
+                "wa:file-browser:glob-filter:pipeline-alpha",
+            ),
+        ).toBe("barcodes");
+
+        await act(async () => {
+            root.unmount();
+        });
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files,
+                    filterStorageKey: "pipeline-alpha",
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        expect(filterInput()?.value).toBe("barcodes");
+        expect(trailingWildcardButton()?.getAttribute("aria-pressed")).toBe(
+            "false",
+        );
+        expect(container.textContent).toContain("raw-barcodes");
+        expect(container.textContent).not.toContain("barcodes.tsv.gz");
+        expect(container.textContent).not.toContain("metrics.tsv.gz");
+    });
+
     it("keeps combined-browser glob filter storage keys distinct when pipeline names contain delimiters", async () => {
         const { SearchCombinedFileBrowser } =
             await import("@/components/search-combined-file-browser");
@@ -477,7 +632,9 @@ describe("N1 file browser", () => {
         await click(saveButton());
 
         const savedGlobFilters = Object.entries(window.localStorage).filter(
-            ([key]) => key.startsWith("wa:file-browser:glob-filter:pipelines:"),
+            ([key]) =>
+                key.startsWith("wa:file-browser:glob-filter:pipelines:") &&
+                !key.endsWith(":wildcards"),
         );
 
         expect(savedGlobFilters).toHaveLength(2);
@@ -535,6 +692,16 @@ describe("N1 file browser", () => {
             expect(input?.value).toBe("*.tsv");
         });
 
+        expect(
+            hydrationContainer
+                .querySelector('button[aria-label="Include leading wildcard"]')
+                ?.getAttribute("aria-pressed"),
+        ).toBe("false");
+        expect(
+            hydrationContainer
+                .querySelector('button[aria-label="Include trailing wildcard"]')
+                ?.getAttribute("aria-pressed"),
+        ).toBe("false");
         expect(hydrationContainer.textContent).toContain("alpha-summary.tsv");
         expect(hydrationContainer.textContent).not.toContain("alpha-run.log");
         expect(recoverableErrors).toHaveLength(0);

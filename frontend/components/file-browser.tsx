@@ -38,10 +38,12 @@ import { LocalTimestamp } from "@/components/local-timestamp";
 import { PreviewPagination } from "@/components/preview-pagination";
 import { type FileEntry } from "@/lib/contracts";
 import {
+    applyFileBrowserGlobWildcards,
     fileBrowserGlobFilterStorageKey,
     filterFilesByGlobPattern,
     saveFileBrowserGlobFilter,
     useSavedFileBrowserGlobFilter,
+    useSavedFileBrowserGlobWildcards,
 } from "@/lib/file-glob-filter";
 import {
     allPreviewFileTypeIds,
@@ -328,14 +330,27 @@ function clampPreviewHeight(value: number): number {
     );
 }
 
+function fileFilterWildcardButtonClass(enabled: boolean): string {
+    return cn(
+        "inline-flex h-8 w-6 shrink-0 items-center justify-center rounded-md border font-mono text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+        enabled
+            ? "border-primary/55 bg-primary/10 text-primary hover:border-primary/75"
+            : "border-border/80 bg-background text-muted-foreground hover:border-primary/45 hover:text-foreground",
+    );
+}
+
 type FileBrowserProps = {
     activeFiles?: FileEntry[];
     /** True when files, activeFiles, and visibleFiles already reflect fileFilterValue. */
     fileFilterApplied?: boolean;
+    fileFilterLeadingWildcard?: boolean;
+    fileFilterTrailingWildcard?: boolean;
     filterStorageKey?: string;
     files: FileEntry[];
     fileFilterValue?: string;
     onFileFilterChange?: (value: string) => void;
+    onFileFilterLeadingWildcardChange?: (enabled: boolean) => void;
+    onFileFilterTrailingWildcardChange?: (enabled: boolean) => void;
     onPreviewHeightChange?: (value: number) => void;
     onPreviewModeChange?: (mode: PreviewMode) => void;
     onPreviewPageChange?: (page: number) => void;
@@ -1120,10 +1135,14 @@ export function buildDirectoryGroups(files: FileEntry[]): DirectoryGroup[] {
 export function FileBrowser({
     activeFiles: activeFilesOverride,
     fileFilterApplied = false,
+    fileFilterLeadingWildcard,
+    fileFilterTrailingWildcard,
     filterStorageKey,
     files,
     fileFilterValue,
     onFileFilterChange,
+    onFileFilterLeadingWildcardChange,
+    onFileFilterTrailingWildcardChange,
     onPreviewHeightChange,
     onPreviewModeChange,
     onPreviewPageChange,
@@ -1148,40 +1167,79 @@ export function FileBrowser({
         [filterStorageKey],
     );
     const savedFileFilter = useSavedFileBrowserGlobFilter(filterStorageKey);
+    const savedFileFilterWildcards =
+        useSavedFileBrowserGlobWildcards(filterStorageKey);
     const [uncontrolledFileFilter, setUncontrolledFileFilter] = useState<{
         storageKey: string | undefined;
         value: string;
+    } | null>(null);
+    const [
+        uncontrolledFileFilterWildcards,
+        setUncontrolledFileFilterWildcards,
+    ] = useState<{
+        leading: boolean;
+        storageKey: string | undefined;
+        trailing: boolean;
     } | null>(null);
     const effectiveUncontrolledFileFilter =
         uncontrolledFileFilter &&
         uncontrolledFileFilter.storageKey === resolvedFilterStorageKey
             ? uncontrolledFileFilter.value
             : savedFileFilter;
+    const effectiveUncontrolledFileFilterWildcards =
+        uncontrolledFileFilterWildcards &&
+        uncontrolledFileFilterWildcards.storageKey === resolvedFilterStorageKey
+            ? uncontrolledFileFilterWildcards
+            : savedFileFilterWildcards;
     const effectiveFileFilter =
         fileFilterValue ?? effectiveUncontrolledFileFilter;
+    const effectiveFileFilterWildcardLeading =
+        fileFilterLeadingWildcard ??
+        effectiveUncontrolledFileFilterWildcards.leading;
+    const effectiveFileFilterWildcardTrailing =
+        fileFilterTrailingWildcard ??
+        effectiveUncontrolledFileFilterWildcards.trailing;
+    const effectiveFileFilterWildcards = useMemo(
+        () => ({
+            leading: effectiveFileFilterWildcardLeading,
+            trailing: effectiveFileFilterWildcardTrailing,
+        }),
+        [
+            effectiveFileFilterWildcardLeading,
+            effectiveFileFilterWildcardTrailing,
+        ],
+    );
+    const appliedFileFilter = useMemo(
+        () =>
+            applyFileBrowserGlobWildcards(
+                effectiveFileFilter,
+                effectiveFileFilterWildcards,
+            ),
+        [effectiveFileFilter, effectiveFileFilterWildcards],
+    );
     const filteredFiles = useMemo(
         () =>
             fileFilterApplied
                 ? files
-                : filterFilesByGlobPattern(files, effectiveFileFilter),
-        [effectiveFileFilter, fileFilterApplied, files],
+                : filterFilesByGlobPattern(files, appliedFileFilter),
+        [appliedFileFilter, fileFilterApplied, files],
     );
     const filteredActiveFilesOverride = useMemo(
         () =>
             activeFilesOverride && !fileFilterApplied
                 ? filterFilesByGlobPattern(
                       activeFilesOverride,
-                      effectiveFileFilter,
+                      appliedFileFilter,
                   )
                 : activeFilesOverride,
-        [activeFilesOverride, effectiveFileFilter, fileFilterApplied],
+        [activeFilesOverride, appliedFileFilter, fileFilterApplied],
     );
     const filteredVisibleFiles = useMemo(
         () =>
             visibleFiles && !fileFilterApplied
-                ? filterFilesByGlobPattern(visibleFiles, effectiveFileFilter)
+                ? filterFilesByGlobPattern(visibleFiles, appliedFileFilter)
                 : visibleFiles,
-        [effectiveFileFilter, fileFilterApplied, visibleFiles],
+        [appliedFileFilter, fileFilterApplied, visibleFiles],
     );
     const registeredFileCount = unfilteredFileCount ?? files.length;
     const [uncontrolledDirectory, setUncontrolledDirectory] = useState<
@@ -1317,9 +1375,43 @@ export function FileBrowser({
         },
         [onFileFilterChange, resolvedFilterStorageKey],
     );
+    const updateLeadingFileFilterWildcard = useCallback(() => {
+        const nextValue = !effectiveFileFilterWildcards.leading;
+
+        setUncontrolledFileFilterWildcards({
+            leading: nextValue,
+            storageKey: resolvedFilterStorageKey,
+            trailing: effectiveFileFilterWildcards.trailing,
+        });
+        onFileFilterLeadingWildcardChange?.(nextValue);
+    }, [
+        effectiveFileFilterWildcards.leading,
+        effectiveFileFilterWildcards.trailing,
+        onFileFilterLeadingWildcardChange,
+        resolvedFilterStorageKey,
+    ]);
+    const updateTrailingFileFilterWildcard = useCallback(() => {
+        const nextValue = !effectiveFileFilterWildcards.trailing;
+
+        setUncontrolledFileFilterWildcards({
+            leading: effectiveFileFilterWildcards.leading,
+            storageKey: resolvedFilterStorageKey,
+            trailing: nextValue,
+        });
+        onFileFilterTrailingWildcardChange?.(nextValue);
+    }, [
+        effectiveFileFilterWildcards.leading,
+        effectiveFileFilterWildcards.trailing,
+        onFileFilterTrailingWildcardChange,
+        resolvedFilterStorageKey,
+    ]);
     const handleSaveFileFilter = useCallback(() => {
-        saveFileBrowserGlobFilter(filterStorageKey, effectiveFileFilter);
-    }, [effectiveFileFilter, filterStorageKey]);
+        saveFileBrowserGlobFilter(
+            filterStorageKey,
+            effectiveFileFilter,
+            effectiveFileFilterWildcards,
+        );
+    }, [effectiveFileFilter, effectiveFileFilterWildcards, filterStorageKey]);
     const cancelScheduledSubdirPreviewRender = useCallback(
         (directoryPath: string): void => {
             const cancel =
@@ -2840,6 +2932,19 @@ export function FileBrowser({
                         className="mt-3 flex w-full min-w-0 max-w-full items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 sm:mt-0 sm:w-auto"
                         data-file-browser-filter-controls="true"
                     >
+                        <button
+                            aria-label="Include leading wildcard"
+                            aria-pressed={effectiveFileFilterWildcards.leading}
+                            className={fileFilterWildcardButtonClass(
+                                effectiveFileFilterWildcards.leading,
+                            )}
+                            data-file-browser-glob-leading-wildcard="true"
+                            onClick={updateLeadingFileFilterWildcard}
+                            title="Include leading wildcard"
+                            type="button"
+                        >
+                            *
+                        </button>
                         <input
                             aria-label="Filter files by glob"
                             className="h-8 w-full max-w-[min(16rem,52vw)] rounded-md border border-border/80 bg-background px-2.5 font-mono text-sm text-foreground shadow-sm transition placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 sm:w-44"
@@ -2851,6 +2956,19 @@ export function FileBrowser({
                             type="search"
                             value={effectiveFileFilter}
                         />
+                        <button
+                            aria-label="Include trailing wildcard"
+                            aria-pressed={effectiveFileFilterWildcards.trailing}
+                            className={fileFilterWildcardButtonClass(
+                                effectiveFileFilterWildcards.trailing,
+                            )}
+                            data-file-browser-glob-trailing-wildcard="true"
+                            onClick={updateTrailingFileFilterWildcard}
+                            title="Include trailing wildcard"
+                            type="button"
+                        >
+                            *
+                        </button>
                         <button
                             aria-label="Save file glob filter"
                             className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/80 bg-background text-muted-foreground shadow-sm transition hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 disabled:cursor-not-allowed disabled:opacity-45"

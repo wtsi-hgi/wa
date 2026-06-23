@@ -6,6 +6,18 @@ export const fileBrowserGlobFilterStoragePrefix =
     "wa:file-browser:glob-filter:";
 
 const regexSpecialCharacters = /[\\^$+?.()|{}\[\]]/g;
+const globWildcardCharacters = /[*?\[]/;
+const defaultGlobWildcardSnapshot = "1:1";
+
+export type FileBrowserGlobWildcards = {
+    leading: boolean;
+    trailing: boolean;
+};
+
+export const defaultFileBrowserGlobWildcards: FileBrowserGlobWildcards = {
+    leading: true,
+    trailing: true,
+};
 
 function escapeRegexCharacter(character: string): string {
     return character.replace(regexSpecialCharacters, "\\$&");
@@ -200,6 +212,36 @@ export function fileBrowserGlobFilterStorageKey(
     return `${fileBrowserGlobFilterStoragePrefix}${trimmedScope}`;
 }
 
+function fileBrowserGlobWildcardStorageKeyByFilterKey(
+    storageKey: string | undefined,
+): string | undefined {
+    return storageKey ? `${storageKey}:wildcards` : undefined;
+}
+
+function encodeFileBrowserGlobWildcards(
+    wildcards: FileBrowserGlobWildcards,
+): string {
+    return `${wildcards.leading ? "1" : "0"}:${wildcards.trailing ? "1" : "0"}`;
+}
+
+function decodeFileBrowserGlobWildcards(
+    snapshot: string,
+): FileBrowserGlobWildcards {
+    const [leading, trailing] = snapshot.split(":");
+
+    if (
+        (leading !== "0" && leading !== "1") ||
+        (trailing !== "0" && trailing !== "1")
+    ) {
+        return defaultFileBrowserGlobWildcards;
+    }
+
+    return {
+        leading: leading === "1",
+        trailing: trailing === "1",
+    };
+}
+
 export function readSavedFileBrowserGlobFilter(
     storageScope: string | undefined,
 ): string {
@@ -222,8 +264,47 @@ function readSavedFileBrowserGlobFilterByKey(
     }
 }
 
+function readSavedFileBrowserGlobWildcardsByKey(
+    storageKey: string | undefined,
+): string {
+    if (!storageKey || typeof window === "undefined") {
+        return defaultGlobWildcardSnapshot;
+    }
+
+    const wildcardStorageKey =
+        fileBrowserGlobWildcardStorageKeyByFilterKey(storageKey);
+
+    if (!wildcardStorageKey) {
+        return defaultGlobWildcardSnapshot;
+    }
+
+    try {
+        const snapshot = window.localStorage.getItem(wildcardStorageKey);
+
+        if (snapshot === "0:0" || snapshot === "0:1") {
+            return snapshot;
+        }
+
+        if (snapshot === "1:0" || snapshot === defaultGlobWildcardSnapshot) {
+            return snapshot;
+        }
+
+        if (window.localStorage.getItem(storageKey)?.trim()) {
+            return "0:0";
+        }
+
+        return defaultGlobWildcardSnapshot;
+    } catch {
+        return defaultGlobWildcardSnapshot;
+    }
+}
+
 function emptyFileBrowserGlobFilterSnapshot(): string {
     return "";
+}
+
+function defaultFileBrowserGlobWildcardSnapshot(): string {
+    return defaultGlobWildcardSnapshot;
 }
 
 function subscribeToFileBrowserGlobFilterStorage(): () => void {
@@ -245,25 +326,64 @@ export function useSavedFileBrowserGlobFilter(
     );
 }
 
+export function useSavedFileBrowserGlobWildcards(
+    storageScope: string | undefined,
+): FileBrowserGlobWildcards {
+    const storageKey = useMemo(
+        () => fileBrowserGlobFilterStorageKey(storageScope),
+        [storageScope],
+    );
+    const snapshot = useSyncExternalStore(
+        subscribeToFileBrowserGlobFilterStorage,
+        () => readSavedFileBrowserGlobWildcardsByKey(storageKey),
+        defaultFileBrowserGlobWildcardSnapshot,
+    );
+
+    return useMemo(() => decodeFileBrowserGlobWildcards(snapshot), [snapshot]);
+}
+
 export function saveFileBrowserGlobFilter(
     storageScope: string | undefined,
     value: string,
+    wildcards: FileBrowserGlobWildcards = defaultFileBrowserGlobWildcards,
 ): void {
     const storageKey = fileBrowserGlobFilterStorageKey(storageScope);
+    const wildcardStorageKey =
+        fileBrowserGlobWildcardStorageKeyByFilterKey(storageKey);
 
-    if (!storageKey || typeof window === "undefined") {
+    if (!storageKey || !wildcardStorageKey || typeof window === "undefined") {
         return;
     }
 
     try {
         if (value.trim()) {
             window.localStorage.setItem(storageKey, value);
+            window.localStorage.setItem(
+                wildcardStorageKey,
+                encodeFileBrowserGlobWildcards(wildcards),
+            );
         } else {
             window.localStorage.removeItem(storageKey);
+            window.localStorage.removeItem(wildcardStorageKey);
         }
     } catch {
         // Browser storage can be unavailable; filtering still works in memory.
     }
+}
+
+export function applyFileBrowserGlobWildcards(
+    pattern: string,
+    wildcards: FileBrowserGlobWildcards,
+): string {
+    const trimmedPattern = pattern.trim();
+
+    if (!trimmedPattern || globWildcardCharacters.test(trimmedPattern)) {
+        return trimmedPattern;
+    }
+
+    return `${wildcards.leading ? "*" : ""}${trimmedPattern}${
+        wildcards.trailing ? "*" : ""
+    }`;
 }
 
 export function filePathMatchesGlobPattern(
