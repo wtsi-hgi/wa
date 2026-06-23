@@ -63,6 +63,35 @@ describe("P1 file content streaming API route", () => {
         expect(new Uint8Array(await response.arrayBuffer())).toEqual(body);
     });
 
+    it("allows scripts for sandboxed HTML preview responses", async () => {
+        resultsRawMock.mockResolvedValue(
+            new Response(
+                "<!doctype html><script>document.body.textContent = 'ready';</script>",
+                {
+                    status: 200,
+                    headers: { "content-type": "text/html; charset=utf-8" },
+                },
+            ),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest("id=abc&path=%2Fout%2Freport.html"),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            "/rest/v1/results/abc/file?path=%2Fout%2Freport.html",
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe(
+            "text/html; charset=utf-8",
+        );
+        expect(response.headers.get("content-security-policy")).toBe(
+            "sandbox allow-scripts",
+        );
+    });
+
     it("proxies through the authenticated file endpoint when the JWT cookie exists", async () => {
         resultsRawMock.mockResolvedValue(
             new Response("alpha\n", {

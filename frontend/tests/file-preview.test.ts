@@ -187,7 +187,7 @@ describe("O1 file preview", () => {
         expect(selectRenderer("text/plain")).toBe("code");
     });
 
-    it("renders html previews in a sandboxed iframe without scripts", () => {
+    it("renders html previews in a sandboxed iframe that allows report scripts", () => {
         renderPreview({
             content: {
                 content: "<html><body><h1>Report</h1></body></html>",
@@ -199,8 +199,10 @@ describe("O1 file preview", () => {
 
         const frame = screen.getByTitle("HTML preview");
 
-        expect(frame.getAttribute("sandbox")).toBe("allow-same-origin");
-        expect(frame.getAttribute("sandbox")).not.toContain("allow-scripts");
+        expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+        expect(frame.getAttribute("sandbox")).not.toContain(
+            "allow-same-origin",
+        );
         expect(frame.getAttribute("src")).toContain(
             "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Freport.html",
         );

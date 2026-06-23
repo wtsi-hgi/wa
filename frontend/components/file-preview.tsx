@@ -46,6 +46,7 @@ const STABLE_THUMBNAIL_WIDTH = Math.max(
 const EXPANDED_TABLE_PAGE_SIZE = 1000;
 const INLINE_TABLE_HEADER_HEIGHT = 48;
 const INLINE_TABLE_ROW_HEIGHT = 44;
+const htmlPreviewSandbox = "allow-scripts";
 const imageExtensions: ReadonlySet<string> = new Set(
     previewBitmapImageExtensions,
 );
@@ -1100,7 +1101,7 @@ export function FilePreview({
                             dialogContent={
                                 <iframe
                                     className="block h-[calc(100vh-9rem)] w-full bg-white"
-                                    sandbox="allow-same-origin"
+                                    sandbox={htmlPreviewSandbox}
                                     src={proxyUrl}
                                     title="Enlarged HTML preview"
                                 />
@@ -1108,7 +1109,7 @@ export function FilePreview({
                         >
                             <iframe
                                 className="block w-full bg-white"
-                                sandbox="allow-same-origin"
+                                sandbox={htmlPreviewSandbox}
                                 src={proxyUrl}
                                 style={{ height: `${maxHeight ?? 512}px` }}
                                 title="HTML preview"
