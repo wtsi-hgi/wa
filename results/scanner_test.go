@@ -153,7 +153,25 @@ func TestScanDirectory(t *testing.T) {
 		convey.So(filepath.Base(entries[0].Path), convey.ShouldEqual, "a.txt")
 	})
 
-	convey.Convey("ScanDirectory follows directory symlinks while preserving the discovered alias path", t, func() {
+	convey.Convey("ScanDirectory follows directory symlinks that resolve inside the root while preserving the discovered alias path", t, func() {
+		rootDir := t.TempDir()
+		realDir := filepath.Join(rootDir, "real")
+		aliasDir := filepath.Join(rootDir, "alias")
+		createSizedFile(t, filepath.Join(realDir, "nested", "linked.txt"), 13)
+		mustSymlink(t, realDir, aliasDir)
+
+		entries, warnings, err := ScanDirectory(rootDir, false)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(warnings, convey.ShouldBeGreaterThanOrEqualTo, 1)
+		convey.So(entries, convey.ShouldHaveLength, 1)
+
+		entriesByRel := entriesByRelPath(rootDir, entries)
+		convey.So(entriesByRel[filepath.Join("alias", "nested", "linked.txt")].Path, convey.ShouldEqual, filepath.Join(rootDir, "alias", "nested", "linked.txt"))
+		convey.So(entriesByRel[filepath.Join("real", "nested", "linked.txt")].Path, convey.ShouldBeBlank)
+	})
+
+	convey.Convey("ScanDirectory skips directory symlinks that resolve outside the root and reports a warning", t, func() {
 		rootDir := t.TempDir()
 		externalDir := t.TempDir()
 		createSizedFile(t, filepath.Join(rootDir, "local.txt"), 8)
@@ -163,12 +181,12 @@ func TestScanDirectory(t *testing.T) {
 		entries, warnings, err := ScanDirectory(rootDir, false)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(warnings, convey.ShouldEqual, 0)
-		convey.So(entries, convey.ShouldHaveLength, 2)
+		convey.So(warnings, convey.ShouldBeGreaterThanOrEqualTo, 1)
+		convey.So(entries, convey.ShouldHaveLength, 1)
 
 		entriesByRel := entriesByRelPath(rootDir, entries)
 		convey.So(entriesByRel["local.txt"].Path, convey.ShouldEqual, filepath.Join(rootDir, "local.txt"))
-		convey.So(entriesByRel[filepath.Join("escape", "external.txt")].Path, convey.ShouldEqual, filepath.Join(rootDir, "escape", "external.txt"))
+		convey.So(entriesByRel[filepath.Join("escape", "external.txt")].Path, convey.ShouldBeBlank)
 	})
 
 	convey.Convey("B1.6: ScanDirectory returns no entries for an empty directory", t, func() {

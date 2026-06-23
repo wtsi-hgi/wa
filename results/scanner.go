@@ -65,7 +65,7 @@ func ScanDirectory(dir string, includeHidden bool, matchPatterns ...string) ([]F
 	warnings := 0
 	visitedDirs := map[string]struct{}{resolvedRoot: {}}
 
-	err = scanDirectoryTree(rootPath, rootPath, includeHidden, normalizedMatchPatterns, visitedDirs, &entries, &warnings, true)
+	err = scanDirectoryTree(rootPath, rootPath, resolvedRoot, includeHidden, normalizedMatchPatterns, visitedDirs, &entries, &warnings, true)
 	if err != nil {
 		return nil, warnings, err
 	}
@@ -98,6 +98,7 @@ func normalizeScanMatchPatterns(matchPatterns []string) ([]string, error) {
 func scanDirectoryTree(
 	rootPath string,
 	dir string,
+	resolvedRoot string,
 	includeHidden bool,
 	matchPatterns []string,
 	visitedDirs map[string]struct{},
@@ -153,6 +154,12 @@ func scanDirectoryTree(
 				continue
 			}
 
+			if !pathWithinDirectory(resolvedRoot, resolvedPath) {
+				*warnings++
+
+				continue
+			}
+
 			if _, seen := visitedDirs[resolvedPath]; seen {
 				*warnings++
 				continue
@@ -160,7 +167,7 @@ func scanDirectoryTree(
 
 			visitedDirs[resolvedPath] = struct{}{}
 
-			err = scanDirectoryTree(rootPath, childPath, includeHidden, matchPatterns, visitedDirs, entries, warnings, false)
+			err = scanDirectoryTree(rootPath, childPath, resolvedRoot, includeHidden, matchPatterns, visitedDirs, entries, warnings, false)
 			if err != nil {
 				return err
 			}

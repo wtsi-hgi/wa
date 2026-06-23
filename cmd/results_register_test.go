@@ -820,7 +820,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "warning: skipped")
 	})
 
-	convey.Convey("register rejects directory symlinks that resolve outside the output directory before sending a request", t, func() {
+	convey.Convey("register skips directory symlinks that resolve outside the output directory and posts remaining files", t, func() {
 		outputDir := t.TempDir()
 		externalDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
@@ -830,10 +830,19 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(os.Symlink(externalDir, filepath.Join(outputDir, "escape")), convey.ShouldBeNil)
 
 		requestCount := 0
+		var postedRegistration results.Registration
+		var handlerErr error
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCount++
+			handlerErr = json.NewDecoder(r.Body).Decode(&postedRegistration)
+			if handlerErr != nil {
+				w.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "unexpected"})
+			_ = json.NewEncoder(w).Encode(results.ResultSet{ID: "skip-result"})
 		}))
 		defer server.Close()
 
@@ -846,9 +855,13 @@ func TestResultsRegisterCommand(t *testing.T) {
 			outputDir,
 		}, nil)
 
-		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "resolves outside")
-		convey.So(requestCount, convey.ShouldEqual, 0)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "warning: skipped")
+		convey.So(requestCount, convey.ShouldEqual, 1)
+		convey.So(handlerErr, convey.ShouldBeNil)
+		convey.So(registerCommandFileRelPathsByKind(t, outputDir, postedRegistration.Files, "output"), convey.ShouldResemble, map[string]bool{
+			"out.txt": true,
+		})
 	})
 
 	convey.Convey("register deduplicates workflow files that also appear in the scanned output directory", t, func() {

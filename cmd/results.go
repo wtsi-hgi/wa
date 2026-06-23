@@ -2082,7 +2082,7 @@ func validateResultsScanTree(rootDir, dir, resolvedRoot string, includeHidden bo
 		}
 
 		if !resultsPathWithinDirectory(resolvedRoot, resolvedPath) {
-			return fmt.Errorf("scan output directory: directory symlink %q resolves outside %q", childPath, rootDir)
+			continue
 		}
 
 		if _, seen := visitedDirs[resolvedPath]; seen {
