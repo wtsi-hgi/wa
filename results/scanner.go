@@ -35,34 +35,49 @@ import (
 
 const scanDirectoryWarningThreshold = 10000
 
-// ScanDirectory recursively scans a directory and returns output file entries.
-func ScanDirectory(dir string, includeHidden bool, matchPatterns ...string) ([]FileEntry, int, error) {
+// ScanWarningReason identifies why a scan path was skipped.
+type ScanWarningReason string
+
+const (
+	// ScanWarningEscapedDirectorySymlink means a directory symlink resolved outside the scan root.
+	ScanWarningEscapedDirectorySymlink ScanWarningReason = "escaped_directory_symlink"
+)
+
+// ScanWarning describes a path skipped while scanning output files.
+type ScanWarning struct {
+	Path   string
+	Target string
+	Reason ScanWarningReason
+}
+
+// ScanDirectoryWithWarnings recursively scans a directory and returns output file entries with skip warnings.
+func ScanDirectoryWithWarnings(dir string, includeHidden bool, matchPatterns ...string) ([]FileEntry, []ScanWarning, error) {
 	rootPath, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	rootInfo, err := os.Stat(rootPath)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	if !rootInfo.IsDir() {
-		return nil, 0, fmt.Errorf("scan directory %q: not a directory", rootPath)
+		return nil, nil, fmt.Errorf("scan directory %q: not a directory", rootPath)
 	}
 
 	normalizedMatchPatterns, err := normalizeScanMatchPatterns(matchPatterns)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	resolvedRoot, err := filepath.EvalSymlinks(rootPath)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	entries := make([]FileEntry, 0)
-	warnings := 0
+	warnings := make([]ScanWarning, 0)
 	visitedDirs := map[string]struct{}{resolvedRoot: {}}
 
 	err = scanDirectoryTree(rootPath, rootPath, resolvedRoot, includeHidden, normalizedMatchPatterns, visitedDirs, &entries, &warnings, true)
@@ -75,6 +90,17 @@ func ScanDirectory(dir string, includeHidden bool, matchPatterns ...string) ([]F
 	}
 
 	return entries, warnings, nil
+}
+
+func appendScanWarning(warnings *[]ScanWarning, warning ScanWarning) {
+	*warnings = append(*warnings, warning)
+}
+
+// ScanDirectory recursively scans a directory and returns output file entries.
+func ScanDirectory(dir string, includeHidden bool, matchPatterns ...string) ([]FileEntry, int, error) {
+	entries, warnings, err := ScanDirectoryWithWarnings(dir, includeHidden, matchPatterns...)
+
+	return entries, len(warnings), err
 }
 
 func normalizeScanMatchPatterns(matchPatterns []string) ([]string, error) {
@@ -103,7 +129,7 @@ func scanDirectoryTree(
 	matchPatterns []string,
 	visitedDirs map[string]struct{},
 	entries *[]FileEntry,
-	warnings *int,
+	warnings *[]ScanWarning,
 	isRoot bool,
 ) error {
 	children, err := os.ReadDir(dir)
@@ -112,7 +138,7 @@ func scanDirectoryTree(
 			return err
 		}
 
-		*warnings++
+		appendScanWarning(warnings, ScanWarning{})
 
 		return nil
 	}
@@ -127,16 +153,16 @@ func scanDirectoryTree(
 		info, err := os.Stat(childPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				*warnings++
+				appendScanWarning(warnings, ScanWarning{})
 				continue
 			}
 
 			if isSymlinkLoopError(err) {
-				*warnings++
+				appendScanWarning(warnings, ScanWarning{})
 				continue
 			}
 
-			*warnings++
+			appendScanWarning(warnings, ScanWarning{})
 
 			continue
 		}
@@ -145,23 +171,27 @@ func scanDirectoryTree(
 			resolvedPath, err := filepath.EvalSymlinks(childPath)
 			if err != nil {
 				if isSymlinkLoopError(err) {
-					*warnings++
+					appendScanWarning(warnings, ScanWarning{})
 					continue
 				}
 
-				*warnings++
+				appendScanWarning(warnings, ScanWarning{})
 
 				continue
 			}
 
 			if !pathWithinDirectory(resolvedRoot, resolvedPath) {
-				*warnings++
+				appendScanWarning(warnings, ScanWarning{
+					Path:   childPath,
+					Target: resolvedPath,
+					Reason: ScanWarningEscapedDirectorySymlink,
+				})
 
 				continue
 			}
 
 			if _, seen := visitedDirs[resolvedPath]; seen {
-				*warnings++
+				appendScanWarning(warnings, ScanWarning{})
 				continue
 			}
 

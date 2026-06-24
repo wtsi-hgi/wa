@@ -820,14 +820,19 @@ func TestResultsRegisterCommand(t *testing.T) {
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "warning: skipped")
 	})
 
-	convey.Convey("register skips directory symlinks that resolve outside the output directory and posts remaining files", t, func() {
+	convey.Convey("register lists skipped directory symlinks that resolve outside the output directory and posts remaining files", t, func() {
 		outputDir := t.TempDir()
-		externalDir := t.TempDir()
+		firstExternalDir := t.TempDir()
+		secondExternalDir := t.TempDir()
 		workflowPath := filepath.Join(t.TempDir(), "main.nf")
+		firstLinkPath := filepath.Join(outputDir, "escape-one")
+		secondLinkPath := filepath.Join(outputDir, "escape-two")
 		writeRegisterCommandTestFile(t, filepath.Join(outputDir, "out.txt"), "result")
-		writeRegisterCommandTestFile(t, filepath.Join(externalDir, "external.txt"), "outside")
+		writeRegisterCommandTestFile(t, filepath.Join(firstExternalDir, "external.txt"), "outside")
+		writeRegisterCommandTestFile(t, filepath.Join(secondExternalDir, "external.txt"), "outside")
 		writeRegisterCommandTestFile(t, workflowPath, "workflow { }\n")
-		convey.So(os.Symlink(externalDir, filepath.Join(outputDir, "escape")), convey.ShouldBeNil)
+		convey.So(os.Symlink(firstExternalDir, firstLinkPath), convey.ShouldBeNil)
+		convey.So(os.Symlink(secondExternalDir, secondLinkPath), convey.ShouldBeNil)
 
 		requestCount := 0
 		var postedRegistration results.Registration
@@ -856,7 +861,11 @@ func TestResultsRegisterCommand(t *testing.T) {
 		}, nil)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "warning: skipped")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, "warning: skipped 2 path(s) while scanning output files")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, firstLinkPath)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, firstExternalDir)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, secondLinkPath)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, secondExternalDir)
 		convey.So(requestCount, convey.ShouldEqual, 1)
 		convey.So(handlerErr, convey.ShouldBeNil)
 		convey.So(registerCommandFileRelPathsByKind(t, outputDir, postedRegistration.Files, "output"), convey.ShouldResemble, map[string]bool{

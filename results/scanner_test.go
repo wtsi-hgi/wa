@@ -189,6 +189,28 @@ func TestScanDirectory(t *testing.T) {
 		convey.So(entriesByRel[filepath.Join("escape", "external.txt")].Path, convey.ShouldBeBlank)
 	})
 
+	convey.Convey("ScanDirectoryWithWarnings reports escaped directory symlink paths and resolved targets", t, func() {
+		rootDir := t.TempDir()
+		firstExternalDir := t.TempDir()
+		secondExternalDir := t.TempDir()
+		firstLinkPath := filepath.Join(rootDir, "escape-one")
+		secondLinkPath := filepath.Join(rootDir, "escape-two")
+		createSizedFile(t, filepath.Join(rootDir, "local.txt"), 8)
+		createSizedFile(t, filepath.Join(firstExternalDir, "external.txt"), 13)
+		createSizedFile(t, filepath.Join(secondExternalDir, "external.txt"), 21)
+		mustSymlink(t, firstExternalDir, firstLinkPath)
+		mustSymlink(t, secondExternalDir, secondLinkPath)
+
+		entries, warnings, err := ScanDirectoryWithWarnings(rootDir, false)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(entries, convey.ShouldHaveLength, 1)
+		convey.So(warnings, convey.ShouldResemble, []ScanWarning{
+			{Path: firstLinkPath, Target: firstExternalDir, Reason: ScanWarningEscapedDirectorySymlink},
+			{Path: secondLinkPath, Target: secondExternalDir, Reason: ScanWarningEscapedDirectorySymlink},
+		})
+	})
+
 	convey.Convey("B1.6: ScanDirectory returns no entries for an empty directory", t, func() {
 		entries, warnings, err := ScanDirectory(t.TempDir(), false)
 
