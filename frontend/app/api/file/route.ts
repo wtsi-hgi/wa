@@ -25,14 +25,14 @@ function clampDimension(value: string | null, fallback: number): number {
 function localPathFromAuthorizedResponse(
     response: Response,
     requestedPath: string,
-): string {
+): string | null {
     const resolvedPath = response.headers.get(resolvedFilePathHeader)?.trim();
 
-    if (resolvedPath && path.isAbsolute(resolvedPath)) {
-        return resolvedPath;
+    if (resolvedPath) {
+        return path.isAbsolute(resolvedPath) ? resolvedPath : null;
     }
 
-    return requestedPath;
+    return path.isAbsolute(requestedPath) ? requestedPath : null;
 }
 
 function canThumbnail(contentType: string | null): boolean {
@@ -351,6 +351,13 @@ async function handleOmeTiffRequest(
         accessResponse,
         options.path,
     );
+    if (!localPath) {
+        return NextResponse.json(
+            { error: "OME preview requires an absolute local file path" },
+            { status: 422 },
+        );
+    }
+
     let metadata;
     try {
         metadata = await getOmeTiffMetadata(localPath);

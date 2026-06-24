@@ -523,6 +523,63 @@ describe("P1 file content streaming API route", () => {
         });
     });
 
+    it("rejects OME-TIFF metadata for a relative registered output path without an absolute resolved file header", async () => {
+        const { registeredPath } = await writeTinyRegisteredOutputTiffForTest();
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: { "content-type": "image/tiff" },
+        });
+        resultsRawMock.mockResolvedValue(upstream.response);
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(registeredPath)}&ome=metadata`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(registeredPath)}&download=true`,
+            { method: "HEAD" },
+        );
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(422);
+        await expect(response.json()).resolves.toEqual({
+            error: "OME preview requires an absolute local file path",
+        });
+    });
+
+    it("rejects OME-TIFF metadata when the backend resolved file header is relative", async () => {
+        const tiffPath = await writeTinyTiffForTest();
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: {
+                "content-type": "image/tiff",
+                [resolvedFilePathHeader]: "qc/ome/stack.ome.tiff",
+            },
+        });
+        resultsRawMock.mockResolvedValue(upstream.response);
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(tiffPath)}&ome=metadata`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
+            { method: "HEAD" },
+        );
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(422);
+        await expect(response.json()).resolves.toEqual({
+            error: "OME preview requires an absolute local file path",
+        });
+    });
+
     it("uses the public download HEAD fallback path for OME metadata when a JWT cookie is stale", async () => {
         const tiffPath = await writeTinyTiffForTest();
         const staleAuth = makeCancellableResponse({ status: 401 });
