@@ -6,7 +6,6 @@ export const fileBrowserGlobFilterStoragePrefix =
     "wa:file-browser:glob-filter:";
 
 const regexSpecialCharacters = /[\\^$+?.()|{}\[\]]/g;
-const globWildcardCharacters = /[*?\[]/;
 const defaultGlobWildcardSnapshot = "1:1";
 
 export type FileBrowserGlobWildcards = {
@@ -377,12 +376,12 @@ export function applyFileBrowserGlobWildcards(
 ): string {
     const trimmedPattern = pattern.trim();
 
-    if (!trimmedPattern || globWildcardCharacters.test(trimmedPattern)) {
+    if (!trimmedPattern) {
         return trimmedPattern;
     }
 
-    return `${wildcards.leading ? "*" : ""}${trimmedPattern}${
-        wildcards.trailing ? "*" : ""
+    return `${wildcards.leading && !trimmedPattern.startsWith("*") ? "*" : ""}${trimmedPattern}${
+        wildcards.trailing && !trimmedPattern.endsWith("*") ? "*" : ""
     }`;
 }
 

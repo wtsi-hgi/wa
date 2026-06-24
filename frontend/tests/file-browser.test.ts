@@ -399,6 +399,83 @@ describe("N1 file browser", () => {
         expect(container.textContent).not.toContain("raw-barcodes.tsv.gz");
     });
 
+    it("keeps wildcard toggle behavior active when typed glob text already contains a star", async () => {
+        const { FileBrowser } = await import("@/components/file-browser");
+        const nestedPyInputsPath =
+            "/lustre/scratch127/gengen/projects_v2/dual_tf/MORF_10/Multiome/sc_analysis_MORF_v2/sc_analysis_BTLNCK/qc_outputs/HAP1_MORF10_BTLNECK2_1_A1_BTLNCK/HAP1_MORF10_BTLNECK2_1_A1_BTLNCK_py_inputs/atac/barcodes.tsv.gz";
+
+        await act(async () => {
+            root.render(
+                createElement(FileBrowser, {
+                    files: [
+                        buildFile(nestedPyInputsPath, "output"),
+                        buildFile("/demo/reports/alpha-summary.tsv", "output"),
+                    ],
+                    onSelectDirectory: vi.fn(),
+                    onSelectFile: vi.fn(),
+                }),
+            );
+        });
+
+        const filterInput = container.querySelector(
+            'input[aria-label="Filter files by glob"]',
+        ) as HTMLInputElement | null;
+        const leadingWildcardButton = container.querySelector(
+            'button[aria-label="Include leading wildcard"]',
+        ) as HTMLButtonElement | null;
+        const trailingWildcardButton = container.querySelector(
+            'button[aria-label="Include trailing wildcard"]',
+        ) as HTMLButtonElement | null;
+
+        expect(filterInput).toBeTruthy();
+        expect(leadingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "true",
+        );
+        expect(trailingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "true",
+        );
+
+        await act(async () => {
+            if (!filterInput) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(filterInput, {
+                target: { value: "py_inputs*.tsv.gz" },
+            });
+        });
+
+        expect(filterInput?.value).toBe("py_inputs*.tsv.gz");
+        expect(
+            container.querySelector('[data-file-browser-empty-filter="true"]'),
+        ).toBeNull();
+        expect(container.textContent).toContain("barcodes.tsv.gz");
+        expect(container.textContent).not.toContain("alpha-summary.tsv");
+
+        await click(leadingWildcardButton);
+
+        expect(leadingWildcardButton?.getAttribute("aria-pressed")).toBe(
+            "false",
+        );
+
+        await act(async () => {
+            if (!filterInput) {
+                throw new Error("Missing glob filter input");
+            }
+
+            fireEvent.change(filterInput, {
+                target: { value: "*py_inputs" },
+            });
+        });
+
+        expect(filterInput?.value).toBe("*py_inputs");
+        expect(
+            container.querySelector('[data-file-browser-empty-filter="true"]'),
+        ).toBeNull();
+        expect(container.textContent).toContain("barcodes.tsv.gz");
+        expect(container.textContent).not.toContain("alpha-summary.tsv");
+    });
+
     it("saves glob filters per storage key and clears when a new key has no saved value", async () => {
         const { FileBrowser } = await import("@/components/file-browser");
         const storageKey = "wa:file-browser:glob-filter:pipeline-alpha";

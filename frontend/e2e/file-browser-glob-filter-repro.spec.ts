@@ -520,9 +520,21 @@ test("filters and persists a search-result file browser glob", async ({
     const saveButton = page.getByRole("button", {
         name: "Save file glob filter",
     });
+    const trailingWildcardButton = page.getByRole("button", {
+        name: "Include trailing wildcard",
+    });
 
     await expect(globInput).toBeVisible();
     await expect(saveButton).toBeEnabled();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "true",
+    );
+    await trailingWildcardButton.click();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
     await globInput.fill(expectedGlobPattern);
     await expect(globInput).toHaveValue(expectedGlobPattern);
     await expect(page.locator('[data-directory-path$="/reports"]')).toHaveCount(
@@ -577,9 +589,23 @@ test("filters and persists a search-result file browser glob", async ({
                 value === expectedGlobPattern,
         ),
     ).toBe(true);
+    expect(
+        evidence.localStorageEntries.some(
+            ([key, value]) =>
+                key.includes("wa:file-browser:glob-filter:pipelines:") &&
+                key.includes(pipelineNames[0]) &&
+                key.includes(pipelineNames[1]) &&
+                key.endsWith(":wildcards") &&
+                value === "1:0",
+        ),
+    ).toBe(true);
 
     await page.reload();
     await expect(globInput).toHaveValue(expectedGlobPattern);
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
     await expect(page.locator('[data-directory-path$="/logs"]')).toHaveCount(0);
 });
 
@@ -593,9 +619,21 @@ test("filters and persists a result-detail file browser glob", async ({
     const saveButton = page.getByRole("button", {
         name: "Save file glob filter",
     });
+    const trailingWildcardButton = page.getByRole("button", {
+        name: "Include trailing wildcard",
+    });
 
     await expect(globInput).toBeVisible();
     await expect(saveButton).toBeEnabled();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "true",
+    );
+    await trailingWildcardButton.click();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
     await globInput.fill(expectedGlobPattern);
     await expect(globInput).toHaveValue(expectedGlobPattern);
     await expect(page.locator('[data-directory-path$="/reports"]')).toHaveCount(
@@ -653,9 +691,23 @@ test("filters and persists a result-detail file browser glob", async ({
                 ) && value === expectedGlobPattern,
         ),
     ).toBe(true);
+    expect(
+        evidence.localStorageEntries.some(
+            ([key, value]) =>
+                key.includes(
+                    `wa:file-browser:glob-filter:pipeline:${pipelineNames[0]}`,
+                ) &&
+                key.endsWith(":wildcards") &&
+                value === "1:0",
+        ),
+    ).toBe(true);
 
     await page.reload();
     await expect(globInput).toHaveValue(expectedGlobPattern);
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
     await expect(page.locator('[data-directory-path$="/logs"]')).toHaveCount(0);
 });
 
