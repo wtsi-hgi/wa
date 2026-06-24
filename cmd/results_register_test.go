@@ -861,7 +861,7 @@ func TestResultsRegisterCommand(t *testing.T) {
 		}, nil)
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "warning: skipped 2 path(s) while scanning output files")
+		convey.So(stderr.String(), convey.ShouldNotContainSubstring, "warning: skipped 2 path(s) while scanning output files")
 		convey.So(stderr.String(), convey.ShouldContainSubstring, firstLinkPath)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, firstExternalDir)
 		convey.So(stderr.String(), convey.ShouldContainSubstring, secondLinkPath)

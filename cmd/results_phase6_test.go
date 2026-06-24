@@ -229,9 +229,10 @@ func TestResultsRescanCommand(t *testing.T) {
 		store := newResultsRescanStoreForTest(t)
 		dir := t.TempDir()
 		externalDir := t.TempDir()
+		linkPath := filepath.Join(dir, "escape")
 		originalFile := createResultsRescanFileForTest(t, dir, "a.txt", "alpha")
 		createResultsRescanFileForTest(t, externalDir, "outside.txt", "beta")
-		convey.So(os.Symlink(externalDir, filepath.Join(dir, "escape")), convey.ShouldBeNil)
+		convey.So(os.Symlink(externalDir, linkPath), convey.ShouldBeNil)
 
 		stored, err := store.Upsert(context.Background(), &results.Registration{
 			PipelineIdentifier: "pipe",
@@ -259,7 +260,9 @@ func TestResultsRescanCommand(t *testing.T) {
 		err = command.Execute()
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(stderr.String(), convey.ShouldContainSubstring, "warning: skipped")
+		convey.So(stderr.String(), convey.ShouldNotContainSubstring, "warning: skipped 1 path(s) while scanning output files")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, linkPath)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, externalDir)
 
 		files, getErr := store.GetFiles(context.Background(), stored.ID)
 		convey.So(getErr, convey.ShouldBeNil)

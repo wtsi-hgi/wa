@@ -1969,13 +1969,19 @@ func writeResultsScanWarnings(output io.Writer, warnings []results.ScanWarning) 
 		return
 	}
 
-	_, _ = fmt.Fprintf(output, "warning: skipped %d path(s) while scanning output files\n", len(warnings))
+	genericWarnings := 0
 	for _, warning := range warnings {
 		if warning.Reason != results.ScanWarningEscapedDirectorySymlink {
+			genericWarnings++
+
 			continue
 		}
 
 		_, _ = fmt.Fprintf(output, "warning: skipped symlink %q -> %q because it points outside the output directory\n", warning.Path, warning.Target)
+	}
+
+	if genericWarnings > 0 {
+		_, _ = fmt.Fprintf(output, "warning: skipped %d path(s) while scanning output files\n", genericWarnings)
 	}
 }
 
