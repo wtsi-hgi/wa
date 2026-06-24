@@ -109,11 +109,13 @@ Defaults applied when an env file does not pin a port:
 The MLWH API port variables still carry the historical `SEQMETA` name for
 scenario-file compatibility; the managed service is `wa mlwh serve`.
 
-Results API bind hosts are separate from client URLs. Development and
-production can set `WA_DEV_RESULTS_HOST` or `WA_PROD_RESULTS_HOST` when
-`results serve` should listen beyond loopback, for example `0.0.0.0`. Normal
-remote CLI users should export one full `WA_RESULTS_SERVER_URL` instead, using
-the Results API port rather than the frontend port.
+Results and MLWH API bind hosts are separate from client URLs. Development and
+production can set `WA_DEV_RESULTS_HOST` / `WA_PROD_RESULTS_HOST` for
+`results serve`, and `WA_DEV_SEQMETA_HOST` / `WA_PROD_SEQMETA_HOST` for
+`mlwh serve`, when a service should listen beyond loopback, for example
+`0.0.0.0`. Normal remote CLI users should export the full client URL instead:
+`WA_RESULTS_SERVER_URL` for results commands and `WA_MLWH_SERVER_URL` for
+`wa mlwh info` / `mlwhdiff`.
 
 ## Environment files
 
@@ -142,7 +144,7 @@ The `make` recipes, `wa` startup path, and `run-dev.sh` enforce the following:
 - `make test` refuses to start if `WA_RESULTS_DB_PATH` is set in the
   environment, so a stray export cannot point tests at a configured dev or
   prod database.
-- `make prod` refuses inherited `WA_TEST_*` or `WA_DEV_*` ports and results
+- `make prod` refuses inherited `WA_TEST_*` or `WA_DEV_*` ports and bind
   host variables, and `run-dev.sh --mode prod` still requires
   `WA_ENV=production` plus a real `WA_RESULTS_DB_PATH` after loading.
 - `run-dev.sh --mode test` always uses an ephemeral `mktemp` SQLite DB
@@ -175,6 +177,8 @@ The scenario `.env*` files supply `WA_RESULTS_DB_PATH`,
 is set, it falls back to `https://localhost:8080`.
 `WA_DEV_RESULTS_HOST` and `WA_PROD_RESULTS_HOST` are server bind hosts used by
 `results serve` when `--url` is unset; they are not client dial hosts.
+`WA_DEV_SEQMETA_HOST` and `WA_PROD_SEQMETA_HOST` are the equivalent bind hosts
+for managed `wa mlwh serve`.
 `wa results --cert` / `wa results serve --key` default from the TLS env vars.
 `run-dev.sh` uses the scenario ports to export `WA_RESULTS_BACKEND_URL` and
 `WA_MLWH_BACKEND_URL` for the frontend; `wa mlwh info` uses
@@ -232,6 +236,44 @@ make dev
 The equivalent production vars are `WA_ENV=production`,
 `WA_PROD_RESULTS_HOST=0.0.0.0`, and `WA_PROD_RESULTS_PORT=8090`. An explicit
 `results serve --url host:port` still overrides the bind host and port.
+
+### Using the MLWH CLI from another machine
+
+Remote `wa mlwh info` users need a running `wa mlwh serve` API, not local MLWH
+database credentials. Configure the server bind address on the machine running
+the stack, then give users the public client URL.
+
+For a development stack with the default local cache-backed MLWH server:
+
+```bash
+# On the machine running make dev, usually in .env.development.local
+export WA_DEV_SEQMETA_HOST=0.0.0.0
+export WA_DEV_SEQMETA_PORT=3673
+make dev
+
+# On remote CLI machines
+export WA_MLWH_SERVER_URL=http://farm22-wrstat01:3673
+wa mlwh info JAGUAR_Genomes15249455
+```
+
+The production equivalents are `WA_PROD_SEQMETA_HOST` and
+`WA_PROD_SEQMETA_PORT`. This mirrors the results setup:
+`WA_DEV_RESULTS_HOST` controls where the Results API listens, while
+`WA_RESULTS_SERVER_URL` is the full URL remote results CLI users dial.
+Likewise, `WA_DEV_SEQMETA_HOST` controls where the MLWH API listens, while
+`WA_MLWH_SERVER_URL` is the full URL `wa mlwh info` dials.
+
+`WA_MLWH_SERVER_URL` is not read as a bind address by `mlwh serve`. If local
+MLWH backing is configured with `WA_MLWH_CACHE_PATH`, `WA_MLWH_DSN`, or
+`WA_RUN_DEV_SEQMETA_CMD`, `make dev` still starts the local MLWH server even
+when `WA_MLWH_SERVER_URL` is also set; the URL is only the public/client URL.
+
+By default `wa mlwh serve` is plain HTTP, so remote users should use
+`http://host:port`. Only publish an `https://` `WA_MLWH_SERVER_URL` when the
+MLWH server is started with its TLS/token settings:
+`WA_MLWH_SERVER_CERT`, `WA_MLWH_SERVER_KEY`, and `WA_MLWH_SERVER_TOKEN` (or the
+equivalent flags). Results uses HTTPS by default in `run-dev.sh`; MLWH does not
+unless those MLWH-specific settings are configured.
 
 ### Accessing `make dev` from a remote host
 
@@ -502,11 +544,14 @@ manager (systemd, supervisor, etc.) to keep them running.
 
 ```bash
 # MLWH current-state API
+export WA_ENV=production
+export WA_PROD_SEQMETA_HOST=0.0.0.0
+export WA_PROD_SEQMETA_PORT=8091
 export WA_MLWH_DSN='user@tcp(mlwh-host:3306)/warehouse'
 export WA_MLWH_PASSWORD='super-secret'
 export WA_MLWH_CACHE_PATH=/var/lib/wa/mlwh-cache.sqlite
 wa mlwh sync
-wa mlwh serve --port 8091
+wa mlwh serve
 
 # Results API (MySQL for production)
 export WA_ENV=production
@@ -541,23 +586,25 @@ trusted by the system.
 
 ### Environment variables for production
 
-| Variable                       | Required                                | Description                                                                                          |
-| ------------------------------ | --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `WA_ENV`                       | For scenario CLI                        | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                    |
-| `WA_PROD_RESULTS_PORT`         | For server/CLI                          | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults      |
-| `WA_PROD_RESULTS_HOST`         | For server                              | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections        |
-| `WA_RESULTS_SERVER_URL`        | For remote CLI                          | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`        |
-| `WA_RESULTS_DB_PATH`           | For results                             | SQLite path, full DSN, or passwordless MySQL DSN                                                     |
-| `WA_RESULTS_DB_PASSWORD`       | Optional                                | MySQL password paired with a passwordless DSN                                                        |
-| `WA_MLWH_DSN`                  | For `wa mlwh sync`                      | Passwordless MLWH DSN                                                                                |
-| `WA_MLWH_PASSWORD`             | Optional                                | MLWH password paired with a passwordless DSN                                                         |
-| `WA_MLWH_CACHE_PATH`           | For `wa mlwh serve` and local operators | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                         |
-| `WA_MLWH_CACHE_PASSWORD`       | Optional                                | MLWH cache MySQL password                                                                            |
-| `WA_MLWH_SERVER_URL`           | For results/mlwhdiff/mlwh info clients  | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url` / `wa mlwh info --server`              |
-| `WA_RESULTS_SERVER_CERT`       | For results                             | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root     |
-| `WA_RESULTS_SERVER_KEY`        | For results                             | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root |
-| `WA_RESULTS_BACKEND_URL`       | For frontend                            | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility           |
-| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                                | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted       |
-| `WA_MLWH_BACKEND_URL`          | For frontend / compatibility            | MLWH query API URL for the frontend and lower-precedence `wa mlwh info` default                      |
-| `WA_STUDIES_CACHE_TTL_SECONDS` | No                                      | Study list cache TTL (default: 300)                                                                  |
-| `PORT`                         | No                                      | Frontend listen port (default: 3000)                                                                 |
+| Variable                       | Required                                | Description                                                                                              |
+| ------------------------------ | --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `WA_ENV`                       | For scenario CLI                        | Use `production` when loading `.env.production` or exporting `WA_PROD_*` defaults                        |
+| `WA_PROD_RESULTS_PORT`         | For server/CLI                          | Production results API port used by `make prod`, `results serve`, and same-machine CLI defaults          |
+| `WA_PROD_RESULTS_HOST`         | For server                              | Results API bind host for `make prod` / `results serve`; set `0.0.0.0` for remote connections            |
+| `WA_PROD_SEQMETA_PORT`         | For server/CLI                          | Production MLWH API port used by `make prod`, `mlwh serve`, and same-machine `wa mlwh info` defaults     |
+| `WA_PROD_SEQMETA_HOST`         | For server                              | MLWH API bind host for `make prod` / `mlwh serve`; set `0.0.0.0` for remote connections                  |
+| `WA_RESULTS_SERVER_URL`        | For remote CLI                          | Full Results API URL equivalent to `--server`, for example `https://results.example.org:8090`            |
+| `WA_RESULTS_DB_PATH`           | For results                             | SQLite path, full DSN, or passwordless MySQL DSN                                                         |
+| `WA_RESULTS_DB_PASSWORD`       | Optional                                | MySQL password paired with a passwordless DSN                                                            |
+| `WA_MLWH_DSN`                  | For `wa mlwh sync`                      | Passwordless MLWH DSN                                                                                    |
+| `WA_MLWH_PASSWORD`             | Optional                                | MLWH password paired with a passwordless DSN                                                             |
+| `WA_MLWH_CACHE_PATH`           | For `wa mlwh serve` and local operators | SQLite path or passwordless MySQL cache DSN used by server-side MLWH lookups                             |
+| `WA_MLWH_CACHE_PASSWORD`       | Optional                                | MLWH cache MySQL password                                                                                |
+| `WA_MLWH_SERVER_URL`           | For results/mlwhdiff/mlwh info clients  | Remote `wa mlwh serve` URL, equivalent to `--mlwh-server-url` / `wa mlwh info --server`; not a bind host |
+| `WA_RESULTS_SERVER_CERT`       | For results                             | TLS certificate path and CLI trust root; `run-dev.sh` resolves relative paths from the repo root         |
+| `WA_RESULTS_SERVER_KEY`        | For results                             | TLS private key path for `wa results serve`; `run-dev.sh` resolves relative paths from the repo root     |
+| `WA_RESULTS_BACKEND_URL`       | For frontend                            | Results API URL for the frontend; kept as a lower-precedence CLI default for compatibility               |
+| `WA_RESULTS_BACKEND_CA_CERT`   | Optional                                | PEM certificate or CA bundle for frontend trust when results backend TLS is not system-trusted           |
+| `WA_MLWH_BACKEND_URL`          | For frontend / compatibility            | MLWH query API URL for the frontend and lower-precedence `wa mlwh info` default                          |
+| `WA_STUDIES_CACHE_TTL_SECONDS` | No                                      | Study list cache TTL (default: 300)                                                                      |
+| `PORT`                         | No                                      | Frontend listen port (default: 3000)                                                                     |

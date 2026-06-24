@@ -116,6 +116,7 @@ func TestRunDevAutoManagedMLWHBackendDoesNotSyncBeforeMLWHServe(t *testing.T) {
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
 		convey.So(invocations[0], convey.ShouldContainSubstring, "results serve")
 		convey.So(invocations[1], convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
+		convey.So(invocations[1], convey.ShouldContainSubstring, fmt.Sprintf("--url 127.0.0.1:%d", seqmetaPort))
 		convey.So(invocationText, convey.ShouldNotContainSubstring, "mlwh sync")
 		convey.So(invocationText, convey.ShouldNotContainSubstring, "mlwhdiff serve")
 		convey.So(
@@ -245,6 +246,7 @@ func TestRunDevAutoManagedMLWHBackendCanServeConfiguredCacheWithoutDSN(t *testin
 		convey.So(snapshot.MLWHCachePath, convey.ShouldEqual, cachePath)
 		convey.So(invocations, convey.ShouldContainSubstring, "results serve")
 		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
+		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("--url 127.0.0.1:%d", seqmetaPort))
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
 		convey.So(process.stdout.String(), convey.ShouldContainSubstring, "MLWH: "+fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
@@ -301,6 +303,7 @@ func TestRunDevHelpDocumentsProdRefusedEnvironment(t *testing.T) {
 			"WA_DEV_RESULTS_PORT",
 			"WA_DEV_SEQMETA_PORT",
 			"WA_DEV_RESULTS_HOST",
+			"WA_DEV_SEQMETA_HOST",
 		} {
 			convey.So(output, convey.ShouldContainSubstring, variable)
 		}
@@ -925,7 +928,9 @@ func startRunDevForScenarioResultsBindOutputTest(
 			"WA_DEV_RESULTS_PORT",
 			"WA_DEV_SEQMETA_PORT",
 			"WA_DEV_RESULTS_HOST",
+			"WA_DEV_SEQMETA_HOST",
 			"WA_PROD_RESULTS_HOST",
+			"WA_PROD_SEQMETA_HOST",
 			"WA_RESULTS_SERVER_URL",
 		},
 		env: env,
@@ -1314,7 +1319,7 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
 
-	convey.Convey("run-dev.sh lets a remote MLWH server URL win over WA_MLWH_DSN auto-start", t, func() {
+	convey.Convey("run-dev.sh starts local MLWH when a managed source and public MLWH URL are both configured", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		frontendPort := runDevFreePortForTest(t)
 		resultsPort := runDevFreePortForTest(t)
@@ -1322,7 +1327,7 @@ func TestRunDevScript(t *testing.T) {
 		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
 		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
 		binDir := t.TempDir()
-		remoteMLWHURL := "https://mlwh.example.test:9000"
+		publicMLWHURL := fmt.Sprintf("https://mlwh.example.test:%d", seqmetaPort)
 
 		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
 
@@ -1337,7 +1342,8 @@ func TestRunDevScript(t *testing.T) {
 				"WA_ENV":                                "development",
 				"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
 				"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
-				"WA_MLWH_SERVER_URL":                    remoteMLWHURL,
+				"WA_MLWH_SERVER_URL":                    publicMLWHURL,
+				"WA_DEV_SEQMETA_HOST":                   "0.0.0.0",
 				"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
 				"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
 				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
@@ -1352,13 +1358,21 @@ func TestRunDevScript(t *testing.T) {
 		})
 
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
-		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 1), "\n")
+		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 2), "\n")
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		stdout := process.stdout.String()
+		localMLWHURL := fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort)
+		mlwhBind := fmt.Sprintf("0.0.0.0:%d", seqmetaPort)
 
-		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, remoteMLWHURL)
+		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, localMLWHURL)
 		convey.So(invocations, convey.ShouldContainSubstring, "results serve")
+		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("mlwh serve --port %d", seqmetaPort))
+		convey.So(invocations, convey.ShouldContainSubstring, "--url "+mlwhBind)
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
-		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
-		convey.So(process.stdout.String(), convey.ShouldNotContainSubstring, fmt.Sprintf("Starting MLWH server on http://127.0.0.1:%d", seqmetaPort))
+		convey.So(stdout, convey.ShouldContainSubstring, fmt.Sprintf("Starting MLWH server on %s", localMLWHURL))
+		convey.So(stdout, convey.ShouldContainSubstring, "MLWH: "+localMLWHURL)
+		convey.So(stdout, convey.ShouldContainSubstring, "MLWH bind: "+mlwhBind+" (listening beyond loopback)")
+		convey.So(stdout, convey.ShouldContainSubstring, "MLWH public: "+publicMLWHURL)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -1950,6 +1964,8 @@ func runDevEnvForTest(unsetKeys []string) []string {
 		"WA_MLWH_PASSWORD",
 		"WA_MLWH_CACHE_PATH",
 		"WA_MLWH_CACHE_PASSWORD",
+		"WA_DEV_SEQMETA_HOST",
+		"WA_PROD_SEQMETA_HOST",
 	}...)
 
 	blocked := make(map[string]struct{}, len(unsetKeys))
@@ -2801,7 +2817,7 @@ func TestRunDevScriptMLWHBuiltInLaunchDropsLegacySyncFlag(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(string(contents), convey.ShouldNotContainSubstring, "--mlwh-sync-interval")
 		convey.So(string(contents), convey.ShouldNotContainSubstring, "mlwhdiff serve")
-		convey.So(string(contents), convey.ShouldContainSubstring, `mlwh_args=(mlwh serve --port "$seqmeta_port")`)
+		convey.So(string(contents), convey.ShouldContainSubstring, `mlwh_args=(mlwh serve --port "$seqmeta_port" --url "$SEQMETA_BIND_ADDR")`)
 	})
 }
 

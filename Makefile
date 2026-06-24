@@ -32,7 +32,7 @@ LOAD_DEVELOPMENT_ENV = \
 	set -a; . ./.env.development; [ -f ./.env.local ] && . ./.env.local; [ -f ./.env.development.local ] && . ./.env.development.local; set +a
 
 LOAD_PRODUCTION_ENV = \
-	for var in WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT WA_TEST_RESULTS_HOST WA_DEV_FRONTEND_PORT WA_DEV_RESULTS_PORT WA_DEV_SEQMETA_PORT WA_DEV_RESULTS_HOST; do \
+	for var in WA_TEST_FRONTEND_PORT WA_TEST_RESULTS_PORT WA_TEST_SEQMETA_PORT WA_TEST_RESULTS_HOST WA_DEV_FRONTEND_PORT WA_DEV_RESULTS_PORT WA_DEV_SEQMETA_PORT WA_DEV_RESULTS_HOST WA_DEV_SEQMETA_HOST; do \
 		if [ -n "$${!var:-}" ]; then \
 			printf 'make prod refuses %s=%s inherited from the shell.\n' "$$var" "$${!var}" >&2; \
 			exit 1; \

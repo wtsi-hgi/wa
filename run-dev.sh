@@ -18,6 +18,7 @@ PROD_REFUSED_INHERITED_ENV_VARS=(
   WA_DEV_RESULTS_PORT
   WA_DEV_SEQMETA_PORT
   WA_DEV_RESULTS_HOST
+  WA_DEV_SEQMETA_HOST
 )
 
 print_prod_refused_env_help() {
@@ -108,6 +109,9 @@ Remote CLI users should use the Results API URL/port from the output
 (`Results` or `Results public`), not the frontend URL/port. The self-signed
 dev TLS certificate is created or regenerated with SANs for loopback, this
 machine's hostnames, and WA_RESULTS_SERVER_URL/WA_RESULTS_BACKEND_URL hosts.
+Remote MLWH CLI users should use WA_MLWH_SERVER_URL. To make a managed local
+MLWH server reachable, set WA_DEV_SEQMETA_HOST or WA_PROD_SEQMETA_HOST to a
+reachable bind host such as 0.0.0.0; WA_MLWH_SERVER_URL is not a bind setting.
 EOF
       exit 0
       ;;
@@ -403,8 +407,15 @@ SEQMETA_LOG="$LOG_DIR/mlwh.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 SEQMETA_CMD="${WA_RUN_DEV_SEQMETA_CMD:-}"
+LOCAL_MLWH_SERVER_CONFIGURED=0
+if [[ "$scenario" == "test" ]] || \
+   has_nonblank_value "$SEQMETA_CMD" || \
+   has_nonblank_value "${WA_MLWH_DSN:-}" || \
+   has_nonblank_value "${WA_MLWH_CACHE_PATH:-}"; then
+  LOCAL_MLWH_SERVER_CONFIGURED=1
+fi
 REMOTE_MLWH_SERVER_CONFIGURED=0
-if has_nonblank_value "${WA_MLWH_SERVER_URL:-}"; then
+if has_nonblank_value "${WA_MLWH_SERVER_URL:-}" && (( ! LOCAL_MLWH_SERVER_CONFIGURED )); then
   REMOTE_MLWH_SERVER_CONFIGURED=1
 fi
 FRONTEND_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_FRONTEND_HEALTH_MAX_ATTEMPTS:-120}"
@@ -420,6 +431,22 @@ results_bind_host_for_scenario() {
   case "$scenario" in
     dev) host="${WA_DEV_RESULTS_HOST:-}" ;;
     prod) host="${WA_PROD_RESULTS_HOST:-}" ;;
+  esac
+
+  host="$(trim_value "$host")"
+  if [[ -z "$host" ]]; then
+    host="127.0.0.1"
+  fi
+
+  printf '%s' "$host"
+}
+
+seqmeta_bind_host_for_scenario() {
+  local host=""
+
+  case "$scenario" in
+    dev) host="${WA_DEV_SEQMETA_HOST:-}" ;;
+    prod) host="${WA_PROD_SEQMETA_HOST:-}" ;;
   esac
 
   host="$(trim_value "$host")"
@@ -585,6 +612,9 @@ collect_dev_tls_san_entries() {
 RESULTS_BIND_HOST="$(results_bind_host_for_scenario)"
 RESULTS_BIND_ADDR="$(format_host_port "$RESULTS_BIND_HOST" "$results_port")"
 RESULTS_BIND_SCOPE="$(results_bind_scope "$RESULTS_BIND_HOST")"
+SEQMETA_BIND_HOST="$(seqmeta_bind_host_for_scenario)"
+SEQMETA_BIND_ADDR="$(format_host_port "$SEQMETA_BIND_HOST" "$seqmeta_port")"
+SEQMETA_BIND_SCOPE="$(results_bind_scope "$SEQMETA_BIND_HOST")"
 
 repo_absolute_path() {
   local value="$1"
@@ -983,7 +1013,7 @@ ensure_port_available_or_reusable() {
 preflight_service_ports() {
   ensure_port_available_or_reusable "results" "results" "WA_${scenario_env_prefix}_RESULTS_PORT" "$results_port" "$RESULTS_HEALTH_URL" "$WA_RESULTS_BACKEND_CA_CERT"
 
-  if (( ! REMOTE_MLWH_SERVER_CONFIGURED )) && [[ -n "$SEQMETA_CMD" || -n "${WA_MLWH_DSN:-}" || ( "$scenario" == "dev" && -n "${WA_MLWH_CACHE_PATH:-}" ) ]]; then
+  if (( LOCAL_MLWH_SERVER_CONFIGURED )); then
     ensure_port_available_or_reusable "MLWH" "seqmeta" "WA_${scenario_env_prefix}_SEQMETA_PORT" "$seqmeta_port" "$SEQMETA_HEALTH_URL"
   fi
 
@@ -1411,7 +1441,7 @@ elif [[ -n "$SEQMETA_CMD" ]]; then
     printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
     printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
   else
-    printf 'Starting MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
+    printf 'Starting MLWH server on %s (bind=%s)\n' "$WA_MLWH_BACKEND_URL" "$SEQMETA_BIND_ADDR"
     WA_RUN_DEV_SEQMETA_CMD="$SEQMETA_CMD" \
       bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"' \
       >>"$SEQMETA_LOG" 2>&1 &
@@ -1431,8 +1461,8 @@ elif [[ -n "${WA_MLWH_DSN:-}" || ( "$scenario" == "dev" && -n "$MLWH_CACHE_PATH"
     printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
     printf 'Reusing existing MLWH server on %s\n' "$WA_MLWH_BACKEND_URL" >"$SEQMETA_LOG"
   else
-    printf 'Starting MLWH server on %s\n' "$WA_MLWH_BACKEND_URL"
-    mlwh_args=(mlwh serve --port "$seqmeta_port")
+    printf 'Starting MLWH server on %s (bind=%s)\n' "$WA_MLWH_BACKEND_URL" "$SEQMETA_BIND_ADDR"
+    mlwh_args=(mlwh serve --port "$seqmeta_port" --url "$SEQMETA_BIND_ADDR")
     "${BIN_PATH}" "${mlwh_args[@]}" >>"$SEQMETA_LOG" 2>&1 &
     PIDS+=("$!")
     SEQMETA_STARTED=1
@@ -1477,6 +1507,14 @@ elif [[ "$RESULTS_BIND_SCOPE" == "listening beyond loopback" ]]; then
 fi
 if [[ -n "${WA_MLWH_BACKEND_URL:-}" ]]; then
   printf 'MLWH: %s\n' "$WA_MLWH_BACKEND_URL"
+fi
+if (( LOCAL_MLWH_SERVER_CONFIGURED )); then
+  printf 'MLWH bind: %s (%s)\n' "$SEQMETA_BIND_ADDR" "$SEQMETA_BIND_SCOPE"
+  if [[ -n "${WA_MLWH_SERVER_URL:-}" ]]; then
+    printf 'MLWH public: %s\n' "$WA_MLWH_SERVER_URL"
+  elif [[ "$SEQMETA_BIND_SCOPE" == "listening beyond loopback" ]]; then
+    printf 'MLWH public: not configured (set WA_MLWH_SERVER_URL to the reachable URL for remote CLI users)\n'
+  fi
 fi
 printf 'Frontend: https://127.0.0.1:%s\n' "$frontend_port"
 printf 'Logs: %s\n' "$LOG_DIR"

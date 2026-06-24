@@ -558,6 +558,61 @@ func TestMLWHServeRequiresCacheConfiguration(t *testing.T) {
 	})
 }
 
+func TestMLWHServeScenarioBindDefaults(t *testing.T) {
+	convey.Convey("Given development MLWH bind envs and a public server URL, mlwh serve binds the local host and port", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "development")
+		t.Setenv("WA_DEV_SEQMETA_HOST", "0.0.0.0")
+		t.Setenv("WA_DEV_SEQMETA_PORT", "3673")
+		t.Setenv("WA_MLWH_SERVER_URL", "https://dev-host.example.org:3673")
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "http")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "0.0.0.0:3673")
+	})
+
+	convey.Convey("Given production MLWH bind host and port envs, mlwh serve uses the production bind address", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "production")
+		t.Setenv("WA_PROD_SEQMETA_HOST", "0.0.0.0")
+		t.Setenv("WA_PROD_SEQMETA_PORT", "8091")
+		t.Setenv("WA_MLWH_SERVER_URL", "https://prod-host.example.org:8091")
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "http")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "0.0.0.0:8091")
+	})
+
+	convey.Convey("Given a public MLWH server URL without an active scenario, mlwh serve ignores it and uses the server port fallback", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+		t.Setenv("WA_ENV", "")
+		t.Setenv("WA_MLWH_SERVER_PORT", "9000")
+		t.Setenv("WA_MLWH_SERVER_URL", "https://public.example.org:3673")
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
+		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "http")
+		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "127.0.0.1:9000")
+	})
+}
+
 func installFakeMLWHServeAuthServer(t *testing.T, fake *fakeMLWHServeAuthServer) {
 	t.Helper()
 

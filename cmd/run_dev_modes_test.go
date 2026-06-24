@@ -205,6 +205,18 @@ func TestRunDevModeGuards(t *testing.T) {
 		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_DEV_RESULTS_HOST")
 	})
 
+	convey.Convey("run-dev.sh --mode prod rejects inherited WA_DEV_SEQMETA_HOST", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+			"WA_ENV":              "production",
+			"WA_RESULTS_DB_PATH":  "/var/lib/wa/results.db",
+			"WA_DEV_SEQMETA_HOST": "0.0.0.0",
+		}, nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_DEV_SEQMETA_HOST")
+	})
+
 	convey.Convey("run-dev.sh --mode prod rejects test-shaped WA_MLWH_CACHE_PATH", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
