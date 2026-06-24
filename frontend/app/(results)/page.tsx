@@ -13,7 +13,10 @@ import {
     fetchStats,
     searchResults,
 } from "@/app/(results)/actions";
-import { currentSession } from "@/app/(results)/auth/actions";
+import {
+    currentSession,
+    type CurrentSession,
+} from "@/app/(results)/auth/actions";
 import { BackendRequestError } from "@/lib/backend-client";
 import type {
     FileEntry,
@@ -40,6 +43,10 @@ const emptyStats: StatsResult = {
 const combinedSearchFileFetchConcurrency = 6;
 const latestResultSetsInitialPageSize = 10;
 const dashboardActivityDays = 30;
+const anonymousSession: CurrentSession = {
+    authenticated: false,
+    username: null,
+};
 
 type CombinedRegistrationFetch = {
     index: number;
@@ -432,7 +439,7 @@ export default async function ResultsLandingPage({
     let metaKeys: string[] = [];
     const studies: Study[] = [];
     const seqmetaAvailable = Boolean(process.env.WA_MLWH_BACKEND_URL?.trim());
-    const sessionPromise = currentSession();
+    const sessionPromise = currentSession().catch(() => anonymousSession);
     const statsPromise = fetchLatestResultSetStats();
     const metaKeysPromise = fetchMetaKeys();
     const session = await sessionPromise;

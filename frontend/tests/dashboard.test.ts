@@ -691,6 +691,37 @@ describe("J1 dashboard with search builder and recent results", () => {
         );
     });
 
+    it("treats auth lookup failures as anonymous for latest result rows", async () => {
+        currentSessionMock.mockRejectedValue(new Error("auth backend down"));
+        const accessible = {
+            ...buildResultSet(49),
+            pipeline_name: "wa/auth-fallback-visible-latest",
+        };
+        const locked = lockResultSet({
+            ...buildResultSet(50),
+            pipeline_name: "wa/auth-fallback-locked-latest",
+        });
+
+        fetchStatsMock.mockResolvedValue(
+            buildStats({
+                recent: [accessible, locked],
+                total: 2,
+            }),
+        );
+        searchResultsMock.mockResolvedValue([]);
+
+        const markup = await renderDashboard();
+
+        expect(markup).toContain(">Search<");
+        expect(markup).toContain("Latest result sets");
+        expect(markup).toContain("wa/auth-fallback-visible-latest");
+        expect(markup).toContain("wa/auth-fallback-locked-latest");
+        expect(countOccurrences(markup, 'data-result-row="true"')).toBe(2);
+        expect(countOccurrences(markup, 'data-result-row-locked="true"')).toBe(
+            1,
+        );
+    });
+
     it("lets signed-in users opt out of the latest access filter and see locked rows", async () => {
         currentSessionMock.mockResolvedValue({
             authenticated: true,
