@@ -258,7 +258,38 @@ describe("O1 file preview", () => {
         expect(image.getAttribute("src")).toContain("thumb=true");
     });
 
-    it("renders OME-TIFF previews with metadata-driven channel and Z controls over derived plane URLs", async () => {
+    it("renders OME-TIFF inline previews as a plain first-plane image without fetching metadata", () => {
+        renderPreview({
+            file: buildFile({
+                path: "/tmp/results/stack.ome.tiff",
+                size: 230_068_104,
+            }),
+            maxHeight: 220,
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff",
+        });
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByLabelText("Channel")).toBeNull();
+        expect(screen.queryByLabelText("Z slice")).toBeNull();
+        expect(screen.queryByText("Loading TIFF metadata...")).toBeNull();
+
+        const image = screen.getByAltText("stack.ome.tiff preview");
+        const src = image.getAttribute("src") ?? "";
+
+        expect(src).toContain("ome=plane");
+        expect(src).toContain("channel=0");
+        expect(src).toContain("z=0");
+        expect(src).toContain("t=0");
+        expect(src).toContain("w=672");
+        expect(src).toContain("h=420");
+        expect(image.className).toContain("object-contain");
+        expect(image.getAttribute("style")).toContain("height: 220px");
+        expect(image.getAttribute("style")).toContain("max-height: 220px");
+        expect(image.getAttribute("style")).toContain("max-width: 672px");
+    });
+
+    it("shows OME-TIFF metadata-driven channel and Z controls only after enlarging", async () => {
         fetchMock.mockResolvedValue(
             Response.json({
                 channelCount: 4,
@@ -292,6 +323,13 @@ describe("O1 file preview", () => {
                 "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff",
         });
 
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByLabelText("Channel")).toBeNull();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: /open image lightbox/i }),
+        );
+
         await screen.findByLabelText("Channel");
 
         expect(fetchMock).toHaveBeenCalledWith(
@@ -300,12 +338,12 @@ describe("O1 file preview", () => {
         expect(screen.getByText("4 channels")).toBeTruthy();
         expect(screen.getByText("16 Z slices")).toBeTruthy();
 
-        const image = screen.getByAltText("stack.ome.tiff preview");
+        const image = screen.getByAltText("stack.ome.tiff full preview");
         expect(image.getAttribute("src")).toContain("ome=plane");
         expect(image.getAttribute("src")).toContain("channel=0");
         expect(image.getAttribute("src")).toContain("z=0");
-        expect(image.getAttribute("src")).toContain("w=672");
-        expect(image.getAttribute("src")).toContain("h=420");
+        expect(image.getAttribute("src")).toContain("w=1600");
+        expect(image.getAttribute("src")).toContain("h=1200");
 
         fireEvent.change(screen.getByLabelText("Channel"), {
             target: { value: "2" },

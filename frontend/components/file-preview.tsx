@@ -92,6 +92,9 @@ export type FilePreviewProps = {
 
 type LightboxImageProps = {
     buttonClassName?: string;
+    dialogCloseButtonClassName?: string;
+    dialogContent?: ReactNode;
+    dialogPanelClassName?: string;
     downloadUrl?: string;
     fileName: string;
     fullSizeUrl: string;
@@ -634,6 +637,9 @@ function CsvPreview({
 
 function LightboxImage({
     buttonClassName,
+    dialogCloseButtonClassName,
+    dialogContent,
+    dialogPanelClassName,
     downloadUrl,
     fileName,
     fullSizeUrl,
@@ -646,6 +652,10 @@ function LightboxImage({
     thumbnailWidth = 320,
 }: LightboxImageProps) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
+    const defaultDialogPanelClassName =
+        "relative z-10 max-h-full max-w-5xl rounded-[2rem] border border-white/15 bg-[color:rgba(15,23,42,0.9)] p-4 shadow-2xl";
+    const defaultDialogCloseButtonClassName =
+        "absolute right-4 top-4 inline-flex size-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition hover:bg-white/10";
 
     useEffect(() => {
         if (!lightboxOpen) {
@@ -732,24 +742,33 @@ function LightboxImage({
                         className="absolute inset-0 bg-[color:rgba(17,24,39,0.75)] backdrop-blur-sm"
                         onClick={() => setLightboxOpen(false)}
                     />
-                    <div className="relative z-10 max-h-full max-w-5xl rounded-[2rem] border border-white/15 bg-[color:rgba(15,23,42,0.9)] p-4 shadow-2xl">
+                    <div
+                        className={
+                            dialogPanelClassName ?? defaultDialogPanelClassName
+                        }
+                    >
                         <button
                             type="button"
                             aria-label="Close image preview"
-                            className="absolute right-4 top-4 inline-flex size-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                            className={
+                                dialogCloseButtonClassName ??
+                                defaultDialogCloseButtonClassName
+                            }
                             onClick={() => setLightboxOpen(false)}
                         >
                             <X className="size-4" aria-hidden="true" />
                         </button>
-                        <Image
-                            alt={`${fileName} full preview`}
-                            className="max-h-[80vh] max-w-full rounded-[1.5rem] object-contain"
-                            src={fullSizeUrl}
-                            unoptimized
-                            width={1600}
-                            height={1200}
-                            sizes="100vw"
-                        />
+                        {dialogContent ?? (
+                            <Image
+                                alt={`${fileName} full preview`}
+                                className="max-h-[80vh] max-w-full rounded-[1.5rem] object-contain"
+                                src={fullSizeUrl}
+                                unoptimized
+                                width={1600}
+                                height={1200}
+                                sizes="100vw"
+                            />
+                        )}
                     </div>
                 </div>
             ) : null}
@@ -813,6 +832,53 @@ function OmeTiffPreview({
     maxHeightPx?: number;
     proxyUrl: string;
 }) {
+    const thumbnailUrl = buildOmeTiffPlaneUrl(proxyUrl, {
+        channel: 0,
+        height: STABLE_THUMBNAIL_HEIGHT,
+        t: 0,
+        width: STABLE_THUMBNAIL_WIDTH,
+        z: 0,
+    });
+    const fullPlaneUrl = buildOmeTiffPlaneUrl(proxyUrl, {
+        channel: 0,
+        height: 1200,
+        t: 0,
+        width: 1600,
+        z: 0,
+    });
+    const renderedHeight = maxHeightPx ?? 240;
+
+    return (
+        <LightboxImage
+            buttonClassName="group relative flex h-full w-full max-w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.5rem]"
+            dialogCloseButtonClassName="absolute right-4 top-4 z-10 inline-flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground transition hover:bg-muted"
+            dialogContent={
+                <OmeTiffExpandedPreview
+                    fileName={fileName}
+                    proxyUrl={proxyUrl}
+                />
+            }
+            dialogPanelClassName="relative z-10 flex max-h-full w-full max-w-6xl flex-col rounded-[2rem] border border-white/15 bg-background p-5 text-foreground shadow-2xl"
+            downloadUrl={buildDownloadUrl(proxyUrl)}
+            fileName={fileName}
+            fullSizeUrl={fullPlaneUrl}
+            imageClassName="mx-auto block"
+            maxHeightPx={renderedHeight}
+            sizes="(min-width: 1280px) 32vw, 92vw"
+            thumbnailHeight={STABLE_THUMBNAIL_HEIGHT}
+            thumbnailUrl={thumbnailUrl}
+            thumbnailWidth={STABLE_THUMBNAIL_WIDTH}
+        />
+    );
+}
+
+function OmeTiffExpandedPreview({
+    fileName,
+    proxyUrl,
+}: {
+    fileName: string;
+    proxyUrl: string;
+}) {
     const [metadataState, setMetadataState] = useState<{
         error: string | null;
         metadata: OmeTiffMetadata | null;
@@ -872,13 +938,11 @@ function OmeTiffPreview({
         metadataState.proxyUrl === proxyUrl ? metadataState.metadata : null;
     const error =
         metadataState.proxyUrl === proxyUrl ? metadataState.error : null;
-    const derivedHeight = maxHeightPx ?? STABLE_THUMBNAIL_HEIGHT;
-    const derivedWidth = Math.max(320, Math.round(derivedHeight * 1.6));
     const downloadUrl = buildDownloadUrl(proxyUrl);
 
     if (error) {
         return (
-            <div className="relative h-full w-full rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+            <div className="relative min-h-64 w-full rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
                 <DownloadIconLink
                     className="absolute right-4 top-4"
                     href={downloadUrl}
@@ -898,7 +962,7 @@ function OmeTiffPreview({
 
     if (!metadata) {
         return (
-            <div className="relative flex h-full w-full items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
+            <div className="relative flex min-h-64 w-full items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
                 <DownloadIconLink
                     className="absolute right-4 top-4"
                     href={downloadUrl}
@@ -913,13 +977,6 @@ function OmeTiffPreview({
     const safeT = clampPreviewCoordinate(t, metadata.sizeT);
     const planeUrl = buildOmeTiffPlaneUrl(proxyUrl, {
         channel: safeChannel,
-        height: derivedHeight,
-        t: safeT,
-        width: derivedWidth,
-        z: safeZ,
-    });
-    const fullPlaneUrl = buildOmeTiffPlaneUrl(proxyUrl, {
-        channel: safeChannel,
         height: 1200,
         t: safeT,
         width: 1600,
@@ -928,15 +985,9 @@ function OmeTiffPreview({
     const showChannelControl = metadata.channelCount > 1;
     const showZControl = metadata.sizeZ > 1;
     const showTControl = metadata.sizeT > 1;
-    const imageHeight = Math.max(
-        96,
-        maxHeightPx
-            ? maxHeightPx - (showChannelControl || showZControl ? 92 : 0)
-            : 260,
-    );
 
     return (
-        <div className="flex h-full w-full max-w-full flex-col gap-3">
+        <div className="flex max-h-[calc(100vh-8rem)] w-full max-w-full flex-col gap-4 pr-12">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 {metadataSummary(metadata).map((item) => (
                     <span
@@ -1019,17 +1070,15 @@ function OmeTiffPreview({
                 </div>
             ) : null}
 
-            <div className="min-h-0 flex-1">
-                <LightboxImage
-                    buttonClassName="group relative inline-flex max-w-full cursor-zoom-in overflow-hidden rounded-[1.5rem]"
-                    downloadUrl={downloadUrl}
-                    fileName={fileName}
-                    fullSizeUrl={fullPlaneUrl}
-                    maxHeightPx={imageHeight}
-                    sizes="(min-width: 1280px) 32vw, 92vw"
-                    thumbnailHeight={derivedHeight}
-                    thumbnailUrl={planeUrl}
-                    thumbnailWidth={derivedWidth}
+            <div className="min-h-0 flex-1 overflow-auto rounded-[1.5rem] bg-muted/30">
+                <Image
+                    alt={`${fileName} full preview`}
+                    className="mx-auto block max-h-[calc(100vh-16rem)] max-w-full object-contain"
+                    height={1200}
+                    sizes="100vw"
+                    src={planeUrl}
+                    unoptimized
+                    width={1600}
                 />
             </div>
         </div>

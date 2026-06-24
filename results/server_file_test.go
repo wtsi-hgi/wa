@@ -91,6 +91,23 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, payload)
 	})
 
+	convey.Convey("Given user alice has access to a registered TIFF under an output subdirectory, when auth file content is checked with HEAD download=true, then headers are returned without a body", t, func() {
+		payload := []byte("tiff bytes")
+		server, resultID, path := newFileServerScenarioForTest(t, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "qc", "ome", "stack.ome.tiff"), payload)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.June, 24, 10, 0, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, fileServerHandlerForTest(t, server), http.MethodHead, gas.EndPointAuth+"/results/"+resultID+"/file?path="+url.QueryEscape(path)+"&download=true", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "image/tiff")
+		convey.So(response.Header().Get("Content-Disposition"), convey.ShouldContainSubstring, "filename=\"stack.ome.tiff\"")
+		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, path)
+		convey.So(response.Body.Len(), convey.ShouldEqual, 0)
+	})
+
 	convey.Convey("Given a legacy relative registered output file path, when the file is requested, then the server resolves it under the output directory", t, func() {
 		payload := []byte("legacy relative content")
 		outputDirectory := t.TempDir()

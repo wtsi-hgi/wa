@@ -50,6 +50,7 @@ const DefaultMaxPreviewBytes int64 = 10 * 1024 * 1024
 const MaxInlinePreviewLines = 20
 
 const previewTruncatedHeader = "X-Preview-Truncated"
+
 const resolvedFilePathHeader = "X-WA-Resolved-File-Path"
 
 // PreviewMode names the three distinct ways the file content endpoint can serve
@@ -386,6 +387,12 @@ func (s *Server) handleGetFile(c *gin.Context) {
 	if download {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(localPath)))
 	}
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+
+		return
+	}
+
 	if allowReadablePreview {
 		preview, truncated, err := readPreviewLinesWithinLimits(reader, s.maxPreviewBytes, lineLimit)
 		if err != nil {
