@@ -1463,6 +1463,9 @@ elif [[ -n "${WA_MLWH_DSN:-}" || -n "$MLWH_CACHE_PATH" ]]; then
   else
     printf 'Starting MLWH server on %s (bind=%s)\n' "$WA_MLWH_BACKEND_URL" "$SEQMETA_BIND_ADDR"
     mlwh_args=(mlwh serve --port "$seqmeta_port" --url "$SEQMETA_BIND_ADDR")
+    if [[ -n "$MLWH_CACHE_PATH" ]]; then
+      mlwh_args+=(--mlwh-cache "$MLWH_CACHE_PATH")
+    fi
     "${BIN_PATH}" "${mlwh_args[@]}" >>"$SEQMETA_LOG" 2>&1 &
     PIDS+=("$!")
     SEQMETA_STARTED=1
