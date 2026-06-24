@@ -118,6 +118,7 @@ export type FileImageThumbnailProps = {
     file: FileEntry;
     fullSizeUrl: string;
     height?: number;
+    proxyUrl?: string;
     thumbnailUrl: string;
 };
 
@@ -1090,14 +1091,35 @@ export const FileImageThumbnail = memo(
         file,
         fullSizeUrl,
         height = 220,
+        proxyUrl,
         thumbnailUrl,
     }: FileImageThumbnailProps) {
         const fileName = file.path.split("/").pop() ?? file.path;
+        const isTiffThumbnail = isTiffPreviewPath(file.path);
+        const sourceUrl = proxyUrl ?? fullSizeUrl;
 
         return (
             <LightboxImage
                 buttonClassName="group relative inline-flex max-w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.25rem]"
-                downloadUrl={buildDownloadUrl(fullSizeUrl)}
+                dialogCloseButtonClassName={
+                    isTiffThumbnail
+                        ? "absolute right-4 top-4 z-10 inline-flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground transition hover:bg-muted"
+                        : undefined
+                }
+                dialogContent={
+                    isTiffThumbnail ? (
+                        <OmeTiffExpandedPreview
+                            fileName={fileName}
+                            proxyUrl={sourceUrl}
+                        />
+                    ) : undefined
+                }
+                dialogPanelClassName={
+                    isTiffThumbnail
+                        ? "relative z-10 flex max-h-full w-full max-w-6xl flex-col rounded-[2rem] border border-white/15 bg-background p-5 text-foreground shadow-2xl"
+                        : undefined
+                }
+                downloadUrl={buildDownloadUrl(sourceUrl)}
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}
                 maxHeightPx={height}
@@ -1115,6 +1137,7 @@ export const FileImageThumbnail = memo(
         return (
             prevProps.file.path === nextProps.file.path &&
             prevProps.fullSizeUrl === nextProps.fullSizeUrl &&
+            prevProps.proxyUrl === nextProps.proxyUrl &&
             prevProps.thumbnailUrl === nextProps.thumbnailUrl &&
             prevProps.height === nextProps.height
         );

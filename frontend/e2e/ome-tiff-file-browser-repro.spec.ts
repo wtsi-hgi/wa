@@ -2,6 +2,7 @@ import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import sharp from "sharp";
 
 import {
@@ -15,8 +16,11 @@ import {
 const repoRoot = path.resolve(process.cwd(), "..");
 const evidenceDir = path.join(repoRoot, ".tmp", "agent");
 const outputDirectory = path.join(evidenceDir, "ome-tiff-file-browser-fixture");
+const subfolderPreviewDirectory = path.join(outputDirectory, "qc");
 const nestedDirectory = path.join(outputDirectory, "qc", "ome");
 const tiffPath = path.join(nestedDirectory, "small-multichannel.ome.tiff");
+const nonPreviewDirectory = path.join(outputDirectory, "qc", "z-nonpreview");
+const nonPreviewPath = path.join(nonPreviewDirectory, "notes.bin");
 const pipelineName = "wa/ome-tiff-file-browser-repro";
 const failureScreenshotPath = path.join(
     evidenceDir,
@@ -26,6 +30,10 @@ const visibleScreenshotPath = path.join(
     evidenceDir,
     "ome-tiff-file-browser-generated-visible.png",
 );
+const subfolderControlsScreenshotPath = path.join(
+    evidenceDir,
+    "ome-tiff-file-browser-subfolder-controls.png",
+);
 
 let registeredResult: ResultSet | null = null;
 
@@ -33,17 +41,26 @@ test.beforeAll(async () => {
     mkdirSync(evidenceDir, { recursive: true });
     rmSync(outputDirectory, { force: true, recursive: true });
     mkdirSync(nestedDirectory, { recursive: true });
+    mkdirSync(nonPreviewDirectory, { recursive: true });
     await writeSmallOmeTiff(tiffPath);
+    writeFileSync(nonPreviewPath, "keeps the parent folder visible\n");
 
-    const stats = statSync(tiffPath);
+    const tiffStats = statSync(tiffPath);
+    const nonPreviewStats = statSync(nonPreviewPath);
     const registration: ResultRegistration = {
         command: "nextflow run wa/ome-tiff-file-browser-repro",
         files: [
             {
                 kind: "output",
-                mtime: stats.mtime.toISOString(),
+                mtime: tiffStats.mtime.toISOString(),
                 path: tiffPath,
-                size: stats.size,
+                size: tiffStats.size,
+            },
+            {
+                kind: "output",
+                mtime: nonPreviewStats.mtime.toISOString(),
+                path: nonPreviewPath,
+                size: nonPreviewStats.size,
             },
         ],
         metadata: {
@@ -72,6 +89,54 @@ test.afterAll(() => {
 test.beforeEach(async ({ context }) => {
     await installResultsAuthCookie(context);
 });
+
+async function openPreviewModes(controls: Locator): Promise<void> {
+    const summary = controls
+        .locator('summary[aria-label="Preview modes"]')
+        .first();
+
+    await expect(summary).toBeVisible();
+    await summary.evaluate((element) => {
+        const details = element.closest("details");
+
+        if (!(details instanceof HTMLDetailsElement)) {
+            throw new Error("Missing preview modes disclosure");
+        }
+
+        if (!details.open) {
+            (element as HTMLElement).click();
+        }
+    });
+}
+
+async function selectDirectoryForSubfolderPreviews(
+    page: Page,
+    directoryPath: string,
+): Promise<void> {
+    const directoryButton = page
+        .locator(`[data-directory-path="${directoryPath}"]`)
+        .first();
+
+    await directoryButton.scrollIntoViewIfNeeded();
+    await expect(directoryButton).toBeVisible();
+
+    if (
+        (await directoryButton.getAttribute("data-directory-expanded")) ===
+        "true"
+    ) {
+        await directoryButton.click();
+        await expect(directoryButton).toHaveAttribute(
+            "data-directory-expanded",
+            "false",
+        );
+    }
+
+    await directoryButton.click();
+    await expect(directoryButton).toHaveAttribute(
+        "data-directory-expanded",
+        "true",
+    );
+}
 
 async function writeSmallOmeTiff(filePath: string): Promise<void> {
     const width = 16;
@@ -191,4 +256,66 @@ test("registered generated multichannel OME-TIFF renders in the file browser pre
         await page.screenshot({ fullPage: true, path: failureScreenshotPath });
         throw error;
     }
+});
+
+test("registered generated multichannel OME-TIFF shows channel controls when enlarged from subfolder previews", async ({
+    page,
+}) => {
+    test.setTimeout(120_000);
+
+    if (!registeredResult) {
+        throw new Error("Result registration did not complete");
+    }
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/results/${registeredResult.id}`, {
+        waitUntil: "domcontentloaded",
+    });
+
+    const fileBrowser = page.locator('[data-file-browser="true"]');
+    await expect(fileBrowser).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`[data-file-path="${tiffPath}"]`)).toBeVisible();
+
+    await selectDirectoryForSubfolderPreviews(page, subfolderPreviewDirectory);
+
+    const folderControls = page.locator(
+        `[data-file-browser-folder-controls="${subfolderPreviewDirectory}"]`,
+    );
+    await expect(folderControls).toBeVisible();
+    await openPreviewModes(folderControls);
+    await folderControls.getByLabel("Subfolder previews").check();
+
+    const subfolderStrip = page.locator(
+        `[data-subdir-preview-strip="${nestedDirectory}"]`,
+    );
+    const subfolderFrame = page.locator(
+        `[data-subdir-preview-frame="${tiffPath}"]`,
+    );
+    const subfolderPreviewImage = subfolderFrame.getByAltText(
+        "small-multichannel.ome.tiff preview",
+    );
+
+    await expect(subfolderStrip).toBeVisible();
+    await expect(subfolderFrame).toBeVisible();
+    await expect(subfolderPreviewImage).toBeVisible({ timeout: 30_000 });
+    await expect(subfolderPreviewImage).toHaveAttribute("src", /ome=plane/);
+    await expect(subfolderPreviewImage).toHaveAttribute("src", /channel=0/);
+
+    await subfolderFrame
+        .getByRole("button", { name: /open image lightbox/i })
+        .click();
+
+    const lightbox = page.getByRole("dialog", {
+        name: /image preview lightbox/i,
+    });
+
+    await expect(lightbox).toBeVisible();
+    await expect(lightbox.getByLabel("Channel", { exact: true })).toBeVisible({
+        timeout: 30_000,
+    });
+    await expect(lightbox.getByText("3 channels")).toBeVisible();
+    await page.screenshot({
+        fullPage: true,
+        path: subfolderControlsScreenshotPath,
+    });
 });

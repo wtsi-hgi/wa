@@ -898,6 +898,10 @@ export function ResultDetailFiles({
                             file.path,
                         )}
                         height={previewHeight}
+                        proxyUrl={buildFileUrl(
+                            resultIdForFile(file),
+                            file.path,
+                        )}
                         thumbnailUrl={buildGridThumbnailUrl(
                             resultIdForFile(file),
                             file.path,

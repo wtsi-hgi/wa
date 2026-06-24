@@ -404,6 +404,74 @@ describe("O1 file preview", () => {
         ).toBe("/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png");
     });
 
+    it("shows OME-TIFF controls after enlarging reusable thumbnail previews", async () => {
+        fetchMock.mockResolvedValue(
+            Response.json({
+                channelCount: 3,
+                channels: [
+                    { index: 0, name: "red" },
+                    { index: 1, name: "green" },
+                    { index: 2, name: "blue" },
+                ],
+                depth: "uchar",
+                dimensionOrder: "XYCZT",
+                format: "tiff",
+                hasOmeMetadata: true,
+                height: 16,
+                pageCount: 3,
+                pixelType: "uint8",
+                sizeT: 1,
+                sizeX: 16,
+                sizeY: 16,
+                sizeZ: 1,
+                width: 16,
+            }),
+        );
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+        const proxyUrl =
+            "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff";
+
+        render(
+            createElement(FileImageThumbnail, {
+                file: buildFile({ path: "/tmp/results/stack.ome.tiff" }),
+                fullSizeUrl: `${proxyUrl}&ome=plane&channel=0&z=0&t=0&w=1600&h=1200`,
+                height: 180,
+                proxyUrl,
+                thumbnailUrl: `${proxyUrl}&ome=plane&channel=0&z=0&t=0&w=672&h=420`,
+            }),
+        );
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByLabelText("Channel")).toBeNull();
+        expect(screen.getByAltText("stack.ome.tiff preview")).toHaveProperty(
+            "src",
+            expect.stringContaining("ome=plane"),
+        );
+        expect(
+            screen
+                .getByRole("link", { name: /download file/i })
+                .getAttribute("href"),
+        ).toBe(`${proxyUrl}&download=true`);
+
+        fireEvent.click(
+            screen.getByRole("button", { name: /open image lightbox/i }),
+        );
+
+        await screen.findByLabelText("Channel");
+
+        expect(fetchMock).toHaveBeenCalledWith(`${proxyUrl}&ome=metadata`);
+        expect(screen.getByText("3 channels")).toBeTruthy();
+
+        const expandedImage = screen.getByAltText(
+            "stack.ome.tiff full preview",
+        );
+        expect(expandedImage.getAttribute("src")).toContain("ome=plane");
+        expect(expandedImage.getAttribute("src")).toContain("channel=0");
+        expect(expandedImage.getAttribute("src")).toContain("w=1600");
+        expect(expandedImage.getAttribute("src")).toContain("h=1200");
+    });
+
     it("shows a file too large message with download link on 413", () => {
         renderPreview({
             error: {
