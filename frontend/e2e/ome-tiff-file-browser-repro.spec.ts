@@ -19,6 +19,10 @@ const outputDirectory = path.join(evidenceDir, "ome-tiff-file-browser-fixture");
 const subfolderPreviewDirectory = path.join(outputDirectory, "qc");
 const nestedDirectory = path.join(outputDirectory, "qc", "ome");
 const tiffPath = path.join(nestedDirectory, "small-multichannel.ome.tiff");
+const zStackTiffPath = path.join(
+    nestedDirectory,
+    "small-multichannel-z-stack.ome.tiff",
+);
 const nonPreviewDirectory = path.join(outputDirectory, "qc", "z-nonpreview");
 const nonPreviewPath = path.join(nonPreviewDirectory, "notes.bin");
 const pipelineName = "wa/ome-tiff-file-browser-repro";
@@ -34,6 +38,10 @@ const subfolderControlsScreenshotPath = path.join(
     evidenceDir,
     "ome-tiff-file-browser-subfolder-controls.png",
 );
+const subfolderZControlsScreenshotPath = path.join(
+    evidenceDir,
+    "ome-tiff-file-browser-subfolder-z-controls.png",
+);
 
 let registeredResult: ResultSet | null = null;
 
@@ -42,10 +50,18 @@ test.beforeAll(async () => {
     rmSync(outputDirectory, { force: true, recursive: true });
     mkdirSync(nestedDirectory, { recursive: true });
     mkdirSync(nonPreviewDirectory, { recursive: true });
-    await writeSmallOmeTiff(tiffPath);
+    await writeSmallOmeTiff(tiffPath, {
+        channelNames: ["red", "green", "blue"],
+        sizeZ: 1,
+    });
+    await writeSmallOmeTiff(zStackTiffPath, {
+        channelNames: ["membrane", "nuclei"],
+        sizeZ: 3,
+    });
     writeFileSync(nonPreviewPath, "keeps the parent folder visible\n");
 
     const tiffStats = statSync(tiffPath);
+    const zStackTiffStats = statSync(zStackTiffPath);
     const nonPreviewStats = statSync(nonPreviewPath);
     const registration: ResultRegistration = {
         command: "nextflow run wa/ome-tiff-file-browser-repro",
@@ -55,6 +71,12 @@ test.beforeAll(async () => {
                 mtime: tiffStats.mtime.toISOString(),
                 path: tiffPath,
                 size: tiffStats.size,
+            },
+            {
+                kind: "output",
+                mtime: zStackTiffStats.mtime.toISOString(),
+                path: zStackTiffPath,
+                size: zStackTiffStats.size,
             },
             {
                 kind: "output",
@@ -138,30 +160,56 @@ async function selectDirectoryForSubfolderPreviews(
     );
 }
 
-async function writeSmallOmeTiff(filePath: string): Promise<void> {
+async function selectFile(page: Page, filePath: string): Promise<void> {
+    const fileButton = page.locator(`[data-file-path="${filePath}"]`).first();
+
+    await expect(fileButton).toBeVisible();
+    await fileButton.click();
+}
+
+async function writeSmallOmeTiff(
+    filePath: string,
+    {
+        channelNames,
+        sizeZ,
+    }: {
+        channelNames: string[];
+        sizeZ: number;
+    },
+): Promise<void> {
     const width = 16;
     const pageHeight = 16;
-    const channels = 3;
-    const pages = 3;
-    const pixels = Buffer.alloc(width * pageHeight * pages * channels);
+    const outputChannels = 3;
+    const pages = channelNames.length * sizeZ;
+    const pixels = Buffer.alloc(width * pageHeight * pages * outputChannels);
 
     for (let page = 0; page < pages; page += 1) {
+        const channel = page % channelNames.length;
+        const z = Math.floor(page / channelNames.length);
+
         for (let y = 0; y < pageHeight; y += 1) {
             for (let x = 0; x < width; x += 1) {
-                const offset = ((page * pageHeight + y) * width + x) * channels;
+                const offset =
+                    ((page * pageHeight + y) * width + x) * outputChannels;
 
-                pixels[offset] = page === 0 ? 255 : x * 12;
-                pixels[offset + 1] = page === 1 ? 255 : y * 12;
-                pixels[offset + 2] = page === 2 ? 255 : 64;
+                pixels[offset] = channel === 0 ? 255 : x * 12;
+                pixels[offset + 1] = channel === 1 ? 255 : y * 12;
+                pixels[offset + 2] = 40 + z * 60;
             }
         }
     }
 
-    const omeXml = `<?xml version="1.0" encoding="UTF-8"?><OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"><Image ID="Image:0"><Pixels ID="Pixels:0:0" DimensionOrder="XYCZT" Type="uint8" SizeX="${width}" SizeY="${pageHeight}" SizeZ="1" SizeC="${pages}" SizeT="1"><Channel ID="Channel:0:0" Name="red" SamplesPerPixel="1"/><Channel ID="Channel:0:1" Name="green" SamplesPerPixel="1"/><Channel ID="Channel:0:2" Name="blue" SamplesPerPixel="1"/><TiffData IFD="0" PlaneCount="${pages}"/></Pixels></Image></OME>`;
+    const channelsXml = channelNames
+        .map(
+            (name, index) =>
+                `<Channel ID="Channel:0:${index}" Name="${name}" SamplesPerPixel="1"/>`,
+        )
+        .join("");
+    const omeXml = `<?xml version="1.0" encoding="UTF-8"?><OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"><Image ID="Image:0"><Pixels ID="Pixels:0:0" DimensionOrder="XYCZT" Type="uint8" SizeX="${width}" SizeY="${pageHeight}" SizeZ="${sizeZ}" SizeC="${channelNames.length}" SizeT="1">${channelsXml}<TiffData IFD="0" PlaneCount="${pages}"/></Pixels></Image></OME>`;
 
     await sharp(pixels, {
         raw: {
-            channels,
+            channels: outputChannels,
             height: pageHeight * pages,
             pageHeight,
             width,
@@ -188,7 +236,7 @@ test("registered generated multichannel OME-TIFF renders in the file browser pre
 
     const fileBrowser = page.locator('[data-file-browser="true"]');
     await expect(fileBrowser).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(`[data-file-path="${tiffPath}"]`)).toBeVisible();
+    await selectFile(page, tiffPath);
 
     const preview = page.locator('[data-file-browser-preview="single"]');
     await expect(preview).toBeVisible();
@@ -317,5 +365,82 @@ test("registered generated multichannel OME-TIFF shows channel controls when enl
     await page.screenshot({
         fullPage: true,
         path: subfolderControlsScreenshotPath,
+    });
+});
+
+test("registered generated Z-stack OME-TIFF shows channel and Z controls when enlarged from subfolder previews", async ({
+    page,
+}) => {
+    test.setTimeout(120_000);
+
+    if (!registeredResult) {
+        throw new Error("Result registration did not complete");
+    }
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/results/${registeredResult.id}`, {
+        waitUntil: "domcontentloaded",
+    });
+
+    const fileBrowser = page.locator('[data-file-browser="true"]');
+    await expect(fileBrowser).toBeVisible({ timeout: 30_000 });
+    await expect(
+        page.locator(`[data-file-path="${zStackTiffPath}"]`),
+    ).toBeVisible();
+
+    await selectDirectoryForSubfolderPreviews(page, subfolderPreviewDirectory);
+
+    const folderControls = page.locator(
+        `[data-file-browser-folder-controls="${subfolderPreviewDirectory}"]`,
+    );
+    await expect(folderControls).toBeVisible();
+    await openPreviewModes(folderControls);
+    await folderControls.getByLabel("Subfolder previews").check();
+
+    const subfolderStrip = page.locator(
+        `[data-subdir-preview-strip="${nestedDirectory}"]`,
+    );
+    const subfolderFrame = page.locator(
+        `[data-subdir-preview-frame="${zStackTiffPath}"]`,
+    );
+    const subfolderPreviewImage = subfolderFrame.getByAltText(
+        "small-multichannel-z-stack.ome.tiff preview",
+    );
+
+    await expect(subfolderStrip).toBeVisible();
+    await expect(subfolderFrame).toBeVisible();
+    await expect(subfolderPreviewImage).toBeVisible({ timeout: 30_000 });
+    await expect(subfolderPreviewImage).toHaveAttribute("src", /ome=plane/);
+    await expect(subfolderPreviewImage).toHaveAttribute("src", /channel=0/);
+    await expect(subfolderPreviewImage).toHaveAttribute("src", /z=0/);
+
+    await subfolderFrame
+        .getByRole("button", { name: /open image lightbox/i })
+        .click();
+
+    const lightbox = page.getByRole("dialog", {
+        name: /image preview lightbox/i,
+    });
+
+    await expect(lightbox).toBeVisible();
+    await expect(lightbox.getByLabel("Channel", { exact: true })).toBeVisible({
+        timeout: 30_000,
+    });
+    await expect(lightbox.getByLabel("Z slice")).toBeVisible();
+    await expect(lightbox.getByText("2 channels")).toBeVisible();
+    await expect(lightbox.getByText("3 Z slices")).toBeVisible();
+
+    await lightbox.getByLabel("Z slice").fill("2");
+
+    await expect(lightbox.getByText("Z 3 of 3")).toBeVisible();
+    await expect(
+        lightbox.getByAltText(
+            "small-multichannel-z-stack.ome.tiff full preview",
+        ),
+    ).toHaveAttribute("src", /z=2/);
+
+    await page.screenshot({
+        fullPage: true,
+        path: subfolderZControlsScreenshotPath,
     });
 });
