@@ -390,7 +390,7 @@ describe("P1 file content streaming API route", () => {
 
         expect(resultsRawMock).toHaveBeenCalledTimes(1);
         expect(resultsRawMock).toHaveBeenCalledWith(
-            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}`,
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
             { method: "HEAD" },
         );
         expect(upstream.cancel).toHaveBeenCalledTimes(1);
@@ -407,13 +407,112 @@ describe("P1 file content streaming API route", () => {
         });
     });
 
+    it("bypasses the backend preview byte limit when authorizing TIFF stack metadata", async () => {
+        const tiffPath = await writeTinyTiffForTest();
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: { "content-type": "image/tiff" },
+        });
+        resultsRawMock.mockImplementation((backendPath: string) => {
+            if (backendPath.includes("download=true")) {
+                return Promise.resolve(upstream.response);
+            }
+
+            return Promise.resolve(
+                Response.json(
+                    { error: "results: file exceeds preview limit" },
+                    {
+                        headers: { "x-file-size": "230068104" },
+                        status: 413,
+                    },
+                ),
+            );
+        });
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(tiffPath)}&ome=metadata`,
+            ),
+        );
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+            format: "tiff",
+            hasOmeMetadata: false,
+            height: 8,
+            pageCount: 1,
+            width: 8,
+        });
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
+            { method: "HEAD" },
+        );
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses the public download HEAD fallback path for OME metadata when a JWT cookie is stale", async () => {
+        const tiffPath = await writeTinyTiffForTest();
+        const staleAuth = makeCancellableResponse({ status: 401 });
+        const publicUpstream = makeCancellableResponse({
+            status: 200,
+            headers: { "content-type": "image/tiff" },
+        });
+        resultsRawMock
+            .mockResolvedValueOnce(staleAuth.response)
+            .mockResolvedValueOnce(publicUpstream.response);
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(tiffPath)}&ome=metadata`,
+                "wa_results_jwt=stale",
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            1,
+            `/rest/v1/auth/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
+            { jwt: "stale", method: "HEAD" },
+        );
+        expect(resultsRawMock).toHaveBeenNthCalledWith(
+            2,
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
+            { method: "HEAD" },
+        );
+        expect(staleAuth.cancel).toHaveBeenCalledTimes(1);
+        expect(publicUpstream.cancel).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+            format: "tiff",
+            height: 8,
+            width: 8,
+        });
+    });
+
     it("renders a derived TIFF plane image after an authenticated HEAD probe without downloading the full stack through the backend", async () => {
         const tiffPath = await writeTinyTiffForTest();
         const upstream = makeCancellableResponse({
             status: 200,
             headers: { "content-type": "image/tiff" },
         });
-        resultsRawMock.mockResolvedValue(upstream.response);
+        resultsRawMock.mockImplementation((backendPath: string) => {
+            if (backendPath.includes("download=true")) {
+                return Promise.resolve(upstream.response);
+            }
+
+            return Promise.resolve(
+                Response.json(
+                    { error: "results: file exceeds preview limit" },
+                    {
+                        headers: { "x-file-size": "230068104" },
+                        status: 413,
+                    },
+                ),
+            );
+        });
 
         const { GET } = await import("@/app/api/file/route");
 
@@ -425,7 +524,7 @@ describe("P1 file content streaming API route", () => {
 
         expect(resultsRawMock).toHaveBeenCalledTimes(1);
         expect(resultsRawMock).toHaveBeenCalledWith(
-            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}`,
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
             { method: "HEAD" },
         );
         expect(upstream.cancel).toHaveBeenCalledTimes(1);
@@ -454,7 +553,7 @@ describe("P1 file content streaming API route", () => {
 
         expect(resultsRawMock).toHaveBeenCalledTimes(1);
         expect(resultsRawMock).toHaveBeenCalledWith(
-            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}`,
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
             { method: "HEAD" },
         );
         expect(upstream.cancel).toHaveBeenCalledTimes(1);
@@ -487,7 +586,35 @@ describe("P1 file content streaming API route", () => {
 
         expect(resultsRawMock).toHaveBeenCalledTimes(1);
         expect(resultsRawMock).toHaveBeenCalledWith(
-            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}`,
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
+            { method: "HEAD" },
+        );
+        expect(response.status).toBe(405);
+        await expect(response.json()).resolves.toEqual({
+            error: "method not allowed",
+        });
+    });
+
+    it("does not fall back to a backend GET body fetch for OME planes when HEAD is unsupported", async () => {
+        const tiffPath = await writeTinyTiffForTest();
+        resultsRawMock.mockResolvedValue(
+            new Response("method not allowed", {
+                status: 405,
+                headers: { "content-type": "text/plain" },
+            }),
+        );
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(tiffPath)}&ome=plane&channel=0&z=0&t=0&w=64&h=64`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledTimes(1);
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
             { method: "HEAD" },
         );
         expect(response.status).toBe(405);

@@ -312,9 +312,11 @@ async function handleOmeTiffRequest(
 
     let accessResponse: Response;
     try {
+        const accessQuery = new URLSearchParams({ path: options.path });
+        accessQuery.set("download", "true");
         accessResponse = await fetchAuthorizedFileHeadResponse(
             options.id,
-            new URLSearchParams({ path: options.path }),
+            accessQuery,
             options.jwt,
         );
     } catch {
