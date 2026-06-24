@@ -1454,7 +1454,7 @@ elif [[ -n "$SEQMETA_CMD" ]]; then
     printf '\n'
     wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
-elif [[ -n "${WA_MLWH_DSN:-}" || ( "$scenario" == "dev" && -n "$MLWH_CACHE_PATH" ) ]]; then
+elif [[ -n "${WA_MLWH_DSN:-}" || -n "$MLWH_CACHE_PATH" ]]; then
   export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
   : >"$SEQMETA_LOG"
   if [[ "$scenario" == "dev" ]] && http_is_healthy "$SEQMETA_HEALTH_URL" "strict"; then
