@@ -383,7 +383,9 @@ func (s *Server) handleGetFile(c *gin.Context) {
 	}()
 
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set(resolvedFilePathHeader, localPath)
+	if r.Method == http.MethodHead && download {
+		w.Header().Set(resolvedFilePathHeader, localPath)
+	}
 	if download {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(localPath)))
 	}

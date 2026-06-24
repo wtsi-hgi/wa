@@ -40,7 +40,7 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 )
 
-func TestServerGetFile(t *testing.T) {
+func TestServerFile(t *testing.T) {
 	convey.Convey("C1.3: Given no JWT and an existing result, when GET /rest/v1/results/<id>/file is called, then status is 403 and no file bytes are returned", t, func() {
 		payload := []byte("<html>secret</html>")
 		server, resultID, path := newFileServerScenarioForTest(t, func(root string) []FileEntry {
@@ -75,7 +75,7 @@ func TestServerGetFile(t *testing.T) {
 		assertLockedResponseForTest(t, response, resultID)
 	})
 
-	convey.Convey("C1.8: Given user alice has access, when auth file content is requested, then existing 200 headers and body are preserved", t, func() {
+	convey.Convey("C1.8: Given user alice has access, when auth file content is previewed, then existing 200 headers and body are preserved without exposing the local path", t, func() {
 		payload := []byte("<html>hello</html>")
 		server, resultID, path := newFileServerScenarioForTest(t, func(root string) []FileEntry {
 			path := writeTestFileForServer(t, filepath.Join(root, "report.html"), payload)
@@ -87,7 +87,7 @@ func TestServerGetFile(t *testing.T) {
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "text/html; charset=utf-8")
-		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, path)
+		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, "")
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, payload)
 	})
 
@@ -105,6 +105,22 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "image/tiff")
 		convey.So(response.Header().Get("Content-Disposition"), convey.ShouldContainSubstring, "filename=\"stack.ome.tiff\"")
 		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, path)
+		convey.So(response.Body.Len(), convey.ShouldEqual, 0)
+	})
+
+	convey.Convey("Given user alice has access to a registered file, when auth file content is checked with ordinary HEAD, then the local path is not exposed", t, func() {
+		payload := []byte("<html>hello</html>")
+		server, resultID, path := newFileServerScenarioForTest(t, func(root string) []FileEntry {
+			path := writeTestFileForServer(t, filepath.Join(root, "report.html"), payload)
+
+			return []FileEntry{{Path: path, Mtime: time.Date(2026, time.June, 24, 10, 1, 0, 0, time.UTC), Size: int64(len(payload)), Kind: "output"}}
+		})
+
+		response := performResultsRequestForTest(t, fileServerHandlerForTest(t, server), http.MethodHead, gas.EndPointAuth+"/results/"+resultID+"/file?path="+url.QueryEscape(path), nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "text/html; charset=utf-8")
+		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, "")
 		convey.So(response.Body.Len(), convey.ShouldEqual, 0)
 	})
 
@@ -139,7 +155,7 @@ func TestServerGetFile(t *testing.T) {
 		response := performResultsRequestForTest(t, fileServerHandlerForTest(t, server), http.MethodGet, gas.EndPointAuth+"/results/"+result.ID+"/file?path="+url.QueryEscape(registeredPath), nil)
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
-		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, localPath)
+		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, "")
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, payload)
 	})
 
@@ -262,6 +278,7 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "application/gzip")
 		convey.So(response.Header().Get("Content-Disposition"), convey.ShouldContainSubstring, "filename=\"data.csv.gz\"")
+		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, "")
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, compressed)
 	})
 
@@ -435,6 +452,7 @@ func TestServerGetFile(t *testing.T) {
 		convey.So(response.Body.Len(), convey.ShouldEqual, len(payload))
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, payload)
 		convey.So(response.Header().Get("Content-Disposition"), convey.ShouldContainSubstring, "attachment;")
+		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, "")
 		convey.So(response.Header().Get("X-Preview-Truncated"), convey.ShouldEqual, "")
 	})
 
