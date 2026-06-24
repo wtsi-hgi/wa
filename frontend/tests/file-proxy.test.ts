@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -12,6 +12,7 @@ const onePixelPng = Buffer.from(
     "base64",
 );
 const tempDirs: string[] = [];
+const resolvedFilePathHeader = "x-wa-resolved-file-path";
 
 vi.mock("@/lib/backend-client", () => ({
     resultsAuthCookieName: "wa_results_jwt",
@@ -56,6 +57,41 @@ async function writeTinyTiffForTest(name = "stack.ome.tiff"): Promise<string> {
         .toFile(tiffPath);
 
     return tiffPath;
+}
+
+async function writeTinyRegisteredOutputTiffForTest(): Promise<{
+    localPath: string;
+    registeredPath: string;
+}> {
+    const repoRoot = path.resolve(process.cwd(), "..");
+    const agentTempRoot = path.join(repoRoot, ".tmp", "agent");
+
+    mkdirSync(agentTempRoot, { recursive: true });
+    const directory = mkdtempSync(
+        path.join(agentTempRoot, "wa-registered-output-"),
+    );
+    const nestedDirectory = path.join(directory, "qc", "ome");
+
+    mkdirSync(nestedDirectory, { recursive: true });
+    tempDirs.push(directory);
+    const registeredPath = path.join("qc", "ome", "stack.ome.tiff");
+    const tiffPath = path.join(directory, registeredPath);
+
+    await sharp({
+        create: {
+            background: { alpha: 1, b: 32, g: 24, r: 16 },
+            channels: 4,
+            height: 8,
+            width: 8,
+        },
+    })
+        .tiff()
+        .toFile(tiffPath);
+
+    return {
+        localPath: tiffPath,
+        registeredPath,
+    };
 }
 
 describe("P1 file content streaming API route", () => {
@@ -452,6 +488,41 @@ describe("P1 file content streaming API route", () => {
         expect(upstream.cancel).toHaveBeenCalledTimes(1);
     });
 
+    it("reads OME-TIFF metadata for a backend-authorized file in a registered output subdirectory", async () => {
+        const { localPath, registeredPath } =
+            await writeTinyRegisteredOutputTiffForTest();
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: {
+                "content-type": "image/tiff",
+                [resolvedFilePathHeader]: localPath,
+            },
+        });
+        resultsRawMock.mockResolvedValue(upstream.response);
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(registeredPath)}&ome=metadata`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(registeredPath)}&download=true`,
+            { method: "HEAD" },
+        );
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+            format: "tiff",
+            hasOmeMetadata: false,
+            height: 8,
+            pageCount: 1,
+            width: 8,
+        });
+    });
+
     it("uses the public download HEAD fallback path for OME metadata when a JWT cookie is stale", async () => {
         const tiffPath = await writeTinyTiffForTest();
         const staleAuth = makeCancellableResponse({ status: 401 });
@@ -525,6 +596,37 @@ describe("P1 file content streaming API route", () => {
         expect(resultsRawMock).toHaveBeenCalledTimes(1);
         expect(resultsRawMock).toHaveBeenCalledWith(
             `/rest/v1/results/abc/file?path=${encodeURIComponent(tiffPath)}&download=true`,
+            { method: "HEAD" },
+        );
+        expect(upstream.cancel).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/webp");
+        expect(response.headers.get("content-security-policy")).toBe("sandbox");
+        expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    });
+
+    it("renders a derived TIFF plane image for a backend-authorized file in a registered output subdirectory", async () => {
+        const { localPath, registeredPath } =
+            await writeTinyRegisteredOutputTiffForTest();
+        const upstream = makeCancellableResponse({
+            status: 200,
+            headers: {
+                "content-type": "image/tiff",
+                [resolvedFilePathHeader]: localPath,
+            },
+        });
+        resultsRawMock.mockResolvedValue(upstream.response);
+
+        const { GET } = await import("@/app/api/file/route");
+
+        const response = await GET(
+            makeRequest(
+                `id=abc&path=${encodeURIComponent(registeredPath)}&ome=plane&channel=0&z=0&t=0&w=64&h=64`,
+            ),
+        );
+
+        expect(resultsRawMock).toHaveBeenCalledWith(
+            `/rest/v1/results/abc/file?path=${encodeURIComponent(registeredPath)}&download=true`,
             { method: "HEAD" },
         );
         expect(upstream.cancel).toHaveBeenCalledTimes(1);

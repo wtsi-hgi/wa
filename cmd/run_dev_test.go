@@ -249,7 +249,7 @@ func TestRunDevAutoManagedMLWHBackendCanServeConfiguredCacheWithoutDSN(t *testin
 		convey.So(invocations, convey.ShouldContainSubstring, fmt.Sprintf("--url 127.0.0.1:%d", seqmetaPort))
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
-		convey.So(process.stdout.String(), convey.ShouldContainSubstring, "MLWH: "+fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(waitForRunDevStdoutForTest(t, process, "MLWH: "+fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort)), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -1222,6 +1222,7 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 		})
 
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+		convey.So(waitForRunDevStdoutForTest(t, process, fmt.Sprintf("Frontend: https://127.0.0.1:%d", frontendPort)), convey.ShouldBeTrue)
 
 		stdout := process.stdout.String()
 		resultsURL := runDevExtractURLForTest(t, stdout, "Results")
@@ -1313,7 +1314,7 @@ func TestRunDevScript(t *testing.T) {
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
 		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
-		convey.So(process.stdout.String(), convey.ShouldContainSubstring, "MLWH: "+remoteMLWHURL)
+		convey.So(waitForRunDevStdoutForTest(t, process, "MLWH: "+remoteMLWHURL), convey.ShouldBeTrue)
 
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
@@ -1360,9 +1361,10 @@ func TestRunDevScript(t *testing.T) {
 		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
 		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 2), "\n")
 		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
-		stdout := process.stdout.String()
 		localMLWHURL := fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort)
 		mlwhBind := fmt.Sprintf("0.0.0.0:%d", seqmetaPort)
+		convey.So(waitForRunDevStdoutForTest(t, process, "MLWH public: "+publicMLWHURL), convey.ShouldBeTrue)
+		stdout := process.stdout.String()
 
 		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, localMLWHURL)
 		convey.So(invocations, convey.ShouldContainSubstring, "results serve")

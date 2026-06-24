@@ -87,6 +87,42 @@ func TestServerGetFile(t *testing.T) {
 
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Header().Get("Content-Type"), convey.ShouldEqual, "text/html; charset=utf-8")
+		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, path)
+		convey.So(response.Body.Bytes(), convey.ShouldResemble, payload)
+	})
+
+	convey.Convey("Given a legacy relative registered output file path, when the file is requested, then the server resolves it under the output directory", t, func() {
+		payload := []byte("legacy relative content")
+		outputDirectory := t.TempDir()
+		localPath := writeTestFileForServer(t, filepath.Join(outputDirectory, "qc", "ome", "stack.ome.tiff"), payload)
+		registeredPath := filepath.Join("qc", "ome", "stack.ome.tiff")
+		store := newSQLiteStoreForTest(t)
+		reg := testRegistration()
+		reg.OutputDirectory = outputDirectory
+		reg.OutputDirectoryGID = gidForTest(200)
+		reg.Files = []FileEntry{{
+			Path:  localPath,
+			Mtime: time.Date(2026, time.June, 24, 9, 0, 0, 0, time.UTC),
+			Size:  int64(len(payload)),
+			Kind:  "output",
+		}}
+		result, err := store.Upsert(context.Background(), reg)
+		convey.So(err, convey.ShouldBeNil)
+
+		_, err = store.db.ExecContext(
+			context.Background(),
+			`UPDATE result_files SET path = ? WHERE result_id = ? AND path = ?`,
+			registeredPath,
+			result.ID,
+			localPath,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		server := NewServer(store, nil, nil)
+		response := performResultsRequestForTest(t, fileServerHandlerForTest(t, server), http.MethodGet, gas.EndPointAuth+"/results/"+result.ID+"/file?path="+url.QueryEscape(registeredPath), nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Header().Get(resolvedFilePathHeader), convey.ShouldEqual, localPath)
 		convey.So(response.Body.Bytes(), convey.ShouldResemble, payload)
 	})
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import path from "path";
 import sharp from "sharp";
 
 import { resultsAuthCookieName, resultsRaw } from "@/lib/backend-client";
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 const defaultThumbnailHeight = 220;
 const defaultThumbnailWidth = 360;
+const resolvedFilePathHeader = "x-wa-resolved-file-path";
 
 function clampDimension(value: string | null, fallback: number): number {
     const parsed = Number(value);
@@ -18,6 +20,19 @@ function clampDimension(value: string | null, fallback: number): number {
     }
 
     return Math.min(1600, Math.max(64, Math.round(parsed)));
+}
+
+function localPathFromAuthorizedResponse(
+    response: Response,
+    requestedPath: string,
+): string {
+    const resolvedPath = response.headers.get(resolvedFilePathHeader)?.trim();
+
+    if (resolvedPath && path.isAbsolute(resolvedPath)) {
+        return resolvedPath;
+    }
+
+    return requestedPath;
 }
 
 function canThumbnail(contentType: string | null): boolean {
@@ -332,9 +347,13 @@ async function handleOmeTiffRequest(
 
     await cancelResponseBody(accessResponse);
 
+    const localPath = localPathFromAuthorizedResponse(
+        accessResponse,
+        options.path,
+    );
     let metadata;
     try {
-        metadata = await getOmeTiffMetadata(options.path);
+        metadata = await getOmeTiffMetadata(localPath);
     } catch {
         return NextResponse.json(
             { error: "unable to read TIFF metadata" },
@@ -352,7 +371,7 @@ async function handleOmeTiffRequest(
     }
 
     try {
-        const plane = await renderOmeTiffPlane(options.path, metadata, {
+        const plane = await renderOmeTiffPlane(localPath, metadata, {
             channel: parsePlaneCoordinate(
                 request.nextUrl.searchParams.get("channel"),
                 0,

@@ -50,6 +50,7 @@ const DefaultMaxPreviewBytes int64 = 10 * 1024 * 1024
 const MaxInlinePreviewLines = 20
 
 const previewTruncatedHeader = "X-Preview-Truncated"
+const resolvedFilePathHeader = "X-WA-Resolved-File-Path"
 
 // PreviewMode names the three distinct ways the file content endpoint can serve
 // a registered file.
@@ -164,16 +165,39 @@ func detectPreviewContentType(path string) string {
 	return contentTypeFromName(baseName)
 }
 
-func hasRegisteredFile(files []FileEntry, requestedPath string) bool {
+func localPathForRegisteredFile(outputDirectory string, filePath string) (string, bool) {
+	trimmedPath := strings.TrimSpace(filePath)
+	if trimmedPath == "" {
+		return "", false
+	}
+
+	if filepath.IsAbs(trimmedPath) {
+		return filepath.Clean(trimmedPath), true
+	}
+
+	cleanOutputDirectory := filepath.Clean(strings.TrimSpace(outputDirectory))
+	if !filepath.IsAbs(cleanOutputDirectory) {
+		return "", false
+	}
+
+	localPath := filepath.Clean(filepath.Join(cleanOutputDirectory, trimmedPath))
+	if !pathWithinDirectory(cleanOutputDirectory, localPath) {
+		return "", false
+	}
+
+	return localPath, true
+}
+
+func registeredFileLocalPath(outputDirectory string, files []FileEntry, requestedPath string) (string, bool) {
 	cleanRequestedPath := filepath.Clean(requestedPath)
 
 	for _, file := range files {
 		if filepath.Clean(file.Path) == cleanRequestedPath {
-			return true
+			return localPathForRegisteredFile(outputDirectory, file.Path)
 		}
 	}
 
-	return false
+	return "", false
 }
 
 func isLineReadableContentType(contentType string) bool {
@@ -317,16 +341,17 @@ func (s *Server) handleGetFile(c *gin.Context) {
 		return
 	}
 
-	if !hasRegisteredFile(files, requestedPath) {
+	localPath, registered := registeredFileLocalPath(result.OutputDirectory, files, requestedPath)
+	if !registered {
 		writeServerError(c, http.StatusForbidden, "requested file is not registered")
 
 		return
 	}
 
 	download := mode == previewModeDownload || r.URL.Query().Get("download") == "true"
-	previewContentType := previewContentTypeForPath(requestedPath, download)
+	previewContentType := previewContentTypeForPath(localPath, download)
 	allowReadablePreview := !download && isLineReadableContentType(previewContentType)
-	fileInfo, err := os.Stat(requestedPath)
+	fileInfo, err := os.Stat(localPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			writeDomainError(c, ErrFileGone)
@@ -346,7 +371,7 @@ func (s *Server) handleGetFile(c *gin.Context) {
 		return
 	}
 
-	reader, contentType, err := openFileForResponse(requestedPath, download)
+	reader, contentType, err := openFileForResponse(localPath, download)
 	if err != nil {
 		writeServerError(c, http.StatusInternalServerError, err.Error())
 
@@ -357,8 +382,9 @@ func (s *Server) handleGetFile(c *gin.Context) {
 	}()
 
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set(resolvedFilePathHeader, localPath)
 	if download {
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(requestedPath)))
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(localPath)))
 	}
 	if allowReadablePreview {
 		preview, truncated, err := readPreviewLinesWithinLimits(reader, s.maxPreviewBytes, lineLimit)
