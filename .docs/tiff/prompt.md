@@ -1,103 +1,253 @@
-# Deep-Zoom OME-TIFF Viewer Prompt
+# OME-TIFF Viewer Improvements Prompt
 
 Target spec path for the spec-writer workflow: `.docs/tiff/spec.md`.
 
 ## Feature Description
 
-Users who work with microscopy-style OME-TIFF outputs are likely to expect a full image viewer, not only a file-browser sanity preview. The current implementation can preview one selected TIFF/OME-TIFF plane at a time by rendering a server-side WebP for a chosen channel, Z slice, and timepoint. That is useful for quick checks, but it is not the full experience microscopy users will ask for.
+The results web UI now has a useful first implementation of TIFF/OME-TIFF
+previewing. It is good enough for quick inspections such as "is our cell
+density good?" and "did this pipeline run correctly?", and that is a meaningful
+workflow win. The next spec should not treat TIFF support as absent. It should
+start from the implemented quick-look behavior, preserve it, and decide which
+improvements would give users the most value before attempting a full
+microscopy workstation in the browser.
 
-Assume the target users want the full thing: a responsive deep-zoom OME-TIFF viewer in the results web UI that can handle large multichannel OME-TIFF stacks without downloading the whole file into the browser. The feature should let users inspect high-resolution image data interactively with pan/zoom, tiled loading, channel compositing, per-channel display controls, and practical navigation through Z/time dimensions.
+User feedback after the initial implementation:
 
-## Background
+- The current preview is useful for quick pipeline and cell-density sanity
+  checks.
+- A full suite of image controls would be valuable, but is understood to be a
+  larger feature.
+- Downloading the TIFF files is easy, and users can open them locally in
+  Napari for deeper inspection.
 
-The existing OME-TIFF preview support was added as a safe minimal implementation:
+That feedback changes the priority. The web UI should remain excellent for
+fast browser-based triage, while a Napari-like full viewer should be treated as
+an incremental improvement path rather than the only acceptable outcome.
 
-- TIFF previews use authenticated `HEAD` checks through `/api/file`.
-- The Next.js server uses Sharp to render a selected TIFF plane to WebP.
-- OME XML metadata drives channel, Z, and T controls.
-- Grid previews use derived first-plane thumbnails.
-- The browser does not fetch full TIFF stacks.
-- Known limit: this is single-plane preview, not deep-zoom, pyramidal, or multichannel-composite tissue viewing.
+## What Is Implemented Now
 
-This is probably enough for "is this the right file?" but not enough for users who expect a microscopy viewer. Those users will likely ask for:
+Current TIFF support is a server-rendered quick-look preview:
 
-- Smooth pan and zoom to native/high-resolution detail.
-- Progressive tile loading rather than one resized image.
-- Viewing multiple channels as a composite, not one channel at a time.
-- Per-channel color/LUT, visibility, contrast/window, and opacity controls.
-- Better Z-stack and timepoint navigation.
-- A full-screen or enlarged inspection mode suitable for real image review.
+- TIFF and OME-TIFF paths are recognized as previewable image-like files.
+- Inline file-browser previews render a maximal-speed first-plane view that
+  behaves like any other graphic preview.
+- Preview grid/subfolder modes use derived first-plane URLs instead of loading
+  the source TIFF stack directly.
+- Enlarged previews share the same OME-aware component regardless of whether
+  they were opened from normal file previews or subfolder preview rows.
+- Enlarged OME previews can fetch metadata and expose controls for channel, Z
+  slice, and timepoint when those dimensions exist.
+- OME XML metadata is parsed when available, including channel names, SizeC,
+  SizeZ, SizeT, SizeX, SizeY, and physical pixel sizes.
+- Non-OME or generic multi-page TIFFs fall back to page/plane-style metadata.
+- The Next.js API supports:
+  - `GET /api/file?...&ome=metadata`
+  - `GET /api/file?...&ome=plane&channel=...&z=...&t=...&w=...&h=...`
+- The Next.js server authorizes OME reads with a backend `HEAD` request using
+  `download=true`; it does not download the source TIFF through the browser.
+- The results server exposes `X-WA-Resolved-File-Path` only for the internal
+  `HEAD` download probe needed by the Next server, avoiding path leaks on
+  ordinary previews/downloads.
+- The Next server requires an absolute local path before reading TIFF data,
+  either from the backend-resolved header or an absolute requested path.
+- Sharp is used server-side to read TIFF metadata and render selected planes as
+  WebP responses.
+- A pixel safety limit is enforced via `WA_OME_TIFF_MAX_INPUT_PIXELS`.
+- Derived plane images are produced on demand by the server and returned from
+  memory with HTTP cache headers; they are not created at register time and are
+  not stored in a persistent tile/thumbnail cache.
+- Tests cover small generated TIFFs, registered output subdirectory paths,
+  path-resolution safety, preview route behavior, and the file-browser preview
+  UX.
+
+Known limits of the implemented version:
+
+- It is not a deep-zoom viewer.
+- It does not provide tiled loading, native-resolution pan/zoom, or multiscale
+  pyramids.
+- It does not composite multiple channels together.
+- It does not provide per-channel color/LUT, opacity, contrast/window, or
+  auto-contrast controls in the UI.
+- It does not offer annotation, measurement, segmentation overlays, 3D volume
+  rendering, playback, or plugin-style analysis.
+- On-demand whole-plane WebP rendering is acceptable for one or a few previews,
+  but may be too expensive for dozens of TIFFs at once without caching or
+  precomputed derivatives.
+
+## Napari Context
+
+Napari is a fast, interactive, multi-dimensional image viewer for Python:
+https://napari.org/ and https://github.com/napari/napari
+
+Relevant Napari capabilities to use as inspiration:
+
+- Browsing, annotating, and analyzing large multi-dimensional images.
+- 2D, 3D, and higher-dimensional array viewing.
+- GPU-backed interactive rendering through Qt/VisPy.
+- Multiple layer types such as images, labels, points, vectors, shapes, and
+  surfaces.
+- Overlaying derived data such as segmentations, points, polygons, and other
+  analysis outputs.
+- Standard scientific Python integration with NumPy, SciPy, Zarr, notebooks,
+  scripts, and plugins.
+- Programmatic control and extensibility through Python.
+
+Benefits Napari has over the current web implementation:
+
+- It can be a true local microscopy analysis environment rather than only a
+  result-browser preview.
+- It has mature interaction patterns for multidimensional image stacks:
+  channel/layer controls, contrast, LUTs, Z/T navigation, 2D/3D views, and
+  overlays.
+- It supports annotation and analysis workflows that are outside the scope of
+  a lightweight web file browser.
+- Once the file is downloaded locally, it can use the local scientific Python
+  ecosystem and plugins rather than being limited to server-rendered WebP
+  planes.
+
+Tradeoffs compared with the web UI:
+
+- Napari requires a local app/Python environment and local file access.
+- It is not integrated with WA result-set permissions, locked-result behavior,
+  browser sharing, or the existing file-browser context.
+- It is better for deep analysis, while WA is better for quick remote triage
+  and deciding whether a result/file is worth downloading.
+
+The spec should therefore frame Napari as the recommended full-analysis escape
+hatch and a source of UX ideas, not as something WA must fully replace.
+
+## Example Files
 
 Example user-provided files for local investigation:
 
-- `.tmp/ome.tiff`: a relatively large 4D OME-TIFF stack, around 200 MB, with channel, Z, X, and Y dimensions.
-- `.tmp/ome_collapsed.tiff`: a smaller related OME-TIFF where the Z dimension has been collapsed.
+- `.tmp/ome.tiff`: a relatively large 4D OME-TIFF stack, around 200 MB, with
+  channel, Z, X, and Y dimensions.
+- `.tmp/ome_collapsed.tiff`: a smaller related OME-TIFF where the Z dimension
+  has been collapsed.
 
-Do not commit these `.tmp` files. If tests need TIFF fixtures, generate small synthetic TIFF/OME-TIFF fixtures during tests or commit tiny purpose-built fixtures only.
+Do not commit these `.tmp` files. If tests need TIFF fixtures, generate small
+synthetic TIFF/OME-TIFF fixtures during tests or commit tiny purpose-built
+fixtures only.
 
 ## References
 
-Use these as background and inspiration, not as mandatory implementation choices:
+Use these as background and inspiration, not as mandatory implementation
+choices:
 
 - User reference: https://github.com/davidvi/tissueviewer
-- User reference / TissueViewer paper: https://academic.oup.com/bioinformatics/article/41/5/btaf246/8120081
-- OpenSeadragon, a common web deep-zoom image viewer: https://openseadragon.github.io/
-- Viv, a web-based visualization library for OME-TIFF and OME-Zarr style bioimaging data: https://github.com/hms-dbmi/viv
-- OME-NGFF / OME-Zarr specifications for multiscale bioimaging data: https://ngff.openmicroscopy.org/latest/
-- OME-TIFF format documentation: https://docs.openmicroscopy.org/ome-model/latest/ome-tiff/
+- User reference / TissueViewer paper:
+  https://academic.oup.com/bioinformatics/article/41/5/btaf246/8120081
+- Napari documentation: https://napari.org/
+- Napari source/readme: https://github.com/napari/napari
+- OpenSeadragon, a common web deep-zoom image viewer:
+  https://openseadragon.github.io/
+- Viv, a web-based visualization library for OME-TIFF and OME-Zarr style
+  bioimaging data: https://github.com/hms-dbmi/viv
+- OME-NGFF / OME-Zarr specifications for multiscale bioimaging data:
+  https://ngff.openmicroscopy.org/latest/
+- OME-TIFF format documentation:
+  https://docs.openmicroscopy.org/ome-model/latest/ome-tiff/
 
 ## Desired User Experience
 
-When a user selects an OME-TIFF/TIFF file in the results file browser, they should be able to open a rich image viewer from the preview pane. The lightweight single-plane preview can remain as an inline default if that helps performance, but there must be an obvious path to a full viewer without downloading the original TIFF.
+Preserve the existing fast inline preview as the default. It should remain a
+low-friction, graphic-like signal for quick visual inspection. Users should not
+need to understand OME, channels, tiles, or Napari just to see whether the file
+looks plausible.
 
-The full viewer should provide:
+Improve the enlarged preview so it becomes a more capable inspection surface,
+inspired by the parts of Napari that matter for quick QA:
 
-- A tile-based image viewport with smooth pan and zoom.
-- Initial fit-to-view rendering, zoom controls, mouse wheel/trackpad zoom, drag-to-pan, and reset-to-fit.
-- Full-screen or large modal/detail mode for inspection.
-- Channel list with names from OME metadata when available.
-- Per-channel visibility toggles.
-- Per-channel color selection or sensible default colors.
-- Per-channel intensity controls, at least min/max/window and preferably auto-contrast based on sampled/tile statistics.
-- Composite rendering for visible channels.
-- Z-slice navigation for stacks.
-- Timepoint navigation when `SizeT > 1`.
-- Plane/series fallback for non-OME multi-page TIFFs.
-- Clear loading, error, and unavailable states.
-- No visible implementation instructions or explanatory prose in the app UI.
+- Large modal or full-screen image area.
+- Fit-to-view rendering, reset-to-fit, and predictable zoom/pan controls.
+- Keyboard and slider controls for channel, Z, and timepoint.
+- Channel names from OME metadata when present.
+- Per-channel visibility, color/LUT, and opacity controls.
+- Per-channel or global contrast/window controls, with a useful auto-contrast
+  default.
+- Optional multi-channel composite rendering.
+- Clear metadata display for dimensions, physical pixel size, current plane,
+  and source format.
+- A prominent download/original-file action for opening the file in Napari.
+- Clear unsupported/error states that preserve the ordinary download path.
 
-The viewer must avoid surprising browser memory/network use. A user opening a 200 MB OME-TIFF should not cause the browser to fetch that whole file. Browser requests should be for metadata, small derived thumbnails, and viewport tiles.
+Do not add visible explanatory prose about implementation details in the app UI.
+Controls should be named naturally and behave like image-viewer controls.
+
+## Recommended Product Direction
+
+The next spec should prefer an incremental plan:
+
+1. Polish the existing quick-look preview.
+   - Keep first-plane inline preview fast.
+   - Make enlarged controls easier to scan and use.
+   - Add obvious original-file download/open-in-local-viewer affordance.
+   - Improve metadata display and error messages.
+
+2. Add Napari-inspired controls without deep zoom.
+   - Channel visibility/color/LUT.
+   - Contrast/window and auto-contrast.
+   - Better Z/T controls, keyboard shortcuts, and optional simple playback.
+   - Optional server-side composite WebP rendering for selected channels.
+
+3. Add deep-zoom only if user demand justifies it.
+   - Tile-based viewport with pan/zoom.
+   - Persistent tile/cache strategy.
+   - Multiscale/pyramidal support or bounded fallback for non-pyramidal TIFFs.
+   - Potential use of OpenSeadragon, Viv, or an OME-NGFF-style manifest.
+
+This direction acknowledges that users can already download files and use
+Napari for full analysis, while still improving WA for quick remote triage.
 
 ## Technical Direction
 
-The spec-writer should research the current codebase before deciding the final architecture. The likely direction is:
+The spec-writer should research the current codebase before deciding the final
+architecture. Likely directions:
 
-- Keep authentication and access checks through the existing `/api/file` proxy path.
-- Add tile endpoints under the existing file API or a closely related API route.
-- Render tiles server-side from the source TIFF/OME-TIFF into WebP or PNG.
-- Use a browser viewer library rather than hand-rolling pan/zoom math if a suitable library fits the app.
-- Consider OpenSeadragon for tiled viewport/pan/zoom.
-- Consider Viv/deck.gl-style rendering if it is a good fit for OME multichannel compositing, but weigh dependency and bundle impact carefully.
-- Consider an internal tile manifest format or an OME-NGFF-like multiscale tile model.
-- Add caching for derived tiles and metadata so repeated pan/zoom operations are not prohibitively expensive.
-- Enforce resource limits: tile size, maximum concurrent tile renders, maximum output dimensions, cache bounds, timeouts, and clear failures for unsupported files.
+- Keep authentication and access checks through the existing `/api/file` proxy
+  path.
+- Keep the backend `HEAD download=true` authorization probe for server-side TIFF
+  access.
+- Preserve the absolute-path guard and the limited
+  `X-WA-Resolved-File-Path` exposure.
+- Continue returning derived WebP/PNG images rather than full TIFF bodies to
+  the browser.
+- For additional single-plane controls, extend the current `ome=plane` route
+  rather than introducing a separate viewer service.
+- For channel composites, decide whether to produce server-side composite
+  images or client-side overlays from multiple derived plane images.
+- For deep zoom, add tile endpoints under the existing file API or a closely
+  related route.
+- If tiles are added, define tile size, coordinate scheme, plane mapping,
+  downsample levels, cache behavior, concurrency limits, and cleanup.
+- Add persistent caching only with explicit bounds and invalidation rules.
+- Enforce resource limits: maximum input pixels, output dimensions, tile render
+  cost, concurrent renders, timeouts, and clear unsupported states.
 
-Important: do not implement a solution that downloads the original TIFF to the browser and relies on client-side full-file decoding. That would fail the central requirement for large files.
+Important: do not implement a solution that downloads the original TIFF to the
+browser and relies on client-side full-file decoding. That would fail the
+central requirement for large files.
 
 ## Tile and Cache Expectations
 
-The spec should define a concrete strategy for serving tiles. It should answer:
+If the spec includes deep zoom, it must define a concrete tile strategy. It
+should answer:
 
 - Whether tiles are generated on demand, precomputed on first open, or mixed.
 - How tile coordinates map to source TIFF pages/planes and downsample levels.
-- Whether non-pyramidal TIFFs are tiled by server-side region extraction, whole-plane resize, cached multiscales, or another approach.
+- Whether non-pyramidal TIFFs are tiled by server-side region extraction,
+  whole-plane resize, cached multiscales, or another approach.
 - How OME metadata dimensions map to channel/Z/T plane selection.
-- How channel composites are produced: server-side composite tiles, client-side blend of per-channel tile layers, or another design.
+- How channel composites are produced: server-side composite tiles, client-side
+  blend of per-channel tile layers, or another design.
 - How derived tiles are cached and invalidated.
 - Where cache files live, how large they may get, and how cleanup works.
-- What happens when a TIFF lacks OME metadata, is malformed, is too large for the configured limits, or cannot be tiled efficiently.
+- What happens when a TIFF lacks OME metadata, is malformed, is too large for
+  configured limits, or cannot be tiled efficiently.
 
-The design should prefer correctness and bounded resource use over trying to support every possible TIFF variant silently.
+The design should prefer correctness and bounded resource use over trying to
+support every possible TIFF variant silently.
 
 ## Integration Points
 
@@ -113,46 +263,80 @@ Current relevant files likely include:
 - `frontend/tests/file-proxy.test.ts`
 - `frontend/tests/file-preview.test.ts`
 - `frontend/tests/result-detail-files.test.ts`
+- `frontend/tests/file-browser.test.ts`
+- `results/server_file.go`
+- `results/server_file_test.go`
 
-The spec should confirm these paths by codebase research rather than assuming the list is complete.
+The spec should confirm these paths by codebase research rather than assuming
+the list is complete.
 
 ## Non-Goals
 
-Do not require users to install desktop tools to view images.
+Do not replace Napari or attempt a complete desktop microscopy analysis suite
+inside WA as the next step.
 
-Do not require users to download OME-TIFF files before inspection.
+Do not require users to download OME-TIFF files before quick browser
+inspection. Downloading for full Napari analysis is acceptable and should remain
+easy.
 
 Do not commit large TIFF fixtures.
 
-Do not weaken existing image, SVG, PDF, HTML, text, subfolder preview, file-type dropdown, saved filter, auth, or locked-result behavior.
+Do not weaken existing image, SVG, PDF, HTML, text, subfolder preview,
+file-type dropdown, saved filter, auth, or locked-result behavior.
 
-Do not introduce `wa mlwh sync` or MLWH cache changes; this feature is file-preview/viewer work.
+Do not introduce `wa mlwh sync` or MLWH cache changes; this feature is
+file-preview/viewer work.
 
-Do not fake OME channel or image data in production code. If a file is unsupported, show an honest unsupported/error state.
+Do not fake OME channel or image data in production code. If a file is
+unsupported, show an honest unsupported/error state.
 
 ## Acceptance-Test Themes
 
-The eventual spec should include behavior-focused acceptance tests for at least:
+The eventual spec should include behavior-focused acceptance tests for at
+least:
 
-- OME metadata discovery exposes channel names, dimensions, Z count, T count, and physical pixel sizes when available.
-- Opening a large OME-TIFF viewer does not request the original TIFF body in the browser.
-- The tile endpoint enforces authenticated access and locked-result behavior consistently with existing file preview/download routes.
-- The viewer initially renders a fit-to-view image from derived tiles.
-- Panning/zooming requests tile URLs rather than the full file.
-- Changing channel visibility or color changes the rendered/composited viewport.
-- Changing Z or T requests the correct plane/tile set.
+- Existing inline TIFF preview still renders a first-plane graphic-like preview
+  without requesting the source TIFF body in the browser.
+- Enlarged preview controls appear from both normal file previews and subfolder
+  preview rows.
+- OME metadata discovery exposes channel names, dimensions, Z count, T count,
+  and physical pixel sizes when available.
+- The OME file proxy authorizes via backend `HEAD download=true`, rejects
+  relative local paths, and does not fall back to a backend GET body fetch.
+- Registered output subdirectory TIFFs preview correctly.
+- Changing channel, Z, or T requests the correct derived plane.
 - Non-OME multi-page TIFFs fall back to plane selection with clear labeling.
 - Unsupported or malformed TIFFs show a clear error and do not crash the page.
+- The original file remains easy to download for Napari/local analysis.
 - Existing preview behavior for non-TIFF file types remains unchanged.
-- Large local examples such as `.tmp/ome.tiff` and `.tmp/ome_collapsed.tiff` can be used manually for evidence, but automated tests use small generated fixtures.
+- If channel compositing is added, changing visibility/color/contrast changes
+  the rendered preview.
+- If deep zoom is added, opening a large OME-TIFF viewer does not request the
+  original TIFF body in the browser, and panning/zooming requests tile URLs.
+- Large local examples such as `.tmp/ome.tiff` and `.tmp/ome_collapsed.tiff`
+  can be used manually for evidence, but automated tests use small generated
+  fixtures.
 
 ## Open Questions for the Spec Writer to Resolve
 
-The spec-writer clarification loop should ask the user questions where needed, especially:
+The spec-writer clarification loop should ask the user questions where needed,
+especially:
 
-- Should the inline file preview become the full deep-zoom viewer by default, or should the inline preview stay lightweight with an "open viewer" action?
-- Is channel compositing mandatory for the first implementation, or can phase 1 deliver deep-zoom single-channel tiles with compositing in phase 2?
-- Are server-side derived tile caches acceptable on disk, and if so where should they live and how aggressively should they be cleaned?
-- Is OpenSeadragon acceptable as a dependency if the implementation handles compositing through multiple tile layers or server-side composite tiles?
-- Should the viewer support only OME-TIFF initially, or generic pyramidal TIFF / multi-page TIFF too?
-- What maximum file size and tile render cost should be supported before returning a bounded unsupported/error state?
+- Is the next goal better quick inspection, or a true browser replacement for
+  some Napari workflows?
+- Which Napari-like controls matter first: channel composite, LUT/color,
+  contrast/window, Z/T navigation, playback, annotation, measurement, or
+  overlays?
+- Should the enlarged preview become full-screen, or is the current modal size
+  enough if it gains better controls?
+- Should phase 1 deliver better single-plane controls before deep zoom?
+- Is channel compositing mandatory for the next implementation, or can it come
+  after contrast/LUT controls?
+- Are server-side derived tile or composite caches acceptable on disk, and if
+  so where should they live and how aggressively should they be cleaned?
+- Is OpenSeadragon acceptable as a dependency if the implementation handles
+  compositing through multiple tile layers or server-side composite tiles?
+- Should the viewer support only OME-TIFF initially, or generic pyramidal TIFF
+  / multi-page TIFF too?
+- What maximum file size, plane size, and tile render cost should be supported
+  before returning a bounded unsupported/error state?
