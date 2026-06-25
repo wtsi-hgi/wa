@@ -23,6 +23,12 @@ import {
 import { PreviewPagination } from "@/components/preview-pagination";
 import type { FileEntry } from "@/lib/contracts";
 import {
+    buildOmeTiffMetadataUrl,
+    buildOmeTiffPlaneUrl,
+    isTiffPreviewPath,
+    type OmeTiffMetadata,
+} from "@/lib/ome-tiff";
+import {
     effectivePreviewExtension,
     nonPreviewableBinaryExtensions,
     previewBitmapImageExtensions,
@@ -86,6 +92,9 @@ export type FilePreviewProps = {
 
 type LightboxImageProps = {
     buttonClassName?: string;
+    dialogCloseButtonClassName?: string;
+    dialogContent?: ReactNode;
+    dialogPanelClassName?: string;
     downloadUrl?: string;
     fileName: string;
     fullSizeUrl: string;
@@ -109,6 +118,7 @@ export type FileImageThumbnailProps = {
     file: FileEntry;
     fullSizeUrl: string;
     height?: number;
+    proxyUrl?: string;
     thumbnailUrl: string;
 };
 
@@ -628,6 +638,9 @@ function CsvPreview({
 
 function LightboxImage({
     buttonClassName,
+    dialogCloseButtonClassName,
+    dialogContent,
+    dialogPanelClassName,
     downloadUrl,
     fileName,
     fullSizeUrl,
@@ -640,6 +653,10 @@ function LightboxImage({
     thumbnailWidth = 320,
 }: LightboxImageProps) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
+    const defaultDialogPanelClassName =
+        "relative z-10 max-h-full max-w-5xl rounded-[2rem] border border-white/15 bg-[color:rgba(15,23,42,0.9)] p-4 shadow-2xl";
+    const defaultDialogCloseButtonClassName =
+        "absolute right-4 top-4 inline-flex size-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition hover:bg-white/10";
 
     useEffect(() => {
         if (!lightboxOpen) {
@@ -726,24 +743,33 @@ function LightboxImage({
                         className="absolute inset-0 bg-[color:rgba(17,24,39,0.75)] backdrop-blur-sm"
                         onClick={() => setLightboxOpen(false)}
                     />
-                    <div className="relative z-10 max-h-full max-w-5xl rounded-[2rem] border border-white/15 bg-[color:rgba(15,23,42,0.9)] p-4 shadow-2xl">
+                    <div
+                        className={
+                            dialogPanelClassName ?? defaultDialogPanelClassName
+                        }
+                    >
                         <button
                             type="button"
                             aria-label="Close image preview"
-                            className="absolute right-4 top-4 inline-flex size-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                            className={
+                                dialogCloseButtonClassName ??
+                                defaultDialogCloseButtonClassName
+                            }
                             onClick={() => setLightboxOpen(false)}
                         >
                             <X className="size-4" aria-hidden="true" />
                         </button>
-                        <Image
-                            alt={`${fileName} full preview`}
-                            className="max-h-[80vh] max-w-full rounded-[1.5rem] object-contain"
-                            src={fullSizeUrl}
-                            unoptimized
-                            width={1600}
-                            height={1200}
-                            sizes="100vw"
-                        />
+                        {dialogContent ?? (
+                            <Image
+                                alt={`${fileName} full preview`}
+                                className="max-h-[80vh] max-w-full rounded-[1.5rem] object-contain"
+                                src={fullSizeUrl}
+                                unoptimized
+                                width={1600}
+                                height={1200}
+                                sizes="100vw"
+                            />
+                        )}
                     </div>
                 </div>
             ) : null}
@@ -771,19 +797,329 @@ function ImagePreview({
     );
 }
 
+function clampPreviewCoordinate(value: number, size: number): number {
+    if (size <= 0) {
+        return 0;
+    }
+
+    return Math.min(size - 1, Math.max(0, Math.round(value)));
+}
+
+function metadataSummary(metadata: OmeTiffMetadata): string[] {
+    const summary = [
+        `${metadata.width} x ${metadata.height}`,
+        metadata.hasOmeMetadata
+            ? `${metadata.channelCount} channels`
+            : `${metadata.pageCount} planes`,
+    ];
+
+    if (metadata.sizeZ > 1) {
+        summary.push(`${metadata.sizeZ} Z slices`);
+    }
+
+    if (metadata.sizeT > 1) {
+        summary.push(`${metadata.sizeT} timepoints`);
+    }
+
+    return summary;
+}
+
+function OmeTiffPreview({
+    fileName,
+    maxHeightPx,
+    proxyUrl,
+}: {
+    fileName: string;
+    maxHeightPx?: number;
+    proxyUrl: string;
+}) {
+    const thumbnailUrl = buildOmeTiffPlaneUrl(proxyUrl, {
+        channel: 0,
+        height: STABLE_THUMBNAIL_HEIGHT,
+        t: 0,
+        width: STABLE_THUMBNAIL_WIDTH,
+        z: 0,
+    });
+    const fullPlaneUrl = buildOmeTiffPlaneUrl(proxyUrl, {
+        channel: 0,
+        height: 1200,
+        t: 0,
+        width: 1600,
+        z: 0,
+    });
+    const renderedHeight = maxHeightPx ?? 240;
+
+    return (
+        <LightboxImage
+            buttonClassName="group relative flex h-full w-full max-w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.5rem]"
+            dialogCloseButtonClassName="absolute right-4 top-4 z-10 inline-flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground transition hover:bg-muted"
+            dialogContent={
+                <OmeTiffExpandedPreview
+                    fileName={fileName}
+                    proxyUrl={proxyUrl}
+                />
+            }
+            dialogPanelClassName="relative z-10 flex max-h-full w-full max-w-6xl flex-col rounded-[2rem] border border-white/15 bg-background p-5 text-foreground shadow-2xl"
+            downloadUrl={buildDownloadUrl(proxyUrl)}
+            fileName={fileName}
+            fullSizeUrl={fullPlaneUrl}
+            imageClassName="mx-auto block"
+            maxHeightPx={renderedHeight}
+            sizes="(min-width: 1280px) 32vw, 92vw"
+            thumbnailHeight={STABLE_THUMBNAIL_HEIGHT}
+            thumbnailUrl={thumbnailUrl}
+            thumbnailWidth={STABLE_THUMBNAIL_WIDTH}
+        />
+    );
+}
+
+function OmeTiffExpandedPreview({
+    fileName,
+    proxyUrl,
+}: {
+    fileName: string;
+    proxyUrl: string;
+}) {
+    const [metadataState, setMetadataState] = useState<{
+        error: string | null;
+        metadata: OmeTiffMetadata | null;
+        proxyUrl: string;
+    }>({
+        error: null,
+        metadata: null,
+        proxyUrl: "",
+    });
+    const [channel, setChannel] = useState(0);
+    const [z, setZ] = useState(0);
+    const [t, setT] = useState(0);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        void fetch(buildOmeTiffMetadataUrl(proxyUrl))
+            .then(async (response) => {
+                if (!response.ok) {
+                    throw new Error("Unable to load TIFF metadata");
+                }
+
+                return (await response.json()) as OmeTiffMetadata;
+            })
+            .then((nextMetadata) => {
+                if (cancelled) {
+                    return;
+                }
+
+                setMetadataState({
+                    error: null,
+                    metadata: nextMetadata,
+                    proxyUrl,
+                });
+            })
+            .catch((metadataError: unknown) => {
+                if (cancelled) {
+                    return;
+                }
+
+                setMetadataState({
+                    error:
+                        metadataError instanceof Error
+                            ? metadataError.message
+                            : "Unable to load TIFF metadata",
+                    metadata: null,
+                    proxyUrl,
+                });
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [proxyUrl]);
+
+    const metadata =
+        metadataState.proxyUrl === proxyUrl ? metadataState.metadata : null;
+    const error =
+        metadataState.proxyUrl === proxyUrl ? metadataState.error : null;
+    const downloadUrl = buildDownloadUrl(proxyUrl);
+
+    if (error) {
+        return (
+            <div className="relative min-h-64 w-full rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 p-6">
+                <DownloadIconLink
+                    className="absolute right-4 top-4"
+                    href={downloadUrl}
+                />
+                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Preview unavailable
+                </p>
+                <h3 className="mt-3 text-xl font-semibold tracking-tight text-foreground">
+                    Unable to read TIFF metadata
+                </h3>
+                <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                    {error}
+                </p>
+            </div>
+        );
+    }
+
+    if (!metadata) {
+        return (
+            <div className="relative flex min-h-64 w-full items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-background/55 px-5 py-8 text-center text-sm text-muted-foreground">
+                <DownloadIconLink
+                    className="absolute right-4 top-4"
+                    href={downloadUrl}
+                />
+                Loading TIFF metadata...
+            </div>
+        );
+    }
+
+    const safeChannel = clampPreviewCoordinate(channel, metadata.channelCount);
+    const safeZ = clampPreviewCoordinate(z, metadata.sizeZ);
+    const safeT = clampPreviewCoordinate(t, metadata.sizeT);
+    const planeUrl = buildOmeTiffPlaneUrl(proxyUrl, {
+        channel: safeChannel,
+        height: 1200,
+        t: safeT,
+        width: 1600,
+        z: safeZ,
+    });
+    const showChannelControl = metadata.channelCount > 1;
+    const showZControl = metadata.sizeZ > 1;
+    const showTControl = metadata.sizeT > 1;
+
+    return (
+        <div className="flex max-h-[calc(100vh-8rem)] w-full max-w-full flex-col gap-4 pr-12">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {metadataSummary(metadata).map((item) => (
+                    <span
+                        className="rounded-full border border-border/70 bg-background/75 px-2.5 py-1"
+                        key={item}
+                    >
+                        {item}
+                    </span>
+                ))}
+            </div>
+
+            {showChannelControl || showZControl || showTControl ? (
+                <div className="flex flex-wrap items-end gap-3">
+                    {showChannelControl ? (
+                        <label className="grid min-w-44 gap-1 text-xs font-medium text-muted-foreground">
+                            <span>
+                                {metadata.hasOmeMetadata ? "Channel" : "Plane"}
+                            </span>
+                            <select
+                                aria-label={
+                                    metadata.hasOmeMetadata
+                                        ? "Channel"
+                                        : "Plane"
+                                }
+                                className="h-9 rounded-md border border-border/80 bg-background px-2 text-sm text-foreground outline-none transition focus:border-primary"
+                                onChange={(event) =>
+                                    setChannel(Number(event.target.value))
+                                }
+                                value={safeChannel}
+                            >
+                                {metadata.channels.map((metadataChannel) => (
+                                    <option
+                                        key={metadataChannel.index}
+                                        value={metadataChannel.index}
+                                    >
+                                        {metadataChannel.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    ) : null}
+
+                    {showZControl ? (
+                        <label className="grid min-w-44 gap-1 text-xs font-medium text-muted-foreground">
+                            <span>
+                                Z {safeZ + 1} of {metadata.sizeZ}
+                            </span>
+                            <input
+                                aria-label="Z slice"
+                                className="accent-primary"
+                                max={metadata.sizeZ - 1}
+                                min={0}
+                                onChange={(event) =>
+                                    setZ(Number(event.target.value))
+                                }
+                                type="range"
+                                value={safeZ}
+                            />
+                        </label>
+                    ) : null}
+
+                    {showTControl ? (
+                        <label className="grid min-w-44 gap-1 text-xs font-medium text-muted-foreground">
+                            <span>
+                                T {safeT + 1} of {metadata.sizeT}
+                            </span>
+                            <input
+                                aria-label="Timepoint"
+                                className="accent-primary"
+                                max={metadata.sizeT - 1}
+                                min={0}
+                                onChange={(event) =>
+                                    setT(Number(event.target.value))
+                                }
+                                type="range"
+                                value={safeT}
+                            />
+                        </label>
+                    ) : null}
+                </div>
+            ) : null}
+
+            <div className="min-h-0 flex-1 overflow-auto rounded-[1.5rem] bg-muted/30">
+                <Image
+                    alt={`${fileName} full preview`}
+                    className="mx-auto block max-h-[calc(100vh-16rem)] max-w-full object-contain"
+                    height={1200}
+                    sizes="100vw"
+                    src={planeUrl}
+                    unoptimized
+                    width={1600}
+                />
+            </div>
+        </div>
+    );
+}
+
 export const FileImageThumbnail = memo(
     function FileImageThumbnail({
         file,
         fullSizeUrl,
         height = 220,
+        proxyUrl,
         thumbnailUrl,
     }: FileImageThumbnailProps) {
         const fileName = file.path.split("/").pop() ?? file.path;
+        const isTiffThumbnail = isTiffPreviewPath(file.path);
+        const sourceUrl = proxyUrl ?? fullSizeUrl;
 
         return (
             <LightboxImage
                 buttonClassName="group relative inline-flex max-w-full cursor-zoom-in justify-center overflow-hidden rounded-[1.25rem]"
-                downloadUrl={buildDownloadUrl(fullSizeUrl)}
+                dialogCloseButtonClassName={
+                    isTiffThumbnail
+                        ? "absolute right-4 top-4 z-10 inline-flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground transition hover:bg-muted"
+                        : undefined
+                }
+                dialogContent={
+                    isTiffThumbnail ? (
+                        <OmeTiffExpandedPreview
+                            fileName={fileName}
+                            proxyUrl={sourceUrl}
+                        />
+                    ) : undefined
+                }
+                dialogPanelClassName={
+                    isTiffThumbnail
+                        ? "relative z-10 flex max-h-full w-full max-w-6xl flex-col rounded-[2rem] border border-white/15 bg-background p-5 text-foreground shadow-2xl"
+                        : undefined
+                }
+                downloadUrl={buildDownloadUrl(sourceUrl)}
                 fileName={fileName}
                 fullSizeUrl={fullSizeUrl}
                 maxHeightPx={height}
@@ -801,6 +1137,7 @@ export const FileImageThumbnail = memo(
         return (
             prevProps.file.path === nextProps.file.path &&
             prevProps.fullSizeUrl === nextProps.fullSizeUrl &&
+            prevProps.proxyUrl === nextProps.proxyUrl &&
             prevProps.thumbnailUrl === nextProps.thumbnailUrl &&
             prevProps.height === nextProps.height
         );
@@ -923,6 +1260,11 @@ export function FilePreview({
         </div>
     ) : null;
     const isImagePreview = !isLoading && previewable && renderer === "image";
+    const isTiffPreview =
+        !isLoading &&
+        previewable &&
+        renderer === "image" &&
+        isTiffPreviewPath(file.path);
     const [markdownMeasureRef, markdownIsOverflowing] =
         useInlinePreviewOverflow<HTMLElement>(
             !isLoading && previewable && renderer === "markdown",
@@ -996,6 +1338,19 @@ export function FilePreview({
                         {error.message?.trim() || "Preview request failed"}
                     </p>
                 </div>
+            </section>
+        );
+    }
+
+    if (isTiffPreview) {
+        return (
+            <section className="h-full max-w-full">
+                <OmeTiffPreview
+                    fileName={fileName}
+                    key={proxyUrl}
+                    maxHeightPx={maxHeight}
+                    proxyUrl={proxyUrl}
+                />
             </section>
         );
     }

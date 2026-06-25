@@ -106,14 +106,16 @@ func TestRunDevModeGuards(t *testing.T) {
 		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_RESULTS_DB_PATH")
 	})
 
-	convey.Convey("run-dev.sh --mode dev refuses without WA_MLWH_DSN", t, func() {
+	convey.Convey("run-dev.sh --mode dev refuses without any MLWH query source", t, func() {
 		repoRoot := runDevRepoRootForTest(t)
 		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "dev", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
 			"WA_RESULTS_DB_PATH": "/var/lib/wa/results.db",
-		}, []string{"WA_ENV", "WA_MLWH_DSN"})
+		}, []string{"WA_ENV", "WA_MLWH_SERVER_URL", "WA_MLWH_CACHE_PATH", "WA_MLWH_DSN", "WA_RUN_DEV_SEQMETA_CMD"})
 
 		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_DSN")
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "MLWH query source")
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_SERVER_URL")
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_MLWH_CACHE_PATH")
 	})
 
 	convey.Convey("run-dev.sh --mode test refuses with WA_RESULTS_DB_PATH set", t, func() {
@@ -201,6 +203,18 @@ func TestRunDevModeGuards(t *testing.T) {
 
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_DEV_RESULTS_HOST")
+	})
+
+	convey.Convey("run-dev.sh --mode prod rejects inherited WA_DEV_SEQMETA_HOST", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		stdout, stderr, err := runRunDevExpectingFailureForTest(t, repoRoot, []string{"--mode", "prod", "--frontend-port", "1", "--results-port", "1", "--seqmeta-port", "1"}, map[string]string{
+			"WA_ENV":              "production",
+			"WA_RESULTS_DB_PATH":  "/var/lib/wa/results.db",
+			"WA_DEV_SEQMETA_HOST": "0.0.0.0",
+		}, nil)
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(stdout+stderr, convey.ShouldContainSubstring, "WA_DEV_SEQMETA_HOST")
 	})
 
 	convey.Convey("run-dev.sh --mode prod rejects test-shaped WA_MLWH_CACHE_PATH", t, func() {

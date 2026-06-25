@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import path from "path";
 import sharp from "sharp";
 
 import { resultsAuthCookieName, resultsRaw } from "@/lib/backend-client";
+import { isTiffPreviewPath } from "@/lib/ome-tiff";
+import { getOmeTiffMetadata, renderOmeTiffPlane } from "@/lib/ome-tiff-server";
 
 export const dynamic = "force-dynamic";
 
 const defaultThumbnailHeight = 220;
 const defaultThumbnailWidth = 360;
+const resolvedFilePathHeader = "x-wa-resolved-file-path";
 
 function clampDimension(value: string | null, fallback: number): number {
     const parsed = Number(value);
@@ -16,6 +20,19 @@ function clampDimension(value: string | null, fallback: number): number {
     }
 
     return Math.min(1600, Math.max(64, Math.round(parsed)));
+}
+
+function localPathFromAuthorizedResponse(
+    response: Response,
+    requestedPath: string,
+): string | null {
+    const resolvedPath = response.headers.get(resolvedFilePathHeader)?.trim();
+
+    if (resolvedPath) {
+        return path.isAbsolute(resolvedPath) ? resolvedPath : null;
+    }
+
+    return path.isAbsolute(requestedPath) ? requestedPath : null;
 }
 
 function canThumbnail(contentType: string | null): boolean {
@@ -149,6 +166,26 @@ function buildPassthroughHeaders(
     return headers;
 }
 
+async function buildBackendErrorResponse(
+    response: Response,
+): Promise<NextResponse> {
+    const body = await readErrorBody(response);
+    const headers = new Headers();
+
+    if (response.status === 413) {
+        const fileSize = response.headers.get("x-file-size");
+
+        if (fileSize) {
+            headers.set("x-file-size", fileSize);
+        }
+    }
+
+    return NextResponse.json(body, {
+        status: response.status,
+        headers,
+    });
+}
+
 type ResultsFileRequestOptions = {
     jwt?: string | null;
     method?: "HEAD";
@@ -205,6 +242,170 @@ async function fetchFileResponse(
     return fetchResultsFile(path, { jwt: options.jwt });
 }
 
+async function fetchAuthorizedFileResponse(
+    id: string,
+    query: URLSearchParams,
+    options: { includeBody: boolean; jwt?: string | null },
+): Promise<Response> {
+    const jwt = options.jwt ?? null;
+    const resultsPath = jwt ? "/rest/v1/auth/results" : "/rest/v1/results";
+    const publicBackendPath = `/rest/v1/results/${encodeURIComponent(id)}/file?${query.toString()}`;
+    const backendPath = `${resultsPath}/${encodeURIComponent(id)}/file?${query.toString()}`;
+    let response = await fetchFileResponse(backendPath, {
+        includeBody: options.includeBody,
+        jwt,
+    });
+
+    if (jwt && response.status === 401) {
+        await cancelResponseBody(response);
+        response = await fetchFileResponse(publicBackendPath, {
+            includeBody: options.includeBody,
+        });
+    }
+
+    return response;
+}
+
+async function fetchAuthorizedFileHeadResponse(
+    id: string,
+    query: URLSearchParams,
+    jwt?: string | null,
+): Promise<Response> {
+    const resultsPath = jwt ? "/rest/v1/auth/results" : "/rest/v1/results";
+    const publicBackendPath = `/rest/v1/results/${encodeURIComponent(id)}/file?${query.toString()}`;
+    const backendPath = `${resultsPath}/${encodeURIComponent(id)}/file?${query.toString()}`;
+    let response = await fetchResultsFile(backendPath, {
+        jwt,
+        method: "HEAD",
+    });
+
+    if (jwt && response.status === 401) {
+        await cancelResponseBody(response);
+        response = await fetchResultsFile(publicBackendPath, {
+            method: "HEAD",
+        });
+    }
+
+    return response;
+}
+
+function parsePlaneCoordinate(value: string | null, fallback: number): number {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+
+    return Math.max(0, Math.round(parsed));
+}
+
+async function handleOmeTiffRequest(
+    request: NextRequest,
+    options: {
+        id: string;
+        jwt?: string | null;
+        path: string;
+        thumbnailHeight: number;
+        thumbnailWidth: number;
+    },
+): Promise<NextResponse> {
+    const mode = request.nextUrl.searchParams.get("ome")?.trim();
+
+    if (mode !== "metadata" && mode !== "plane") {
+        return NextResponse.json(
+            { error: "ome query parameter must be metadata or plane" },
+            { status: 400 },
+        );
+    }
+
+    if (!isTiffPreviewPath(options.path)) {
+        return NextResponse.json(
+            { error: "OME preview is only available for .tif and .tiff files" },
+            { status: 400 },
+        );
+    }
+
+    let accessResponse: Response;
+    try {
+        const accessQuery = new URLSearchParams({ path: options.path });
+        accessQuery.set("download", "true");
+        accessResponse = await fetchAuthorizedFileHeadResponse(
+            options.id,
+            accessQuery,
+            options.jwt,
+        );
+    } catch {
+        return NextResponse.json(
+            { error: "results backend request failed" },
+            { status: 503 },
+        );
+    }
+
+    if (!accessResponse.ok) {
+        return buildBackendErrorResponse(accessResponse);
+    }
+
+    await cancelResponseBody(accessResponse);
+
+    const localPath = localPathFromAuthorizedResponse(
+        accessResponse,
+        options.path,
+    );
+    if (!localPath) {
+        return NextResponse.json(
+            { error: "OME preview requires an absolute local file path" },
+            { status: 422 },
+        );
+    }
+
+    let metadata;
+    try {
+        metadata = await getOmeTiffMetadata(localPath);
+    } catch {
+        return NextResponse.json(
+            { error: "unable to read TIFF metadata" },
+            { status: 422 },
+        );
+    }
+
+    if (mode === "metadata") {
+        return NextResponse.json(metadata, {
+            headers: {
+                "cache-control":
+                    "private, max-age=300, stale-while-revalidate=3600",
+            },
+        });
+    }
+
+    try {
+        const plane = await renderOmeTiffPlane(localPath, metadata, {
+            channel: parsePlaneCoordinate(
+                request.nextUrl.searchParams.get("channel"),
+                0,
+            ),
+            height: options.thumbnailHeight,
+            t: parsePlaneCoordinate(request.nextUrl.searchParams.get("t"), 0),
+            width: options.thumbnailWidth,
+            z: parsePlaneCoordinate(request.nextUrl.searchParams.get("z"), 0),
+        });
+
+        return new NextResponse(new Uint8Array(plane), {
+            headers: {
+                "cache-control":
+                    "private, max-age=300, stale-while-revalidate=3600",
+                "content-security-policy": "sandbox",
+                "content-type": "image/webp",
+            },
+            status: 200,
+        });
+    } catch {
+        return NextResponse.json(
+            { error: "unable to render TIFF preview plane" },
+            { status: 422 },
+        );
+    }
+}
+
 async function handleFileRequest(
     request: NextRequest,
     options: { includeBody: boolean },
@@ -231,6 +432,18 @@ async function handleFileRequest(
         );
     }
 
+    const jwt = request.cookies.get(resultsAuthCookieName)?.value ?? null;
+
+    if (request.nextUrl.searchParams.has("ome")) {
+        return handleOmeTiffRequest(request, {
+            id,
+            jwt,
+            path,
+            thumbnailHeight,
+            thumbnailWidth,
+        });
+    }
+
     const query = new URLSearchParams({ path });
     if (download === "true") {
         query.set("download", "true");
@@ -242,24 +455,12 @@ async function handleFileRequest(
         query.set("mode", mode);
     }
 
-    const jwt = request.cookies.get(resultsAuthCookieName)?.value ?? null;
-    const resultsPath = jwt ? "/rest/v1/auth/results" : "/rest/v1/results";
-
     let response: Response;
     try {
-        const publicBackendPath = `/rest/v1/results/${encodeURIComponent(id)}/file?${query.toString()}`;
-        const backendPath = `${resultsPath}/${encodeURIComponent(id)}/file?${query.toString()}`;
-        response = await fetchFileResponse(backendPath, {
+        response = await fetchAuthorizedFileResponse(id, query, {
             includeBody: options.includeBody,
             jwt,
         });
-
-        if (jwt && response.status === 401) {
-            await cancelResponseBody(response);
-            response = await fetchFileResponse(publicBackendPath, {
-                includeBody: options.includeBody,
-            });
-        }
     } catch {
         return NextResponse.json(
             { error: "results backend request failed" },
@@ -268,21 +469,7 @@ async function handleFileRequest(
     }
 
     if (!response.ok) {
-        const body = await readErrorBody(response);
-        const headers = new Headers();
-
-        if (response.status === 413) {
-            const fileSize = response.headers.get("x-file-size");
-
-            if (fileSize) {
-                headers.set("x-file-size", fileSize);
-            }
-        }
-
-        return NextResponse.json(body, {
-            status: response.status,
-            headers,
-        });
+        return buildBackendErrorResponse(response);
     }
 
     if (!options.includeBody) {

@@ -29,6 +29,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -232,6 +234,73 @@ func (s *stubMLWHInfoClient) Close() error {
 	s.closed = true
 
 	return nil
+}
+
+func TestMLWHInfoCommandUsesConfiguredServerWithoutLocalCredentials(t *testing.T) {
+	convey.Convey("Given only WA_MLWH_SERVER_URL is configured, when wa mlwh info runs, then it queries the MLWH server and does not require local DB or cache credentials", t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+
+			switch r.URL.Path {
+			case "/resolve/study/DN1234":
+				w.WriteHeader(http.StatusNotFound)
+				writeMLWHInfoServerJSONForTest(w, map[string]string{
+					"code":    "not_found",
+					"message": "study not found",
+				})
+			case "/resolve/sample-name/DN1234":
+				writeMLWHInfoServerJSONForTest(w, mlwh.Match{
+					Kind:      mlwh.KindSangerSampleName,
+					Canonical: "DN1234",
+					Sample: &mlwh.Sample{
+						Name:           "DN1234",
+						IDSampleLims:   "8675309",
+						SangerSampleID: "DN1234",
+						SupplierName:   "remote-supplier",
+						Studies:        []mlwh.Study{{IDStudyLims: "5901", Name: "Remote Study"}},
+						Libraries:      []mlwh.Library{{PipelineIDLims: "Chromium", IDStudyLims: "5901"}},
+					},
+				})
+			case "/sample/DN1234/lanes":
+				writeMLWHInfoServerJSONForTest(w, []mlwh.Lane{{IDRun: 49001, Position: 2, TagIndex: 7}})
+			case "/sample/DN1234/irods":
+				writeMLWHInfoServerJSONForTest(w, []mlwh.IRODSPath{{
+					IDProduct:  "product-remote",
+					Collection: "/seq/remote",
+					DataObject: "DN1234.cram",
+					IRODSPath:  "/seq/remote/DN1234.cram",
+				}})
+			default:
+				w.WriteHeader(http.StatusInternalServerError)
+				writeMLWHInfoServerJSONForTest(w, map[string]string{
+					"code":    "upstream_impaired",
+					"message": "unexpected path " + r.URL.Path,
+				})
+			}
+		}))
+		defer server.Close()
+
+		t.Setenv("WA_MLWH_SERVER_URL", server.URL)
+		t.Setenv("WA_MLWH_DSN", "")
+		t.Setenv("WA_MLWH_PASSWORD", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", "")
+		t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "DN1234"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Identifier: DN1234")
+		convey.So(output, convey.ShouldContainSubstring, "remote-supplier")
+		convey.So(output, convey.ShouldContainSubstring, "Remote Study")
+		convey.So(output, convey.ShouldContainSubstring, "library: Chromium / 5901")
+		convey.So(output, convey.ShouldContainSubstring, "/seq/remote/DN1234.cram")
+	})
+}
+
+func writeMLWHInfoServerJSONForTest(w http.ResponseWriter, value any) {
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		panic("encode mlwh info test response: " + err.Error())
+	}
 }
 
 func TestMLWHInfoCommandHumanReadableSample(t *testing.T) {
@@ -520,6 +589,12 @@ func TestMLWHInfoCommandSurfacesEmptyCacheHint(t *testing.T) {
 func withStubMLWHInfoClient(t *testing.T, stub *stubMLWHInfoClient) {
 	t.Helper()
 	t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/mlwarehouse")
+	t.Setenv("WA_MLWH_SERVER_URL", "")
+	t.Setenv("WA_MLWH_BACKEND_URL", "")
+	t.Setenv("WA_ENV", "")
+	t.Setenv("WA_TEST_SEQMETA_PORT", "")
+	t.Setenv("WA_DEV_SEQMETA_PORT", "")
+	t.Setenv("WA_PROD_SEQMETA_PORT", "")
 
 	original := openMLWHInfoClient
 	t.Cleanup(func() { openMLWHInfoClient = original })

@@ -225,38 +225,49 @@ func TestResultsRescanCommand(t *testing.T) {
 		convey.So(stderr.String(), convey.ShouldContainSubstring, "warning: skipped")
 	})
 
-	convey.Convey("rescan rejects directory symlinks that resolve outside the requested output directory before sending a request", t, func() {
+	convey.Convey("rescan skips directory symlinks that resolve outside the requested output directory", t, func() {
+		store := newResultsRescanStoreForTest(t)
 		dir := t.TempDir()
 		externalDir := t.TempDir()
-		createResultsRescanFileForTest(t, dir, "a.txt", "alpha")
+		linkPath := filepath.Join(dir, "escape")
+		originalFile := createResultsRescanFileForTest(t, dir, "a.txt", "alpha")
 		createResultsRescanFileForTest(t, externalDir, "outside.txt", "beta")
-		convey.So(os.Symlink(externalDir, filepath.Join(dir, "escape")), convey.ShouldBeNil)
+		convey.So(os.Symlink(externalDir, linkPath), convey.ShouldBeNil)
 
-		requestCount := 0
-		requestPathCh := make(chan string, 1)
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestCount++
-			requestPathCh <- r.URL.Path
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(results.ResultSet{
-				ID:              "ignored-id",
-				OutputDirectory: dir,
-			})
-		}))
+		stored, err := store.Upsert(context.Background(), &results.Registration{
+			PipelineIdentifier: "pipe",
+			RunKey:             "runid=48522",
+			Requester:          "alice",
+			Operator:           "bob",
+			Command:            "nextflow run pipe",
+			PipelineName:       "nf-pipe",
+			PipelineVersion:    "1.2.3",
+			OutputDirectory:    dir,
+			Files:              []results.FileEntry{originalFile},
+		})
+		convey.So(err, convey.ShouldBeNil)
+
+		server := newResultsRescanServerForTest(t, store)
 		defer server.Close()
 
-		_, err := executeRootCommandForTest(t, []string{"results", "rescan", "--server", server.URL, "ignored-id", dir})
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		command := NewRootCommand()
+		command.SetOut(stdout)
+		command.SetErr(stderr)
+		command.SetArgs([]string{"results", "rescan", "--server", server.URL, stored.ID, dir})
 
-		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(err.Error(), convey.ShouldContainSubstring, "resolves outside")
-		convey.So(requestCount, convey.ShouldEqual, 1)
+		err = command.Execute()
 
-		requestPath := ""
-		select {
-		case requestPath = <-requestPathCh:
-		default:
-		}
-		convey.So(requestPath, convey.ShouldEqual, gas.EndPointAuth+"/results/ignored-id")
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(stderr.String(), convey.ShouldNotContainSubstring, "warning: skipped 1 path(s) while scanning output files")
+		convey.So(stderr.String(), convey.ShouldContainSubstring, linkPath)
+		convey.So(stderr.String(), convey.ShouldContainSubstring, externalDir)
+
+		files, getErr := store.GetFiles(context.Background(), stored.ID)
+		convey.So(getErr, convey.ShouldBeNil)
+		convey.So(files, convey.ShouldHaveLength, 1)
+		convey.So(files[0].Path, convey.ShouldEqual, filepath.Join(dir, "a.txt"))
 	})
 
 	convey.Convey("rescan rejects alias directories that are not the registered output directory", t, func() {

@@ -185,8 +185,12 @@ func newMLWHServeCommand() *cobra.Command {
 			"Configuration is read from the environment after the persistent --env",
 			"flag has loaded matching .env files. Set WA_MLWH_CACHE_PATH or pass",
 			"--mlwh-cache to choose the cache, and optionally set WA_MLWH_SERVER_CERT,",
-			"WA_MLWH_SERVER_KEY, WA_MLWH_SERVER_TOKEN, WA_MLWH_SERVER_URL or",
-			"WA_MLWH_SERVER_PORT to secure or bind the server.",
+			"WA_MLWH_SERVER_KEY, and WA_MLWH_SERVER_TOKEN together to secure the",
+			"server. Without those TLS/token settings, mlwh serve is plain HTTP.",
+			"Bind defaults come from the active WA_*_SEQMETA_HOST/PORT scenario",
+			"variables, or WA_MLWH_SERVER_PORT when no scenario port is active.",
+			"WA_MLWH_SERVER_URL is the public client URL used by wa mlwh info and",
+			"mlwhdiff; it is not used as a bind address.",
 			"",
 			"Example:",
 			"  WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite wa --env production mlwh serve",
@@ -237,8 +241,8 @@ func newMLWHServeCommand() *cobra.Command {
 		},
 	}
 
-	command.Flags().StringVar(&bindURL, "url", firstEnv("WA_MLWH_SERVER_URL"), "HTTP(S) bind address (defaults to 127.0.0.1:<port>)")
-	command.Flags().IntVar(&port, "port", 8080, "HTTP(S) port used only when --url is unset")
+	command.Flags().StringVar(&bindURL, "url", "", "bind host:port or URL (defaults to active WA_*_SEQMETA_HOST/PORT or 127.0.0.1:<port>)")
+	command.Flags().IntVar(&port, "port", 8080, "listen port used only when --url is unset")
 	command.Flags().StringVar(&cert, "cert", firstEnv("WA_MLWH_SERVER_CERT"), "TLS certificate path")
 	command.Flags().StringVarP(&key, "key", "k", firstEnv("WA_MLWH_SERVER_KEY"), "TLS private key path")
 	command.Flags().StringVar(&serverToken, "server-token", firstEnv("WA_MLWH_SERVER_TOKEN"), "Server token basename or absolute path")
@@ -526,7 +530,12 @@ func resolveMLWHServeBindAddr(rawURL string, port int, portChanged bool) (string
 			return "", err
 		}
 
-		return net.JoinHostPort("127.0.0.1", strconv.Itoa(bindPort)), nil
+		host := strings.TrimSpace(activeMLWHBindHost())
+		if host == "" {
+			host = "127.0.0.1"
+		}
+
+		return net.JoinHostPort(host, strconv.Itoa(bindPort)), nil
 	}
 
 	if strings.Contains(trimmed, "://") {
@@ -561,15 +570,19 @@ func resolveMLWHServeBindPort(flagValue int, flagChanged bool) (int, error) {
 	port := flagValue
 	source := "--port"
 	if !flagChanged {
-		envPort := strings.TrimSpace(firstEnv("WA_MLWH_SERVER_PORT"))
+		envPort := strings.TrimSpace(activeMLWHPort())
+		source = "active WA_*_SEQMETA_PORT"
+		if envPort == "" {
+			envPort = strings.TrimSpace(firstEnv("WA_MLWH_SERVER_PORT"))
+			source = "WA_MLWH_SERVER_PORT"
+		}
 		if envPort != "" {
 			parsedPort, err := strconv.Atoi(envPort)
 			if err != nil {
-				return 0, fmt.Errorf("invalid WA_MLWH_SERVER_PORT %q", envPort)
+				return 0, fmt.Errorf("invalid %s %q", source, envPort)
 			}
 
 			port = parsedPort
-			source = "WA_MLWH_SERVER_PORT"
 		}
 	}
 
@@ -578,4 +591,15 @@ func resolveMLWHServeBindPort(flagValue int, flagChanged bool) (int, error) {
 	}
 
 	return port, nil
+}
+
+func activeMLWHBindHost() string {
+	switch firstEnv("WA_ENV") {
+	case "development":
+		return firstEnv("WA_DEV_SEQMETA_HOST")
+	case "production":
+		return firstEnv("WA_PROD_SEQMETA_HOST")
+	default:
+		return ""
+	}
 }

@@ -150,6 +150,38 @@ wa mlwh sync
 wa mlwh serve --port 8091
 ```
 
+To accept `wa mlwh info` connections from another machine, bind the MLWH API
+to a reachable address on the server side and give users the public client URL.
+With scenario envs this mirrors the results API setup:
+
+```bash
+# On the server running make dev
+export WA_DEV_SEQMETA_HOST=0.0.0.0
+export WA_DEV_SEQMETA_PORT=3673
+make dev
+
+# On remote CLI machines
+export WA_MLWH_SERVER_URL=http://farm22-wrstat01:3673
+```
+
+Use `WA_PROD_SEQMETA_HOST` and `WA_PROD_SEQMETA_PORT` for production. Do not
+use `WA_MLWH_SERVER_URL` as a bind setting; it is the URL clients dial. The
+default MLWH server is plain HTTP, so publish an `https://` URL only when
+`wa mlwh serve` is configured with `WA_MLWH_SERVER_CERT`,
+`WA_MLWH_SERVER_KEY`, and `WA_MLWH_SERVER_TOKEN`.
+
+Normal CLI users can query that server without local MLWH database or cache
+credentials:
+
+```bash
+export WA_MLWH_SERVER_URL=http://host:8091
+wa mlwh info DN1234
+wa mlwh info 5901 --type study --json
+```
+
+When using the local development scenario, `wa --env development mlwh info
+DN1234` defaults to the MLWH API port from the scenario env file.
+
 ### Poll for metadata changes
 
 ```bash

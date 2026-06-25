@@ -13,6 +13,10 @@ import {
     fetchStats,
     searchResults,
 } from "@/app/(results)/actions";
+import {
+    currentSession,
+    type CurrentSession,
+} from "@/app/(results)/auth/actions";
 import { BackendRequestError } from "@/lib/backend-client";
 import type {
     FileEntry,
@@ -22,7 +26,10 @@ import type {
     Study,
 } from "@/lib/contracts";
 import { formatRegistrationUnique } from "@/lib/result-identity";
-import { parseSearchFilters } from "@/lib/search-params";
+import {
+    parseSearchFilters,
+    showLockedResultsParam,
+} from "@/lib/search-params";
 import { canonicalSeqmetaKey } from "@/lib/seqmeta-keys";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -36,6 +43,10 @@ const emptyStats: StatsResult = {
 const combinedSearchFileFetchConcurrency = 6;
 const latestResultSetsInitialPageSize = 10;
 const dashboardActivityDays = 30;
+const anonymousSession: CurrentSession = {
+    authenticated: false,
+    username: null,
+};
 
 type CombinedRegistrationFetch = {
     index: number;
@@ -220,6 +231,17 @@ function normalizeSearchParams(
     return parseSearchFilters(params);
 }
 
+function searchParamIncludes(
+    searchParams: SearchParams,
+    key: string,
+    expectedValue: string,
+): boolean {
+    const value = searchParams[key];
+    const values = Array.isArray(value) ? value : value ? [value] : [];
+
+    return values.some((entry) => entry.trim() === expectedValue);
+}
+
 function buildReturnHref(searchParams: SearchParams): string {
     const params = new URLSearchParams();
 
@@ -238,6 +260,14 @@ function buildReturnHref(searchParams: SearchParams): string {
 
 function isResultViewable(result: ResultSet): boolean {
     return result.access?.locked !== true && result.access?.can_view !== false;
+}
+
+function filterViewableEntries(
+    entries: ResultSet[] | SearchResult[],
+): ResultSet[] | SearchResult[] {
+    return entries.filter((entry) => isResultViewable(toResultSet(entry))) as
+        | ResultSet[]
+        | SearchResult[];
 }
 
 function outputDirectorySpecificity(
@@ -409,8 +439,13 @@ export default async function ResultsLandingPage({
     let metaKeys: string[] = [];
     const studies: Study[] = [];
     const seqmetaAvailable = Boolean(process.env.WA_MLWH_BACKEND_URL?.trim());
+    const sessionPromise = currentSession().catch(() => anonymousSession);
     const statsPromise = fetchLatestResultSetStats();
     const metaKeysPromise = fetchMetaKeys();
+    const session = await sessionPromise;
+    const filterByAccessibleResults =
+        session.authenticated &&
+        !searchParamIncludes(rawSearchParams, showLockedResultsParam, "1");
 
     try {
         stats = await statsPromise;
@@ -430,7 +465,14 @@ export default async function ResultsLandingPage({
             getErrorMessage(error, "Unable to load filter fields");
     }
 
-    let tableData: ResultSet[] | SearchResult[] = stats.recent;
+    const visibleStats = filterByAccessibleResults
+        ? {
+              ...stats,
+              recent: stats.recent.filter(isResultViewable),
+          }
+        : stats;
+
+    let tableData: ResultSet[] | SearchResult[] = visibleStats.recent;
     let tableMode: "recent" | "search" = "recent";
     let tableEmptyMessage = "No recent results yet.";
     let combinedSearchFiles: CombinedSearchFile[] = [];
@@ -442,7 +484,10 @@ export default async function ResultsLandingPage({
         tableEmptyMessage = "No result sets matched the current search.";
 
         try {
-            tableData = await searchResults(resolvedSearchParams);
+            const searchData = await searchResults(resolvedSearchParams);
+            tableData = filterByAccessibleResults
+                ? filterViewableEntries(searchData)
+                : searchData;
         } catch (error) {
             tableData = [];
             statsError =
@@ -465,7 +510,11 @@ export default async function ResultsLandingPage({
     const showCombinedSearchFileBrowser =
         combinedSearchFiles.length > 0 ||
         combinedSearchLockedRegistrations.length > 0;
-    const suggestionValues = buildSuggestionValues(stats, tableData, studies);
+    const suggestionValues = buildSuggestionValues(
+        visibleStats,
+        tableData,
+        studies,
+    );
 
     return (
         <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-10 lg:px-12 lg:py-10">

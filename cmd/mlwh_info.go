@@ -50,6 +50,10 @@ var openMLWHInfoClient = func(ctx context.Context, cfg mlwh.Config) (mlwhInfoCli
 	return mlwh.Open(ctx, cfg)
 }
 
+var openMLWHInfoRemoteClient = func(_ context.Context, cfg mlwh.RemoteConfig) (mlwhInfoClient, error) {
+	return mlwh.NewRemoteClient(cfg)
+}
+
 // mlwhInfoClient is the subset of *mlwh.Client used by `wa mlwh info`.
 type mlwhInfoClient interface {
 	ClassifyIdentifier(ctx context.Context, raw string) (mlwh.Match, error)
@@ -71,6 +75,57 @@ type mlwhInfoClient interface {
 	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 
 	Close() error
+}
+
+func openMLWHInfoConfiguredClient(ctx context.Context, serverURL string) (mlwhInfoClient, error) {
+	if trimmedServerURL := strings.TrimSpace(serverURL); trimmedServerURL != "" {
+		return openMLWHInfoRemoteClient(ctx, mlwh.RemoteConfig{BaseURL: trimmedServerURL})
+	}
+
+	cfg, err := resolveMLWHInfoLocalConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := openMLWHInfoClient(ctx, cfg)
+	if err != nil {
+		if strings.TrimSpace(cfg.DSN) != "" && errors.Is(err, mlwh.ErrPasswordInDSN) {
+			return nil, fmt.Errorf("WA_MLWH_DSN: %w", err)
+		}
+
+		return nil, err
+	}
+
+	return client, nil
+}
+
+func defaultMLWHInfoServerURL() string {
+	if serverURL := strings.TrimSpace(firstEnv("WA_MLWH_SERVER_URL")); serverURL != "" {
+		return serverURL
+	}
+
+	if backendURL := strings.TrimSpace(firstEnv("WA_MLWH_BACKEND_URL")); backendURL != "" {
+		return backendURL
+	}
+
+	if port := strings.TrimSpace(activeMLWHPort()); port != "" {
+		return "http://127.0.0.1:" + port
+	}
+
+	return ""
+}
+
+func activeMLWHPort() string {
+	switch firstEnv("WA_ENV") {
+	case "test":
+		return firstEnv("WA_TEST_SEQMETA_PORT")
+	case "development":
+		return firstEnv("WA_DEV_SEQMETA_PORT")
+	case "production":
+		return firstEnv("WA_PROD_SEQMETA_PORT")
+	default:
+		return ""
+	}
 }
 
 type mlwhInfoSampleNameResolver interface {
@@ -494,15 +549,16 @@ type infoReport struct {
 
 func newMLWHInfoCommand() *cobra.Command {
 	var (
-		typeFlag string
-		jsonOut  bool
+		serverURL string
+		typeFlag  string
+		jsonOut   bool
 	)
 
 	command := &cobra.Command{
 		Use:   "info <identifier>",
 		Short: "Look up everything we know about an MLWH identifier",
 		Long: strings.Join([]string{
-			"Look up an MLWH identifier in the local SQLite cache and print",
+			"Look up an MLWH identifier through a wa mlwh serve API and print",
 			"every related record we have for it (sample fields, the parent",
 			"study, library and run associations, lanes and iRODS paths).",
 			"",
@@ -514,35 +570,40 @@ func newMLWHInfoCommand() *cobra.Command {
 			"a specific resolver. Pass --json for a single JSON object suitable",
 			"for piping into jq.",
 			"",
-			"Reads from the local SQLite cache populated by 'wa mlwh sync'.",
-			"If the cache is cold for a needed table the command exits with",
-			"an error suggesting you run 'wa mlwh sync' first.",
+			"Normal CLI users should point this command at the MLWH query",
+			"server with --server or WA_MLWH_SERVER_URL; database and cache",
+			"credentials stay with the server process. When WA_ENV selects a",
+			"scenario and no server URL is set, the command defaults to the",
+			"active local MLWH API port from WA_*_SEQMETA_PORT. Operators can",
+			"still run against a local cache with WA_MLWH_CACHE_PATH, or use",
+			"WA_MLWH_DSN for direct local operator mode.",
 			"",
-			"Configuration is read from the environment (same variables as",
-			"'wa mlwh sync'). Use the persistent --env flag (or",
-			"WA_ENV=development|test|production) to load matching",
+			"Configuration is read from the environment. Use the persistent",
+			"--env flag (or WA_ENV=development|test|production) to load matching",
 			".env.<name> / .env.<name>.local files from the working directory",
 			"before resolving:",
 			"",
-			"  WA_MLWH_DSN             Optional for cache-backed reads; required",
-			"                          only when running 'wa mlwh sync'.",
+			"  WA_MLWH_SERVER_URL      Preferred. Base URL for wa mlwh serve.",
+			"  WA_MLWH_BACKEND_URL     Lower-precedence compatibility default.",
+			"  WA_*_SEQMETA_PORT       Scenario-local default API port.",
+			"  WA_MLWH_DSN             Optional direct operator mode only;",
+			"                          required when running 'wa mlwh sync'.",
 			"  WA_MLWH_PASSWORD        Optional. Password used with",
 			"                          WA_MLWH_DSN when syncing from upstream.",
-			"  WA_MLWH_CACHE_PATH      Optional. Path to the local SQLite cache",
-			"                          file. Defaults to <user-cache-dir>/wa/",
-			"                          mlwh.sqlite (created on first use).",
+			"  WA_MLWH_CACHE_PATH      Optional local operator cache path or",
+			"                          MySQL cache DSN without a password.",
 			"  WA_MLWH_CACHE_PASSWORD  Optional. SQLCipher key used to encrypt",
 			"                          the local cache when set.",
 			"",
 			"Examples:",
-			"  # Auto-detect identifier type and print human-readable info",
+			"  # Query a development stack started by make dev",
 			"  wa --env development mlwh info DN1234",
 			"",
-			"  # Force resolution as a study and emit JSON",
-			"  wa --env production mlwh info 5901 --type study --json",
+			"  # Query a remote MLWH server and emit JSON",
+			"  wa mlwh info 5901 --server http://host:8091 --type study --json",
 			"",
-			"  # Look up a numeric run id",
-			"  wa mlwh info 49001 --type run",
+			"  # Local operator cache fallback",
+			"  WA_MLWH_CACHE_PATH=.tmp/mlwh-cache.sqlite wa mlwh info 49001 --type run",
 		}, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -554,17 +615,8 @@ func newMLWHInfoCommand() *cobra.Command {
 				return errors.New("usage: wa mlwh info <identifier>")
 			}
 
-			cfg, err := resolveMLWHSyncConfig()
+			client, err := openMLWHInfoConfiguredClient(cmd.Context(), serverURL)
 			if err != nil {
-				return err
-			}
-
-			client, err := openMLWHInfoClient(cmd.Context(), cfg)
-			if err != nil {
-				if errors.Is(err, mlwh.ErrPasswordInDSN) {
-					return fmt.Errorf("WA_MLWH_DSN: %w", err)
-				}
-
 				return fmt.Errorf("open mlwh client: %w", err)
 			}
 			defer func() { _ = client.Close() }()
@@ -573,8 +625,26 @@ func newMLWHInfoCommand() *cobra.Command {
 		},
 	}
 
+	command.Flags().StringVar(&serverURL, "server", defaultMLWHInfoServerURL(), "MLWH server base URL (defaults to WA_MLWH_SERVER_URL, WA_MLWH_BACKEND_URL, or active WA_*_SEQMETA_PORT)")
 	command.Flags().StringVar(&typeFlag, "type", "", "force identifier type (sample|study|run|library); default is auto-detect")
 	command.Flags().BoolVar(&jsonOut, "json", false, "emit a single JSON object instead of human-readable text")
 
 	return command
+}
+
+func resolveMLWHInfoLocalConfig() (mlwh.Config, error) {
+	if strings.TrimSpace(firstEnv("WA_MLWH_DSN")) != "" {
+		return resolveMLWHSyncConfig()
+	}
+
+	if strings.TrimSpace(firstEnv("WA_MLWH_CACHE_PATH")) == "" {
+		return mlwh.Config{}, errors.New("WA_MLWH_SERVER_URL or WA_MLWH_CACHE_PATH must be set; pass --server to use a remote wa mlwh serve instance")
+	}
+
+	cacheConfig, err := resolveMLWHServeCacheConfig("", false)
+	if err != nil {
+		return mlwh.Config{}, err
+	}
+
+	return mlwh.Config{Cache: cacheConfig}, nil
 }

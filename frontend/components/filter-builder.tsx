@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { Check, Plus, Search, X } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
     boxPanelInsetClass,
@@ -26,6 +26,7 @@ import { formatRegistrationUnique } from "@/lib/result-identity";
 import {
     buildSearchQuery,
     canonicalSearchFilterKey,
+    showLockedResultsParam,
     type SearchFilters,
 } from "@/lib/search-params";
 import { cn } from "@/lib/utils";
@@ -328,6 +329,7 @@ export function FilterBuilder({
 }: FilterBuilderProps) {
     const pathname = usePathname();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const fieldOptions = getFieldOptions(metaKeys, seqmetaAvailable);
 
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -401,7 +403,12 @@ export function FilterBuilder({
     }, [genericDraftValue]);
 
     function pushFilters(filters: SearchFilters) {
-        const renderedQuery = buildSearchQuery(filters).toString();
+        const params = buildSearchQuery(filters);
+        if (searchParams.get(showLockedResultsParam) === "1") {
+            params.set(showLockedResultsParam, "1");
+        }
+
+        const renderedQuery = params.toString();
 
         router.push(renderedQuery ? `${pathname}?${renderedQuery}` : pathname);
     }

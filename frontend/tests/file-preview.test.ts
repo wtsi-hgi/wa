@@ -8,13 +8,16 @@ import {
     render,
     screen,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const { highlightAutoMock } = vi.hoisted(() => ({
     highlightAutoMock: vi.fn((content: string) => ({
         value: `highlighted:${content}`,
     })),
 }));
+const fetchMock = vi.fn<typeof fetch>();
+
+vi.stubGlobal("fetch", fetchMock);
 
 vi.mock("highlight.js/lib/core", () => ({
     default: {
@@ -123,7 +126,12 @@ function fileNameFromPath(filePath: string): string {
 
 afterEach(() => {
     cleanup();
+    fetchMock.mockReset();
     highlightAutoMock.mockClear();
+});
+
+afterAll(() => {
+    vi.unstubAllGlobals();
 });
 
 describe("O1 file preview", () => {
@@ -250,6 +258,105 @@ describe("O1 file preview", () => {
         expect(image.getAttribute("src")).toContain("thumb=true");
     });
 
+    it("renders OME-TIFF inline previews as a plain first-plane image without fetching metadata", () => {
+        renderPreview({
+            file: buildFile({
+                path: "/tmp/results/stack.ome.tiff",
+                size: 230_068_104,
+            }),
+            maxHeight: 220,
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff",
+        });
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByLabelText("Channel")).toBeNull();
+        expect(screen.queryByLabelText("Z slice")).toBeNull();
+        expect(screen.queryByText("Loading TIFF metadata...")).toBeNull();
+
+        const image = screen.getByAltText("stack.ome.tiff preview");
+        const src = image.getAttribute("src") ?? "";
+
+        expect(src).toContain("ome=plane");
+        expect(src).toContain("channel=0");
+        expect(src).toContain("z=0");
+        expect(src).toContain("t=0");
+        expect(src).toContain("w=672");
+        expect(src).toContain("h=420");
+        expect(image.className).toContain("object-contain");
+        expect(image.getAttribute("style")).toContain("height: 220px");
+        expect(image.getAttribute("style")).toContain("max-height: 220px");
+        expect(image.getAttribute("style")).toContain("max-width: 672px");
+    });
+
+    it("shows OME-TIFF metadata-driven channel and Z controls only after enlarging", async () => {
+        fetchMock.mockResolvedValue(
+            Response.json({
+                channelCount: 4,
+                channels: [
+                    { index: 0, name: "ch1 - PhenoVue Fluor 488" },
+                    { index: 1, name: "ch2 - PhenoVue 641 Mito Stain" },
+                    { index: 2, name: "ch3 - PhenoVue Hoechst 33342" },
+                    { index: 3, name: "ch4 - PhenoVue Fluor 568" },
+                ],
+                depth: "ushort",
+                dimensionOrder: "XYZCT",
+                format: "tiff",
+                hasOmeMetadata: true,
+                height: 2160,
+                pageCount: 64,
+                pixelType: "uint16",
+                sizeT: 1,
+                sizeX: 2160,
+                sizeY: 2160,
+                sizeZ: 16,
+                width: 2160,
+            }),
+        );
+
+        renderPreview({
+            file: buildFile({
+                path: "/tmp/results/stack.ome.tiff",
+                size: 230_068_104,
+            }),
+            proxyUrl:
+                "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff",
+        });
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByLabelText("Channel")).toBeNull();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: /open image lightbox/i }),
+        );
+
+        await screen.findByLabelText("Channel");
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff&ome=metadata",
+        );
+        expect(screen.getByText("4 channels")).toBeTruthy();
+        expect(screen.getByText("16 Z slices")).toBeTruthy();
+
+        const image = screen.getByAltText("stack.ome.tiff full preview");
+        expect(image.getAttribute("src")).toContain("ome=plane");
+        expect(image.getAttribute("src")).toContain("channel=0");
+        expect(image.getAttribute("src")).toContain("z=0");
+        expect(image.getAttribute("src")).toContain("w=1600");
+        expect(image.getAttribute("src")).toContain("h=1200");
+
+        fireEvent.change(screen.getByLabelText("Channel"), {
+            target: { value: "2" },
+        });
+        fireEvent.change(screen.getByLabelText("Z slice"), {
+            target: { value: "3" },
+        });
+
+        expect(screen.getByText("Z 4 of 16")).toBeTruthy();
+        expect(image.getAttribute("src")).toContain("channel=2");
+        expect(image.getAttribute("src")).toContain("z=3");
+    });
+
     it("uses a full-width thumbnail wrapper for row previews", async () => {
         const { FileImageThumbnail } =
             await import("@/components/file-preview");
@@ -295,6 +402,74 @@ describe("O1 file preview", () => {
         expect(
             screen.getByAltText("plot.png full preview").getAttribute("src"),
         ).toBe("/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fplot.png");
+    });
+
+    it("shows OME-TIFF controls after enlarging reusable thumbnail previews", async () => {
+        fetchMock.mockResolvedValue(
+            Response.json({
+                channelCount: 3,
+                channels: [
+                    { index: 0, name: "red" },
+                    { index: 1, name: "green" },
+                    { index: 2, name: "blue" },
+                ],
+                depth: "uchar",
+                dimensionOrder: "XYCZT",
+                format: "tiff",
+                hasOmeMetadata: true,
+                height: 16,
+                pageCount: 3,
+                pixelType: "uint8",
+                sizeT: 1,
+                sizeX: 16,
+                sizeY: 16,
+                sizeZ: 1,
+                width: 16,
+            }),
+        );
+        const { FileImageThumbnail } =
+            await import("@/components/file-preview");
+        const proxyUrl =
+            "/api/file?id=result-1&path=%2Ftmp%2Fresults%2Fstack.ome.tiff";
+
+        render(
+            createElement(FileImageThumbnail, {
+                file: buildFile({ path: "/tmp/results/stack.ome.tiff" }),
+                fullSizeUrl: `${proxyUrl}&ome=plane&channel=0&z=0&t=0&w=1600&h=1200`,
+                height: 180,
+                proxyUrl,
+                thumbnailUrl: `${proxyUrl}&ome=plane&channel=0&z=0&t=0&w=672&h=420`,
+            }),
+        );
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.queryByLabelText("Channel")).toBeNull();
+        expect(screen.getByAltText("stack.ome.tiff preview")).toHaveProperty(
+            "src",
+            expect.stringContaining("ome=plane"),
+        );
+        expect(
+            screen
+                .getByRole("link", { name: /download file/i })
+                .getAttribute("href"),
+        ).toBe(`${proxyUrl}&download=true`);
+
+        fireEvent.click(
+            screen.getByRole("button", { name: /open image lightbox/i }),
+        );
+
+        await screen.findByLabelText("Channel");
+
+        expect(fetchMock).toHaveBeenCalledWith(`${proxyUrl}&ome=metadata`);
+        expect(screen.getByText("3 channels")).toBeTruthy();
+
+        const expandedImage = screen.getByAltText(
+            "stack.ome.tiff full preview",
+        );
+        expect(expandedImage.getAttribute("src")).toContain("ome=plane");
+        expect(expandedImage.getAttribute("src")).toContain("channel=0");
+        expect(expandedImage.getAttribute("src")).toContain("w=1600");
+        expect(expandedImage.getAttribute("src")).toContain("h=1200");
     });
 
     it("shows a file too large message with download link on 413", () => {

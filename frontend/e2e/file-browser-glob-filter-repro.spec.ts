@@ -420,6 +420,14 @@ async function writeNestedPyInputsEvidence(
     page: Page,
     label: string,
     screenshotName: string,
+    expected: {
+        behavior: string;
+        globPattern: string;
+    } = {
+        behavior:
+            "The nested barcodes.tsv.gz path is visible without a filter and remains visible when the single-star py_inputs glob is applied.",
+        globPattern: nestedPyInputsGlobPattern,
+    },
 ): Promise<FilterEvidence & { evidencePath: string; filterValue: string }> {
     mkdirSync(evidenceDir, { recursive: true });
 
@@ -486,13 +494,12 @@ async function writeNestedPyInputsEvidence(
             {
                 ...evidence,
                 expected: {
-                    globPattern: nestedPyInputsGlobPattern,
+                    globPattern: expected.globPattern,
                     nestedPathSuffix: nestedPyInputsRelativePath.replaceAll(
                         path.sep,
                         "/",
                     ),
-                    behavior:
-                        "The nested barcodes.tsv.gz path is visible without a filter and remains visible when the single-star py_inputs glob is applied.",
+                    behavior: expected.behavior,
                 },
                 pageUrl: page.url(),
             },
@@ -513,9 +520,21 @@ test("filters and persists a search-result file browser glob", async ({
     const saveButton = page.getByRole("button", {
         name: "Save file glob filter",
     });
+    const trailingWildcardButton = page.getByRole("button", {
+        name: "Include trailing wildcard",
+    });
 
     await expect(globInput).toBeVisible();
     await expect(saveButton).toBeEnabled();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "true",
+    );
+    await trailingWildcardButton.click();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
     await globInput.fill(expectedGlobPattern);
     await expect(globInput).toHaveValue(expectedGlobPattern);
     await expect(page.locator('[data-directory-path$="/reports"]')).toHaveCount(
@@ -570,9 +589,23 @@ test("filters and persists a search-result file browser glob", async ({
                 value === expectedGlobPattern,
         ),
     ).toBe(true);
+    expect(
+        evidence.localStorageEntries.some(
+            ([key, value]) =>
+                key.includes("wa:file-browser:glob-filter:pipelines:") &&
+                key.includes(pipelineNames[0]) &&
+                key.includes(pipelineNames[1]) &&
+                key.endsWith(":wildcards") &&
+                value === "1:0",
+        ),
+    ).toBe(true);
 
     await page.reload();
     await expect(globInput).toHaveValue(expectedGlobPattern);
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
     await expect(page.locator('[data-directory-path$="/logs"]')).toHaveCount(0);
 });
 
@@ -586,9 +619,21 @@ test("filters and persists a result-detail file browser glob", async ({
     const saveButton = page.getByRole("button", {
         name: "Save file glob filter",
     });
+    const trailingWildcardButton = page.getByRole("button", {
+        name: "Include trailing wildcard",
+    });
 
     await expect(globInput).toBeVisible();
     await expect(saveButton).toBeEnabled();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "true",
+    );
+    await trailingWildcardButton.click();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
     await globInput.fill(expectedGlobPattern);
     await expect(globInput).toHaveValue(expectedGlobPattern);
     await expect(page.locator('[data-directory-path$="/reports"]')).toHaveCount(
@@ -646,9 +691,23 @@ test("filters and persists a result-detail file browser glob", async ({
                 ) && value === expectedGlobPattern,
         ),
     ).toBe(true);
+    expect(
+        evidence.localStorageEntries.some(
+            ([key, value]) =>
+                key.includes(
+                    `wa:file-browser:glob-filter:pipeline:${pipelineNames[0]}`,
+                ) &&
+                key.endsWith(":wildcards") &&
+                value === "1:0",
+        ),
+    ).toBe(true);
 
     await page.reload();
     await expect(globInput).toHaveValue(expectedGlobPattern);
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
     await expect(page.locator('[data-directory-path$="/logs"]')).toHaveCount(0);
 });
 
@@ -709,6 +768,108 @@ test("matches nested-directory glob filters across py_inputs TSV gzip paths", as
         ),
     ).toBe(true);
     expect(filteredEvidence.visibleText).not.toContain("No files match");
+});
+
+test("active star toggles make natural glob text match nested barcode files", async ({
+    context,
+    page,
+}) => {
+    await openResultDetailFileBrowser(context, page);
+
+    const nestedDirectorySuffix = path
+        .dirname(nestedPyInputsRelativePath)
+        .replaceAll(path.sep, "/");
+    const nestedPathSuffix = nestedPyInputsRelativePath.replaceAll(
+        path.sep,
+        "/",
+    );
+    const nestedDirectory = page
+        .locator(`button[data-directory-path$="${nestedDirectorySuffix}"]`)
+        .first();
+    const nestedFile = page
+        .locator(`button[data-file-path$="${nestedPathSuffix}"]`)
+        .first();
+    const globInput = page.getByLabel("Filter files by glob");
+    const leadingWildcardButton = page.getByRole("button", {
+        name: "Include leading wildcard",
+    });
+    const trailingWildcardButton = page.getByRole("button", {
+        name: "Include trailing wildcard",
+    });
+
+    await expect(globInput).toBeVisible();
+    await expect(leadingWildcardButton).toHaveAttribute("aria-pressed", "true");
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "true",
+    );
+
+    const toggleMetrics = await page.evaluate(() =>
+        [
+            document.querySelector<HTMLElement>(
+                '[data-file-browser-glob-leading-wildcard="true"]',
+            ),
+            document.querySelector<HTMLElement>(
+                '[data-file-browser-glob-trailing-wildcard="true"]',
+            ),
+        ].map((element) => {
+            const box = element?.getBoundingClientRect();
+
+            return {
+                height: box?.height ?? 0,
+                width: box?.width ?? 0,
+            };
+        }),
+    );
+
+    expect(
+        toggleMetrics.every((metric) => metric.width > 0 && metric.width <= 30),
+        `Expected compact wildcard toggle widths, got ${JSON.stringify(toggleMetrics)}`,
+    ).toBe(true);
+    expect(
+        toggleMetrics.every(
+            (metric) => metric.height > 0 && metric.height <= 34,
+        ),
+        `Expected compact wildcard toggle heights, got ${JSON.stringify(toggleMetrics)}`,
+    ).toBe(true);
+
+    await globInput.fill("barcodes");
+    await expect(globInput).toHaveValue("barcodes");
+    await expect(
+        page.locator('[data-file-browser-empty-filter="true"]'),
+    ).toHaveCount(0);
+    await expect(nestedDirectory).toBeVisible();
+    await nestedDirectory.click();
+    await expect(nestedFile).toBeVisible();
+
+    const filteredEvidence = await writeNestedPyInputsEvidence(
+        page,
+        "result-detail natural barcodes filter with active star toggles",
+        "file-browser-glob-star-toggle-natural-substring-postfix.png",
+        {
+            behavior:
+                "A plain barcodes filter keeps the nested barcodes.tsv.gz path visible while both compact wildcard toggles are active.",
+            globPattern: "*barcodes*",
+        },
+    );
+
+    expect(filteredEvidence.filterValue).toBe("barcodes");
+    expect(
+        filteredEvidence.filePaths.some((filePath) =>
+            filePath.endsWith(nestedPathSuffix),
+        ),
+    ).toBe(true);
+    expect(filteredEvidence.visibleText).not.toContain("No files match");
+
+    await trailingWildcardButton.click();
+    await expect(trailingWildcardButton).toHaveAttribute(
+        "aria-pressed",
+        "false",
+    );
+    await expect(nestedFile).toHaveCount(0);
+    await expect(
+        page.locator('[data-file-browser-empty-filter="true"]'),
+    ).toBeVisible();
 });
 
 test("does not emit a Next script-tag error after reloading a saved search file-browser glob", async ({

@@ -1324,7 +1324,7 @@ func buildResultsRegistrationForCommand(
 		return nil, err
 	}
 
-	outputFiles, scanWarnings, err := results.ScanDirectory(outputDir, includeHidden, matchPatterns...)
+	outputFiles, scanWarnings, err := results.ScanDirectoryWithWarnings(outputDir, includeHidden, matchPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("scan output directory: %w", err)
 	}
@@ -1700,7 +1700,7 @@ func newResultsRescanCommand(options *resultsCommandOptions) *cobra.Command {
 				return err
 			}
 
-			files, scanWarnings, err := results.ScanDirectory(args[1], includeHidden)
+			files, scanWarnings, err := results.ScanDirectoryWithWarnings(args[1], includeHidden)
 			if err != nil {
 				return fmt.Errorf("scan output directory: %w", err)
 			}
@@ -1964,12 +1964,25 @@ func resultsRegisterInputFiles(paths []string) ([]results.FileEntry, error) {
 	return entries, nil
 }
 
-func writeResultsScanWarnings(output io.Writer, warnings int) {
-	if warnings <= 0 || output == nil {
+func writeResultsScanWarnings(output io.Writer, warnings []results.ScanWarning) {
+	if len(warnings) == 0 || output == nil {
 		return
 	}
 
-	_, _ = fmt.Fprintf(output, "warning: skipped %d path(s) while scanning output files\n", warnings)
+	genericWarnings := 0
+	for _, warning := range warnings {
+		if warning.Reason != results.ScanWarningEscapedDirectorySymlink {
+			genericWarnings++
+
+			continue
+		}
+
+		_, _ = fmt.Fprintf(output, "warning: skipped symlink %q -> %q because it points outside the output directory\n", warning.Path, warning.Target)
+	}
+
+	if genericWarnings > 0 {
+		_, _ = fmt.Fprintf(output, "warning: skipped %d path(s) while scanning output files\n", genericWarnings)
+	}
 }
 
 func deduplicateResultsTrackedFiles(outputFiles, inputFiles []results.FileEntry, pipelineFiles ...results.FileEntry) []results.FileEntry {
@@ -2082,7 +2095,7 @@ func validateResultsScanTree(rootDir, dir, resolvedRoot string, includeHidden bo
 		}
 
 		if !resultsPathWithinDirectory(resolvedRoot, resolvedPath) {
-			return fmt.Errorf("scan output directory: directory symlink %q resolves outside %q", childPath, rootDir)
+			continue
 		}
 
 		if _, seen := visitedDirs[resolvedPath]; seen {

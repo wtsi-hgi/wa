@@ -29,12 +29,26 @@ test("shows only the username in the signed-in account trigger and menu", async 
     const accountButton = page.locator(
         '[data-results-auth-bar="true"] [aria-label$=" account"]',
     );
+    const accessToggle = page.getByRole("checkbox", {
+        name: "Only show accessible result sets",
+    });
+    const accessToggleIndicator = page.locator(
+        '[data-results-auth-bar="true"] [data-access-filter-state="accessible"]',
+    );
 
     await expect(accountButton).toBeVisible({ timeout: 30_000 });
+    await expect(accessToggle).toBeChecked();
+    await expect(accessToggleIndicator).toBeVisible();
 
     const triggerEvidence = await page.evaluate(() => {
         const trigger = document.querySelector(
             '[data-results-auth-bar="true"] [aria-label$=" account"]',
+        );
+        const accessToggle = document.querySelector(
+            '[data-results-auth-bar="true"] input[aria-label="Only show accessible result sets"]',
+        );
+        const accessIndicator = document.querySelector(
+            '[data-results-auth-bar="true"] [data-access-filter-state]',
         );
 
         if (!(trigger instanceof HTMLElement)) {
@@ -53,8 +67,30 @@ test("shows only the username in the signed-in account trigger and menu", async 
             '[data-slot="avatar-fallback"]',
         );
         const rect = trigger.getBoundingClientRect();
+        const accessRect =
+            accessIndicator instanceof HTMLElement
+                ? accessIndicator.getBoundingClientRect()
+                : null;
 
         return {
+            accessToggleChecked:
+                accessToggle instanceof HTMLInputElement
+                    ? accessToggle.checked
+                    : null,
+            accessToggleState:
+                accessIndicator instanceof HTMLElement
+                    ? accessIndicator.dataset.accessFilterState
+                    : null,
+            accessToggleRect: accessRect
+                ? {
+                      bottom: Math.round(accessRect.bottom),
+                      height: Math.round(accessRect.height),
+                      left: Math.round(accessRect.left),
+                      right: Math.round(accessRect.right),
+                      top: Math.round(accessRect.top),
+                      width: Math.round(accessRect.width),
+                  }
+                : null,
             avatarPresent: avatar !== null,
             avatarFallbackPresent: avatarFallback !== null,
             badgeText: badge?.textContent?.replace(/\s+/g, " ").trim() ?? null,
@@ -111,6 +147,12 @@ test("shows only the username in the signed-in account trigger and menu", async 
     expect(triggerEvidence?.avatarPresent).toBe(false);
     expect(triggerEvidence?.avatarFallbackPresent).toBe(false);
     expect(triggerEvidence?.triggerText).toBe(triggerEvidence?.username);
+    expect(triggerEvidence?.accessToggleChecked).toBe(true);
+    expect(triggerEvidence?.accessToggleState).toBe("accessible");
+    expect(triggerEvidence?.accessToggleRect).not.toBeNull();
+    expect(triggerEvidence?.accessToggleRect?.left).toBeGreaterThanOrEqual(
+        triggerEvidence?.triggerRect.right ?? 0,
+    );
     expect(popupText).toContain(triggerEvidence?.username);
     expect(popupAvatarEvidence.avatarPresent).toBe(false);
     expect(popupAvatarEvidence.avatarFallbackPresent).toBe(false);
