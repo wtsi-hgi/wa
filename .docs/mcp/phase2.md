@@ -34,8 +34,8 @@ Implement `(*Client).SearchStudies(ctx, term string, limit, offset int)
 `errors.Join(ErrCacheNeverSynced, ErrNotFound)`. Tests in
 `mlwh/search_test.go`. Covers all 6 acceptance tests from A1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.2: A2 - sample search, SQLite FTS5 [parallel with 2.1, 2.3, 2.4]
 
@@ -55,8 +55,8 @@ in `mlwh/search_test.go`. Covers all 6 acceptance tests from A2.
 Dialect dispatch is shared with Item 2.5; coordinate so both the SQLite
 and MySQL branches live behind one `c.cache.Dialect()` switch.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.3: F2 - list-relationship counts [parallel with 2.1, 2.2, 2.4]
 
@@ -73,8 +73,8 @@ sample join/filter as `SamplesForStudy` (via `library_samples`), honouring
 samples returns `Count{Count: 0}` and no error. Tests in
 `mlwh/count_test.go`. Covers all 4 acceptance tests from F2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 2.4: D2 - Client.Freshness [parallel with 2.1, 2.2, 2.3]
 
@@ -95,8 +95,8 @@ Phase 4).
 Covers acceptance tests 1, 2, and 3 from D2 (test 4 is the `RemoteClient`
 round-trip, deferred to Phase 4).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -117,8 +117,8 @@ construction (and dialect dispatch vs the SQLite path). Tests in
 Runs after Batch 1 is reviewed. Depends on Item 2.2 (extends the same
 `SearchSamples` dialect switch).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.6: F1 - search count methods
 
@@ -137,8 +137,8 @@ tests from F1.
 Runs after Item 2.5. Depends on Items 2.1 and 2.2 (reuses their WHERE
 clauses); the sample count also reuses the MySQL narrowing from Item 2.5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.7: B3 - cross-dialect search set-equality (ASCII fixtures)
 
@@ -153,5 +153,5 @@ still run. Covers all 3 acceptance tests from B3.
 
 Depends on Items 2.5 and 2.6 (exercises A2/A3 and F1 together).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
