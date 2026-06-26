@@ -174,8 +174,8 @@ type EnrichmentResult struct {
 
 // TaggedID identifies one canonical identifier dimension for results expansion.
 type TaggedID struct {
-	Kind      IdentifierKind
-	Canonical string
+	Kind      IdentifierKind `json:"kind"`
+	Canonical string         `json:"canonical"`
 }
 
 // SearchValues groups expanded values used for results searches.

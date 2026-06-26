@@ -57,6 +57,7 @@ type serverFakeQueryer struct {
 	resolveStudyFunc       func(context.Context, string) (Match, error)
 	samplesForStudyFunc    func(context.Context, string, int, int) ([]Sample, error)
 	enrichFunc             func(context.Context, string) (EnrichmentResult, error)
+	expandIdentifierFunc   func(context.Context, IdentifierKind, string) ([]TaggedID, error)
 
 	samplesForStudyCall struct {
 		studyLimsID string
@@ -169,8 +170,12 @@ func (q *serverFakeQueryer) FindSamplesByLibraryType(_ context.Context, _ string
 	panic("unexpected FindSamplesByLibraryType call")
 }
 
-func (q *serverFakeQueryer) ExpandIdentifier(_ context.Context, _ IdentifierKind, _ string) ([]TaggedID, error) {
-	panic("unexpected ExpandIdentifier call")
+func (q *serverFakeQueryer) ExpandIdentifier(ctx context.Context, kind IdentifierKind, raw string) ([]TaggedID, error) {
+	if q.expandIdentifierFunc == nil {
+		panic("unexpected ExpandIdentifier call")
+	}
+
+	return q.expandIdentifierFunc(ctx, kind, raw)
 }
 
 func (q *serverFakeQueryer) ExpandSearchValues(_ context.Context, _ IdentifierKind, _ string) (SearchValues, error) {
@@ -352,5 +357,75 @@ func TestServerEnrichB2(t *testing.T) {
 		convey.So(graph, convey.ShouldContainKey, "study")
 		convey.So(graph, convey.ShouldNotContainKey, "project")
 		convey.So(graph, convey.ShouldNotContainKey, "users")
+	})
+}
+
+func TestServerClassifyJSONCasingE1(t *testing.T) {
+	convey.Convey("E1.2: Given GET /classify/6568 returns a Match with a Study, then the top-level keys are snake_case and the nested study keeps its snake_case keys", t, func() {
+		queryer := &serverFakeQueryer{
+			classifyIdentifierFunc: func(_ context.Context, raw string) (Match, error) {
+				return Match{
+					Kind:      KindStudyLimsID,
+					Canonical: raw,
+					Study:     &Study{IDStudyLims: raw, Name: "Malaria genomics"},
+				}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/classify/6568")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var payload map[string]any
+		decodeMLWHJSONResponseForTest(t, response, &payload)
+
+		convey.So(payload, convey.ShouldContainKey, "kind")
+		convey.So(payload, convey.ShouldContainKey, "canonical")
+		convey.So(payload, convey.ShouldContainKey, "study")
+		convey.So(payload, convey.ShouldNotContainKey, "Kind")
+		convey.So(payload, convey.ShouldNotContainKey, "Canonical")
+		convey.So(payload, convey.ShouldNotContainKey, "Study")
+
+		convey.So(payload["kind"], convey.ShouldEqual, string(KindStudyLimsID))
+		convey.So(payload["canonical"], convey.ShouldEqual, "6568")
+
+		study, ok := payload["study"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(study["id_study_lims"], convey.ShouldEqual, "6568")
+		convey.So(study, convey.ShouldNotContainKey, "IDStudyLims")
+	})
+}
+
+func TestServerExpandJSONCasingE1(t *testing.T) {
+	convey.Convey("E1.4: Given GET /expand/run_id/100 returns TaggedIDs, then each array element has snake_case keys kind and canonical", t, func() {
+		queryer := &serverFakeQueryer{
+			expandIdentifierFunc: func(_ context.Context, kind IdentifierKind, raw string) ([]TaggedID, error) {
+				convey.So(kind, convey.ShouldEqual, KindRunID)
+				convey.So(raw, convey.ShouldEqual, "100")
+
+				return []TaggedID{
+					{Kind: KindRunID, Canonical: raw},
+					{Kind: KindSangerSampleName, Canonical: "DN1234"},
+				}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/expand/run_id/100")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var payload []map[string]any
+		decodeMLWHJSONResponseForTest(t, response, &payload)
+
+		convey.So(payload, convey.ShouldHaveLength, 2)
+		for _, element := range payload {
+			convey.So(element, convey.ShouldContainKey, "kind")
+			convey.So(element, convey.ShouldContainKey, "canonical")
+			convey.So(element, convey.ShouldNotContainKey, "Kind")
+			convey.So(element, convey.ShouldNotContainKey, "Canonical")
+		}
+
+		convey.So(payload[0]["kind"], convey.ShouldEqual, string(KindRunID))
+		convey.So(payload[0]["canonical"], convey.ShouldEqual, "100")
 	})
 }

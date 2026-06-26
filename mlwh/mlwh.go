@@ -72,10 +72,10 @@ type Run struct {
 
 // Match is the canonical resolver result.
 type Match struct {
-	Kind      IdentifierKind
-	Canonical string
-	Sample    *Sample
-	Study     *Study
-	Run       *Run
-	Library   *Library
+	Kind      IdentifierKind `json:"kind"`
+	Canonical string         `json:"canonical"`
+	Sample    *Sample        `json:"sample,omitempty"`
+	Study     *Study         `json:"study,omitempty"`
+	Run       *Run           `json:"run,omitempty"`
+	Library   *Library       `json:"library,omitempty"`
 }

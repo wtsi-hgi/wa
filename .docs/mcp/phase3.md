@@ -29,8 +29,8 @@ decodes into the same structs and stays consistent automatically;
 `mlwh/server_test.go` and `mlwh/types_test.go`. Covers all 4 acceptance
 tests from E1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: E2 - parity preserved across the casing change
 
@@ -49,5 +49,5 @@ Acceptance test 2 references the new search/count/freshness methods; if
 they are not yet wired into `RemoteClient`/parity at this point, that
 assertion is completed when Phase 4 extends the parity table.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
