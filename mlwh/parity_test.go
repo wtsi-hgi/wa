@@ -55,6 +55,16 @@ const (
 	parityLibraryLimsID   = "SQPP-47463-G:B1"
 	parityFindLibraryType = "Bespoke"
 	parityRunID           = "48522"
+	// parityStudySearchTerm matches both seeded studies via their name
+	// ("Parity Study 7607"/"7608") and study_title ("Study title 7607"/"7608"),
+	// so SearchStudies/CountStudySearch return a non-trivial, deterministic set
+	// (two studies, ordered by id_study_lims) across local and remote clients.
+	parityStudySearchTerm = "study"
+	// paritySampleSearchTerm matches both seeded samples via their supplier_name
+	// ("supplier-7607-1"/"supplier-7607-2"), so SearchSamples/CountSampleSearch
+	// return a non-trivial, deterministic set (two samples, ordered by
+	// id_sample_tmp) once the FTS5 sample_search index is rebuilt below.
+	paritySampleSearchTerm = "supplier"
 )
 
 type parityQueryCase struct {
@@ -137,6 +147,23 @@ func parityQueryCases() []parityQueryCase {
 		{name: "LibraryDetail", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.LibraryDetail(ctx, parityLibraryType, parityStudyID)
 		}},
+		{name: "SearchStudies", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.SearchStudies(ctx, parityStudySearchTerm, 100, 0)
+		}},
+		{name: "SearchSamples", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.SearchSamples(ctx, paritySampleSearchTerm, 100, 0)
+		}},
+		{name: "CountStudySearch", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountStudySearch(ctx, parityStudySearchTerm)
+		}},
+		{name: "CountSampleSearch", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSampleSearch(ctx, paritySampleSearchTerm)
+		}},
+		{name: "CountStudies", call: func(ctx context.Context, q Queryer) (any, error) { return q.CountStudies(ctx) }},
+		{name: "CountSamplesForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSamplesForStudy(ctx, parityStudyID)
+		}},
+		{name: "Freshness", call: func(ctx context.Context, q Queryer) (any, error) { return q.Freshness(ctx) }},
 	}
 }
 
@@ -197,6 +224,11 @@ func seedParityCache(t *testing.T, db *sql.DB) {
 	seedIseqProductMetricsMirrorRow(t, db, 9003, 31, 48523, 2, 1, parityStudyID)
 	seedIRODSLocationMirrorRow(t, db, "9001", "/seq/illumina/runs/48/48522/plex1", "48522#1.cram", 31, parityStudyID)
 	seedIRODSLocationMirrorRow(t, db, "9002", "/seq/illumina/runs/48/48522/plex1", "48522#2.cram", 32, parityStudyID)
+
+	// sample_search is an external-content FTS5 table; raw sample_mirror inserts
+	// do not populate it, so rebuild it (as the sample sync does) before the
+	// parity table exercises SearchSamples/CountSampleSearch.
+	rebuildSampleSearchIndexForTest(t, db)
 }
 
 func paritySyncedAt() time.Time {

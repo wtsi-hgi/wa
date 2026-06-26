@@ -36,6 +36,17 @@ import (
 
 const mlwhServerFetchAllLimit = 1_000_000
 
+// mlwhSearchDefaultLimit is the default page size for the substring-search
+// endpoints when no limit query param is supplied. Unlike the other endpoints
+// (which default to mlwhServerFetchAllLimit), search is its own pagination
+// contract: a bounded default page with a hard maximum.
+const mlwhSearchDefaultLimit = 100
+
+// mlwhSearchMaxLimit is the maximum limit the substring-search endpoints
+// accept. A larger limit is rejected with the bad_request 400 envelope rather
+// than clamped, so callers cannot request unbounded search pages.
+const mlwhSearchMaxLimit = 1000
+
 // Server serves the MLWH read/query REST API.
 type Server struct {
 	queryer Queryer
@@ -54,7 +65,12 @@ func NewServer(q Queryer, opts ...ServerOption) *Server {
 	return server
 }
 
-// RegisterRoutes registers MLWH API routes on the provided Gin routers.
+// RegisterRoutes registers MLWH API routes on the provided Gin routers. The
+// plain router carries the operational plain routes (GET /health), and, when no
+// auth group is supplied, the Registry endpoints at their root paths
+// (unauthenticated mode). When an auth group is supplied (secured mode) the
+// Registry endpoints register behind it while /health stays a plain route on
+// the router, so readiness checks remain reachable and unauthenticated.
 func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 	if s == nil {
 		return
@@ -62,7 +78,11 @@ func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 
 	if router != nil {
 		configureMLWHRouter(router)
-		registerMLWHEndpoints(router, s.queryer)
+		registerMLWHPlainRoutes(router)
+
+		if auth == nil {
+			registerMLWHEndpoints(router, s.queryer)
+		}
 	}
 
 	if auth != nil {
@@ -73,6 +93,14 @@ func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 func configureMLWHRouter(router *gin.Engine) {
 	router.UseRawPath = true
 	router.UnescapePathValues = false
+}
+
+// registerMLWHPlainRoutes registers the operational routes that are not Registry
+// (Queryer) endpoints: GET /health, a cheap liveness probe that returns
+// {"status":"ok"} without consulting the queryer, so readiness checks stay
+// inexpensive and never surface a never-synced 503.
+func registerMLWHPlainRoutes(router *gin.Engine) {
+	router.GET("/health", mlwhHealthHandler)
 }
 
 func registerMLWHEndpoints(registrar mlwhRouteRegistrar, queryer Queryer) {
@@ -124,6 +152,44 @@ func mlwhLibraryStudyAndPagination(c *gin.Context) (string, string, mlwhPaginati
 func mlwhPaginationFromQuery(c *gin.Context) (mlwhPagination, bool) {
 	limit, ok := mlwhQueryInt(c, "limit", mlwhServerFetchAllLimit)
 	if !ok {
+		return mlwhPagination{}, false
+	}
+
+	offset, ok := mlwhQueryInt(c, "offset", 0)
+	if !ok {
+		return mlwhPagination{}, false
+	}
+
+	return mlwhPagination{limit: limit, offset: offset}, true
+}
+
+// mlwhTermAndSearchPagination reads the :term path param and the search-specific
+// pagination (default limit mlwhSearchDefaultLimit, maximum mlwhSearchMaxLimit).
+// A non-integer or over-maximum limit aborts with the bad_request 400 envelope
+// before the queryer is reached, leaving the non-search fetch-all default
+// untouched for every other endpoint.
+func mlwhTermAndSearchPagination(c *gin.Context) (string, mlwhPagination, bool) {
+	term, ok := mlwhPathParam(c, "term")
+	if !ok {
+		return "", mlwhPagination{}, false
+	}
+
+	pagination, ok := mlwhSearchPaginationFromQuery(c)
+	if !ok {
+		return "", mlwhPagination{}, false
+	}
+
+	return term, pagination, true
+}
+
+func mlwhSearchPaginationFromQuery(c *gin.Context) (mlwhPagination, bool) {
+	limit, ok := mlwhQueryInt(c, "limit", mlwhSearchDefaultLimit)
+	if !ok {
+		return mlwhPagination{}, false
+	}
+	if limit > mlwhSearchMaxLimit {
+		writeMLWHBadRequest(c, fmt.Sprintf("limit must not exceed %d", mlwhSearchMaxLimit))
+
 		return mlwhPagination{}, false
 	}
 
@@ -434,6 +500,61 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.LibraryDetail(c.Request.Context(), pipeline, study)
 			writeMLWHResult(c, result, err)
 		}
+	case "SearchStudies":
+		return func(c *gin.Context) {
+			term, pagination, ok := mlwhTermAndSearchPagination(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.SearchStudies(c.Request.Context(), term, pagination.limit, pagination.offset)
+			writeMLWHResult(c, result, err)
+		}
+	case "SearchSamples":
+		return func(c *gin.Context) {
+			term, pagination, ok := mlwhTermAndSearchPagination(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.SearchSamples(c.Request.Context(), term, pagination.limit, pagination.offset)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountStudySearch":
+		return func(c *gin.Context) {
+			term, ok := mlwhPathParam(c, "term")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudySearch(c.Request.Context(), term)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountSampleSearch":
+		return func(c *gin.Context) {
+			term, ok := mlwhPathParam(c, "term")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountSampleSearch(c.Request.Context(), term)
+			writeMLWHResult(c, result, err)
+		}
+	case "CountStudies":
+		return func(c *gin.Context) {
+			result, err := queryer.CountStudies(c.Request.Context())
+			writeMLWHResult(c, result, err)
+		}
+	case "CountSamplesForStudy":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountSamplesForStudy(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "Freshness":
+		return func(c *gin.Context) {
+			result, err := queryer.Freshness(c.Request.Context())
+			writeMLWHResult(c, result, err)
+		}
 	default:
 		panic(fmt.Sprintf("mlwh: no endpoint handler for %s", method))
 	}
@@ -501,6 +622,12 @@ func mlwhLibraryStudy(c *gin.Context) (string, string, bool) {
 	}
 
 	return pipeline, study, true
+}
+
+// mlwhHealthHandler answers GET /health with a static {"status":"ok"} body. It
+// does not consult the queryer, so it succeeds regardless of sync state.
+func mlwhHealthHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func mlwhQueryInt(c *gin.Context, name string, defaultValue int) (int, bool) {

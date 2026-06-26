@@ -232,7 +232,7 @@ func newMLWHServeCommand() *cobra.Command {
 				}
 
 				configureMLWHServeRouter(authServer.Router())
-				server.RegisterRoutes(nil, authServer.AuthRouter())
+				server.RegisterRoutes(authServer.Router(), authServer.AuthRouter())
 			} else {
 				server.RegisterRoutes(authServer.Router(), nil)
 			}

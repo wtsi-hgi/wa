@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"testing"
 	"time"
 
@@ -135,6 +136,33 @@ func TestFreshnessReportsAllFiveTablesInOrder(t *testing.T) {
 				syncTableIseqProductMetrics,
 				syncTableSeqProductIRODSLocations,
 			})
+		})
+	})
+}
+
+// D2 acceptance test 4: the RemoteClient.Freshness round-trip through the gin
+// server and JSON decoding equals the local Client's Freshness result.
+func TestFreshnessRemoteClientRoundTripEqualsLocalD2(t *testing.T) {
+	convey.Convey("D2.4: Given a Client over a seeded cache served by an httptest server", t, func() {
+		local := newParityClient(t)
+		defer closeParityClientForTest(t, local)
+
+		highWater := time.Date(2026, time.June, 1, 10, 0, 0, 0, time.UTC)
+		lastRun := time.Date(2026, time.June, 1, 10, 5, 0, 0, time.UTC)
+		seedSyncStateRun(t, local.cache.DB(), syncTableSample, highWater, lastRun)
+		seedSyncStateRun(t, local.cache.DB(), syncTableStudy, highWater, lastRun)
+
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		localResult, localErr := local.Freshness(context.Background())
+		remoteResult, remoteErr := remote.Freshness(context.Background())
+
+		convey.Convey("when Freshness runs locally and remotely, then the decoded Freshness equals the local result", func() {
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(len(localResult.Tables), convey.ShouldEqual, 5)
+			convey.So(reflect.DeepEqual(localResult, remoteResult), convey.ShouldBeTrue)
 		})
 	})
 }

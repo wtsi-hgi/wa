@@ -34,8 +34,8 @@ enrichment is Phase 5 C1). Keep `var _ Queryer = (*Client)(nil)` and
 4.2-4.4; it has no acceptance tests of its own (the route, RemoteClient,
 and coverage assertions land with A4/F3/D2 and Phase 5 C2).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.2: A4 - search routes, pagination guard, and RemoteClient
 
@@ -52,8 +52,8 @@ tests from A4.
 
 Depends on Item 4.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.3: F3 - count routes and RemoteClient
 
@@ -69,8 +69,8 @@ each returning `{count: N}` and mapping `ErrCacheNeverSynced` to 503
 
 Depends on Item 4.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.4: D1 + D2 - /health route and freshness route/RemoteClient
 
@@ -87,5 +87,5 @@ Covers acceptance tests 1 and 2 from D1 (test 3, the OpenAPI presence of
 
 Depends on Item 4.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

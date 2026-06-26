@@ -208,7 +208,7 @@ func TestRegistryCoversQueryer(t *testing.T) {
 		convey.Convey("when compared, then every Queryer method has exactly one Registry entry", func() {
 			missing, duplicate, unknown := registryCoverageIssues(queryer, registryMethods)
 
-			convey.So(Registry, convey.ShouldHaveLength, 33)
+			convey.So(Registry, convey.ShouldHaveLength, 40)
 			convey.So(missing, convey.ShouldBeEmpty)
 			convey.So(duplicate, convey.ShouldBeEmpty)
 			convey.So(unknown, convey.ShouldBeEmpty)
@@ -336,6 +336,83 @@ func TestRegistrySamplesForLibrary(t *testing.T) {
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(entry.Path, convey.ShouldEqual, "/library/:pipeline/study/:study/samples")
 		convey.So(entry.PathParams, convey.ShouldResemble, []string{"pipeline", "study"})
+	})
+}
+
+func TestRegistrySearchCountFreshnessEntries(t *testing.T) {
+	// Item 4.1: the seven Phase 4 Queryer members each get a Registry entry
+	// matching the spec's Registry table: paths, PathParams, Paginated, and
+	// the NewResult type the handler and RemoteClient derive from.
+	convey.Convey("Given the Phase 4 Registry entries, then each matches the spec's Registry table", t, func() {
+		convey.Convey("SearchStudies is a paginated study-search list endpoint", func() {
+			entry, ok := registryEntryByMethod("SearchStudies")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Path, convey.ShouldEqual, "/search/study/:term")
+			convey.So(entry.PathParams, convey.ShouldResemble, []string{"term"})
+			convey.So(entry.Paginated, convey.ShouldBeTrue)
+			_, isSlice := entry.NewResult().(*[]Study)
+			convey.So(isSlice, convey.ShouldBeTrue)
+		})
+
+		convey.Convey("SearchSamples is a paginated sample-search list endpoint", func() {
+			entry, ok := registryEntryByMethod("SearchSamples")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Path, convey.ShouldEqual, "/search/sample/:term")
+			convey.So(entry.PathParams, convey.ShouldResemble, []string{"term"})
+			convey.So(entry.Paginated, convey.ShouldBeTrue)
+			_, isSlice := entry.NewResult().(*[]Sample)
+			convey.So(isSlice, convey.ShouldBeTrue)
+		})
+
+		convey.Convey("CountStudySearch is a non-paginated count endpoint", func() {
+			entry, ok := registryEntryByMethod("CountStudySearch")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Path, convey.ShouldEqual, "/search/study/:term/count")
+			convey.So(entry.PathParams, convey.ShouldResemble, []string{"term"})
+			convey.So(entry.Paginated, convey.ShouldBeFalse)
+			_, isCount := entry.NewResult().(*Count)
+			convey.So(isCount, convey.ShouldBeTrue)
+		})
+
+		convey.Convey("CountSampleSearch is a non-paginated count endpoint", func() {
+			entry, ok := registryEntryByMethod("CountSampleSearch")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Path, convey.ShouldEqual, "/search/sample/:term/count")
+			convey.So(entry.PathParams, convey.ShouldResemble, []string{"term"})
+			convey.So(entry.Paginated, convey.ShouldBeFalse)
+			_, isCount := entry.NewResult().(*Count)
+			convey.So(isCount, convey.ShouldBeTrue)
+		})
+
+		convey.Convey("CountStudies is a non-paginated count endpoint with no path params", func() {
+			entry, ok := registryEntryByMethod("CountStudies")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Path, convey.ShouldEqual, "/studies/count")
+			convey.So(entry.PathParams, convey.ShouldBeEmpty)
+			convey.So(entry.Paginated, convey.ShouldBeFalse)
+			_, isCount := entry.NewResult().(*Count)
+			convey.So(isCount, convey.ShouldBeTrue)
+		})
+
+		convey.Convey("CountSamplesForStudy is a non-paginated count endpoint keyed by study id", func() {
+			entry, ok := registryEntryByMethod("CountSamplesForStudy")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Path, convey.ShouldEqual, "/study/:id/samples/count")
+			convey.So(entry.PathParams, convey.ShouldResemble, []string{"id"})
+			convey.So(entry.Paginated, convey.ShouldBeFalse)
+			_, isCount := entry.NewResult().(*Count)
+			convey.So(isCount, convey.ShouldBeTrue)
+		})
+
+		convey.Convey("Freshness is a non-paginated freshness endpoint with no path params", func() {
+			entry, ok := registryEntryByMethod("Freshness")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Path, convey.ShouldEqual, "/freshness")
+			convey.So(entry.PathParams, convey.ShouldBeEmpty)
+			convey.So(entry.Paginated, convey.ShouldBeFalse)
+			_, isFreshness := entry.NewResult().(*Freshness)
+			convey.So(isFreshness, convey.ShouldBeTrue)
+		})
 	})
 }
 

@@ -60,6 +60,19 @@ type Queryer interface {
 	FindSamplesBySupplierName(ctx context.Context, supplierName string) ([]Sample, error)
 	FindSamplesByLibraryType(ctx context.Context, libraryType string) ([]Sample, error)
 
+	// Substring search (term is a path param; limit/offset pagination).
+	SearchStudies(ctx context.Context, term string, limit, offset int) ([]Study, error)
+	SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error)
+
+	// Counts (each returns Count; honour id_lims = 'SQSCP' like its read).
+	CountStudySearch(ctx context.Context, term string) (Count, error)
+	CountSampleSearch(ctx context.Context, term string) (Count, error)
+	CountStudies(ctx context.Context) (Count, error)
+	CountSamplesForStudy(ctx context.Context, studyLimsID string) (Count, error)
+
+	// Freshness (cache read; degrades gracefully on a never-synced cache).
+	Freshness(ctx context.Context) (Freshness, error)
+
 	// Expansion.
 	ExpandIdentifier(ctx context.Context, kind IdentifierKind, canonical string) ([]TaggedID, error)
 	ExpandSearchValues(ctx context.Context, kind IdentifierKind, canonical string) (SearchValues, error)

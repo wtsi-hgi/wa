@@ -170,6 +170,107 @@ func TestRemoteClientEscapesPathIdentifiers(t *testing.T) {
 	})
 }
 
+func TestRemoteClientSearchSamplesRoundTripsA4(t *testing.T) {
+	convey.Convey("A4.5: Given a RemoteClient pointed at a server returning two samples", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, []Sample{
+			{IDSampleTmp: 1, Name: "Alpha"},
+			{IDSampleTmp: 2, Name: "Beta"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when SearchSamples runs, then the request path is /search/sample/acme?limit=100&offset=0 and it returns the two samples", func() {
+			samples, err := client.SearchSamples(context.Background(), "acme", 100, 0)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldResemble, []Sample{
+				{IDSampleTmp: 1, Name: "Alpha"},
+				{IDSampleTmp: 2, Name: "Beta"},
+			})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/search/sample/acme?limit=100&offset=0")
+		})
+	})
+
+	convey.Convey("A4.5 (studies): Given a RemoteClient pointed at a server returning two studies", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, []Study{
+			{IDStudyLims: "1", Name: "Malaria genomics"},
+			{IDStudyLims: "2", Name: "Malaria vaccine"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when SearchStudies runs, then the request path carries the term and pagination and it returns the two studies", func() {
+			studies, err := client.SearchStudies(context.Background(), "malar", 100, 0)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(studies, convey.ShouldResemble, []Study{
+				{IDStudyLims: "1", Name: "Malaria genomics"},
+				{IDStudyLims: "2", Name: "Malaria vaccine"},
+			})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/search/study/malar?limit=100&offset=0")
+		})
+	})
+}
+
+func TestRemoteClientSearchEscapesTermSegmentA4(t *testing.T) {
+	convey.Convey("A4.6: Given a search term containing a slash and spaces", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, []Sample{})
+		defer server.Close()
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when SearchSamples runs, then the term path segment is URL-escaped", func() {
+			_, err := client.SearchSamples(context.Background(), "a/c me", 100, 0)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/search/sample/a%2Fc%20me?limit=100&offset=0")
+		})
+	})
+}
+
+func TestRemoteClientCountSampleSearchRoundTripsF3(t *testing.T) {
+	convey.Convey("F3.4: Given a RemoteClient over a server returning a Count", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, Count{Count: 3})
+		defer server.Close()
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when CountSampleSearch runs, then the path is /search/sample/acme/count and it returns the server's Count", func() {
+			count, err := client.CountSampleSearch(context.Background(), "acme")
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 3})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/search/sample/acme/count")
+		})
+	})
+}
+
+func TestRemoteClientCountStudiesRoundTripsF3(t *testing.T) {
+	convey.Convey("F3 (studies count): Given a RemoteClient over a server returning a Count", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, Count{Count: 7})
+		defer server.Close()
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when CountStudies runs, then the path is /studies/count and it returns the server's Count", func() {
+			count, err := client.CountStudies(context.Background())
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 7})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/studies/count")
+		})
+	})
+}
+
 func newRemoteClientJSONServerForTest[T any](requestURIs chan<- string, result T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestURIs <- r.URL.RequestURI()
