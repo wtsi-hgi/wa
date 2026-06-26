@@ -165,6 +165,106 @@ func TestRepairCompletedSampleMirrorCreatesMissingLookupIndexes(t *testing.T) {
 	})
 }
 
+func TestSupportsFullTextSearchMySQL8Supported(t *testing.T) {
+	convey.Convey("H1.2: Given a sqlmock MySQL backend whose VERSION() returns 8.4.7", t, func() {
+		roDB, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() {
+			mock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT VERSION()`)).WillReturnRows(
+			sqlmock.NewRows([]string{"version"}).AddRow("8.4.7"),
+		)
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		supported, err := client.SupportsFullTextSearch(context.Background())
+
+		convey.Convey("when the check runs, then it reports supported", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(supported, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestSupportsFullTextSearchMySQLPre8Unsupported(t *testing.T) {
+	convey.Convey("H1.3: Given a sqlmock MySQL backend whose VERSION() returns 5.7.40", t, func() {
+		roDB, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() {
+			mock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT VERSION()`)).WillReturnRows(
+			sqlmock.NewRows([]string{"version"}).AddRow("5.7.40"),
+		)
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		supported, err := client.SupportsFullTextSearch(context.Background())
+
+		convey.Convey("when the check runs, then it reports unsupported", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(supported, convey.ShouldBeFalse)
+		})
+	})
+}
+
+func TestSupportsFullTextSearchMariaDBUnsupported(t *testing.T) {
+	convey.Convey("H1.4: Given a sqlmock MySQL backend whose VERSION() returns 10.11.2-MariaDB", t, func() {
+		roDB, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() {
+			mock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT VERSION()`)).WillReturnRows(
+			sqlmock.NewRows([]string{"version"}).AddRow("10.11.2-MariaDB"),
+		)
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		supported, err := client.SupportsFullTextSearch(context.Background())
+
+		convey.Convey("when the check runs, then it reports unsupported even though the major version is >= 8", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(supported, convey.ShouldBeFalse)
+		})
+	})
+}
+
+func TestSupportsFullTextSearchMariaDBLowercaseUnsupported(t *testing.T) {
+	convey.Convey("Given a sqlmock MySQL backend whose VERSION() advertises mariadb in lower case", t, func() {
+		roDB, mock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() {
+			mock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT VERSION()`)).WillReturnRows(
+			sqlmock.NewRows([]string{"version"}).AddRow("11.4.2-0ubuntu0.24.04.1-mariadb"),
+		)
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		supported, err := client.SupportsFullTextSearch(context.Background())
+
+		convey.Convey("when the check runs, then the mariadb match is case-insensitive and reports unsupported", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(supported, convey.ShouldBeFalse)
+		})
+	})
+}
+
 func TestOpenCacheSQLitePreviousVersionRecreatesSampleSearchIndex(t *testing.T) {
 	convey.Convey("B1.3: Given a SQLite cache at the previous schema version", t, func() {
 		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
@@ -1184,6 +1284,23 @@ func TestClientReadOnlyHandleRejectsWrites(t *testing.T) {
 			convey.So(err, convey.ShouldEqual, readOnlyErr)
 			convey.So(roDB.Close(), convey.ShouldBeNil)
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestSupportsFullTextSearchSQLite(t *testing.T) {
+	convey.Convey("H1.1: Given a SQLite cache", t, func() {
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: filepath.Join(t.TempDir(), "cache.sqlite")})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(cache.Close(), convey.ShouldBeNil) })
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		supported, err := client.SupportsFullTextSearch(context.Background())
+
+		convey.Convey("when the backend check runs, then it reports supported without querying a version", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(supported, convey.ShouldBeTrue)
 		})
 	})
 }

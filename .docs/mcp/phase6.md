@@ -29,5 +29,5 @@ binds a listener; SQLite and MySQL >= 8 proceed. Tests in
 `mlwh/cache_test.go` (or `mlwh/search_test.go`) and `cmd/mlwh_test.go`.
 Covers all 5 acceptance tests from H1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

@@ -375,6 +375,46 @@ func (c *Client) countSampleSearch(ctx context.Context, term, query string) (Cou
 	return Count{Count: 0}, nil
 }
 
+// SupportsFullTextSearch reports whether the cache backend can serve the
+// index-backed sample substring search (the SQLite FTS5 trigram table or the
+// MySQL ngram FULLTEXT index). SQLite always qualifies. A MySQL backend
+// qualifies only when it is genuine MySQL >= 8: it does not qualify when the
+// reported VERSION() string contains "mariadb" (case-insensitive) or when its
+// major version is below 8, because neither can provide the ngram full-text
+// search the sample search relies on. The version check reuses the same
+// VERSION() logic (mySQLServerVersion/mySQLMajorVersion) the schema collation
+// selection uses.
+func (c *Client) SupportsFullTextSearch(ctx context.Context) (bool, error) {
+	if c == nil || c.cache == nil {
+		return false, fmt.Errorf("mlwh: cache client not configured")
+	}
+
+	if c.cache.Dialect() != "mysql" {
+		return true, nil
+	}
+
+	db := c.readCacheDB()
+	if db == nil {
+		return false, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	version, err := mySQLServerVersion(ctx, db)
+	if err != nil {
+		return false, fmt.Errorf("mlwh: query mysql version for full-text search support: %w", err)
+	}
+
+	if strings.Contains(strings.ToLower(version), "mariadb") {
+		return false, nil
+	}
+
+	major, err := mySQLMajorVersion(version)
+	if err != nil {
+		return false, fmt.Errorf("mlwh: parse mysql version %q: %w", version, err)
+	}
+
+	return major >= 8, nil
+}
+
 func (c *Client) queryStudySearch(ctx context.Context, db *sql.DB, query string, args ...any) ([]Study, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {

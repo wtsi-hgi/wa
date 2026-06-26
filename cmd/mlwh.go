@@ -54,6 +54,13 @@ var mlwhServeNewAuthServer = func(logWriter io.Writer) mlwhServeAuthServer {
 	return &mlwhServeGasAuthServer{Server: gas.New(logWriter)}
 }
 
+// mlwhServeSupportsFullTextSearch reports whether the opened cache backend can
+// serve the index-backed sample substring search. It is a package var so tests
+// can simulate an unsupported MySQL backend without a live MySQL server.
+var mlwhServeSupportsFullTextSearch = func(ctx context.Context, client *mlwh.Client) (bool, error) {
+	return client.SupportsFullTextSearch(ctx)
+}
+
 func mlwhServeRejectPasswordAuth(_, _ string) (bool, string) {
 	return false, ""
 }
@@ -218,6 +225,14 @@ func newMLWHServeCommand() *cobra.Command {
 				return fmt.Errorf("open mlwh cache: %w", err)
 			}
 			defer func() { _ = client.Close() }()
+
+			supported, err := mlwhServeSupportsFullTextSearch(commandContext(cmd), client)
+			if err != nil {
+				return fmt.Errorf("check mlwh cache backend: %w", err)
+			}
+			if !supported {
+				return errors.New("wa mlwh serve requires SQLite or MySQL >= 8 for full-text search")
+			}
 
 			authServer := mlwhServeNewAuthServer(cmd.ErrOrStderr())
 			server := mlwh.NewServer(client)
