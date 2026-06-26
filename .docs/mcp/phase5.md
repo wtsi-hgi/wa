@@ -34,8 +34,8 @@ all 3 acceptance tests from C1.
 
 This item is the metadata foundation for Items 5.2 and 5.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after item 5.1 is reviewed)
 
@@ -55,8 +55,8 @@ via the plain `GET /openapi.json` route in `mlwh/server.go` (also add
 `mlwh/server_test.go`. Covers all 7 acceptance tests from C2 (and D1
 acceptance test 3, `/health` present in the document).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.3: G1 - endpoint reference + glossary [parallel with 5.2]
 
@@ -72,8 +72,8 @@ constant value (`study_lims_id`, `sanger_sample_name`, `run_id`, ...) and
 how the entities relate. Tests in `mlwh/docs_test.go`. Covers all 3
 acceptance tests from G1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items

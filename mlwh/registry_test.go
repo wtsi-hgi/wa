@@ -63,6 +63,28 @@ func TestRegistryUsesUniqueGetPaths(t *testing.T) {
 	})
 }
 
+func TestRegistryEntriesAreDocumented(t *testing.T) {
+	// C1 acceptance test 1: every Registry entry carries a non-empty Summary
+	// and Description so the generated OpenAPI document and human reference are
+	// useful to an LLM.
+	convey.Convey("Given Registry, when iterated, then every entry has a non-empty Summary and Description", t, func() {
+		missingSummary := []string{}
+		missingDescription := []string{}
+
+		for _, entry := range Registry {
+			if strings.TrimSpace(entry.Summary) == "" {
+				missingSummary = append(missingSummary, entry.Method)
+			}
+			if strings.TrimSpace(entry.Description) == "" {
+				missingDescription = append(missingDescription, entry.Method)
+			}
+		}
+
+		convey.So(missingSummary, convey.ShouldBeEmpty)
+		convey.So(missingDescription, convey.ShouldBeEmpty)
+	})
+}
+
 func TestAddMLWHQueryDocumentation(t *testing.T) {
 	convey.Convey("Given DEVELOPING.md", t, func() {
 		developing := readRepoRootFile(t, "DEVELOPING.md")
@@ -416,6 +438,66 @@ func TestRegistrySearchCountFreshnessEntries(t *testing.T) {
 	})
 }
 
+func TestRegistryPaginatedEntriesDeclareLimitOffset(t *testing.T) {
+	// C1 acceptance test 2: every Paginated entry declares limit and offset
+	// QueryParams of type integer, the structured specs the OpenAPI generator
+	// turns into query parameters.
+	convey.Convey("Given each Paginated entry, when checked, then its QueryParams include integer limit and offset", t, func() {
+		missingLimit := []string{}
+		missingOffset := []string{}
+
+		for _, entry := range Registry {
+			if !entry.Paginated {
+				continue
+			}
+
+			limit, hasLimit := queryParamByName(entry.QueryParams, "limit")
+			offset, hasOffset := queryParamByName(entry.QueryParams, "offset")
+
+			if !hasLimit || limit.Type != "integer" {
+				missingLimit = append(missingLimit, entry.Method)
+			}
+			if !hasOffset || offset.Type != "integer" {
+				missingOffset = append(missingOffset, entry.Method)
+			}
+		}
+
+		convey.So(missingLimit, convey.ShouldBeEmpty)
+		convey.So(missingOffset, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given a non-paginated entry, when checked, then it declares no limit/offset QueryParams", t, func() {
+		entry, ok := registryEntryByMethod("CountStudies")
+		convey.So(ok, convey.ShouldBeTrue)
+
+		_, hasLimit := queryParamByName(entry.QueryParams, "limit")
+		_, hasOffset := queryParamByName(entry.QueryParams, "offset")
+		convey.So(hasLimit, convey.ShouldBeFalse)
+		convey.So(hasOffset, convey.ShouldBeFalse)
+	})
+
+	convey.Convey("Given the search entries, when checked, then their limit QueryParam documents the default of 100", t, func() {
+		for _, method := range []string{"SearchStudies", "SearchSamples"} {
+			entry, ok := registryEntryByMethod(method)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			limit, hasLimit := queryParamByName(entry.QueryParams, "limit")
+			convey.So(hasLimit, convey.ShouldBeTrue)
+			convey.So(limit.Description, convey.ShouldContainSubstring, "100")
+		}
+	})
+}
+
+func queryParamByName(params []QueryParam, name string) (QueryParam, bool) {
+	for _, param := range params {
+		if param.Name == name {
+			return param, true
+		}
+	}
+
+	return QueryParam{}, false
+}
+
 func registryEntryByMethod(method string) (Endpoint, bool) {
 	for _, entry := range Registry {
 		if entry.Method == method {
@@ -424,4 +506,76 @@ func registryEntryByMethod(method string) (Endpoint, bool) {
 	}
 
 	return Endpoint{}, false
+}
+
+func TestServedTypeFieldsCarryDocTags(t *testing.T) {
+	// C1 acceptance test 3: every JSON-serialised field of the directly-served
+	// result types carries a non-empty doc: tag, the per-field description the
+	// OpenAPI generator and human reference read by reflection. The spec names
+	// Study and Match; the full directly-served set is checked so none drifts.
+	servedTypes := []struct {
+		name string
+		typ  reflect.Type
+	}{
+		{"Match", reflect.TypeOf(Match{})},
+		{"TaggedID", reflect.TypeOf(TaggedID{})},
+		{"Study", reflect.TypeOf(Study{})},
+		{"Sample", reflect.TypeOf(Sample{})},
+		{"Lane", reflect.TypeOf(Lane{})},
+		{"IRODSPath", reflect.TypeOf(IRODSPath{})},
+		{"Library", reflect.TypeOf(Library{})},
+		{"Run", reflect.TypeOf(Run{})},
+		{"SampleDetail", reflect.TypeOf(SampleDetail{})},
+		{"StudyDetail", reflect.TypeOf(StudyDetail{})},
+		{"RunDetail", reflect.TypeOf(RunDetail{})},
+		{"LibraryDetail", reflect.TypeOf(LibraryDetail{})},
+		{"LibraryLink", reflect.TypeOf(LibraryLink{})},
+		{"EnrichmentResult", reflect.TypeOf(EnrichmentResult{})},
+		{"EnrichmentGraph", reflect.TypeOf(EnrichmentGraph{})},
+		{"MissingHop", reflect.TypeOf(MissingHop{})},
+		{"SearchValues", reflect.TypeOf(SearchValues{})},
+		{"Count", reflect.TypeOf(Count{})},
+		{"Freshness", reflect.TypeOf(Freshness{})},
+		{"TableFreshness", reflect.TypeOf(TableFreshness{})},
+	}
+
+	convey.Convey("Given the directly-served types, when reflected, then every JSON-serialised field has a non-empty doc tag", t, func() {
+		fieldsMissingDoc := []string{}
+
+		for _, served := range servedTypes {
+			fieldsMissingDoc = append(fieldsMissingDoc, jsonFieldsMissingDocTag(served.name, served.typ)...)
+		}
+
+		convey.So(fieldsMissingDoc, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given the Study struct, when reflected, then every JSON-serialised field has a non-empty doc tag", t, func() {
+		convey.So(jsonFieldsMissingDocTag("Study", reflect.TypeOf(Study{})), convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given the Match struct, when reflected, then every JSON-serialised field has a non-empty doc tag", t, func() {
+		convey.So(jsonFieldsMissingDocTag("Match", reflect.TypeOf(Match{})), convey.ShouldBeEmpty)
+	})
+}
+
+func jsonFieldsMissingDocTag(typeName string, typ reflect.Type) []string {
+	missing := []string{}
+
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		jsonName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if jsonName == "-" {
+			continue
+		}
+
+		if strings.TrimSpace(field.Tag.Get("doc")) == "" {
+			missing = append(missing, typeName+"."+field.Name)
+		}
+	}
+
+	return missing
 }

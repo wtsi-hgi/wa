@@ -98,9 +98,13 @@ func configureMLWHRouter(router *gin.Engine) {
 // registerMLWHPlainRoutes registers the operational routes that are not Registry
 // (Queryer) endpoints: GET /health, a cheap liveness probe that returns
 // {"status":"ok"} without consulting the queryer, so readiness checks stay
-// inexpensive and never surface a never-synced 503.
+// inexpensive and never surface a never-synced 503; and GET /openapi.json, the
+// self-describing OpenAPI 3.1.0 document. Both are plain routes, so in secured
+// mode they stay on the unauthenticated router and remain reachable without a
+// token.
 func registerMLWHPlainRoutes(router *gin.Engine) {
 	router.GET("/health", mlwhHealthHandler)
+	router.GET("/openapi.json", mlwhOpenAPIHandler)
 }
 
 func registerMLWHEndpoints(registrar mlwhRouteRegistrar, queryer Queryer) {
@@ -628,6 +632,13 @@ func mlwhLibraryStudy(c *gin.Context) (string, string, bool) {
 // does not consult the queryer, so it succeeds regardless of sync state.
 func mlwhHealthHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// mlwhOpenAPIHandler answers GET /openapi.json with the generated OpenAPI 3.1.0
+// document. Like /health it is a static plain route that does not consult the
+// queryer, so it stays inexpensive and reachable without authentication.
+func mlwhOpenAPIHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, OpenAPIDocument())
 }
 
 func mlwhQueryInt(c *gin.Context, name string, defaultValue int) (int, bool) {
