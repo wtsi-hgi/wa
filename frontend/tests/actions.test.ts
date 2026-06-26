@@ -44,10 +44,10 @@ const enrichmentStudyFixture = {
 };
 
 const mlwhStudyMatchPayload = {
-    Kind: "study_lims_id",
-    Canonical: "6568",
-    Sample: null,
-    Study: {
+    kind: "study_lims_id",
+    canonical: "6568",
+    sample: null,
+    study: {
         id_study_tmp: 42,
         id_lims: "SQSCP",
         id_study_lims: "6568",
@@ -70,20 +70,20 @@ const mlwhStudyMatchPayload = {
         ega_policy_accession_number: "EGAP00001",
         data_release_timing: "Immediate",
     },
-    Run: null,
-    Library: null,
+    run: null,
+    library: null,
 };
 
 const identifierFixture: IdentifierResult = {
     identifier: "6568",
     type: "study_lims_id",
-    object: mlwhStudyMatchPayload.Study,
+    object: mlwhStudyMatchPayload.study,
 };
 
 const mlwhSampleMatchPayload = {
-    Kind: "sanger_sample_name",
-    Canonical: "7607STDY14643771",
-    Sample: {
+    kind: "sanger_sample_name",
+    canonical: "7607STDY14643771",
+    sample: {
         id_sample_tmp: 73,
         id_lims: "SQSCP",
         id_sample_lims: "SMP-7607-1",
@@ -96,7 +96,7 @@ const mlwhSampleMatchPayload = {
         taxon_id: 9606,
         common_name: "Human",
         description: "primary sample",
-        studies: [mlwhStudyMatchPayload.Study],
+        studies: [mlwhStudyMatchPayload.study],
         libraries: [
             {
                 pipeline_id_lims: "Custom",
@@ -106,9 +106,9 @@ const mlwhSampleMatchPayload = {
             },
         ],
     },
-    Study: null,
-    Run: null,
-    Library: null,
+    study: null,
+    run: null,
+    library: null,
 };
 
 const enrichmentFixture: EnrichmentResult = {
@@ -182,7 +182,7 @@ describe("A3 MLWH-backed server actions", () => {
         await expect(validateIdentifier("7607STDY14643771")).resolves.toEqual({
             identifier: "7607STDY14643771",
             type: "sanger_sample_name",
-            object: mlwhSampleMatchPayload.Sample,
+            object: mlwhSampleMatchPayload.sample,
         });
         expect(fetchMock).toHaveBeenCalledWith(
             "https://mlwh:9000/classify/7607STDY14643771",

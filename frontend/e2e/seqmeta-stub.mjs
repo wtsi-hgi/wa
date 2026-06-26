@@ -579,31 +579,31 @@ function runMatchObject(result) {
 function mlwhMatchFromValidation(result) {
     const kind = mlwhKindFromValidation(result);
     const match = {
-        Kind: kind,
-        Canonical: canonicalIdentifier(result, kind),
-        Sample: null,
-        Study: null,
-        Run: null,
-        Library: null,
+        kind,
+        canonical: canonicalIdentifier(result, kind),
+        sample: null,
+        study: null,
+        run: null,
+        library: null,
     };
 
     if (sampleKinds.has(kind)) {
-        match.Sample = result.object ?? null;
+        match.sample = result.object ?? null;
         return match;
     }
 
     if (studyKinds.has(kind)) {
-        match.Study = result.object ?? null;
+        match.study = result.object ?? null;
         return match;
     }
 
     if (runKinds.has(kind)) {
-        match.Run = runMatchObject(result);
+        match.run = runMatchObject(result);
         return match;
     }
 
     if (libraryKinds.has(kind)) {
-        match.Library = result.object ?? null;
+        match.library = result.object ?? null;
     }
 
     return match;

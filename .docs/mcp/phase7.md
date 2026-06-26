@@ -45,8 +45,8 @@ consumer of `/classify`, `/resolve/*`, or `/expand/:kind/:id` beyond
 conventions: nextjs-fastapi-conventions; vitest `expect()`. Covers all 4
 acceptance tests from E3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.2: G2 - security-posture documentation [parallel with 7.1, 7.3]
 
@@ -66,8 +66,8 @@ the known limitation that secured gas mode moves endpoints under
 perform JWT login (documented, not fixed here). No test file (acceptance
 checks read the document). Covers all 3 acceptance tests from G2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.3: G3 - unauthenticated reachability [parallel with 7.1, 7.2]
 
@@ -84,8 +84,8 @@ unauthenticated 200 for `GET /search/study/malar`, `/studies/count`,
 a Bearer token; `/freshness` against a never-synced cache returns 200 (not
 503). Covers all 3 acceptance tests from G3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item. Launch review
 subagents using the reviewer skill matching each item's stack:

@@ -33,6 +33,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
@@ -700,6 +701,55 @@ func TestServerExpandJSONCasingE1(t *testing.T) {
 
 		convey.So(payload[0]["kind"], convey.ShouldEqual, string(KindRunID))
 		convey.So(payload[0]["canonical"], convey.ShouldEqual, "100")
+	})
+}
+
+func TestServerUnauthenticatedReachabilityG3(t *testing.T) {
+	convey.Convey("G3.1: Given a server over a synced cache (seeded with a malaria study) and no auth group", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedStudyMirrorSearchRow(t, cache.DB(), 1, "6568", "Malaria genomics", "Malaria study title", "Genomics", "Sponsor A")
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when search, counts, freshness, health, and openapi are each requested with no auth, then all return 200", func() {
+			for _, path := range []string{"/search/study/malar", "/studies/count", "/freshness", "/health", "/openapi.json"} {
+				response := performMLWHRequestForTest(t, client, http.MethodGet, path)
+				convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			}
+		})
+
+		convey.Convey("when GET /search/study/malar is served, then the seeded malaria study is returned (malar matches seeded studies)", func() {
+			response := performMLWHRequestForTest(t, client, http.MethodGet, "/search/study/malar")
+
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var studies []Study
+			decodeMLWHJSONResponseForTest(t, response, &studies)
+			convey.So(studies, convey.ShouldHaveLength, 1)
+			convey.So(studies[0].Name, convey.ShouldEqual, "Malaria genomics")
+		})
+	})
+}
+
+func TestServerFreshnessNeverSyncedReturns200G3(t *testing.T) {
+	convey.Convey("G3.3: Given a server over a never-synced cache with no auth group, when GET /freshness is served, then status is 200 and not 503 (freshness degrades gracefully)", t, func() {
+		client := newParityClient(t)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/freshness")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Code, convey.ShouldNotEqual, http.StatusServiceUnavailable)
+
+		var freshness Freshness
+		decodeMLWHJSONResponseForTest(t, response, &freshness)
+		convey.So(freshness.Tables, convey.ShouldHaveLength, len(freshnessSyncTables))
+		for _, table := range freshness.Tables {
+			convey.So(table.EverSynced, convey.ShouldBeFalse)
+		}
 	})
 }
 
