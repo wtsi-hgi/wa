@@ -60,6 +60,130 @@ func TestLoadSchema(t *testing.T) {
 	})
 }
 
+func TestSampleSearchSchemaSQLiteDeclaresTrigramVirtualTable(t *testing.T) {
+	convey.Convey("B1.1: Given the embedded SQLite sample search schema", t, func() {
+		ddl, err := loadSearchIndexSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when inspected, then it declares an fts5 virtual table over the four sample fields with the trigram tokenizer", func() {
+			upper := strings.ToUpper(ddl)
+			convey.So(upper, convey.ShouldContainSubstring, "CREATE VIRTUAL TABLE")
+			convey.So(upper, convey.ShouldContainSubstring, "USING FTS5")
+			convey.So(ddl, convey.ShouldContainSubstring, "sample_search")
+			convey.So(ddl, convey.ShouldContainSubstring, "content='sample_mirror'")
+			convey.So(ddl, convey.ShouldContainSubstring, "content_rowid='id_sample_tmp'")
+			convey.So(ddl, convey.ShouldContainSubstring, "tokenize='trigram'")
+
+			for _, column := range []string{"name", "supplier_name", "common_name", "donor_id"} {
+				convey.So(ddl, convey.ShouldContainSubstring, column)
+			}
+		})
+	})
+}
+
+func TestSampleSearchSchemaMySQLDeclaresNgramFulltextIndex(t *testing.T) {
+	convey.Convey("B1.2: Given the embedded MySQL sample search schema string", t, func() {
+		ddl, err := loadSearchIndexSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when parsed, then it declares one ngram FULLTEXT index over exactly the four columns on sample_mirror", func() {
+			statements := splitSQLStatements(ddl)
+			convey.So(statements, convey.ShouldHaveLength, 1)
+
+			table, columns, parser, err := parseMySQLFulltextIndex(statements[0])
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(table, convey.ShouldEqual, "sample_mirror")
+			convey.So(parser, convey.ShouldEqual, "ngram")
+			convey.So(columns, convey.ShouldResemble, []string{"name", "supplier_name", "common_name", "donor_id"})
+		})
+	})
+}
+
+func TestParseSchemaShapeRecordsSearchIndex(t *testing.T) {
+	convey.Convey("B2.1: Given the SQLite and MySQL full schemas at the current version", t, func() {
+		sqliteFull, err := loadFullSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlFull, err := loadFullSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteFull)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlFull)
+		convey.So(err, convey.ShouldBeNil)
+
+		wantColumns := []string{"common_name", "donor_id", "name", "supplier_name"}
+
+		convey.Convey("when parseSchemaShape runs on each, then both record a full-text search index over the same column set on sample_mirror", func() {
+			convey.So(sqliteShape.FullText["sample_mirror"], convey.ShouldResemble, wantColumns)
+			convey.So(mysqlShape.FullText["sample_mirror"], convey.ShouldResemble, wantColumns)
+			convey.So(sqliteShape.FullText, convey.ShouldResemble, mysqlShape.FullText)
+		})
+	})
+}
+
+func TestParseSchemaShapeFullTextIsColumnSetSensitive(t *testing.T) {
+	convey.Convey("B2.3: Given a deliberately divergent search index (SQLite fts5 over three fields, MySQL FULLTEXT over four)", t, func() {
+		mysqlFull, err := loadFullSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		// Replace the real four-column SQLite fts5 search index with a divergent
+		// three-column one, leaving the rest of the schema identical to MySQL.
+		sqliteBase, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		sqliteDivergent := append(sqliteBase, `CREATE VIRTUAL TABLE sample_search USING fts5(
+			name, supplier_name, common_name,
+			content='sample_mirror', content_rowid='id_sample_tmp', tokenize='trigram')`)
+
+		sqliteShape, err := parseSchemaShape(sqliteDivergent)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlFull)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when the parity model compares them, then the full-text representations differ and the parity comparison fails", func() {
+			convey.So(sqliteShape.FullText["sample_mirror"], convey.ShouldResemble, []string{"common_name", "name", "supplier_name"})
+			convey.So(sqliteShape.FullText, convey.ShouldNotResemble, mysqlShape.FullText)
+			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldNotBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldNotBeNil)
+		})
+	})
+}
+
+func TestParseSchemaShapeRecognisesInlineMySQLFulltext(t *testing.T) {
+	convey.Convey("Given a MySQL CREATE TABLE with an inline FULLTEXT ... WITH PARSER ngram clause", t, func() {
+		stmts := []string{`CREATE TABLE sample_mirror (
+			id_sample_tmp INTEGER NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			supplier_name VARCHAR(255) NOT NULL,
+			common_name VARCHAR(255) NOT NULL,
+			donor_id VARCHAR(255) NOT NULL,
+			FULLTEXT (name, supplier_name, common_name, donor_id) WITH PARSER ngram
+		)`}
+
+		shape, err := parseSchemaShape(stmts)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when parsed, then the inline full-text index is recorded as the normalised search column set, not as a table column", func() {
+			convey.So(shape.FullText["sample_mirror"], convey.ShouldResemble, []string{"common_name", "donor_id", "name", "supplier_name"})
+			convey.So(shape.Tables["sample_mirror"], convey.ShouldNotContainKey, "FULLTEXT")
+		})
+	})
+}
+
+func TestCompareCacheSchemaShapesDetectsFullTextDivergence(t *testing.T) {
+	convey.Convey("Given two shapes that agree on tables, indexes, and unique constraints but differ on the full-text search index", t, func() {
+		expected := schemaShape{FullText: map[string][]string{"sample_mirror": {"common_name", "donor_id", "name", "supplier_name"}}}
+		actual := schemaShape{FullText: map[string][]string{"sample_mirror": {"common_name", "donor_id", "name"}}}
+
+		convey.Convey("when compared, then the comparison reports a full-text search index mismatch", func() {
+			convey.So(compareCacheSchemaShapes(expected, actual), convey.ShouldNotBeNil)
+		})
+
+		convey.Convey("when an identical full-text shape is compared, then the comparison passes", func() {
+			convey.So(compareCacheSchemaShapes(expected, expected), convey.ShouldBeNil)
+		})
+	})
+}
+
 func TestParseSchemaShapeParity(t *testing.T) {
 	convey.Convey("Given both dialect schema directories", t, func() {
 		sqliteSchema, sqliteErr := loadSchema("sqlite")
@@ -97,6 +221,24 @@ func TestParseSchemaShapeParity(t *testing.T) {
 				"donor_samples":   {"donor_id,id_sample_tmp"},
 				"library_samples": {"pipeline_id_lims,id_sample_tmp,id_study_lims"},
 			})
+		})
+
+		convey.Convey("B2.2: when the full schema (including the search index) is parsed, then the full-text search representation matches across dialects along with tables, columns, indexes, and unique constraints", func() {
+			sqliteFull, sqliteFullErr := loadFullSchema("sqlite")
+			mysqlFull, mysqlFullErr := loadFullSchema("mysql")
+			convey.So(sqliteFullErr, convey.ShouldBeNil)
+			convey.So(mysqlFullErr, convey.ShouldBeNil)
+
+			sqliteFullShape, sqliteFullErr := parseSchemaShape(sqliteFull)
+			mysqlFullShape, mysqlFullErr := parseSchemaShape(mysqlFull)
+			convey.So(sqliteFullErr, convey.ShouldBeNil)
+			convey.So(mysqlFullErr, convey.ShouldBeNil)
+
+			convey.So(sqliteFullShape.Tables, convey.ShouldResemble, mysqlFullShape.Tables)
+			convey.So(sqliteFullShape.Index, convey.ShouldResemble, mysqlFullShape.Index)
+			convey.So(sqliteFullShape.Unique, convey.ShouldResemble, mysqlFullShape.Unique)
+			convey.So(sqliteFullShape.FullText, convey.ShouldResemble, mysqlFullShape.FullText)
+			convey.So(compareCacheSchemaShapes(sqliteFullShape, mysqlFullShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -176,16 +318,19 @@ func TestSQLiteSchemaExecutionViaOpenCache(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.Reset(func() { _ = rows.Close() })
 
-		tables := make([]string, 0, len(schemaStatementOrder))
+		tables := make([]string, 0, len(schemaStatementOrder)+1)
 		for rows.Next() {
 			var table string
 			convey.So(rows.Scan(&table), convey.ShouldBeNil)
 			tables = append(tables, table)
 		}
 
-		convey.Convey("when the schema loader runs, then the nine cache tables exist", func() {
+		convey.Convey("when the schema loader runs, then the nine cache tables and the sample_search index exist", func() {
 			convey.So(rows.Err(), convey.ShouldBeNil)
-			convey.So(tables, convey.ShouldResemble, schemaStatementOrder)
+			for _, table := range schemaStatementOrder {
+				convey.So(tables, convey.ShouldContain, table)
+			}
+			convey.So(tables, convey.ShouldContain, sampleSearchTable)
 		})
 	})
 }

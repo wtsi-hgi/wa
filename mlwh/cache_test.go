@@ -72,6 +72,32 @@ func TestOpenCacheSQLiteFreshSetsSchemaVersion(t *testing.T) {
 	})
 }
 
+func TestOpenCacheSQLiteCreatesSampleSearchTrigramVirtualTable(t *testing.T) {
+	convey.Convey("B1.1: Given an empty SQLite cache opened through OpenCache", t, func() {
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: filepath.Join(t.TempDir(), "cache.sqlite")})
+		convey.So(err, convey.ShouldBeNil)
+		convey.Reset(func() { convey.So(cache.Close(), convey.ShouldBeNil) })
+
+		convey.Convey("when the schema is applied, then a trigram fts5 virtual table over the four sample fields exists and is queryable with MATCH", func() {
+			var sql string
+			convey.So(cache.DB().QueryRow(
+				`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sample_search'`,
+			).Scan(&sql), convey.ShouldBeNil)
+
+			upper := strings.ToUpper(sql)
+			convey.So(upper, convey.ShouldContainSubstring, "VIRTUAL TABLE")
+			convey.So(upper, convey.ShouldContainSubstring, "FTS5")
+			convey.So(sql, convey.ShouldContainSubstring, "tokenize='trigram'")
+			for _, column := range []string{"name", "supplier_name", "common_name", "donor_id"} {
+				convey.So(sql, convey.ShouldContainSubstring, column)
+			}
+
+			_, err = cache.DB().Exec(`SELECT rowid FROM sample_search WHERE sample_search MATCH ? LIMIT 1`, "abc")
+			convey.So(err, convey.ShouldBeNil)
+		})
+	})
+}
+
 func TestAllowLargeMySQLColdLoadIndexShapeAllowsLegacySampleNameOnlyIndex(t *testing.T) {
 	convey.Convey("Given a large MySQL sample mirror with the legacy name-only read index shape", t, func() {
 		db, mock, err := sqlmock.New()
@@ -136,6 +162,46 @@ func TestRepairCompletedSampleMirrorCreatesMissingLookupIndexes(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(mock.ExpectationsWereMet(), convey.ShouldBeNil)
+	})
+}
+
+func TestOpenCacheSQLitePreviousVersionRecreatesSampleSearchIndex(t *testing.T) {
+	convey.Convey("B1.3: Given a SQLite cache at the previous schema version", t, func() {
+		cachePath := filepath.Join(t.TempDir(), "cache.sqlite")
+
+		cache, err := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`DROP TABLE IF EXISTS sample_search`)
+		convey.So(err, convey.ShouldBeNil)
+		_, err = cache.DB().Exec(`UPDATE schema_version SET version = ?`, CacheSchemaVersion-1)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(cache.Close(), convey.ShouldBeNil)
+
+		var (
+			searchTables  int
+			searchUsable  error
+			migrationLine string
+		)
+
+		migrationLine = captureCacheMigrationOutput(t, func() {
+			reopened, openErr := OpenCache(context.Background(), CacheConfig{Path: cachePath})
+			convey.So(openErr, convey.ShouldBeNil)
+			convey.Reset(func() { convey.So(reopened.Close(), convey.ShouldBeNil) })
+
+			convey.So(reopened.DB().QueryRow(
+				`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sample_search'`,
+			).Scan(&searchTables), convey.ShouldBeNil)
+			_, searchUsable = reopened.DB().Exec(`SELECT rowid FROM sample_search WHERE sample_search MATCH ? LIMIT 1`, "abc")
+		})
+
+		convey.Convey("when OpenCache runs at the new version, then it prints exactly one migration line and the sample search index is present", func() {
+			convey.So(migrationLine, convey.ShouldEqual, fmt.Sprintf(
+				"mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n",
+				CacheSchemaVersion-1, CacheSchemaVersion,
+			))
+			convey.So(searchTables, convey.ShouldEqual, 1)
+			convey.So(searchUsable, convey.ShouldBeNil)
+		})
 	})
 }
 
@@ -211,8 +277,8 @@ func TestOpenCacheSQLiteSchemaMismatchResetsSchema(t *testing.T) {
 			convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sync_state') WHERE name = 'indexes_dropped'`).Scan(&indexesDroppedColumns), convey.ShouldBeNil)
 		})
 
-		convey.Convey("when OpenCache runs, then it migrates to v2, recreates the affected tables, and clears sync_state", func() {
-			convey.So(output, convey.ShouldEqual, "mlwh cache: schema v1->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+		convey.Convey("when OpenCache runs, then it migrates to the current version, recreates the affected tables, and clears sync_state", func() {
+			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n", CacheSchemaVersion))
 			convey.So(version, convey.ShouldEqual, CacheSchemaVersion)
 			convey.So(sampleRows, convey.ShouldEqual, 0)
 			convey.So(syncStateRows, convey.ShouldEqual, 1)
@@ -273,7 +339,7 @@ func TestOpenCacheSQLiteCurrentVersionShapeMismatchResetsSchema(t *testing.T) {
 			convey.So(sampleRows, convey.ShouldEqual, 0)
 		})
 
-		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v3->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
 	})
 }
 
@@ -304,7 +370,7 @@ func TestOpenCacheSQLiteCurrentVersionWrongShapeResetsSchema(t *testing.T) {
 			convey.So(columnCount, convey.ShouldBeGreaterThan, 1)
 		})
 
-		convey.So(output, convey.ShouldEqual, "mlwh cache: schema v3->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+		convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v%d->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n", CacheSchemaVersion, CacheSchemaVersion))
 	})
 }
 
@@ -481,8 +547,8 @@ func TestOpenCacheMySQLMigratesV1Cache(t *testing.T) {
 			convey.So(cache.Close(), convey.ShouldBeNil)
 		})
 
-		convey.Convey("when OpenCache runs, then it applies the v2 migration and emits the same single stderr line", func() {
-			convey.So(output, convey.ShouldEqual, "mlwh cache: schema v1->v3, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n")
+		convey.Convey("when OpenCache runs, then it applies the migration and emits the same single stderr line", func() {
+			convey.So(output, convey.ShouldEqual, fmt.Sprintf("mlwh cache: schema v1->v%d, recreated tables: [donor_samples, iseq_product_metrics_mirror, library_samples, sample_mirror, seq_product_irods_locations_mirror, study_mirror]\n", CacheSchemaVersion))
 			convey.So(rwMock.ExpectationsWereMet(), convey.ShouldBeNil)
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		})
@@ -1000,6 +1066,7 @@ func TestApplySchemaMySQLPre8FallsBackToGeneralCaseInsensitiveCollation(t *testi
 				mock.ExpectExec(regexp.QuoteMeta(stmt)).WillReturnResult(sqlmock.NewResult(0, 0))
 			}
 		}
+		expectSampleSearchIndexApply(mock, "mysql")
 		mock.ExpectClose()
 
 		err = applySchema(context.Background(), db, "mysql")
@@ -1031,9 +1098,58 @@ func expectSchemaBootstrap(mock sqlmock.Sqlmock, dialect string) {
 			mock.ExpectExec(regexp.QuoteMeta(stmt)).WillReturnResult(sqlmock.NewResult(0, 0))
 		}
 	}
+	expectSampleSearchIndexApply(mock, dialect)
 
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM schema_version`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`)).WithArgs(CacheSchemaVersion).WillReturnResult(sqlmock.NewResult(1, 1))
+}
+
+func expectSampleSearchIndexApply(mock sqlmock.Sqlmock, dialect string) {
+	ddl, err := loadSearchIndexSchema(dialect)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, stmt := range splitSQLStatements(ddl) {
+		mock.ExpectExec(regexp.QuoteMeta(stmt)).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+}
+
+func TestSampleSyncPopulatesSQLiteSampleSearchIndex(t *testing.T) {
+	convey.Convey("B1.4: Given a populated SQLite sample_mirror and a cold-load sync that maintains the fts5 table", t, func() {
+		cache, _ := openCountingSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		rows := sampleSyncRowsForRange(1, 3, time.Date(2026, time.June, 1, 12, 0, 0, 0, time.UTC), nil)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSample: {columns: sampleSyncSourceColumns, rows: rows},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		report, sawRows, err := client.syncTableData(context.Background(), syncTableSample, syncStateRecord{})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(sawRows, convey.ShouldBeTrue)
+		convey.So(report.Inserted, convey.ShouldEqual, 3)
+
+		convey.Convey("when a sample is searched by name via the fts5 MATCH, then its rowid is returned (the index is populated, not empty)", func() {
+			var name string
+			convey.So(cache.DB().QueryRow(`SELECT name FROM sample_mirror WHERE id_sample_tmp = 1`).Scan(&name), convey.ShouldBeNil)
+			convey.So(len(name), convey.ShouldBeGreaterThanOrEqualTo, 3)
+
+			var rowid int64
+			convey.So(cache.DB().QueryRow(
+				`SELECT rowid FROM sample_search WHERE sample_search MATCH ?`,
+				`"`+name+`"`,
+			).Scan(&rowid), convey.ShouldBeNil)
+			convey.So(rowid, convey.ShouldEqual, 1)
+
+			var indexedRows int
+			convey.So(cache.DB().QueryRow(`SELECT COUNT(*) FROM sample_search`).Scan(&indexedRows), convey.ShouldBeNil)
+			convey.So(indexedRows, convey.ShouldEqual, 3)
+		})
+	})
 }
 
 func TestClientReadOnlyHandleRejectsWrites(t *testing.T) {
@@ -1176,6 +1292,7 @@ func expectMySQLSchemaMigration(mock sqlmock.Sqlmock, fromVersion, toVersion int
 			mock.ExpectExec(regexp.QuoteMeta(stmt)).WillReturnResult(sqlmock.NewResult(0, 0))
 		}
 	}
+	expectSampleSearchIndexApply(mock, "mysql")
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM sync_state LIMIT 0`)).WillReturnRows(
 		sqlmock.NewRows([]string{"table_name", "high_water", "last_run"}),

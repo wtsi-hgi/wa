@@ -1133,8 +1133,14 @@ try {
     db.exec(fs.readFileSync(path.join(schemaDir, `${name}.sql`), "utf8"));
   }
 
+  // The sample_mirror full-text search index (fts5 trigram virtual table) is
+  // applied after the base tables, matching mlwh.OpenCache. The schema version
+  // must stay in lockstep with mlwh.CacheSchemaVersion so opening this seeded
+  // cache does not trigger a drop/recreate migration that would clear the data.
+  db.exec(fs.readFileSync(path.join(schemaDir, "sample_search.sql"), "utf8"));
+
   db.exec("DELETE FROM schema_version");
-  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [3]);
+  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [4]);
 
   for (const tableName of ["sample", "study", "iseq_flowcell", "iseq_product_metrics", "seq_product_irods_locations"]) {
     run(
@@ -1288,6 +1294,10 @@ try {
       syncedAt,
     ],
   );
+
+  // Populate the fts5 external-content search index from sample_mirror, the
+  // same cold-load rebuild discipline mlwh sync uses.
+  db.exec("INSERT INTO sample_search(sample_search) VALUES('rebuild')");
 
   db.exec("COMMIT");
 } catch (error) {

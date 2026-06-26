@@ -241,6 +241,23 @@ const (
 	sampleSyncModeColdID
 )
 
+// rebuildSampleSearchIndex repopulates the sample_mirror full-text search index
+// from sample_mirror, mirroring the donor_samples cold-load rebuild discipline.
+// For SQLite this rebuilds the fts5 external-content virtual table (whose
+// contents are not maintained automatically); MySQL's FULLTEXT index is
+// maintained by the engine, so this is a no-op there.
+func rebuildSampleSearchIndex(ctx context.Context, tx *sql.Tx, dialect string) error {
+	if dialect != "sqlite" {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `INSERT INTO `+sampleSearchTable+`(`+sampleSearchTable+`) VALUES('rebuild')`); err != nil {
+		return fmt.Errorf("mlwh: rebuild sample search index from sample_mirror: %w", err)
+	}
+
+	return nil
+}
+
 func sampleColdSyncSourceQuery() string {
 	return `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated FROM sample WHERE id_lims = 'SQSCP' AND id_sample_tmp < ? ORDER BY id_sample_tmp DESC`
 }
@@ -1428,6 +1445,9 @@ func shouldDeferMirrorIndexRebuild(cache Cache) bool {
 
 func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect string) (bool, error) {
 	if err := rebuildDonorSampleTable(ctx, tx, dialect); err != nil {
+		return false, err
+	}
+	if err := rebuildSampleSearchIndex(ctx, tx, dialect); err != nil {
 		return false, err
 	}
 	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {

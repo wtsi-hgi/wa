@@ -30,8 +30,8 @@ the existing sample sync (cold-load index discipline), printing the
 existing one-line migration message. Tests in `mlwh/cache_schema_test.go`
 and `mlwh/cache_test.go`. Covers all 4 acceptance tests from B1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: B2 - schema-shape parity represents the search index
 
@@ -48,5 +48,5 @@ dialects and is sensitive to the search column set. Tests in
 
 Depends on Item 1.1 (the search index must exist in both schemas first).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

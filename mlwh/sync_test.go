@@ -200,6 +200,7 @@ func TestFinalizeSampleSyncStateRebuildsLargeSQLiteSecondaryIndexes(t *testing.T
 		mock.ExpectExec(regexp.QuoteMeta(`PRAGMA busy_timeout = 5000`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM donor_samples`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`INSERT OR IGNORE INTO donor_samples(donor_id, id_sample_tmp) SELECT donor_id, id_sample_tmp FROM sample_mirror`)).WillReturnResult(sqlmock.NewResult(0, 10296551))
+		mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO sample_search(sample_search) VALUES('rebuild')`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("sqlite", sampleMirrorIndexSet.Table))).WillReturnRows(sqlmock.NewRows([]string{"name"}))
 		for _, index := range sampleMirrorSecondaryIndexes {
 			mock.ExpectExec(regexp.QuoteMeta(fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON sample_mirror(%s)`, index.Name, index.Column))).
