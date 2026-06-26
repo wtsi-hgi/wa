@@ -137,6 +137,35 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
 
+// sampleSearchTriggerNames are the SQLite triggers that maintain the
+// sample_search fts5 external-content table from sample_mirror writes. They are
+// declared in cache_schema/sqlite/sample_search.sql (created with the fts5
+// table) and managed like the secondary indexes during cold load: dropped
+// before the bulk insert and recreated at finalize.
+var sampleSearchTriggerNames = []string{
+	"sample_search_ai",
+	"sample_search_ad",
+	"sample_search_au",
+}
+
+// sampleSearchTriggerStatements are the CREATE TRIGGER statements that keep the
+// fts5 external-content table consistent with sample_mirror. They mirror the
+// definitions in cache_schema/sqlite/sample_search.sql so cold-load recreate
+// produces the same triggers a fresh OpenCache installs.
+var sampleSearchTriggerStatements = []string{
+	`CREATE TRIGGER IF NOT EXISTS sample_search_ai AFTER INSERT ON sample_mirror BEGIN ` +
+		`INSERT INTO sample_search(rowid, name, supplier_name, common_name, donor_id) ` +
+		`VALUES (new.id_sample_tmp, new.name, new.supplier_name, new.common_name, new.donor_id); END`,
+	`CREATE TRIGGER IF NOT EXISTS sample_search_ad AFTER DELETE ON sample_mirror BEGIN ` +
+		`INSERT INTO sample_search(sample_search, rowid, name, supplier_name, common_name, donor_id) ` +
+		`VALUES ('delete', old.id_sample_tmp, old.name, old.supplier_name, old.common_name, old.donor_id); END`,
+	`CREATE TRIGGER IF NOT EXISTS sample_search_au AFTER UPDATE ON sample_mirror BEGIN ` +
+		`INSERT INTO sample_search(sample_search, rowid, name, supplier_name, common_name, donor_id) ` +
+		`VALUES ('delete', old.id_sample_tmp, old.name, old.supplier_name, old.common_name, old.donor_id); ` +
+		`INSERT INTO sample_search(rowid, name, supplier_name, common_name, donor_id) ` +
+		`VALUES (new.id_sample_tmp, new.name, new.supplier_name, new.common_name, new.donor_id); END`,
+}
+
 type studySourceColumnSpec struct {
 	canonical string
 	aliases   []string
@@ -241,6 +270,25 @@ const (
 	sampleSyncModeColdID
 )
 
+// dropSampleSearchTriggers removes the SQLite fts5 maintenance triggers so the
+// cold-load bulk insert does not fire them per row (which would defeat the
+// drop-for-speed optimisation and double-populate alongside the subsequent
+// 'rebuild'). On MySQL the search index is engine-maintained, so this is a
+// no-op.
+func dropSampleSearchTriggers(ctx context.Context, tx *sql.Tx, dialect string) error {
+	if dialect != "sqlite" {
+		return nil
+	}
+
+	for _, name := range sampleSearchTriggerNames {
+		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name); err != nil {
+			return fmt.Errorf("mlwh: drop sample search trigger %s: %w", name, err)
+		}
+	}
+
+	return nil
+}
+
 // rebuildSampleSearchIndex repopulates the sample_mirror full-text search index
 // from sample_mirror, mirroring the donor_samples cold-load rebuild discipline.
 // For SQLite this rebuilds the fts5 external-content virtual table (whose
@@ -253,6 +301,24 @@ func rebuildSampleSearchIndex(ctx context.Context, tx *sql.Tx, dialect string) e
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO `+sampleSearchTable+`(`+sampleSearchTable+`) VALUES('rebuild')`); err != nil {
 		return fmt.Errorf("mlwh: rebuild sample search index from sample_mirror: %w", err)
+	}
+
+	return nil
+}
+
+// createSampleSearchTriggers (re)creates the SQLite fts5 maintenance triggers so
+// that, after a cold load, subsequent incremental sample writes propagate into
+// sample_search. On MySQL the search index is engine-maintained, so this is a
+// no-op.
+func createSampleSearchTriggers(ctx context.Context, tx *sql.Tx, dialect string) error {
+	if dialect != "sqlite" {
+		return nil
+	}
+
+	for _, stmt := range sampleSearchTriggerStatements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("mlwh: create sample search trigger: %w", err)
+		}
 	}
 
 	return nil
@@ -1450,6 +1516,9 @@ func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect
 	if err := rebuildSampleSearchIndex(ctx, tx, dialect); err != nil {
 		return false, err
 	}
+	if err := createSampleSearchTriggers(ctx, tx, dialect); err != nil {
+		return false, err
+	}
 	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
 		return false, err
 	}
@@ -1483,6 +1552,9 @@ func prepareSampleMirrorIndexesForSync(ctx context.Context, cache Cache, state *
 
 	if err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
 		if err := dropSampleMirrorSecondaryIndexes(ctx, tx, cache.Dialect()); err != nil {
+			return err
+		}
+		if err := dropSampleSearchTriggers(ctx, tx, cache.Dialect()); err != nil {
 			return err
 		}
 

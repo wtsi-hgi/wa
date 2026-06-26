@@ -185,6 +185,42 @@ func seedSyncStateRun(t *testing.T, db *sql.DB, table string, highWater, lastRun
 	}
 }
 
+// A cold load writes a sync_state row before pulling data, stamping high_water with
+// the zero time (formatSyncTime(time.Time{}) == "0001-01-01T00:00:00Z"). If that
+// cold load is interrupted before the first batch advances high_water, the row
+// persists with that zero high_water. Freshness must report an empty high_water for
+// it (matching the "empty if never synced" contract), never the bogus year-0001
+// timestamp, while still rendering a genuine non-zero last_run.
+func TestFreshnessZeroHighWaterRendersEmpty(t *testing.T) {
+	convey.Convey("Given a sync_state row whose high_water is the zero cold-load value", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		lastRun := time.Date(2026, time.June, 1, 10, 5, 0, 0, time.UTC)
+
+		_, err := cache.DB().Exec(
+			`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, NULL, 1)`,
+			syncTableSample,
+			formatSyncTime(time.Time{}),
+			formatSyncTime(lastRun),
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		freshness, freshErr := client.Freshness(context.Background())
+
+		convey.Convey("when Freshness runs, then high_water is empty and last_run keeps its UTC value", func() {
+			convey.So(freshErr, convey.ShouldBeNil)
+
+			byTable := freshnessByTable(freshness)
+			sample := byTable[syncTableSample]
+			convey.So(sample.HighWater, convey.ShouldBeEmpty)
+			convey.So(sample.LastRun, convey.ShouldEqual, "2026-06-01T10:05:00Z")
+		})
+	})
+}
+
 // D2 acceptance test 3: a non-UTC stored time is normalised to UTC RFC3339 ending
 // in Z on the way out.
 func TestFreshnessNormalisesNonUTCTimeToUTC(t *testing.T) {

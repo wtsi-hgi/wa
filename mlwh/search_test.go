@@ -28,6 +28,7 @@ package mlwh
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"testing"
 	"time"
@@ -201,6 +202,53 @@ func TestSearchStudiesTreatsPercentAsLiteralNotWildcard(t *testing.T) {
 		convey.Convey("when SearchStudies runs for \"50%\", then only the literal-percent study matches", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(studyLimsIDs(studies), convey.ShouldResemble, []string{"1001"})
+
+			count, countErr := client.CountStudySearch(context.Background(), "50%")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(studies))
+		})
+	})
+}
+
+func TestSearchStudiesMatchesUnderscoreAndEscapeCharAsLiteralSubstring(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache whose titles exercise the LIKE wildcard and escape characters", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// Row 1 holds a literal underscore; row 2 holds the same letters with a
+		// different separator. If the underscore were treated as the LIKE single
+		// -character wildcard rather than a literal, both rows would match "a_b";
+		// the escape clause means only the literal-underscore row does.
+		seedStudyMirrorSearchRow(t, cache.DB(), 50, "2001", "study-a", "code a_b end", "Genomics", "Sponsor A")
+		seedStudyMirrorSearchRow(t, cache.DB(), 51, "2002", "study-b", "code axb end", "Genomics", "Sponsor B")
+		// Row 3 holds a literal occurrence of whatever character the search uses
+		// as its LIKE escape character; row 4 holds the same letters without it.
+		// The escape character must be matched literally (substring), so only row
+		// 3 matches a term containing it.
+		seedStudyMirrorSearchRow(t, cache.DB(), 52, "2003", "study-c", "code wow"+searchLIKEEscapeChar+"yes end", "Genomics", "Sponsor C")
+		seedStudyMirrorSearchRow(t, cache.DB(), 53, "2004", "study-d", "code wowyes end", "Genomics", "Sponsor D")
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchStudies runs for a term containing an underscore, then only the literal-underscore study matches", func() {
+			studies, err := client.SearchStudies(context.Background(), "a_b", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(studyLimsIDs(studies), convey.ShouldResemble, []string{"2001"})
+
+			count, countErr := client.CountStudySearch(context.Background(), "a_b")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(studies))
+		})
+
+		convey.Convey("when SearchStudies runs for a term containing the escape character, then only the literal-escape-char study matches", func() {
+			studies, err := client.SearchStudies(context.Background(), "wow"+searchLIKEEscapeChar+"yes", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(studyLimsIDs(studies), convey.ShouldResemble, []string{"2003"})
+
+			count, countErr := client.CountStudySearch(context.Background(), "wow"+searchLIKEEscapeChar+"yes")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(studies))
 		})
 	})
 }
@@ -507,6 +555,50 @@ func TestSearchSamplesTreatsFTS5OperatorCharactersAsLiteralSubstring(t *testing.
 	})
 }
 
+func TestSearchSamplesMatchesUnderscoreAndEscapeCharAsLiteralSubstring(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache whose names exercise the LIKE wildcard and escape characters", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// Row 1 holds a literal underscore in supplier_name; row 2 holds the same
+		// letters with a different separator. If the underscore were the LIKE
+		// single-character wildcard rather than a literal, both would match
+		// "wid_get"; the escape clause means only the literal-underscore row does.
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "name-1", "wid_get supplier", "common-1", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "widxget supplier", "common-2", "donor-2")
+		// Row 3 holds a literal occurrence of whatever character the search uses
+		// as its LIKE escape character; row 4 holds the same letters without it.
+		// The escape character must be matched literally (substring), so only row
+		// 3 matches a term containing it.
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "name-3", "wow"+searchLIKEEscapeChar+"yes supplier", "common-3", "donor-3")
+		seedSampleMirrorSearchRow(t, cache.DB(), 4, "name-4", "wowyes supplier", "common-4", "donor-4")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchSamples runs for a term containing an underscore, then only the literal-underscore sample matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "wid_get", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+
+			count, countErr := client.CountSampleSearch(context.Background(), "wid_get")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+
+		convey.Convey("when SearchSamples runs for a term containing the escape character, then only the literal-escape-char sample matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "wow"+searchLIKEEscapeChar+"yes", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{3})
+
+			count, countErr := client.CountSampleSearch(context.Background(), "wow"+searchLIKEEscapeChar+"yes")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+	})
+}
+
 func TestCountSampleSearchMatchesSearchSamplesCount(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache with three samples matching \"acme\"", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -534,6 +626,89 @@ func TestCountSampleSearchMatchesSearchSamplesCount(t *testing.T) {
 			convey.So(count.Count, convey.ShouldEqual, len(samples))
 		})
 	})
+}
+
+func TestIncrementalSyncMakesNewSampleSearchable(t *testing.T) {
+	convey.Convey("Given a SQLite cache cold-synced with sample A, when a second incremental sync adds sample B", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), disableSyncLock: true}
+		coldBase := time.Date(2026, time.May, 20, 9, 0, 0, 0, time.UTC)
+
+		// Cold sync builds the fts5 index from sample_mirror.
+		coldRow := sampleSyncRowValues(1, coldBase, sampleSyncRowOverride{Name: "alpha-sample"})
+		runSampleSyncForTest(t, client, coldRow)
+
+		// An incremental sync (state exists, non-zero high_water, indexes not
+		// dropped) adds a brand-new sample whose searchable name is distinctive.
+		incrementalRow := sampleSyncRowValues(2, coldBase.Add(time.Hour), sampleSyncRowOverride{Name: "bravoUnique-sample"})
+		runSampleSyncForTest(t, client, coldRow, incrementalRow)
+
+		convey.Convey("then SearchSamples finds B and CountSampleSearch agrees", func() {
+			samples, err := client.SearchSamples(context.Background(), "bravounique", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{2})
+
+			count, countErr := client.CountSampleSearch(context.Background(), "bravounique")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+		})
+	})
+}
+
+func TestIncrementalSyncReflectsUpdatedSearchableField(t *testing.T) {
+	convey.Convey("Given a SQLite cache cold-synced with a sample, when a second incremental sync updates its searchable name", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), disableSyncLock: true}
+		coldBase := time.Date(2026, time.May, 21, 9, 0, 0, 0, time.UTC)
+
+		coldRow := sampleSyncRowValues(1, coldBase, sampleSyncRowOverride{Name: "zebraOriginal-sample"})
+		runSampleSyncForTest(t, client, coldRow)
+
+		updatedRow := sampleSyncRowValues(1, coldBase.Add(time.Hour), sampleSyncRowOverride{Name: "antelopeUpdated-sample"})
+		runSampleSyncForTest(t, client, updatedRow)
+
+		convey.Convey("then the new value matches and the old value no longer matches", func() {
+			newSamples, err := client.SearchSamples(context.Background(), "antelopeupdated", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(newSamples), convey.ShouldResemble, []int64{1})
+
+			oldSamples, oldErr := client.SearchSamples(context.Background(), "zebraoriginal", 100, 0)
+			convey.So(oldErr, convey.ShouldBeNil)
+			convey.So(oldSamples, convey.ShouldBeEmpty)
+
+			oldCount, oldCountErr := client.CountSampleSearch(context.Background(), "zebraoriginal")
+			convey.So(oldCountErr, convey.ShouldBeNil)
+			convey.So(oldCount, convey.ShouldResemble, Count{})
+		})
+	})
+}
+
+// runSampleSyncForTest drives one sample sync run against the client's cache
+// using an in-process source returning the given rows, picking up the existing
+// sync_state so a second call exercises the incremental (indexes-not-dropped)
+// path rather than another cold load.
+func runSampleSyncForTest(t *testing.T, client *Client, rows ...[]driver.Value) {
+	t.Helper()
+
+	source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+		syncTableSample: {columns: sampleSyncSourceColumns, rows: rows},
+	})
+	defer func() { _ = source.Close() }()
+
+	client.syncSource = source
+
+	state, err := readSyncStateFromDB(context.Background(), client.cache.DB(), syncTableSample)
+	if err != nil {
+		t.Fatalf("runSampleSyncForTest() read sync state: %v", err)
+	}
+
+	if _, _, err = client.syncTableData(context.Background(), syncTableSample, state); err != nil {
+		t.Fatalf("runSampleSyncForTest() sync: %v", err)
+	}
 }
 
 func TestCountSampleSearchExcludesTrigramFalsePositiveLikeSearch(t *testing.T) {

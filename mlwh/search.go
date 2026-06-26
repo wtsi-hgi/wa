@@ -39,8 +39,14 @@ const searchTermMinLength = 3
 
 // searchLIKEEscapeChar is the escape character bound via an explicit LIKE
 // ESCAPE clause so that user-supplied '%' and '_' are matched literally rather
-// than acting as wildcards.
-const searchLIKEEscapeChar = `\`
+// than acting as wildcards. It is '!' rather than the conventional backslash
+// because the shared `ESCAPE '<char>'` clause must be valid SQL on both
+// backends: on MySQL under the default sql_mode (NO_BACKSLASH_ESCAPES off) the
+// literal `'\'` is a backslash escaping the closing quote, making `ESCAPE '\'`
+// an unterminated string literal (a syntax error), while SQLite rejects the
+// doubled `'\\'` form as not a single character. '!' needs no string-literal
+// escaping in either dialect, so the one clause works for both.
+const searchLIKEEscapeChar = `!`
 
 // studySearchFields are the study_mirror columns OR'd together by the study
 // substring search (and its count sibling).
@@ -137,8 +143,9 @@ var studySearchSQL = `SELECT ` + studyMirrorSelectColumns + studySearchFromWhere
 var studySearchCountSQL = `SELECT COUNT(*)` + studySearchFromWhere
 
 // likeContainsClause renders an OR'd, parenthesised set of
-// `column LIKE ? ESCAPE '\'` predicates, one per field. Callers bind the same
-// escaped pattern once per field, in field order.
+// `column LIKE ? ESCAPE '!'` predicates, one per field (see searchLIKEEscapeChar
+// for why '!' is the escape character). Callers bind the same escaped pattern
+// once per field, in field order.
 func likeContainsClause(fields []string) string {
 	predicates := make([]string, len(fields))
 	for index, field := range fields {
@@ -151,7 +158,9 @@ func likeContainsClause(fields []string) string {
 // escapeLIKEPattern wraps term in '%...%' for a substring (contains) LIKE,
 // escaping the LIKE wildcards ('%', '_') and the escape character itself so the
 // term is matched literally. The returned pattern is bound as a parameter and
-// paired with an explicit `ESCAPE '\'` clause.
+// paired with an explicit `ESCAPE '!'` clause (see searchLIKEEscapeChar). The
+// escape character is replaced first so an already-escaped occurrence is not
+// reprocessed by the wildcard rules.
 func escapeLIKEPattern(term string) string {
 	replacer := strings.NewReplacer(
 		searchLIKEEscapeChar, searchLIKEEscapeChar+searchLIKEEscapeChar,

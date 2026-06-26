@@ -28,11 +28,57 @@ package mlwh
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/smartystreets/goconvey/convey"
 )
+
+// TestSearchSQLEscapeClauseIsDialectSafe guards the LIKE ESCAPE clause baked
+// into every substring-search SQL string against a regression that breaks the
+// MySQL backend. On MySQL under the default sql_mode (NO_BACKSLASH_ESCAPES off),
+// the string literal `'\'` is a backslash escaping the closing quote, so an
+// `ESCAPE '\'` clause is an unterminated literal and MySQL rejects the whole
+// statement with a syntax error (Error 1064). The sqlmock matchers below assert
+// only the MATCH/LIKE skeleton and never the ESCAPE fragment, so they cannot
+// catch this; this test asserts the SQL contract directly: every search SQL
+// string must carry a single, valid `ESCAPE '!'` clause per searchable field
+// and must never contain the broken lone-backslash form, so the clause is valid
+// on both MySQL and SQLite.
+func TestSearchSQLEscapeClauseIsDialectSafe(t *testing.T) {
+	convey.Convey("Given the substring-search SQL strings built for both dialects", t, func() {
+		studyFieldCount := len(studySearchFields)
+		sampleFieldCount := len(sampleSearchFields)
+
+		cases := []struct {
+			name           string
+			sql            string
+			expectedClause int
+		}{
+			{"studySearchSQL", studySearchSQL, studyFieldCount},
+			{"studySearchCountSQL", studySearchCountSQL, studyFieldCount},
+			{"sampleSearchSQL (SQLite)", sampleSearchSQL, sampleFieldCount},
+			{"sampleSearchCountSQL (SQLite)", sampleSearchCountSQL, sampleFieldCount},
+			{"sampleSearchMySQLSQL", sampleSearchMySQLSQL, sampleFieldCount},
+			{"sampleSearchMySQLCountSQL", sampleSearchMySQLCountSQL, sampleFieldCount},
+		}
+
+		for _, testCase := range cases {
+			convey.Convey("the "+testCase.name+" clause is dialect-safe", func() {
+				convey.Convey("then it never renders the unterminated MySQL form ESCAPE '\\'", func() {
+					convey.So(strings.Contains(testCase.sql, `ESCAPE '\'`), convey.ShouldBeFalse)
+				})
+
+				convey.Convey("then it renders a valid ESCAPE '!' clause once per searchable field", func() {
+					convey.So(strings.Contains(testCase.sql, `ESCAPE '!'`), convey.ShouldBeTrue)
+					convey.So(strings.Count(testCase.sql, "ESCAPE "), convey.ShouldEqual, testCase.expectedClause)
+					convey.So(strings.Count(testCase.sql, `ESCAPE '!'`), convey.ShouldEqual, testCase.expectedClause)
+				})
+			})
+		}
+	})
+}
 
 func TestSearchSamplesMySQLShortTermIssuesNoQuery(t *testing.T) {
 	convey.Convey("Given a sqlmock MySQL Client", t, func() {

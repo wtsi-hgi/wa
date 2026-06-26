@@ -129,6 +129,12 @@ func parseSchemaStatement(stmt string, shape *schemaShape) error {
 		}
 
 		shape.FullText[table] = normaliseFullTextColumns(columns)
+	case strings.HasPrefix(upper, "CREATE TRIGGER"):
+		// Triggers maintain the SQLite sample_search fts5 external-content table
+		// from sample_mirror writes. They carry no table/index/column shape, so
+		// they do not participate in the dialect parity model (MySQL's FULLTEXT
+		// index is engine-maintained and needs none); ignore them here.
+		return nil
 	default:
 		return fmt.Errorf("mlwh: unsupported schema statement %q", stmt)
 	}
@@ -385,12 +391,20 @@ func loadSearchIndexSchema(dialect string) (string, error) {
 	return string(body), nil
 }
 
+// splitSQLStatements splits a DDL group into individual statements on top-level
+// `;`. It strips `--` line comments and keeps `CREATE TRIGGER ... BEGIN ...
+// END;` bodies whole: the internal statement separators between BEGIN and the
+// matching END do not split the trigger, because an fts5 maintenance trigger's
+// body contains its own `;`.
 func splitSQLStatements(group string) []string {
 	var (
 		statements []string
 		builder    strings.Builder
+		word       strings.Builder
 		depth      int
+		blockDepth int
 		quote      rune
+		inComment  bool
 	)
 
 	flush := func() {
@@ -402,31 +416,64 @@ func splitSQLStatements(group string) []string {
 		builder.Reset()
 	}
 
-	for _, r := range group {
+	// finishWord consumes the identifier accumulated in word and adjusts the
+	// BEGIN/END block depth so `;` inside a trigger body does not flush.
+	finishWord := func() {
 		switch {
+		case strings.EqualFold(word.String(), "BEGIN"):
+			blockDepth++
+		case strings.EqualFold(word.String(), "END") && blockDepth > 0:
+			blockDepth--
+		}
+
+		word.Reset()
+	}
+
+	runes := []rune(group)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		switch {
+		case inComment:
+			if r == '\n' {
+				inComment = false
+				builder.WriteRune(r)
+			}
 		case quote != 0:
 			builder.WriteRune(r)
 			if r == quote {
 				quote = 0
 			}
+		case r == '-' && i+1 < len(runes) && runes[i+1] == '-':
+			finishWord()
+			inComment = true
+			i++
 		case r == '\'' || r == '"' || r == '`':
+			finishWord()
 			quote = r
 			builder.WriteRune(r)
+		case r == '_' || r == '$' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			word.WriteRune(r)
+			builder.WriteRune(r)
 		case r == '(':
+			finishWord()
 			depth++
 			builder.WriteRune(r)
 		case r == ')':
+			finishWord()
 			if depth > 0 {
 				depth--
 			}
 			builder.WriteRune(r)
-		case r == ';' && depth == 0:
+		case r == ';' && depth == 0 && blockDepth == 0:
+			finishWord()
 			flush()
 		default:
+			finishWord()
 			builder.WriteRune(r)
 		}
 	}
 
+	finishWord()
 	flush()
 
 	return statements

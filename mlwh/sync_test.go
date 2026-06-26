@@ -201,6 +201,9 @@ func TestFinalizeSampleSyncStateRebuildsLargeSQLiteSecondaryIndexes(t *testing.T
 		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM donor_samples`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`INSERT OR IGNORE INTO donor_samples(donor_id, id_sample_tmp) SELECT donor_id, id_sample_tmp FROM sample_mirror`)).WillReturnResult(sqlmock.NewResult(0, 10296551))
 		mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO sample_search(sample_search) VALUES('rebuild')`)).WillReturnResult(sqlmock.NewResult(0, 0))
+		for _, stmt := range sampleSearchTriggerStatements {
+			mock.ExpectExec(regexp.QuoteMeta(stmt)).WillReturnResult(sqlmock.NewResult(0, 0))
+		}
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("sqlite", sampleMirrorIndexSet.Table))).WillReturnRows(sqlmock.NewRows([]string{"name"}))
 		for _, index := range sampleMirrorSecondaryIndexes {
 			mock.ExpectExec(regexp.QuoteMeta(fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON sample_mirror(%s)`, index.Name, index.Column))).
@@ -1679,15 +1682,19 @@ func TestClientSyncSampleColdLoadSetsIndexesDroppedBeforeFirstBatchSQLite(t *tes
 		statements := filterRecordedStatements(observer.Statements(), func(statement recordedSQLStatement) bool {
 			return !strings.HasPrefix(normalizeSQL(statement.Query), "PRAGMA ")
 		})
-		convey.So(statements, convey.ShouldHaveLength, len(sampleMirrorSecondaryIndexes)+1)
+		dropCount := len(sampleMirrorSecondaryIndexes) + len(sampleSearchTriggerNames)
+		convey.So(statements, convey.ShouldHaveLength, dropCount+1)
 
-		expectedDrops := make([]string, 0, len(sampleMirrorSecondaryIndexes))
+		expectedDrops := make([]string, 0, dropCount)
 		for _, index := range sampleMirrorSecondaryIndexes {
 			expectedDrops = append(expectedDrops, normalizeSQL(`DROP INDEX IF EXISTS `+index.Name))
 		}
+		for _, name := range sampleSearchTriggerNames {
+			expectedDrops = append(expectedDrops, normalizeSQL(`DROP TRIGGER IF EXISTS `+name))
+		}
 
-		actualDrops := make([]string, 0, len(sampleMirrorSecondaryIndexes))
-		for _, statement := range statements[:len(sampleMirrorSecondaryIndexes)] {
+		actualDrops := make([]string, 0, dropCount)
+		for _, statement := range statements[:dropCount] {
 			actualDrops = append(actualDrops, normalizeSQL(statement.Query))
 		}
 

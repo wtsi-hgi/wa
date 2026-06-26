@@ -36,7 +36,7 @@ import (
 // schema-version lineage (CacheSchemaVersion) so the documented API version
 // moves with each schema/contract change; the patch component is reserved for
 // documentation-only revisions within a schema version.
-const mlwhAPIVersion = "1.4.0"
+const mlwhAPIVersion = "1.5.0"
 
 // openAPIVersion is the OpenAPI specification version the generated document
 // conforms to.

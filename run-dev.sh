@@ -1140,7 +1140,7 @@ try {
   db.exec(fs.readFileSync(path.join(schemaDir, "sample_search.sql"), "utf8"));
 
   db.exec("DELETE FROM schema_version");
-  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [4]);
+  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [5]);
 
   for (const tableName of ["sample", "study", "iseq_flowcell", "iseq_product_metrics", "seq_product_irods_locations"]) {
     run(

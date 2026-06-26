@@ -115,11 +115,18 @@ func (c *Client) Freshness(ctx context.Context) (Freshness, error) {
 }
 
 // formatFreshnessTime parses a stored sync_state timestamp and re-renders it as UTC
-// RFC3339 ending in Z, normalising any stored zone offset to UTC.
+// RFC3339 ending in Z, normalising any stored zone offset to UTC. A zero time renders
+// as the empty string: an interrupted cold load can persist a sync_state row whose
+// high_water is the formatted zero time ("0001-01-01T00:00:00Z"), and the contract is
+// that an absent meaningful timestamp is reported empty rather than as year 0001.
 func formatFreshnessTime(raw any) (string, error) {
 	parsed, err := parseSyncTimeValue(raw)
 	if err != nil {
 		return "", err
+	}
+
+	if parsed.IsZero() {
+		return "", nil
 	}
 
 	return parsed.UTC().Format(utcRFC3339Layout), nil
