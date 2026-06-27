@@ -1569,10 +1569,18 @@ elif [[ -n "$SEQMETA_CMD" ]]; then
     WA_RUN_DEV_SEQMETA_CMD="$SEQMETA_CMD" \
       bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"' \
       >>"$SEQMETA_LOG" 2>&1 &
-    seqmeta_pid="$!"
-    PIDS+=("$seqmeta_pid")
+    PIDS+=("$!")
     SEQMETA_STARTED=1
-    ensure_mlwh_synced_after_serve "$seqmeta_pid"
+    # An operator-supplied command serves its own backend; run-dev.sh does not
+    # own it and cannot sync it, nor may it assume the command implements the
+    # /freshness probe, so readiness waits on /studies alone (the auto-managed
+    # branch below keeps the cold-cache freshness/sync flow).
+    printf 'Waiting for MLWH studies readiness at %s' "$SEQMETA_HEALTH_URL"
+    if [[ -n "$MLWH_CACHE_PATH" ]]; then
+      printf ' (MLWH cache: %s; a cold cache can take a while on first run)' "$MLWH_CACHE_PATH"
+    fi
+    printf '\n'
+    wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
   fi
 elif [[ -n "${WA_MLWH_DSN:-}" || -n "$MLWH_CACHE_PATH" ]]; then
   export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"

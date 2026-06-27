@@ -535,6 +535,70 @@ func TestRunDevAutoManagedMLWHBackendCanServeTestModeEphemeralCacheWithoutDSN(t 
 	})
 }
 
+func TestRunDevOperatorManagedMLWHBackendReachesReadinessWithoutFreshnessProbe(t *testing.T) {
+	convey.Convey("run-dev.sh reaches readiness for an operator-managed MLWH command that only serves /studies", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+
+		writeRunDevMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "test",
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			unsetEnv:     runDevUnsetRemoteMLWHEnvForTest(),
+			env: map[string]string{
+				"PATH":                                   binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"WA_RUN_DEV_SEQMETA_CMD":                 runDevPathRoutedSeqmetaStubCommandForTest(),
+				"WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS": "60",
+				"WA_RUN_DEV_ENV_SNAPSHOT":                snapshotPath,
+				"WA_RUN_DEV_RESULTS_HEALTH_URL":          fmt.Sprintf("https://127.0.0.1:%d/rest/v1/results/stats", resultsPort),
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD":  `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":           `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":         `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":           `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":            fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(
+			process.stdout.String(),
+			convey.ShouldContainSubstring,
+			fmt.Sprintf("Waiting for MLWH studies readiness at http://127.0.0.1:%d/studies", seqmetaPort),
+		)
+		convey.So(process.stdout.String(), convey.ShouldNotContainSubstring, "/freshness")
+
+		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 1), "\n")
+		convey.So(invocations, convey.ShouldContainSubstring, "results serve")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh serve")
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+}
+
+// runDevPathRoutedSeqmetaStubCommandForTest returns an operator-managed MLWH
+// command that faithfully mirrors the real e2e stub (frontend/e2e/seqmeta-stub.mjs):
+// it answers GET /studies with 200 [] and returns 404 for every other path,
+// including /freshness. run-dev.sh does not own this operator-supplied backend
+// and must reach readiness off /studies alone, never assuming the command serves
+// the /freshness probe used by the auto-managed sync flow.
+func runDevPathRoutedSeqmetaStubCommandForTest() string {
+	return `node -e "const http = require('node:http'); const port = Number(process.env.WA_TEST_SEQMETA_PORT); const server = http.createServer((request, response) => { const url = new URL(request.url ?? '/', 'http://127.0.0.1:' + port); if (url.pathname === '/studies') { response.writeHead(200, {'content-type':'application/json'}); response.end('[]'); return; } response.writeHead(404, {'content-type':'application/json'}); response.end(JSON.stringify({error: 'not found'})); }); const shutdown = () => server.close(() => process.exit(0)); process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown); server.listen(port, '127.0.0.1');"`
+}
+
 func runDevSeedFixtureCountForTest(t *testing.T, repoRoot string) int {
 	t.Helper()
 
