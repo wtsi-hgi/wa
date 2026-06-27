@@ -66,11 +66,12 @@ func NewServer(q Queryer, opts ...ServerOption) *Server {
 }
 
 // RegisterRoutes registers MLWH API routes on the provided Gin routers. The
-// plain router carries the operational plain routes (GET /health), and, when no
-// auth group is supplied, the Registry endpoints at their root paths
-// (unauthenticated mode). When an auth group is supplied (secured mode) the
-// Registry endpoints register behind it while /health stays a plain route on
-// the router, so readiness checks remain reachable and unauthenticated.
+// plain router carries the operational plain routes (GET /health and GET
+// /openapi.json), and, when no auth group is supplied, the Registry endpoints
+// at their root paths (unauthenticated mode). When an auth group is supplied
+// (secured mode) the Registry endpoints register behind it while /health and
+// /openapi.json stay plain routes on the router, so readiness checks and the
+// OpenAPI document remain reachable and unauthenticated.
 func (s *Server) RegisterRoutes(router *gin.Engine, auth *gin.RouterGroup) {
 	if s == nil {
 		return
@@ -191,6 +192,11 @@ func mlwhSearchPaginationFromQuery(c *gin.Context) (mlwhPagination, bool) {
 	if !ok {
 		return mlwhPagination{}, false
 	}
+	if limit < 0 {
+		writeMLWHBadRequest(c, "limit must not be negative")
+
+		return mlwhPagination{}, false
+	}
 	if limit > mlwhSearchMaxLimit {
 		writeMLWHBadRequest(c, fmt.Sprintf("limit must not exceed %d", mlwhSearchMaxLimit))
 
@@ -199,6 +205,11 @@ func mlwhSearchPaginationFromQuery(c *gin.Context) (mlwhPagination, bool) {
 
 	offset, ok := mlwhQueryInt(c, "offset", 0)
 	if !ok {
+		return mlwhPagination{}, false
+	}
+	if offset < 0 {
+		writeMLWHBadRequest(c, "offset must not be negative")
+
 		return mlwhPagination{}, false
 	}
 

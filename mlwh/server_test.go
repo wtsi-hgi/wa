@@ -565,6 +565,58 @@ func TestServerSearchPaginationGuardA4(t *testing.T) {
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(queryer.searchCall.limit, convey.ShouldEqual, mlwhSearchMaxLimit)
 	})
+
+	convey.Convey("Given GET /search/study/malar?limit=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchStudiesFunc: func(_ context.Context, _ string, _, _ int) ([]Study, error) {
+				panic("queryer must not be called when limit is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/study/malar?limit=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given GET /search/sample/acme?limit=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchSamplesFunc: func(_ context.Context, _ string, _, _ int) ([]Sample, error) {
+				panic("queryer must not be called when limit is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/sample/acme?limit=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given GET /search/study/malar?offset=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchStudiesFunc: func(_ context.Context, _ string, _, _ int) ([]Study, error) {
+				panic("queryer must not be called when offset is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/study/malar?offset=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given GET /search/sample/acme?offset=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchSamplesFunc: func(_ context.Context, _ string, _, _ int) ([]Sample, error) {
+				panic("queryer must not be called when offset is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/sample/acme?offset=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
 }
 
 func TestServerCountEndpointsF3(t *testing.T) {
