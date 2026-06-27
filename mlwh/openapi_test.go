@@ -118,6 +118,24 @@ func TestOpenAPIDocumentIdentityC2(t *testing.T) {
 	})
 }
 
+func TestOpenAPIPublicVersionConstantNoDrift(t *testing.T) {
+	// An external consumer (e.g. an MCP server importing this package) must be
+	// able to read the targeted API version as a typed, compiled-in symbol
+	// without contacting a live server or walking the untyped document. Assert at
+	// that public boundary: APIVersion is non-blank and equals the info.version
+	// value actually served by OpenAPIDocument(), so the exported symbol and the
+	// served document can never drift apart.
+	convey.Convey("Given the public APIVersion constant, then it is non-blank and equals the served info.version", t, func() {
+		convey.So(strings.TrimSpace(APIVersion), convey.ShouldNotBeBlank)
+
+		doc := decodedOpenAPIDocForTest(t)
+
+		info, ok := doc["info"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(info["version"], convey.ShouldEqual, APIVersion)
+	})
+}
+
 func TestOpenAPIDocumentCoversRegistryPathsC2(t *testing.T) {
 	// C2 acceptance test 2: every Registry entry's Path and Verb appears with
 	// the correct path params and (for paginated entries) limit/offset query
