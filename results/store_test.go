@@ -1260,7 +1260,7 @@ func TestStoreSearchSuggestions(t *testing.T) {
 }
 
 func TestStoreRegisteredMetadataValues(t *testing.T) {
-	convey.Convey("Given registered metadata, registeredMetadataValues returns only the registered subset case-insensitively", t, func() {
+	convey.Convey("Given registered metadata, registeredMetadataValues returns only the registered subset", t, func() {
 		store := newSQLiteStoreForTest(t)
 		ctx := context.Background()
 
@@ -1277,13 +1277,6 @@ func TestStoreRegisteredMetadataValues(t *testing.T) {
 		convey.So(registered, convey.ShouldResemble, map[string]struct{}{
 			"6568": {},
 			"7000": {},
-		})
-
-		convey.Convey("and matches candidate values irrespective of case", func() {
-			registered, err = store.registeredMetadataValues(ctx, combinedStudyMetaKeys, []string{"6568"})
-
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(registered, convey.ShouldContainKey, "6568")
 		})
 	})
 
