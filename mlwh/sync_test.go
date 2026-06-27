@@ -138,6 +138,16 @@ var (
 	syncCountingSQLiteCounters   = map[string]*syncCommitCounter{}
 )
 
+func withSampleSearchTokenReadPageSizeForTest(t *testing.T, size int) {
+	t.Helper()
+
+	original := sampleSearchTokenReadPageSize
+	sampleSearchTokenReadPageSize = size
+	t.Cleanup(func() {
+		sampleSearchTokenReadPageSize = original
+	})
+}
+
 func syncSelectedTablesForTest(ctx context.Context, client *Client, tables ...string) ([]SyncReport, error) {
 	reports := make([]SyncReport, 0, len(tables))
 	for _, table := range tables {
@@ -201,12 +211,16 @@ func TestFinalizeSampleSyncStateRebuildsLargeSQLiteSecondaryIndexes(t *testing.T
 		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM donor_samples`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`INSERT OR IGNORE INTO donor_samples(donor_id, id_sample_tmp) SELECT donor_id, id_sample_tmp FROM sample_mirror`)).WillReturnResult(sqlmock.NewResult(0, 10296551))
 		// The token index is rebuilt with index-added-after discipline: drop the
-		// covering index, clear the table, stream sample_mirror to tokenise, then
-		// recreate the index. The mirror read returns no rows here, so no token
-		// INSERT is issued before the index is recreated.
+		// covering index, clear the table, read sample_mirror in id-range pages to
+		// tokenise (closing each page's result set before inserting it, so MySQL is
+		// never asked to write while a SELECT result set is open), then recreate the
+		// index. The first page read returns no rows here, terminating the paged
+		// loop, so no further page read and no token INSERT is issued before the
+		// index is recreated.
 		mock.ExpectExec(regexp.QuoteMeta(`DROP INDEX IF EXISTS sample_search_token_idx`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM sample_search_token`)).WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror`)).
+		mock.ExpectQuery(regexp.QuoteMeta(sampleSearchTokenPageQuery + strconv.Itoa(sampleSearchTokenReadPageSize))).
+			WithArgs(int64(0)).
 			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp", "name", "supplier_name", "common_name", "donor_id"}))
 		mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS sample_search_token_idx ON sample_search_token(token, id_sample_tmp)`)).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectQuery(regexp.QuoteMeta(mirrorIndexInventoryQuery("sqlite", sampleMirrorIndexSet.Table))).WillReturnRows(sqlmock.NewRows([]string{"name"}))

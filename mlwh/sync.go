@@ -61,6 +61,14 @@ const (
 
 var syncColdBatchSize = 50000
 
+// sampleSearchTokenReadPageSize is the number of sample_mirror rows the cold-load
+// token rebuild reads per id-range page. Each page's rows are fully scanned and
+// the result set closed before that page's tokens are inserted, so the
+// transaction's single connection is never simultaneously reading a result set
+// and writing (which fails on MySQL at scale). It is a var so tests can shrink it
+// to force a modest fixture across many pages.
+var sampleSearchTokenReadPageSize = 4000
+
 var supportedSyncTables = []string{
 	syncTableSample,
 	syncTableStudy,
@@ -141,6 +149,11 @@ var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_
 // declaration order by the cold-load bulk build and the incremental
 // maintenance.
 var sampleSearchTokenColumns = []string{"token", "id_sample_tmp"}
+
+// sampleSearchTokenPageQuery selects one id-range page of sample_mirror rows for
+// the cold-load token rebuild, ordered by the primary key so paging is a strict
+// keyset scan (no OFFSET, no held-open result set).
+const sampleSearchTokenPageQuery = `SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror WHERE id_sample_tmp > ? ORDER BY id_sample_tmp LIMIT `
 
 // sampleSearchTokenIndex is the (token, id_sample_tmp) covering index that backs
 // the index-order sample search page. It is dropped before the cold-load bulk
@@ -257,18 +270,10 @@ type sampleSearchTokenRow struct {
 	IDSampleTmp int64
 }
 
-// insertSampleSearchTokensFromMirror reads every sample's id and searchable
-// fields from sample_mirror, tokenises them, and bulk-inserts the resulting
-// (token, id_sample_tmp) rows. Rows are buffered into bounded chunks so a 10M+
-// sample_mirror builds without an unbounded in-memory slice.
-func insertSampleSearchTokensFromMirror(ctx context.Context, tx *sql.Tx, dialect string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror`)
-	if err != nil {
-		return fmt.Errorf("mlwh: read sample_mirror for token rebuild: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	chunkRowLimit := syncStatementRowLimit(len(sampleSearchTokenColumns))
+// insertSampleSearchTokenPage tokenises one page of sample_mirror rows and
+// bulk-inserts the resulting (token, id_sample_tmp) rows in chunks bounded by the
+// statement parameter limit.
+func insertSampleSearchTokenPage(ctx context.Context, tx *sql.Tx, dialect string, page []sampleSearchTokenSource, chunkRowLimit int) error {
 	buffer := make([]sampleSearchTokenRow, 0, chunkRowLimit)
 	flush := func() error {
 		if len(buffer) == 0 {
@@ -284,29 +289,90 @@ func insertSampleSearchTokensFromMirror(ctx context.Context, tx *sql.Tx, dialect
 		return nil
 	}
 
-	for rows.Next() {
-		var (
-			id                                      int64
-			name, supplierName, commonName, donorID string
-		)
-		if err = rows.Scan(&id, &name, &supplierName, &commonName, &donorID); err != nil {
-			return fmt.Errorf("mlwh: scan sample_mirror for token rebuild: %w", err)
-		}
-
-		for _, token := range sampleSearchTokens(name, supplierName, commonName, donorID) {
-			buffer = append(buffer, sampleSearchTokenRow{Token: token, IDSampleTmp: id})
+	for _, source := range page {
+		for _, token := range sampleSearchTokens(source.Name, source.SupplierName, source.CommonName, source.DonorID) {
+			buffer = append(buffer, sampleSearchTokenRow{Token: token, IDSampleTmp: source.ID})
 			if len(buffer) == chunkRowLimit {
-				if err = flush(); err != nil {
+				if err := flush(); err != nil {
 					return err
 				}
 			}
 		}
 	}
-	if err = rows.Err(); err != nil {
-		return fmt.Errorf("mlwh: read sample_mirror for token rebuild: %w", err)
-	}
 
 	return flush()
+}
+
+// sampleSearchTokenSource holds one sample_mirror row's id and searchable fields,
+// read into memory one page at a time so the result set is closed before that
+// page's tokens are inserted.
+type sampleSearchTokenSource struct {
+	ID           int64
+	Name         string
+	SupplierName string
+	CommonName   string
+	DonorID      string
+}
+
+// readSampleSearchTokenPage reads one id-range page of sample_mirror rows after
+// lastID into a slice and closes the result set before returning, so no result
+// set is held open while the caller inserts the page's tokens. It returns the
+// page's rows and the maximum id_sample_tmp seen (the next page cursor).
+func readSampleSearchTokenPage(ctx context.Context, tx *sql.Tx, pageQuery string, lastID int64) ([]sampleSearchTokenSource, int64, error) {
+	rows, err := tx.QueryContext(ctx, pageQuery, lastID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("mlwh: read sample_mirror for token rebuild: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	page := make([]sampleSearchTokenSource, 0, sampleSearchTokenReadPageSize)
+	maxID := lastID
+	for rows.Next() {
+		var source sampleSearchTokenSource
+		if err = rows.Scan(&source.ID, &source.Name, &source.SupplierName, &source.CommonName, &source.DonorID); err != nil {
+			return nil, 0, fmt.Errorf("mlwh: scan sample_mirror for token rebuild: %w", err)
+		}
+
+		page = append(page, source)
+		if source.ID > maxID {
+			maxID = source.ID
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("mlwh: read sample_mirror for token rebuild: %w", err)
+	}
+
+	return page, maxID, nil
+}
+
+// insertSampleSearchTokensFromMirror reads every sample's id and searchable
+// fields from sample_mirror, tokenises them, and bulk-inserts the resulting
+// (token, id_sample_tmp) rows. It reads sample_mirror in id-range pages: each
+// page is fully scanned into a bounded slice and its result set closed BEFORE the
+// page's tokens are inserted, so the transaction's single connection is never
+// reading a result set while writing. This is required on MySQL, where executing
+// an INSERT while a streaming SELECT from the same connection is still open fails
+// with "driver: bad connection" at scale. Memory stays bounded to one page.
+func insertSampleSearchTokensFromMirror(ctx context.Context, tx *sql.Tx, dialect string) error {
+	chunkRowLimit := syncStatementRowLimit(len(sampleSearchTokenColumns))
+	pageQuery := sampleSearchTokenPageQuery + strconv.Itoa(sampleSearchTokenReadPageSize)
+	lastID := int64(0)
+
+	for {
+		page, maxID, err := readSampleSearchTokenPage(ctx, tx, pageQuery, lastID)
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			return nil
+		}
+
+		if err = insertSampleSearchTokenPage(ctx, tx, dialect, page, chunkRowLimit); err != nil {
+			return err
+		}
+
+		lastID = maxID
+	}
 }
 
 // sampleSearchTokens returns the distinct lowercased word tokens of the given

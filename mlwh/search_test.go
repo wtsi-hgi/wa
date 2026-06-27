@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -710,6 +711,76 @@ func TestCountSampleSearchBoundedByCap(t *testing.T) {
 			count, err := client.CountSampleSearch(context.Background(), "homo")
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldResemble, Count{Count: sampleSearchCountCap})
+		})
+	})
+}
+
+func TestColdLoadTokenRebuildPagesMirrorAndKeepsEverySampleSearchable(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache whose sample_mirror spans many id-range pages of the cold-load token rebuild", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// A tiny read page size forces the rebuild to read sample_mirror in many
+		// id-range pages, so the page cursor (lastID) and page boundaries are
+		// exercised rather than a single full scan. This is the structure that
+		// fails on MySQL at scale when a streaming result set is held open while
+		// inserting on the same connection; here it pins paged correctness.
+		withSampleSearchTokenReadPageSizeForTest(t, 2)
+
+		// Non-contiguous, out-of-insertion-order ids (with gaps) prove the rebuild
+		// orders by id_sample_tmp and advances strictly past the page's max id: a
+		// naive contiguous-id or OFFSET assumption, or an off-by-one cursor, would
+		// drop or double-process rows at a page boundary.
+		ids := []int64{50, 3, 17, 4, 99, 5, 18, 100, 2, 64}
+
+		// Each sample gets a globally unique, equal-length, collision-free word
+		// token ("uniqa", "uniqb", ...) so a prefix search for one sample's token
+		// matches that sample alone (no token is a prefix of another), plus a shared
+		// "homo" token. uniqueToken pairs an id with its unique token.
+		uniqueToken := func(id int64) string {
+			for index, candidate := range ids {
+				if candidate == id {
+					return "uniq" + string(rune('a'+index))
+				}
+			}
+
+			return ""
+		}
+		for _, id := range ids {
+			seedSampleMirrorSearchRow(t, cache.DB(), id, "specimen-"+formatInt(id), uniqueToken(id), "Homo sapiens", "donor-"+formatInt(id))
+		}
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when each sample is searched by its unique token, then every sample across every page is found", func() {
+			missing := make([]int64, 0)
+			for _, id := range ids {
+				samples, err := client.SearchSamples(context.Background(), uniqueToken(id), 100, 0)
+				convey.So(err, convey.ShouldBeNil)
+				if len(samples) != 1 || samples[0].IDSampleTmp != id {
+					missing = append(missing, id)
+				}
+			}
+			convey.So(missing, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("when the shared token is searched, then all samples from all pages are returned in id order", func() {
+			samples, err := client.SearchSamples(context.Background(), "homo", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			want := append([]int64(nil), ids...)
+			slices.Sort(want)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, want)
+		})
+
+		convey.Convey("when the distinct owners in the token table are counted, then every page's samples are present", func() {
+			// Counting the distinct id_sample_tmp owners proves no page was skipped
+			// and no page boundary dropped a sample's tokens: each seeded sample must
+			// own at least one token row.
+			distinct := countRows(t, cache.DB(), `SELECT COUNT(DISTINCT id_sample_tmp) FROM `+sampleSearchTokenTable)
+			convey.So(distinct, convey.ShouldEqual, len(ids))
 		})
 	})
 }
