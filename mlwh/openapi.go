@@ -32,12 +32,20 @@ import (
 	"sync"
 )
 
-// mlwhAPIVersion is the semantic version of the served MLWH REST API, surfaced
-// as info.version in the OpenAPI document. Its minor component tracks the cache
+// APIVersion is the semantic version of the served MLWH REST API, surfaced as
+// info.version in the OpenAPI document. Its minor component tracks the cache
 // schema-version lineage (CacheSchemaVersion) so the documented API version
 // moves with each schema/contract change; the patch component is reserved for
-// documentation-only revisions within a schema version.
-const mlwhAPIVersion = "1.6.0"
+// documentation-only revisions within a schema version. It is a compiled-in
+// constant: reading it never contacts a live server, letting an external
+// consumer (such as an MCP server importing this package) read the targeted API
+// version with compile-time safety.
+const APIVersion = "1.6.0"
+
+// mlwhAPIVersion is the unexported alias of APIVersion retained for internal
+// references; it shares APIVersion's single source of truth so the served
+// info.version and the public symbol can never drift.
+const mlwhAPIVersion = APIVersion
 
 // openAPIVersion is the OpenAPI specification version the generated document
 // conforms to.
