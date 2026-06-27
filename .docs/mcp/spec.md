@@ -47,19 +47,19 @@ minimum effective term length 3, index-backed**. No relevance score; results
 ordered by id for stable pagination.
 
 - **Searchable fields (fixed):**
-  - Study: `name`, `study_title`, `programme`, `faculty_sponsor`.
-  - Sample: `name`, `supplier_name`, `common_name`, `donor_id`.
+    - Study: `name`, `study_title`, `programme`, `faculty_sponsor`.
+    - Sample: `name`, `supplier_name`, `common_name`, `donor_id`.
 - **Study search** (small table, ~8k rows): plain `LIKE '%term%'` scan OR'd
   across the four study fields. No FTS index.
 - **Sample search** (large table, ~10M rows): an index narrows candidates,
   then a case-insensitive `LIKE '%term%'` post-filter over the four sample
   fields guarantees exact substring semantics.
-  - SQLite: an FTS5 external-content virtual table over the four fields using
-    the `trigram` tokenizer; `MATCH` narrows, `LIKE` confirms.
-  - MySQL: a single `FULLTEXT (...) WITH PARSER ngram` index over the four
-    fields; `MATCH ... AGAINST` (boolean mode) narrows, `LIKE` confirms.
-  - No MySQL server reconfiguration; rely on default `ngram_token_size = 2`
-    plus the post-filter. Do NOT build a portable trigram-table fallback.
+    - SQLite: an FTS5 external-content virtual table over the four fields using
+      the `trigram` tokenizer; `MATCH` narrows, `LIKE` confirms.
+    - MySQL: a single `FULLTEXT (...) WITH PARSER ngram` index over the four
+      fields; `MATCH ... AGAINST` (boolean mode) narrows, `LIKE` confirms.
+    - No MySQL server reconfiguration; rely on default `ngram_token_size = 2`
+      plus the post-filter. Do NOT build a portable trigram-table fallback.
 - **Parity is exact set-equality across dialects** because every backend
   applies the same `LIKE '%term%'` post-filter. The only permitted divergence
   is **accent handling** (MySQL `utf8mb4_0900_ai_ci` is accent-insensitive;
@@ -85,7 +85,7 @@ ordered by id for stable pagination.
   route and the search-`limit` max guard; register `GET /openapi.json`.
 - `mlwh/remote.go`: add `RemoteClient` methods for every new `Queryer` member.
 - `mlwh/openapi.go` (new): assemble the OpenAPI 3.1.0 document from `Registry`
-  + reflection over result types + the `{code,message}` envelope.
+    - reflection over result types + the `{code,message}` envelope.
 - `mlwh/docs.go` (new): generate the human endpoint reference from the same
   metadata.
 - `mlwh/cache_schema/{sqlite,mysql}/sample_search.sql` (new): the FTS5 virtual
@@ -155,15 +155,15 @@ All GET, JSON bodies, `{code,message}` envelope. Path identifiers
 URL-path-escaped by `RemoteClient`, unescaped by the handler (existing
 `mlwhPathParam`).
 
-| Queryer method       | Path                            | PathParams | Paginated | Response  |
-| -------------------- | ------------------------------- | ---------- | --------- | --------- |
-| SearchStudies        | /search/study/:term             | [term]     | true      | []Study   |
-| SearchSamples        | /search/sample/:term            | [term]     | true      | []Sample  |
-| CountStudySearch     | /search/study/:term/count       | [term]     | false     | Count     |
-| CountSampleSearch    | /search/sample/:term/count      | [term]     | false     | Count     |
-| CountStudies         | /studies/count                  | []         | false     | Count     |
-| CountSamplesForStudy | /study/:id/samples/count        | [id]       | false     | Count     |
-| Freshness            | /freshness                      | []         | false     | Freshness |
+| Queryer method       | Path                       | PathParams | Paginated | Response  |
+| -------------------- | -------------------------- | ---------- | --------- | --------- |
+| SearchStudies        | /search/study/:term        | [term]     | true      | []Study   |
+| SearchSamples        | /search/sample/:term       | [term]     | true      | []Sample  |
+| CountStudySearch     | /search/study/:term/count  | [term]     | false     | Count     |
+| CountSampleSearch    | /search/sample/:term/count | [term]     | false     | Count     |
+| CountStudies         | /studies/count             | []         | false     | Count     |
+| CountSamplesForStudy | /study/:id/samples/count   | [id]       | false     | Count     |
+| Freshness            | /freshness                 | []         | false     | Freshness |
 
 The `Endpoint` struct gains doc/param metadata (Goal 2); existing entries are
 backfilled with summaries/descriptions. `/health` and `/openapi.json` are
@@ -360,7 +360,7 @@ under a writable MySQL cache (see B3).
    id is de-duplicated and the sample fetched once.
 4. Given a `sqlmock` MySQL `Client`, when `CountSampleSearch(ctx, "acme")` runs,
    then the captured SQL is the bounded `COUNT(*)` over a `SELECT DISTINCT
-   id_sample_tmp ... LIMIT ?` (cap), with the prefix and cap bound.
+id_sample_tmp ... LIMIT ?` (cap), with the prefix and cap bound.
 
 ### A4: search routes, pagination guard, and RemoteClient
 
@@ -589,7 +589,7 @@ operational route.
 **Acceptance tests:**
 
 1. Given a server with any `Queryer` (even a never-synced cache), when `GET
-   /health` is served with no auth, then status is 200 and the body is
+/health` is served with no auth, then status is 200 and the body is
    `{"status":"ok"}`.
 2. Given the server handler source, when audited, then `/health` performs no
    cache read (it does not call the `Queryer`).
@@ -648,6 +648,7 @@ As a consumer, I want every response body consistently `snake_case`, so
 keys.
 
 Add JSON tags:
+
 - `Match` (`mlwh/mlwh.go`): `Kind->kind`, `Canonical->canonical`,
   `Sample->sample` (omitempty), `Study->study` (omitempty), `Run->run`
   (omitempty), `Library->library` (omitempty).
@@ -983,7 +984,7 @@ parallel unless noted.
   MySQL ngram full-text approach was abandoned: at 10.35M rows ngram FULLTEXT
   threw `Error 188` for most terms (and 20-32s otherwise), and a trigram inverted
   index cost ~16GB and 1-4s queries. Instead `sample_search_token(token,
-  id_sample_tmp)` stores the distinct lowercased `[a-z0-9]+` words of the four
+id_sample_tmp)` stores the distinct lowercased `[a-z0-9]+` words of the four
   fields, and search pages it in `(token, id_sample_tmp)` index order
   (`token LIKE 'prefix%'`) - 48-62ms at any cardinality, identical SQL across
   dialects. Semantics are start-of-word (not mid-word substring); the >=3-char
@@ -995,7 +996,7 @@ parallel unless noted.
   `sample_mirror` carries a derived search index.
 - **Counts are separate endpoints, not a list envelope.** Existing list
   endpoints keep bare-array bodies and the `mlwhServerFetchAllLimit =
-  1_000_000` fetch-all default, so the frontend study-samples / library-samples
+1_000_000` fetch-all default, so the frontend study-samples / library-samples
   fetch-all calls and `mlwhdiff` (`providerFetchLimit`) are untouched. Each
   count is its own `Queryer` method + `Registry` entry returning `{count:N}`,
   honouring `id_lims = 'SQSCP'` like its corresponding read.

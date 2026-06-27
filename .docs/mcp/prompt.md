@@ -32,7 +32,7 @@ Assessment of fit for the MCP use case:
   `RemoteClient` mean a competent implementor needs nothing from us to build
   that part.
 - **The real functional gap is discovery / search.** Every existing "find"
-  endpoint is an *exact* match (`/find/sample/supplier-name/:id`, etc.). There
+  endpoint is an _exact_ match (`/find/sample/supplier-name/:id`, etc.). There
   is no substring/fuzzy search and no server-side filtering, so open-ended
   natural-language questions ("studies about malaria", "studies sponsored by
   X", "samples whose supplier name contains …", "how many samples in study
@@ -60,13 +60,13 @@ Add cache-backed search/filter queries so the MCP server can answer open-ended
 "find / which / how many" questions instead of only exact-identifier lookups.
 
 - Cover at least the high-value discovery intents:
-  - **Study search** over human-meaningful fields — `name`, `study_title`,
-    `programme`, `faculty_sponsor` (the spec should confirm the exact field
-    set). The study table is comparatively small.
-  - **Sample search** over human-meaningful fields — e.g. `name`,
-    `supplier_name`, `common_name`, `donor_id` (confirm the set). The sample
-    table is very large (millions of rows), so sample search needs special care
-    for indexing and result bounding.
+    - **Study search** over human-meaningful fields — `name`, `study_title`,
+      `programme`, `faculty_sponsor` (the spec should confirm the exact field
+      set). The study table is comparatively small.
+    - **Sample search** over human-meaningful fields — e.g. `name`,
+      `supplier_name`, `common_name`, `donor_id` (confirm the set). The sample
+      table is very large (millions of rows), so sample search needs special care
+      for indexing and result bounding.
 - Each new query follows the established 1:1 discipline and the "add a new MLWH
   query" checklist from `.docs/mlwh-overhaul/spec.md` §Goal 4: add any needed
   column/index to **both** dialect schemas
@@ -139,20 +139,18 @@ Make every response body consistently `snake_case`.
 - Two directly-served types currently have **no JSON tags** and therefore
   serialise with Go's `PascalCase` field names, producing mixed casing in the
   same payload (e.g. `/classify` returns `{"Kind":…,"Canonical":…,"Study":{…
-  snake_case …}}`):
-  - `Match` (`mlwh/mlwh.go`) — returned by `/classify/:id`, `/resolve/*`.
-  - `TaggedID` (`mlwh/types.go`) — returned by `/expand/:kind/:id`.
+snake_case …}}`): - `Match` (`mlwh/mlwh.go`) — returned by `/classify/:id`, `/resolve/*`. - `TaggedID` (`mlwh/types.go`) — returned by `/expand/:kind/:id`.
 - Add `snake_case` JSON tags to both so all endpoints are uniform.
 - This is a **breaking wire change** with a defined blast radius that must be
   updated in lockstep:
-  - Frontend: `validateIdentifier` in `frontend/app/(results)/actions.ts`
-    parses `/classify` through the Zod `identifierResultSchema` — update that
-    schema (and any dependent TS type / `studies-cache` usage) to the new keys.
-  - `RemoteClient` decodes into the **same** Go structs as the server encodes,
-    so it stays automatically consistent; the `RemoteClient`↔`Client` parity
-    test must still pass. `wa mlwh info` (which consumes `Match` via
-    `RemoteClient`) is unaffected at the Go level.
-  - Audit for any other consumer of the affected endpoints' raw JSON.
+    - Frontend: `validateIdentifier` in `frontend/app/(results)/actions.ts`
+      parses `/classify` through the Zod `identifierResultSchema` — update that
+      schema (and any dependent TS type / `studies-cache` usage) to the new keys.
+    - `RemoteClient` decodes into the **same** Go structs as the server encodes,
+      so it stays automatically consistent; the `RemoteClient`↔`Client` parity
+      test must still pass. `wa mlwh info` (which consumes `Match` via
+      `RemoteClient`) is unaffected at the Go level.
+    - Audit for any other consumer of the affected endpoints' raw JSON.
 
 ### 5. Bounded, count-aware pagination for LLM contexts
 
@@ -169,15 +167,15 @@ context, and make counts cheap.
   the frontend and any other param-omitting caller.
 - The spec must deliver bounded, count-aware listing **without breaking
   fetch-all callers**. It should choose and justify an approach such as:
-  - a documented **maximum limit** guard high enough not to disturb the
-    explicit-large-limit internal callers, plus a documented recommended page
-    size for external/MCP clients;
-  - **count** support (dedicated count endpoints, or a `count`-only mode, or a
-    total exposed via response metadata / header) so "how many …" needs no full
-    transfer — this also backs Goal 1;
-  - if a richer list envelope (total + truncation flag) is considered, treat the
-    change from today's bare-JSON-array bodies as breaking and coordinate it
-    with the frontend and `RemoteClient` decoders, or keep it opt-in.
+    - a documented **maximum limit** guard high enough not to disturb the
+      explicit-large-limit internal callers, plus a documented recommended page
+      size for external/MCP clients;
+    - **count** support (dedicated count endpoints, or a `count`-only mode, or a
+      total exposed via response metadata / header) so "how many …" needs no full
+      transfer — this also backs Goal 1;
+    - if a richer list envelope (total + truncation flag) is considered, treat the
+      change from today's bare-JSON-array bodies as breaking and coordinate it
+      with the frontend and `RemoteClient` decoders, or keep it opt-in.
 - Whatever is chosen must keep the existing frontend study-samples and
   `mlwhdiff` fetch-all behaviour correct.
 
@@ -247,7 +245,7 @@ Notes). The work here must:
   vitest enrichment fixtures must still pass) or any existing consumer
   (`wa mlwh info`, `wa mlwhdiff serve`, `wa results serve`, the frontend).
 - **Tests follow project conventions** (GoConvey; `sqlmock` + `modernc.org/
-  sqlite`; both cache dialects via the existing matrix harness). Add: handler
+sqlite`; both cache dialects via the existing matrix harness). Add: handler
   tests for the new endpoints; `RemoteClient`↔`Client` parity for the new
   `Queryer` members; a test that the OpenAPI document covers every endpoint and
   type; updated frontend tests for the casing change. Live-MLWH integration
@@ -284,10 +282,10 @@ Notes). The work here must:
   `mlwh/cache_schema/{sqlite,mysql}/*.sql`, `mlwh/cache.go` (sync state /
   high-water), and the parity test.
 - Consumers affected / to keep working: `cmd/mlwh_info.go`, `cmd/mlwhdiff.go`
-  + `mlwhdiff/provider.go` (`providerFetchLimit`), `cmd/results.go`, and the
-  frontend `frontend/app/(results)/actions.ts` (`validateIdentifier` →
-  `identifierResultSchema`, study/library sample fetches that omit `limit`)
-  plus its Zod schemas and `frontend/lib/studies-cache`.
+    - `mlwhdiff/provider.go` (`providerFetchLimit`), `cmd/results.go`, and the
+      frontend `frontend/app/(results)/actions.ts` (`validateIdentifier` →
+      `identifierResultSchema`, study/library sample fetches that omit `limit`)
+      plus its Zod schemas and `frontend/lib/studies-cache`.
 - Governing prior specs: `.docs/mlwh-overhaul/spec.md`, `.docs/mlwh-sync/spec.md`,
   `.docs/mlwh/spec.md`, `.docs/proposal.md`.
 
@@ -304,8 +302,8 @@ These are already decided by the requester and override looser wording above.
 
 ### Clarifications — round 1
 
-- **Search matching strategy (Goal 1):** *The final matching mechanism is fixed
-  in round 3 below, which is authoritative for how search works.* What still
+- **Search matching strategy (Goal 1):** _The final matching mechanism is fixed
+  in round 3 below, which is authoritative for how search works._ What still
   holds at this level: search is index-backed, the index is built and maintained
   by `wa mlwh sync`, and adding it requires new columns/indexes in **both**
   dialect schemas plus extending the cache-schema parser and two-dialect parity
@@ -369,9 +367,9 @@ These are already decided by the requester and override looser wording above.
   Pagination uses the existing `?limit`/`?offset` (default 100, max 1000 from
   round 1). No new query-param plumbing is added to the handler or
   `RemoteClient`; the term is URL-encoded like other path params.
-- **Search index design (Goal 1):** *Superseded by round 3 — see there for the
+- **Search index design (Goal 1):** _Superseded by round 3 — see there for the
   final matching mechanism (substring), the per-entity strategy, the field sets,
-  and the parity contract.* One testing detail from this round still applies:
+  and the parity contract._ One testing detail from this round still applies:
   because `sqlmock` cannot evaluate the MySQL full-text predicate, MySQL unit
   tests assert query construction while real matching is exercised for SQLite
   (FTS5) in unit tests and for MySQL only under `WA_MLWH_DSN`.
@@ -404,15 +402,15 @@ and 2. The searchable field sets are unchanged (study: `name`, `study_title`,
   Verified against the real cache backend (Oracle **MySQL 8.4.7**;
   `sample_mirror` ≈ 10.3M rows, `study_mirror` ≈ 8.2k rows; `ngram_token_size`
   = 2, `innodb_ft_min_token_size` = 3):
-  - **Sample search** (large table): index-backed substring via the SQLite FTS5
-    **`trigram`** tokenizer and a MySQL **`FULLTEXT … WITH PARSER ngram`** index
-    over the sample search fields, each used to narrow candidates and then
-    **confirmed with a case-insensitive `LIKE '%term%'` post-filter**. The
-    post-filter guarantees exact substring semantics. No server reconfiguration:
-    rely on the default `ngram_token_size = 2` plus the post-filter; do not
-    require changing global MySQL FTS variables.
-  - **Study search** (small table): a plain `LIKE '%term%'` scan across the
-    study search fields (OR'd), **no FTS index**.
+    - **Sample search** (large table): index-backed substring via the SQLite FTS5
+      **`trigram`** tokenizer and a MySQL **`FULLTEXT … WITH PARSER ngram`** index
+      over the sample search fields, each used to narrow candidates and then
+      **confirmed with a case-insensitive `LIKE '%term%'` post-filter**. The
+      post-filter guarantees exact substring semantics. No server reconfiguration:
+      rely on the default `ngram_token_size = 2` plus the post-filter; do not
+      require changing global MySQL FTS variables.
+    - **Study search** (small table): a plain `LIKE '%term%'` scan across the
+      study search fields (OR'd), **no FTS index**.
 - **Parity is now exact set-equality (supersedes the round-2 "set-only with
   documented ranking divergence").** Because every backend applies the same
   `LIKE '%term%'` post-filter, the search endpoints return **identical row sets
@@ -470,8 +468,7 @@ unchanged** (plain `LIKE '%term%'` scan on the ~8k-row `study_mirror`; measured
   Measured: ~4 tokens/row, **~1.7GB**, ~7.5min to build at 10.35M.
 - **`SearchSamples`:** match the lowercased query as a **prefix against tokens**.
   Page via index-order — `WHERE token LIKE 'prefix%' ORDER BY token,
-  id_sample_tmp LIMIT ? OFFSET ?` — then fetch the sample rows (small over-fetch
-  + dedupe ids). This streams the page from the index with no global sort:
+id_sample_tmp LIMIT ? OFFSET ?` — then fetch the sample rows (small over-fetch - dedupe ids). This streams the page from the index with no global sort:
   measured **48-62ms at any cardinality** (`homo`/1.9M matches = 62ms). All
   sample rows are `id_lims='SQSCP'` (the sync invariant), so no scoping join is
   needed in the hot path. Do NOT use `SELECT DISTINCT ... ORDER BY id` (measured

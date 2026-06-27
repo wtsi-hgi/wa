@@ -5,7 +5,7 @@ identifier kind exposed by the cache-backed `wa mlwh serve` REST API, for an
 implementor with no prior MLWH or Sanger background. The machine-readable
 schemas of every response live in the OpenAPI document at `GET /openapi.json`;
 the catalogue of endpoints is in `api-reference.md`. This file is hand-authored
-and explains *what the things mean*, not the wire format.
+and explains _what the things mean_, not the wire format.
 
 The **MLWH** (Multi-LIMS Warehouse) is a read-only data warehouse that mirrors
 metadata from the Sanger Institute's Laboratory Information Management Systems
@@ -104,7 +104,7 @@ study ──< library >── sample ──< lane (run, lane, tag) >── run
 
 ## Identifier kinds
 
-An **identifier kind** (`IdentifierKind`) names what a raw identifier *is*. The
+An **identifier kind** (`IdentifierKind`) names what a raw identifier _is_. The
 `/classify`, `/resolve/*`, and `/expand/*` endpoints report the kind of an
 identifier and its canonical value, so a natural-language layer can turn a bare
 string a user typed into the right lookup. The complete set of kinds is below;

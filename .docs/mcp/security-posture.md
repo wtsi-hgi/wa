@@ -112,7 +112,7 @@ wire contract in two ways:
 - The data endpoints move **under the `/rest/v1/auth` prefix** (gas
   `EndPointAuth`), because they are registered on the JWT-protected auth router
   group instead of at their root paths. (The plain operational routes `GET
-  /health` and `GET /openapi.json` stay at the root and remain reachable without
+/health` and `GET /openapi.json` stay at the root and remain reachable without
   a token.)
 - Reaching those endpoints requires a **JWT** obtained by first logging in at
   `POST /rest/v1/jwt` (gas `EndPointJWT`) and then sending it as a
