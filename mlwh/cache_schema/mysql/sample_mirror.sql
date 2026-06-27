@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS sample_mirror (
 	sanger_sample_id VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
 	supplier_name    VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
 	accession_number VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
-	donor_id         VARCHAR(255) NOT NULL,
+	donor_id         VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
 	taxon_id         INT          NOT NULL,
-	common_name      VARCHAR(255) NOT NULL,
+	common_name      VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
 	description      TEXT         NOT NULL,
 	last_updated     VARCHAR(255) NOT NULL
 );
@@ -34,6 +34,9 @@ CREATE INDEX sample_mirror_accession_number_idx
 
 CREATE INDEX sample_mirror_donor_id_idx
 	ON sample_mirror(donor_id);
+
+CREATE INDEX sample_mirror_common_name_idx
+	ON sample_mirror(common_name);
 
 CREATE INDEX sample_mirror_last_updated_idx
 	ON sample_mirror(last_updated);

@@ -768,6 +768,203 @@ func TestSearchSamplesMultiWordCountEqualsPagedResults(t *testing.T) {
 	})
 }
 
+// TestSearchSamplesPartialMultiWordTermMatchesFullValuePrefix is the 260627-10
+// regression for the partial term "hek_r": it word-tokenises to "hek","r" (one a
+// very broad single-char prefix), which made the old multi-token word-AND scan a
+// huge union and time out. The fix unions a fast full-value PREFIX match over the
+// four NOCASE/ci-indexed fields with the word-token AND: "hek_r" must find the
+// sample whose supplier_name is literally "Hek_R1" (the full-value prefix) but NOT
+// an unrelated sample whose only "hek*" word has no "r*" continuation.
+func TestSearchSamplesPartialMultiWordTermMatchesFullValuePrefix(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with a Hek_R1 supplier and hek-only decoys", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// id 1 supplier_name "Hek_R1" starts literally with "hek_r" (full-value
+		// prefix) and tokenises to "hek","r1".
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "name-1", "Hek_R1", "Homo sapiens", "donor-1")
+		// id 2 "HEK293" has a "hek*" word but no "r*" word: no "hek_r" prefix and no
+		// "r" continuation, so neither the prefix nor the word-AND must match it.
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "HEK293", "Homo sapiens", "donor-2")
+		// id 3 has an "r1*" word but no "hek*" word: the word-AND must reject it.
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "name-3", "R1-only", "Mus musculus", "donor-3")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchSamples runs for hek_r, then only the Hek_R1 sample matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "hek_r", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+		})
+
+		convey.Convey("when CountSampleSearch runs for hek_r, then it equals the full SearchSamples length", func() {
+			count, err := client.CountSampleSearch(context.Background(), "hek_r")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+
+			samples, searchErr := client.SearchSamples(context.Background(), "hek_r", 1000, 0)
+			convey.So(searchErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+	})
+}
+
+// TestSearchSamplesMultiWordTermMatchesCommonNameFullPrefix is the 260627-10
+// regression for "homo sapiens": both word tokens are very broad prefixes, so the
+// word-token anchor is skipped and the full-value PREFIX match over the
+// common_name index carries the term. It must find the sample whose common_name is
+// "Homo sapiens" and exclude a sample whose common_name is "Homo neanderthalensis"
+// (it has a "homo*" word but its full value does not start with "homo sapiens").
+func TestSearchSamplesMultiWordTermMatchesCommonNameFullPrefix(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with Homo sapiens and other Homo common names", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "name-1", "supplier-1", "Homo sapiens", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "supplier-2", "Homo sapiens", "donor-2")
+		// id 3 common_name "Homo neanderthalensis": has a "homo*" word but does not
+		// start with "homo sapiens", so the full-value prefix must exclude it (and the
+		// word-token anchor for the broad tokens "homo"/"sapiens" contributes nothing).
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "name-3", "supplier-3", "Homo neanderthalensis", "donor-3")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchSamples runs for \"homo sapiens\", then only the Homo sapiens samples match", func() {
+			samples, err := client.SearchSamples(context.Background(), "homo sapiens", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
+		})
+
+		convey.Convey("when CountSampleSearch runs for \"homo sapiens\", then it equals the full SearchSamples length", func() {
+			count, err := client.CountSampleSearch(context.Background(), "homo sapiens")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 2})
+
+			samples, searchErr := client.SearchSamples(context.Background(), "homo sapiens", 1000, 0)
+			convey.So(searchErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+	})
+}
+
+// TestSearchSamplesMultiWordFullPrefixPageUsesNoBroadGroupBy is the 260627-10
+// performance contract: the full-value prefix page query that carries a multi-word
+// term must resolve via the four NOCASE/ci-collated column indexes (a MULTI-INDEX OR
+// of anchored prefix ranges), never the removed broad multi-token GROUP BY over the
+// union of every per-token range. Asserting the EXPLAIN QUERY PLAN is the same
+// behavioural proxy used by the single-range plan tests: index range SEARCHes and no
+// GROUP BY aggregation.
+func TestSearchSamplesMultiWordFullPrefixPageUsesNoBroadGroupBy(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache reachable through its read handle", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		for id := 1; id <= 64; id++ {
+			seedSampleMirrorSearchRow(t, cache.DB(), int64(id), "name-"+formatInt(int64(id)), "supplier-"+formatInt(int64(id)), "Homo sapiens", "donor-"+formatInt(int64(id)))
+		}
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		readDB := cacheReadDB(cache)
+		convey.So(readDB, convey.ShouldNotBeNil)
+
+		pattern := escapeLIKEPrefixPattern("homo sapiens")
+		args := append(likeContainsArgs(pattern, sampleFullPrefixFields), 100)
+
+		convey.Convey("when the full-value prefix page query is planned, then it uses the column indexes with no GROUP BY", func() {
+			details := explainQueryPlanDetails(t, readDB, sampleFullPrefixPageSQL, args...)
+
+			convey.So(planUsesNamedIndexSearch(details, "sample_mirror_common_name_idx"), convey.ShouldBeTrue)
+			convey.So(planUsesGroupBy(details), convey.ShouldBeFalse)
+		})
+	})
+}
+
+// TestSearchSamplesSeparatorInsensitiveSpacedTermMatchesViaAnchor pins that the
+// spaced term "hek r1" still matches the supplier_name "Hek_R1" through the
+// word-token anchor (the term and the stored value tokenise identically), while a
+// "hek"-only sample and an "r1"-only sample are excluded - the word-AND behaviour
+// from 260627-6 preserved through the anchor strategy that replaced the GROUP BY.
+func TestSearchSamplesSeparatorInsensitiveSpacedTermMatchesViaAnchor(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with Hek_R1 and single-word decoys", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "7607STDY", "Hek_R1", "Homo sapiens", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "HEK293-clone", "Homo sapiens", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "name-3", "R1-batch", "Mus musculus", "donor-3")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchSamples runs for the spaced term \"hek r1\", then only the sample with both words matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "hek r1", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+		})
+
+		convey.Convey("when CountSampleSearch runs for \"hek r1\", then it equals the full SearchSamples length", func() {
+			count, err := client.CountSampleSearch(context.Background(), "hek r1")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+
+			samples, searchErr := client.SearchSamples(context.Background(), "hek r1", 1000, 0)
+			convey.So(searchErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+	})
+}
+
+// TestSearchSamplesMultiWordWithOnlyBroadShortTokensDoesNotBlowUp pins that a
+// multi-word term whose only searchable token is broad and whose other tokens are
+// shorter than searchTermMinLength still completes quickly and correctly: the
+// word-token anchor handles the broad token and verifies the short token in memory,
+// while the full-value prefix carries any literal-prefix matches. The count agrees
+// with the full result length.
+func TestSearchSamplesMultiWordWithOnlyBroadShortTokensDoesNotBlowUp(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache where many samples share a broad word and a few add a short word", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// A block of "hek"-word samples, only some of which also carry an "r1" word,
+		// exceeding nothing but proving the broad anchor + in-memory short-token check
+		// stays correct and bounded.
+		for id := 1; id <= 200; id++ {
+			supplier := "HEK293-" + formatInt(int64(id))
+			if id%4 == 0 {
+				supplier = "Hek R1 " + formatInt(int64(id))
+			}
+			seedSampleMirrorSearchRow(t, cache.DB(), int64(id), "name-"+formatInt(int64(id)), supplier, "Homo sapiens", "donor-"+formatInt(int64(id)))
+		}
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchSamples and CountSampleSearch run for \"hek r1\", then only the samples with both words match and the count agrees", func() {
+			samples, err := client.SearchSamples(context.Background(), "hek r1", 1000, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			want := make([]int64, 0)
+			for id := int64(1); id <= 200; id++ {
+				if id%4 == 0 {
+					want = append(want, id)
+				}
+			}
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, want)
+
+			count, countErr := client.CountSampleSearch(context.Background(), "hek r1")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+	})
+}
+
 // TestSearchSamplesNonASCIITermSearchesItsAsciiTokens proves the new tokenised
 // behaviour: a non-ASCII term is tokenised the same way stored values are, so
 // "café" searches its token "caf" (matching a sample with a "caf*" word) while a
@@ -1458,6 +1655,21 @@ func sampleTmpIDs(samples []Sample) []int64 {
 func planUsesGroupBy(details []string) bool {
 	for _, detail := range details {
 		if strings.Contains(detail, "GROUP BY") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// planUsesNamedIndexSearch reports whether any plan row is an index range SEARCH
+// using the named index (SQLite renders the full-value prefix's NOCASE/ci index
+// ranges as "SEARCH sample_mirror USING INDEX <name> (col>? AND col<?)"), the
+// behavioural proxy for "the full-value prefix uses the column index, not a full
+// table scan".
+func planUsesNamedIndexSearch(details []string, indexName string) bool {
+	for _, detail := range details {
+		if strings.Contains(detail, "SEARCH") && strings.Contains(detail, indexName) {
 			return true
 		}
 	}
