@@ -297,6 +297,24 @@ func (rc *RemoteClient) LibraryDetail(ctx context.Context, pipelineIDLims, study
 	return remoteCall[LibraryDetail](rc, ctx, "LibraryDetail", []string{pipelineIDLims, studyLimsID}, nil)
 }
 
+// Call is the generic counterpart to the typed methods (ResolveSample,
+// AllStudies, ...): instead of selecting an endpoint at compile time, it
+// dispatches to the Registry entry whose Method name equals method. It is for
+// callers that choose an endpoint dynamically by Registry Method name, such as
+// a generic "call any endpoint" tool, without a hand-written switch.
+//
+// pathParams supplies the endpoint's path parameters in declaration order and
+// query supplies any query parameters (e.g. limit/offset for paginated
+// endpoints). The decoded typed result is returned as an any holding a pointer
+// to the endpoint's NewResult type (for example *Match for ResolveSample or
+// *[]Study for AllStudies); type-assert it to that pointer to read the value.
+//
+// Call surfaces the same errors as the typed methods, including an unknown or
+// missing Registry method and a path-param arity mismatch.
+func (rc *RemoteClient) Call(ctx context.Context, method string, pathParams []string, query url.Values) (any, error) {
+	return rc.do(ctx, method, pathParams, query)
+}
+
 func (rc *RemoteClient) do(ctx context.Context, method string, pathParams []string, query url.Values) (any, error) {
 	if rc == nil || rc.httpClient == nil {
 		return nil, fmt.Errorf("%w: nil remote client", ErrUpstreamImpaired)

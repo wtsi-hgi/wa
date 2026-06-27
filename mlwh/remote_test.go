@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -267,6 +268,96 @@ func TestRemoteClientCountStudiesRoundTripsF3(t *testing.T) {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldResemble, Count{Count: 7})
 			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/studies/count")
+		})
+	})
+}
+
+func TestRemoteClientCallMatchesTypedResolveSample(t *testing.T) {
+	convey.Convey("Given a stub MLWH server returning a sample Match", t, func() {
+		requestURIs := make(chan string, 2)
+		match := Match{Kind: KindSangerSampleName, Canonical: "SANGER1", Sample: &Sample{IDSampleTmp: 1, Name: "Alpha"}}
+		server := newRemoteClientJSONServerForTest(requestURIs, match)
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when Call dispatches ResolveSample dynamically, then it yields the same result as the typed method", func() {
+			result, err := client.Call(context.Background(), "ResolveSample", []string{"SANGER1"}, nil)
+			convey.So(err, convey.ShouldBeNil)
+
+			typed, ok := result.(*Match)
+			convey.So(ok, convey.ShouldBeTrue)
+
+			expected, err := client.ResolveSample(context.Background(), "SANGER1")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(*typed, convey.ShouldResemble, expected)
+
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "Call request URI"), convey.ShouldEqual, "/resolve/sample/SANGER1")
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "typed request URI"), convey.ShouldEqual, "/resolve/sample/SANGER1")
+		})
+	})
+}
+
+func TestRemoteClientCallPaginationPassthrough(t *testing.T) {
+	convey.Convey("Given a stub MLWH server returning a page of studies", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, []Study{
+			{IDStudyLims: "1", Name: "Malaria genomics"},
+			{IDStudyLims: "2", Name: "Malaria vaccine"},
+		})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when Call drives AllStudies with limit/offset query values, then it returns the decoded rows and forwards the pagination", func() {
+			result, err := client.Call(context.Background(), "AllStudies", nil, url.Values{"limit": {"2"}, "offset": {"0"}})
+			convey.So(err, convey.ShouldBeNil)
+
+			studies, ok := result.(*[]Study)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(*studies, convey.ShouldResemble, []Study{
+				{IDStudyLims: "1", Name: "Malaria genomics"},
+				{IDStudyLims: "2", Name: "Malaria vaccine"},
+			})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/studies?limit=2&offset=0")
+		})
+	})
+}
+
+func TestRemoteClientCallUnknownMethod(t *testing.T) {
+	convey.Convey("Given a RemoteClient", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, Match{})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when Call is given an unknown Registry method, then it returns an error", func() {
+			result, err := client.Call(context.Background(), "NoSuchMethod", nil, nil)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(result, convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestRemoteClientCallPathParamArityMismatch(t *testing.T) {
+	convey.Convey("Given a RemoteClient", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, Match{})
+		defer server.Close()
+
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when Call dispatches a path-param endpoint with no path params, then it returns an error", func() {
+			result, err := client.Call(context.Background(), "ResolveSample", nil, nil)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(result, convey.ShouldBeNil)
 		})
 	})
 }
