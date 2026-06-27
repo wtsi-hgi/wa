@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 )
 
 // mlwhAPIVersion is the semantic version of the served MLWH REST API, surfaced
@@ -49,6 +50,19 @@ const openAPISchemaRefPrefix = "#/components/schemas/"
 // openAPIErrorSchemaName is the component schema name of the {code, message}
 // error envelope shared by every error response.
 const openAPIErrorSchemaName = "Error"
+
+// openAPIDocumentOnce builds the OpenAPI document exactly once. The document is
+// static at runtime (it derives only from the package-level Registry, the
+// served Go types, and mlwhAPIVersion), so the reflection and large nested-map
+// allocation OpenAPIDocument() performs need not repeat per request.
+var openAPIDocumentOnce = sync.OnceValue(OpenAPIDocument)
+
+// memoizedOpenAPIDocument returns the shared, built-once OpenAPI document for
+// serving at GET /openapi.json. It is byte-for-byte identical to
+// OpenAPIDocument() but avoids rebuilding the document on every request.
+func memoizedOpenAPIDocument() map[string]any {
+	return openAPIDocumentOnce()
+}
 
 // openAPIErrorResponse pairs a stable error code with the HTTP status it is
 // returned under, derived from httpStatusAndErrorCode in errors_http.go plus the

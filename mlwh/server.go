@@ -647,9 +647,11 @@ func mlwhHealthHandler(c *gin.Context) {
 
 // mlwhOpenAPIHandler answers GET /openapi.json with the generated OpenAPI 3.1.0
 // document. Like /health it is a static plain route that does not consult the
-// queryer, so it stays inexpensive and reachable without authentication.
+// queryer, so it stays inexpensive and reachable without authentication. The
+// document is built once and reused, so the reflection and large-map allocation
+// behind it do not repeat per request.
 func mlwhOpenAPIHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, OpenAPIDocument())
+	c.JSON(http.StatusOK, memoizedOpenAPIDocument())
 }
 
 func mlwhQueryInt(c *gin.Context, name string, defaultValue int) (int, bool) {

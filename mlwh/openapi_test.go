@@ -76,6 +76,33 @@ func TestServerOpenAPIRouteDoesNotReadCacheC2(t *testing.T) {
 	})
 }
 
+func TestServerOpenAPIRouteServesDocumentC2(t *testing.T) {
+	// The served document is built once and reused (memoised), but the route's
+	// observable behaviour must be unchanged: the body must decode to exactly the
+	// document OpenAPIDocument() produces, and successive requests must return the
+	// identical body.
+	convey.Convey("Given GET /openapi.json, then the served body equals OpenAPIDocument() and is stable across requests", t, func() {
+		queryer := &serverFakeQueryer{}
+
+		want, err := json.Marshal(OpenAPIDocument())
+		convey.So(err, convey.ShouldBeNil)
+
+		var wantDoc map[string]any
+		convey.So(json.Unmarshal(want, &wantDoc), convey.ShouldBeNil)
+
+		first := performMLWHRequestForTest(t, queryer, http.MethodGet, "/openapi.json")
+		convey.So(first.Code, convey.ShouldEqual, http.StatusOK)
+
+		var servedDoc map[string]any
+		decodeMLWHJSONResponseForTest(t, first, &servedDoc)
+		convey.So(reflect.DeepEqual(servedDoc, wantDoc), convey.ShouldBeTrue)
+
+		second := performMLWHRequestForTest(t, queryer, http.MethodGet, "/openapi.json")
+		convey.So(second.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(second.Body.Bytes(), convey.ShouldResemble, first.Body.Bytes())
+	})
+}
+
 func TestOpenAPIDocumentIdentityC2(t *testing.T) {
 	// C2 acceptance test 1.
 	convey.Convey("Given the generated document, when parsed, then its identity fields match the spec", t, func() {
