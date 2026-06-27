@@ -40,33 +40,33 @@ describe("Playwright MLWH seqmeta stub", () => {
 
         expect(response.status).toBe(200);
         expect(body).toMatchObject({
-            Canonical: "7607",
-            Kind: "study_lims_id",
-            Sample: null,
-            Study: {
+            canonical: "7607",
+            kind: "study_lims_id",
+            sample: null,
+            study: {
                 id_study_lims: "7607",
                 name: "7607",
             },
-            Run: null,
-            Library: null,
+            run: null,
+            library: null,
         });
     });
 
-    it("classifies samples into the Sample Match field", async () => {
+    it("classifies samples into the sample Match field", async () => {
         const response = await fetch(`${baseUrl}/classify/7607STDY14643771`);
         const body = (await response.json()) as Record<string, unknown>;
 
         expect(response.status).toBe(200);
         expect(body).toMatchObject({
-            Canonical: "7607STDY14643771",
-            Kind: "sanger_sample_name",
-            Sample: {
+            canonical: "7607STDY14643771",
+            kind: "sanger_sample_name",
+            sample: {
                 sanger_id: "7607STDY14643771",
                 sample_name: "7607STDY14643771",
             },
-            Study: null,
-            Run: null,
-            Library: null,
+            study: null,
+            run: null,
+            library: null,
         });
     });
 

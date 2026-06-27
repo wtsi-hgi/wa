@@ -57,25 +57,49 @@ const (
 	MaxSamplesPerHop     int            = 1000
 )
 
+// IdentifierKinds returns every IdentifierKind constant value in a stable
+// declaration order. It is the single source of truth for the set of supported
+// identifier kinds, consumed by the domain glossary's coverage test so a newly
+// added kind that is left undocumented is caught.
+func IdentifierKinds() []IdentifierKind {
+	return []IdentifierKind{
+		KindSampleUUID,
+		KindSampleLimsID,
+		KindSangerSampleName,
+		KindSangerSampleID,
+		KindSupplierName,
+		KindSampleAccession,
+		KindDonorID,
+		KindStudyUUID,
+		KindStudyLimsID,
+		KindStudyAccession,
+		KindStudyName,
+		KindRunID,
+		KindLibraryType,
+		KindLibraryID,
+		KindLibraryLimsID,
+	}
+}
+
 // Library is the cache-backed library shape mirrored from MLWH.
 type Library struct {
-	PipelineIDLims string `json:"pipeline_id_lims"`
-	IDStudyLims    string `json:"id_study_lims"`
-	LibraryID      string `json:"library_id,omitempty"`
-	IDLibraryLims  string `json:"id_library_lims,omitempty"`
+	PipelineIDLims string `json:"pipeline_id_lims" doc:"pipeline LIMS identifier of the library"`
+	IDStudyLims    string `json:"id_study_lims" doc:"LIMS identifier of the study the library belongs to"`
+	LibraryID      string `json:"library_id,omitempty" doc:"library identifier, when known"`
+	IDLibraryLims  string `json:"id_library_lims,omitempty" doc:"LIMS library identifier, when known"`
 }
 
 // Run is the run identifier shape resolved from MLWH.
 type Run struct {
-	IDRun int `json:"id_run"`
+	IDRun int `json:"id_run" doc:"sequencing run identifier"`
 }
 
 // Match is the canonical resolver result.
 type Match struct {
-	Kind      IdentifierKind
-	Canonical string
-	Sample    *Sample
-	Study     *Study
-	Run       *Run
-	Library   *Library
+	Kind      IdentifierKind `json:"kind" doc:"kind of the resolved identifier"`
+	Canonical string         `json:"canonical" doc:"canonical form of the resolved identifier"`
+	Sample    *Sample        `json:"sample,omitempty" doc:"matched sample, when the identifier resolves to one"`
+	Study     *Study         `json:"study,omitempty" doc:"matched study, when the identifier resolves to one"`
+	Run       *Run           `json:"run,omitempty" doc:"matched run, when the identifier resolves to one"`
+	Library   *Library       `json:"library,omitempty" doc:"matched library, when the identifier resolves to one"`
 }

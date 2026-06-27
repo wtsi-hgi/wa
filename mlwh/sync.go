@@ -61,6 +61,14 @@ const (
 
 var syncColdBatchSize = 50000
 
+// sampleSearchTokenReadPageSize is the number of sample_mirror rows the cold-load
+// token rebuild reads per id-range page. Each page's rows are fully scanned and
+// the result set closed before that page's tokens are inserted, so the
+// transaction's single connection is never simultaneously reading a result set
+// and writing (which fails on MySQL at scale). It is a var so tests can shrink it
+// to force a modest fixture across many pages.
+var sampleSearchTokenReadPageSize = 4000
+
 var supportedSyncTables = []string{
 	syncTableSample,
 	syncTableStudy,
@@ -137,9 +145,29 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
 
+// sampleSearchTokenColumns are the sample_search_token columns written in
+// declaration order by the cold-load bulk build and the incremental
+// maintenance.
+var sampleSearchTokenColumns = []string{"token", "id_sample_tmp"}
+
+// sampleSearchTokenPageQuery selects one id-range page of sample_mirror rows for
+// the cold-load token rebuild, ordered by the primary key so paging is a strict
+// keyset scan (no OFFSET, no held-open result set).
+const sampleSearchTokenPageQuery = `SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror WHERE id_sample_tmp > ? ORDER BY id_sample_tmp LIMIT `
+
+// sampleSearchTokenIndex is the (token, id_sample_tmp) covering index that backs
+// the index-order sample search page. It is dropped before the cold-load bulk
+// token build and recreated after, mirroring the secondary-index discipline.
+var sampleSearchTokenIndex = syncIndexSpec{Name: "sample_search_token_idx", Column: "token, id_sample_tmp"}
+
 type studySourceColumnSpec struct {
 	canonical string
 	aliases   []string
+}
+
+type syncIndexSpec struct {
+	Name   string
+	Column string
 }
 
 var studySourceColumnSpecs = []studySourceColumnSpec{
@@ -164,11 +192,6 @@ var studySourceColumnSpecs = []studySourceColumnSpec{
 	{canonical: "ega_dac_accession_number", aliases: []string{"egadac_accession_number"}},
 	{canonical: "ega_policy_accession_number"},
 	{canonical: "data_release_timing"},
-}
-
-type syncIndexSpec struct {
-	Name   string
-	Column string
 }
 
 var sampleMirrorSecondaryIndexes = []syncIndexSpec{
@@ -240,6 +263,277 @@ const (
 	sampleSyncModeIncremental sampleSyncMode = iota
 	sampleSyncModeColdID
 )
+
+// sampleSearchTokenRow is one (token, id_sample_tmp) entry of the prefix index.
+type sampleSearchTokenRow struct {
+	Token       string
+	IDSampleTmp int64
+}
+
+// insertSampleSearchTokenPage tokenises one page of sample_mirror rows and
+// bulk-inserts the resulting (token, id_sample_tmp) rows in chunks bounded by the
+// statement parameter limit.
+func insertSampleSearchTokenPage(ctx context.Context, tx *sql.Tx, dialect string, page []sampleSearchTokenSource, chunkRowLimit int) error {
+	buffer := make([]sampleSearchTokenRow, 0, chunkRowLimit)
+	flush := func() error {
+		if len(buffer) == 0 {
+			return nil
+		}
+
+		if err := insertSampleSearchTokenRows(ctx, tx, dialect, buffer); err != nil {
+			return err
+		}
+
+		buffer = buffer[:0]
+
+		return nil
+	}
+
+	for _, source := range page {
+		for _, token := range sampleSearchTokens(source.Name, source.SupplierName, source.CommonName, source.DonorID) {
+			buffer = append(buffer, sampleSearchTokenRow{Token: token, IDSampleTmp: source.ID})
+			if len(buffer) == chunkRowLimit {
+				if err := flush(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return flush()
+}
+
+// sampleSearchTokenSource holds one sample_mirror row's id and searchable fields,
+// read into memory one page at a time so the result set is closed before that
+// page's tokens are inserted.
+type sampleSearchTokenSource struct {
+	ID           int64
+	Name         string
+	SupplierName string
+	CommonName   string
+	DonorID      string
+}
+
+// readSampleSearchTokenPage reads one id-range page of sample_mirror rows after
+// lastID into a slice and closes the result set before returning, so no result
+// set is held open while the caller inserts the page's tokens. It returns the
+// page's rows and the maximum id_sample_tmp seen (the next page cursor).
+func readSampleSearchTokenPage(ctx context.Context, tx *sql.Tx, pageQuery string, lastID int64) ([]sampleSearchTokenSource, int64, error) {
+	rows, err := tx.QueryContext(ctx, pageQuery, lastID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("mlwh: read sample_mirror for token rebuild: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	page := make([]sampleSearchTokenSource, 0, sampleSearchTokenReadPageSize)
+	maxID := lastID
+	for rows.Next() {
+		var source sampleSearchTokenSource
+		if err = rows.Scan(&source.ID, &source.Name, &source.SupplierName, &source.CommonName, &source.DonorID); err != nil {
+			return nil, 0, fmt.Errorf("mlwh: scan sample_mirror for token rebuild: %w", err)
+		}
+
+		page = append(page, source)
+		if source.ID > maxID {
+			maxID = source.ID
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("mlwh: read sample_mirror for token rebuild: %w", err)
+	}
+
+	return page, maxID, nil
+}
+
+// insertSampleSearchTokensFromMirror reads every sample's id and searchable
+// fields from sample_mirror, tokenises them, and bulk-inserts the resulting
+// (token, id_sample_tmp) rows. It reads sample_mirror in id-range pages: each
+// page is fully scanned into a bounded slice and its result set closed BEFORE the
+// page's tokens are inserted, so the transaction's single connection is never
+// reading a result set while writing. This is required on MySQL, where executing
+// an INSERT while a streaming SELECT from the same connection is still open fails
+// with "driver: bad connection" at scale. Memory stays bounded to one page.
+func insertSampleSearchTokensFromMirror(ctx context.Context, tx *sql.Tx, dialect string) error {
+	chunkRowLimit := syncStatementRowLimit(len(sampleSearchTokenColumns))
+	pageQuery := sampleSearchTokenPageQuery + strconv.Itoa(sampleSearchTokenReadPageSize)
+	lastID := int64(0)
+
+	for {
+		page, maxID, err := readSampleSearchTokenPage(ctx, tx, pageQuery, lastID)
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			return nil
+		}
+
+		if err = insertSampleSearchTokenPage(ctx, tx, dialect, page, chunkRowLimit); err != nil {
+			return err
+		}
+
+		lastID = maxID
+	}
+}
+
+// sampleSearchTokens returns the distinct lowercased word tokens of the given
+// searchable field values. A token is a maximal run of ASCII [a-z0-9] (other
+// runes, including non-ASCII letters, split tokens); each rune is lowercased so
+// the stored tokens are case-insensitively prefix-searchable. Order is
+// stable-first-seen and duplicates across fields are collapsed, so a sample with
+// repeated words (e.g. "Homo sapiens" and common_name "homo") stores each token
+// once.
+func sampleSearchTokens(values ...string) []string {
+	seen := make(map[string]struct{})
+	tokens := make([]string, 0, len(values)*2)
+
+	var builder strings.Builder
+	flush := func() {
+		if builder.Len() == 0 {
+			return
+		}
+
+		token := builder.String()
+		builder.Reset()
+		if _, ok := seen[token]; ok {
+			return
+		}
+
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+
+	for _, value := range values {
+		for _, r := range value {
+			switch {
+			case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+				builder.WriteRune(r)
+			case r >= 'A' && r <= 'Z':
+				builder.WriteRune(r - 'A' + 'a')
+			default:
+				flush()
+			}
+		}
+
+		flush()
+	}
+
+	return tokens
+}
+
+// replaceSampleSearchTokensForBatch keeps sample_search_token consistent with an
+// incremental sample upsert: it deletes the existing token rows for the batch's
+// ids (so an updated sample's stale tokens are removed) and inserts the current
+// distinct tokens for each sample, making incrementally-synced samples
+// searchable. It runs only on the incremental path (the cold-load path rebuilds
+// the whole token table at finalize instead).
+func replaceSampleSearchTokensForBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []sampleSyncRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	if err := deleteSampleSearchTokensForKeys(ctx, tx, sampleBatchKeys(rows)); err != nil {
+		return err
+	}
+
+	tokenRows := make([]sampleSearchTokenRow, 0, len(rows)*4)
+	for _, row := range rows {
+		for _, token := range sampleSearchTokens(row.Sample.Name, row.Sample.SupplierName, row.Sample.CommonName, row.Sample.DonorID) {
+			tokenRows = append(tokenRows, sampleSearchTokenRow{Token: token, IDSampleTmp: row.Sample.IDSampleTmp})
+		}
+	}
+
+	return forEachRowChunk(tokenRows, syncStatementRowLimit(len(sampleSearchTokenColumns)), func(chunk []sampleSearchTokenRow) error {
+		return insertSampleSearchTokenRows(ctx, tx, dialect, chunk)
+	})
+}
+
+// deleteSampleSearchTokensForKeys removes all token rows owned by the given
+// id_sample_tmp keys, in bounded chunks.
+func deleteSampleSearchTokensForKeys(ctx context.Context, tx *sql.Tx, keys [][]any) error {
+	keyChunkLimit := syncStatementRowLimit(1)
+	for start := 0; start < len(keys); start += keyChunkLimit {
+		end := min(start+keyChunkLimit, len(keys))
+		whereClause, whereArgs := buildKeyInClause([]string{"id_sample_tmp"}, keys[start:end])
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE %s", sampleSearchTokenTable, whereClause), whereArgs...); err != nil {
+			return fmt.Errorf("mlwh: clear sample search token batch: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// insertSampleSearchTokenRows bulk-inserts a chunk of token rows.
+func insertSampleSearchTokenRows(ctx context.Context, tx *sql.Tx, dialect string, rows []sampleSearchTokenRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	stmt := buildBulkInsertStatement(sampleSearchTokenTable, sampleSearchTokenColumns, len(rows))
+	args := make([]any, 0, len(rows)*len(sampleSearchTokenColumns))
+	for _, row := range rows {
+		args = append(args, row.Token, row.IDSampleTmp)
+	}
+
+	if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+		return fmt.Errorf("mlwh: insert sample search token batch: %w", err)
+	}
+
+	return nil
+}
+
+// rebuildSampleSearchTokenIndex repopulates sample_search_token from
+// sample_mirror, mirroring the donor_samples cold-load rebuild discipline: it
+// drops the covering index, clears the table, streams every SQSCP sample's
+// searchable fields and bulk-inserts their distinct word tokens, then recreates
+// the index. Runs in both dialects (the prefix index has no engine-maintained
+// counterpart).
+func rebuildSampleSearchTokenIndex(ctx context.Context, tx *sql.Tx, dialect string) error {
+	if err := dropSampleSearchTokenIndex(ctx, tx, dialect); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM `+sampleSearchTokenTable); err != nil {
+		return fmt.Errorf("mlwh: clear sample search tokens before rebuild: %w", err)
+	}
+
+	if err := insertSampleSearchTokensFromMirror(ctx, tx, dialect); err != nil {
+		return err
+	}
+
+	return createSampleSearchTokenIndex(ctx, tx, dialect)
+}
+
+// dropSampleSearchTokenIndex drops the sample_search_token covering index so the
+// cold-load bulk token build inserts without per-row index maintenance,
+// mirroring the secondary-index drop-before-bulk-insert discipline. It is
+// recreated by createSampleSearchTokenIndex after the build.
+func dropSampleSearchTokenIndex(ctx context.Context, tx *sql.Tx, dialect string) error {
+	stmt := `DROP INDEX IF EXISTS ` + sampleSearchTokenIndex.Name
+	if dialect == "mysql" {
+		stmt = `DROP INDEX ` + sampleSearchTokenIndex.Name + ` ON ` + sampleSearchTokenTable
+	}
+
+	if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("mlwh: drop sample search token index: %w", err)
+	}
+
+	return nil
+}
+
+// createSampleSearchTokenIndex recreates the sample_search_token covering index
+// after the cold-load bulk token build.
+func createSampleSearchTokenIndex(ctx context.Context, tx *sql.Tx, dialect string) error {
+	stmt := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s(%s)`, sampleSearchTokenIndex.Name, sampleSearchTokenTable, sampleSearchTokenIndex.Column)
+	if dialect == "mysql" {
+		stmt = fmt.Sprintf(`CREATE INDEX %s ON %s(%s)`, sampleSearchTokenIndex.Name, sampleSearchTokenTable, sampleSearchTokenIndex.Column)
+	}
+
+	if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("mlwh: create sample search token index: %w", err)
+	}
+
+	return nil
+}
 
 func sampleColdSyncSourceQuery() string {
 	return `SELECT id_sample_tmp, id_lims, id_sample_lims, uuid_sample_lims, name, sanger_sample_id, supplier_name, accession_number, donor_id, taxon_id, common_name, description, last_updated FROM sample WHERE id_lims = 'SQSCP' AND id_sample_tmp < ? ORDER BY id_sample_tmp DESC`
@@ -1428,6 +1722,9 @@ func shouldDeferMirrorIndexRebuild(cache Cache) bool {
 
 func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect string) (bool, error) {
 	if err := rebuildDonorSampleTable(ctx, tx, dialect); err != nil {
+		return false, err
+	}
+	if err := rebuildSampleSearchTokenIndex(ctx, tx, dialect); err != nil {
 		return false, err
 	}
 	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
@@ -2900,6 +3197,10 @@ func writeSampleBatch(ctx context.Context, cache Cache, rows []sampleSyncRow, hi
 					return err
 				}
 			} else if err := replaceDonorSampleBatch(ctx, tx, deduped); err != nil {
+				return err
+			}
+
+			if err := replaceSampleSearchTokensForBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 				return err
 			}
 		}

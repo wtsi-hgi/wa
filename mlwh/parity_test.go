@@ -55,6 +55,16 @@ const (
 	parityLibraryLimsID   = "SQPP-47463-G:B1"
 	parityFindLibraryType = "Bespoke"
 	parityRunID           = "48522"
+	// parityStudySearchTerm matches both seeded studies via their name
+	// ("Parity Study 7607"/"7608") and study_title ("Study title 7607"/"7608"),
+	// so SearchStudies/CountStudySearch return a non-trivial, deterministic set
+	// (two studies, ordered by id_study_lims) across local and remote clients.
+	parityStudySearchTerm = "study"
+	// paritySampleSearchTerm matches both seeded samples via their supplier_name
+	// ("supplier-7607-1"/"supplier-7607-2"), so SearchSamples/CountSampleSearch
+	// return a non-trivial, deterministic set (two samples, ordered by
+	// id_sample_tmp) once the FTS5 sample_search index is rebuilt below.
+	paritySampleSearchTerm = "supplier"
 )
 
 type parityQueryCase struct {
@@ -137,6 +147,23 @@ func parityQueryCases() []parityQueryCase {
 		{name: "LibraryDetail", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.LibraryDetail(ctx, parityLibraryType, parityStudyID)
 		}},
+		{name: "SearchStudies", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.SearchStudies(ctx, parityStudySearchTerm, 100, 0)
+		}},
+		{name: "SearchSamples", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.SearchSamples(ctx, paritySampleSearchTerm, 100, 0)
+		}},
+		{name: "CountStudySearch", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountStudySearch(ctx, parityStudySearchTerm)
+		}},
+		{name: "CountSampleSearch", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSampleSearch(ctx, paritySampleSearchTerm)
+		}},
+		{name: "CountStudies", call: func(ctx context.Context, q Queryer) (any, error) { return q.CountStudies(ctx) }},
+		{name: "CountSamplesForStudy", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountSamplesForStudy(ctx, parityStudyID)
+		}},
+		{name: "Freshness", call: func(ctx context.Context, q Queryer) (any, error) { return q.Freshness(ctx) }},
 	}
 }
 
@@ -197,6 +224,11 @@ func seedParityCache(t *testing.T, db *sql.DB) {
 	seedIseqProductMetricsMirrorRow(t, db, 9003, 31, 48523, 2, 1, parityStudyID)
 	seedIRODSLocationMirrorRow(t, db, "9001", "/seq/illumina/runs/48/48522/plex1", "48522#1.cram", 31, parityStudyID)
 	seedIRODSLocationMirrorRow(t, db, "9002", "/seq/illumina/runs/48/48522/plex1", "48522#2.cram", 32, parityStudyID)
+
+	// sample_search is an external-content FTS5 table; raw sample_mirror inserts
+	// do not populate it, so rebuild it (as the sample sync does) before the
+	// parity table exercises SearchSamples/CountSampleSearch.
+	rebuildSampleSearchIndexForTest(t, db)
 }
 
 func paritySyncedAt() time.Time {
@@ -254,6 +286,11 @@ func seedParitySample(t *testing.T, db *sql.DB, sample paritySample) {
 }
 
 func TestRemoteClientClientParityB4(t *testing.T) {
+	// E2.2 / B4.1: the full parity table is exercised over the HTTP round-trip
+	// and its asserted method count is pinned to the live Queryer member count,
+	// so a future Queryer method that is not added here (e.g. the Phase 4
+	// search/count/freshness additions) fails this test until the table covers
+	// it.
 	convey.Convey("B4.1: Given a seeded OpenCacheOnly SQLite cache and an httptest server wrapping the same Client", t, func() {
 		local := newParitySeededClient(t)
 		defer closeParityClientForTest(t, local)
@@ -280,10 +317,53 @@ func TestRemoteClientClientParityB4(t *testing.T) {
 			}
 		}
 
-		convey.Convey("when each Queryer method is invoked on both clients, then all 33 JSON round-tripped results match", func() {
-			convey.So(cases, convey.ShouldHaveLength, 33)
-			convey.So(checked, convey.ShouldEqual, 33)
+		convey.Convey("when each Queryer method is invoked on both clients, then the asserted count equals the Queryer member count and all JSON round-tripped results match", func() {
+			convey.So(len(cases), convey.ShouldEqual, queryerMethodCount())
+			convey.So(checked, convey.ShouldEqual, queryerMethodCount())
 			convey.So(failures, convey.ShouldHaveLength, 0)
+		})
+	})
+}
+
+func TestRemoteClientClientParityCasingE2(t *testing.T) {
+	// E2.1: the Match (ClassifyIdentifier, ResolveStudy) and TaggedID
+	// (ExpandIdentifier) results carry the snake_case JSON tags added in Item
+	// 3.1; this proves their round-trip through the gin server and RemoteClient
+	// decode back to Go values identical to the local Client's.
+	convey.Convey("E2.1: Given the seeded parity cache served over HTTP", t, func() {
+		local := newParitySeededClient(t)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when ClassifyIdentifier runs on both clients, then the snake_case Match round-trip is lossless", func() {
+			localResult, localErr := local.ClassifyIdentifier(context.Background(), parityStudyID)
+			remoteResult, remoteErr := remote.ClassifyIdentifier(context.Background(), parityStudyID)
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(localResult.Study, convey.ShouldNotBeNil)
+			convey.So(reflect.DeepEqual(localResult, remoteResult), convey.ShouldBeTrue)
+		})
+
+		convey.Convey("when ResolveStudy runs on both clients, then the snake_case Match round-trip is lossless", func() {
+			localResult, localErr := local.ResolveStudy(context.Background(), parityStudyID)
+			remoteResult, remoteErr := remote.ResolveStudy(context.Background(), parityStudyID)
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(localResult.Study, convey.ShouldNotBeNil)
+			convey.So(reflect.DeepEqual(localResult, remoteResult), convey.ShouldBeTrue)
+		})
+
+		convey.Convey("when ExpandIdentifier runs on both clients, then the snake_case TaggedID round-trip is lossless", func() {
+			localResult, localErr := local.ExpandIdentifier(context.Background(), KindStudyLimsID, parityStudyID)
+			remoteResult, remoteErr := remote.ExpandIdentifier(context.Background(), KindStudyLimsID, parityStudyID)
+
+			convey.So(localErr, convey.ShouldBeNil)
+			convey.So(remoteErr, convey.ShouldBeNil)
+			convey.So(len(localResult), convey.ShouldBeGreaterThan, 0)
+			convey.So(reflect.DeepEqual(localResult, remoteResult), convey.ShouldBeTrue)
 		})
 	})
 }
@@ -385,4 +465,11 @@ func newParityHTTPServerForTest(queryer Queryer) *httptest.Server {
 	NewServer(queryer).RegisterRoutes(router, nil)
 
 	return httptest.NewServer(router)
+}
+
+// queryerMethodCount returns the number of methods declared on the Queryer
+// interface, derived by reflection so the parity table stays pinned to the
+// actual query surface rather than a hand-maintained literal.
+func queryerMethodCount() int {
+	return reflect.TypeOf((*Queryer)(nil)).Elem().NumMethod()
 }

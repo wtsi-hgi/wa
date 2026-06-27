@@ -241,12 +241,12 @@ describe("contract schemas", () => {
             name: "Cancer Programme",
         };
         const parsed = identifierResultSchema.parse({
-            Kind: "study_lims_id",
-            Canonical: "6568",
-            Sample: null,
-            Study: study,
-            Run: null,
-            Library: null,
+            kind: "study_lims_id",
+            canonical: "6568",
+            sample: null,
+            study,
+            run: null,
+            library: null,
         });
 
         expect(parsed).toEqual({
@@ -254,6 +254,24 @@ describe("contract schemas", () => {
             type: "study_lims_id",
             object: study,
         });
+    });
+
+    it("rejects the legacy PascalCase MLWH Match shape", () => {
+        const result = identifierResultSchema.safeParse({
+            Kind: "study_lims_id",
+            Canonical: "6568",
+            Sample: null,
+            Study: {
+                id_study_tmp: 42,
+                id_lims: "SQSCP",
+                id_study_lims: "6568",
+                name: "Cancer Programme",
+            },
+            Run: null,
+            Library: null,
+        });
+
+        expect(result.success).toBe(false);
     });
 
     it("parses a valid enrichment result payload for a study graph", () => {

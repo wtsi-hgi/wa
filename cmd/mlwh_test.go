@@ -50,6 +50,17 @@ import (
 	"github.com/wtsi-hgi/wa/mlwh"
 )
 
+// mlwhServeG3UnauthenticatedPaths are the new Registry endpoints plus the
+// operational plain routes that G3 requires reachable at root paths in the
+// default unauthenticated serve mode.
+var mlwhServeG3UnauthenticatedPaths = []string{
+	"/search/study/malar",
+	"/studies/count",
+	"/freshness",
+	"/health",
+	"/openapi.json",
+}
+
 func TestMLWHSyncCommandRequiresDSN(t *testing.T) {
 	convey.Convey("E3.2: Given a missing WA_MLWH_DSN, when wa mlwh sync runs, then the exit code is non-zero and stderr names WA_MLWH_DSN", t, func() {
 		t.Setenv("WA_MLWH_DSN", "")
@@ -196,6 +207,74 @@ func TestMLWHSyncCommandReportsConcurrentCacheLockOnStderrOnly(t *testing.T) {
 		convey.So(strings.TrimSpace(stdout.String()), convey.ShouldEqual, "")
 		convey.So(strings.TrimSpace(stderr.String()), convey.ShouldEqual, mlwh.ErrSyncAlreadyRunning.Error())
 	})
+}
+
+// prepareMLWHServeMalariaCacheForTest builds a synced SQLite cache seeded with a
+// study whose name contains "malar", so GET /search/study/malar matches at least
+// one row over the served cache. It is used by the G3 reachability tests, which
+// require malar to match seeded studies.
+func prepareMLWHServeMalariaCacheForTest(t *testing.T) string {
+	t.Helper()
+
+	cachePath := filepath.Join(t.TempDir(), "mlwh.sqlite")
+	cache, err := mlwh.OpenCache(context.Background(), mlwh.CacheConfig{Path: cachePath})
+	if err != nil {
+		t.Fatalf("open mlwh cache: %v", err)
+	}
+	defer func() {
+		if err = cache.Close(); err != nil {
+			t.Fatalf("close mlwh cache: %v", err)
+		}
+	}()
+
+	seedMLWHServeMalariaStudyForTest(t, cache.DB())
+
+	return cachePath
+}
+
+func seedMLWHServeMalariaStudyForTest(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO study_mirror(id_study_tmp, id_lims, id_study_lims, uuid_study_lims, name, accession_number, study_title, faculty_sponsor, state, data_release_strategy, data_access_group, programme, reference_genome, ethically_approved, study_type, contains_human_dna, contaminated_human_dna, study_visibility, ega_dac_accession_number, ega_policy_accession_number, data_release_timing, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		1,
+		"SQSCP",
+		"6568",
+		"study-uuid-6568",
+		"Malaria genomics survey",
+		"EGAS00001006568",
+		"Study title 6568",
+		"Faculty sponsor 6568",
+		"active",
+		"strategy",
+		"group",
+		"programme",
+		"GRCh38",
+		true,
+		"study-type",
+		false,
+		false,
+		"public",
+		"EGAD0001",
+		"EGAP0001",
+		"immediate",
+		"2026-05-11T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insert study_mirror: %v", err)
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO sync_state(table_name, high_water, last_run, resume_cursor, indexes_dropped) VALUES (?, ?, ?, ?, ?)`,
+		"study",
+		"2026-05-11T00:00:00Z",
+		"2026-05-11T00:00:00Z",
+		nil,
+		0,
+	)
+	if err != nil {
+		t.Fatalf("insert sync_state: %v", err)
+	}
 }
 
 type liveMLWHSyncClientStub struct {
@@ -543,6 +622,99 @@ func TestMLWHServeSecuredModeRequiresBearerToken(t *testing.T) {
 	})
 }
 
+func TestMLWHServeUnauthenticatedReachabilityG3(t *testing.T) {
+	convey.Convey("G3.1: Given wa mlwh serve over a synced cache with no auth configured, when search, counts, freshness, health, and openapi are each requested, then all return 200 unauthenticated", t, func() {
+		cachePath := prepareMLWHServeMalariaCacheForTest(t)
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			for _, path := range mlwhServeG3UnauthenticatedPaths {
+				response := performMLWHServeRequestForTest(server.router, http.MethodGet, path)
+				convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			}
+
+			convey.So(server.enableCalls, convey.ShouldHaveLength, 0)
+			convey.So(server.startCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.startCalls[0].kind, convey.ShouldEqual, "http")
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve", "--port", "0"})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
+func TestMLWHServeSecuredModeUnauthorizedForNewEndpointsG3(t *testing.T) {
+	convey.Convey("G3.2: Given wa mlwh serve secured with cert, key, and server token, when the new endpoints are requested without a Bearer token, then each returns 401 behind the auth group", t, func() {
+		cachePath := prepareMLWHServeMalariaCacheForTest(t)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			for _, path := range []string{"/search/study/malar", "/studies/count", "/freshness"} {
+				response := performMLWHServeRequestForTest(server.router, http.MethodGet, gas.EndPointAuth+path)
+				convey.So(response.Code, convey.ShouldEqual, http.StatusUnauthorized)
+			}
+
+			// /health and /openapi.json stay plain routes on the public router,
+			// so they remain reachable unauthenticated even in secured mode.
+			for _, path := range []string{"/health", "/openapi.json"} {
+				response := performMLWHServeRequestForTest(server.router, http.MethodGet, path)
+				convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			}
+
+			convey.So(server.enableCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.startCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.startCalls[0].kind, convey.ShouldEqual, "tls")
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{
+			"mlwh", "serve",
+			"--port", "0",
+			"--mlwh-cache", cachePath,
+			"--cert", "cert.pem",
+			"--key", "key.pem",
+			"--server-token", "mlwh-server.token",
+		})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
+func TestMLWHServeFreshnessNeverSyncedReturns200G3(t *testing.T) {
+	convey.Convey("G3.3: Given wa mlwh serve over a never-synced cache, when GET /freshness is requested, then status is 200 and not 503 (freshness degrades gracefully)", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, false)
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			response := performMLWHServeRequestForTest(server.router, http.MethodGet, "/freshness")
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(response.Code, convey.ShouldNotEqual, http.StatusServiceUnavailable)
+
+			// The companion plain routes also stay reachable on the never-synced
+			// cache, since they never consult the queryer.
+			for _, path := range []string{"/health", "/openapi.json"} {
+				probe := performMLWHServeRequestForTest(server.router, http.MethodGet, path)
+				convey.So(probe.Code, convey.ShouldEqual, http.StatusOK)
+			}
+
+			convey.So(server.startCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.startCalls[0].kind, convey.ShouldEqual, "http")
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve", "--port", "0"})
+
+		convey.So(err, convey.ShouldBeNil)
+	})
+}
+
 func TestMLWHServeRequiresCacheConfiguration(t *testing.T) {
 	convey.Convey("E4.4: Given wa mlwh serve with no WA_MLWH_CACHE_PATH and no --mlwh-cache, then it errors naming the missing cache configuration", t, func() {
 		t.Setenv("WA_MLWH_CACHE_PATH", "")
@@ -610,6 +782,28 @@ func TestMLWHServeScenarioBindDefaults(t *testing.T) {
 		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
 		convey.So(fakeAuth.startCalls[0].kind, convey.ShouldEqual, "http")
 		convey.So(fakeAuth.startCalls[0].addr, convey.ShouldEqual, "127.0.0.1:9000")
+	})
+}
+
+func TestMLWHServeStartsOnAnyBackendWithoutFlavorRefusal(t *testing.T) {
+	convey.Convey("Given any supported cache backend, when wa mlwh serve runs, then it registers routes and binds a listener with no backend-flavor or version refusal", t, func() {
+		cachePath := prepareMLWHServeCacheForTest(t, true)
+		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
+		fakeAuth := newFakeMLWHServeAuthServer()
+		fakeAuth.onStart = func(server *fakeMLWHServeAuthServer) error {
+			response := performMLWHServeRequestForTest(server.router, http.MethodGet, "/studies")
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			convey.So(server.startCalls, convey.ShouldHaveLength, 1)
+			convey.So(server.startCalls[0].kind, convey.ShouldEqual, "http")
+
+			return nil
+		}
+		installFakeMLWHServeAuthServer(t, fakeAuth)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve", "--port", "0"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
 	})
 }
 

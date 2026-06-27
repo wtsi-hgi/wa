@@ -60,6 +60,79 @@ func TestLoadSchema(t *testing.T) {
 	})
 }
 
+func TestSampleSearchTokenSchemaSQLiteDeclaresTokenTableAndIndex(t *testing.T) {
+	convey.Convey("Given the embedded SQLite sample_search_token schema", t, func() {
+		stmts, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+
+		ddl, err := cacheSchemaFS.ReadFile("cache_schema/sqlite/sample_search_token.sql")
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when inspected, then it declares a normal token table over (token, id_sample_tmp) with a covering index on the same columns", func() {
+			upper := strings.ToUpper(string(ddl))
+			convey.So(upper, convey.ShouldContainSubstring, "CREATE TABLE IF NOT EXISTS SAMPLE_SEARCH_TOKEN")
+			convey.So(upper, convey.ShouldNotContainSubstring, "VIRTUAL TABLE")
+			convey.So(upper, convey.ShouldNotContainSubstring, "FTS5")
+			convey.So(string(ddl), convey.ShouldContainSubstring, "token")
+			convey.So(string(ddl), convey.ShouldContainSubstring, "id_sample_tmp")
+			convey.So(string(ddl), convey.ShouldContainSubstring, "ON sample_search_token(token, id_sample_tmp)")
+
+			// The token table is one of the ordinary schema tables loaded by
+			// loadSchema, not a separately applied search index.
+			joined := strings.Join(stmts, "\n")
+			convey.So(joined, convey.ShouldContainSubstring, "sample_search_token")
+		})
+	})
+}
+
+func TestSampleSearchTokenSchemaMySQLDeclaresTokenTableAndIndex(t *testing.T) {
+	convey.Convey("Given the embedded MySQL sample_search_token schema string", t, func() {
+		ddl, err := cacheSchemaFS.ReadFile("cache_schema/mysql/sample_search_token.sql")
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when parsed, then it declares a normal token table and a (token, id_sample_tmp) index, with no FULLTEXT", func() {
+			statements := splitSQLStatements(string(ddl))
+			convey.So(statements, convey.ShouldHaveLength, 2)
+
+			table, columns, _, err := parseCreateTable(statements[0])
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(table, convey.ShouldEqual, "sample_search_token")
+			convey.So(columns, convey.ShouldContainKey, "token")
+			convey.So(columns, convey.ShouldContainKey, "id_sample_tmp")
+
+			indexTable, indexColumns, err := parseCreateIndex(statements[1])
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(indexTable, convey.ShouldEqual, "sample_search_token")
+			convey.So(indexColumns, convey.ShouldResemble, []string{"token", "id_sample_tmp"})
+
+			convey.So(strings.ToUpper(string(ddl)), convey.ShouldNotContainSubstring, "FULLTEXT")
+		})
+	})
+}
+
+func TestParseSchemaShapeRecordsTokenIndexAsNormalTable(t *testing.T) {
+	convey.Convey("Given the SQLite and MySQL schemas at the current version", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when parseSchemaShape runs on each, then both record sample_search_token as a normal table with a (token, id_sample_tmp) index", func() {
+			convey.So(sqliteShape.Tables, convey.ShouldContainKey, "sample_search_token")
+			convey.So(mysqlShape.Tables, convey.ShouldContainKey, "sample_search_token")
+			convey.So(sqliteShape.Tables["sample_search_token"], convey.ShouldResemble, map[string]string{"token": "text", "id_sample_tmp": "integer"})
+			convey.So(sqliteShape.Tables["sample_search_token"], convey.ShouldResemble, mysqlShape.Tables["sample_search_token"])
+			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, []string{"token,id_sample_tmp"})
+			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, mysqlShape.Index["sample_search_token"])
+		})
+	})
+}
+
 func TestParseSchemaShapeParity(t *testing.T) {
 	convey.Convey("Given both dialect schema directories", t, func() {
 		sqliteSchema, sqliteErr := loadSchema("sqlite")
@@ -70,7 +143,7 @@ func TestParseSchemaShapeParity(t *testing.T) {
 		sqliteShape, sqliteErr := parseSchemaShape(sqliteSchema)
 		mysqlShape, mysqlErr := parseSchemaShape(mysqlSchema)
 
-		convey.Convey("when the parsed schema shapes are compared, then the v2 table names match exactly", func() {
+		convey.Convey("when the parsed schema shapes are compared, then the table names match exactly", func() {
 			convey.So(sqliteErr, convey.ShouldBeNil)
 			convey.So(mysqlErr, convey.ShouldBeNil)
 			convey.So(tableNames(sqliteShape.Tables), convey.ShouldResemble, sortedSchemaTableNames())
@@ -83,10 +156,11 @@ func TestParseSchemaShapeParity(t *testing.T) {
 			convey.So(sqliteShape.Tables, convey.ShouldResemble, mysqlShape.Tables)
 		})
 
-		convey.Convey("when comparing the per-table index column lists, then they match across dialects", func() {
+		convey.Convey("when comparing the per-table index column lists, then they match across dialects (including the sample_search_token prefix index)", func() {
 			convey.So(sqliteErr, convey.ShouldBeNil)
 			convey.So(mysqlErr, convey.ShouldBeNil)
 			convey.So(sqliteShape.Index, convey.ShouldResemble, mysqlShape.Index)
+			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, []string{"token,id_sample_tmp"})
 		})
 
 		convey.Convey("when comparing unique constraints, then the per-table column tuples match across dialects", func() {
@@ -97,6 +171,13 @@ func TestParseSchemaShapeParity(t *testing.T) {
 				"donor_samples":   {"donor_id,id_sample_tmp"},
 				"library_samples": {"pipeline_id_lims,id_sample_tmp,id_study_lims"},
 			})
+		})
+
+		convey.Convey("when the full schema parity is compared, then tables, columns, indexes, and unique constraints all match across dialects", func() {
+			convey.So(sqliteErr, convey.ShouldBeNil)
+			convey.So(mysqlErr, convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -176,16 +257,19 @@ func TestSQLiteSchemaExecutionViaOpenCache(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.Reset(func() { _ = rows.Close() })
 
-		tables := make([]string, 0, len(schemaStatementOrder))
+		tables := make([]string, 0, len(schemaStatementOrder)+1)
 		for rows.Next() {
 			var table string
 			convey.So(rows.Scan(&table), convey.ShouldBeNil)
 			tables = append(tables, table)
 		}
 
-		convey.Convey("when the schema loader runs, then the nine cache tables exist", func() {
+		convey.Convey("when the schema loader runs, then every cache table (including sample_search_token) exists", func() {
 			convey.So(rows.Err(), convey.ShouldBeNil)
-			convey.So(tables, convey.ShouldResemble, schemaStatementOrder)
+			for _, table := range schemaStatementOrder {
+				convey.So(tables, convey.ShouldContain, table)
+			}
+			convey.So(tables, convey.ShouldContain, "sample_search_token")
 		})
 	})
 }

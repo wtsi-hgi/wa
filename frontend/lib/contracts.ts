@@ -79,24 +79,24 @@ const normalizedIdentifierResultSchema = z.object({
 });
 
 const mlwhMatchSchema = z.object({
-    Kind: z.string(),
-    Canonical: z.string(),
-    Sample: z.unknown().nullable().optional(),
-    Study: z.unknown().nullable().optional(),
-    Run: z.unknown().nullable().optional(),
-    Library: z.unknown().nullable().optional(),
+    kind: z.string(),
+    canonical: z.string(),
+    sample: z.unknown().nullable().optional(),
+    study: z.unknown().nullable().optional(),
+    run: z.unknown().nullable().optional(),
+    library: z.unknown().nullable().optional(),
 });
 
 function mlwhMatchObject(match: z.infer<typeof mlwhMatchSchema>): unknown {
-    return match.Sample ?? match.Study ?? match.Run ?? match.Library ?? null;
+    return match.sample ?? match.study ?? match.run ?? match.library ?? null;
 }
 
 export const identifierResultSchema = z
     .union([
         normalizedIdentifierResultSchema,
         mlwhMatchSchema.transform((match) => ({
-            identifier: match.Canonical,
-            type: match.Kind,
+            identifier: match.canonical,
+            type: match.kind,
             object: mlwhMatchObject(match),
         })),
     ])

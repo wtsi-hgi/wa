@@ -33,6 +33,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
@@ -53,15 +54,34 @@ func TestServerHandlersDoNotOwnCachesB2(t *testing.T) {
 }
 
 type serverFakeQueryer struct {
-	classifyIdentifierFunc func(context.Context, string) (Match, error)
-	resolveStudyFunc       func(context.Context, string) (Match, error)
-	samplesForStudyFunc    func(context.Context, string, int, int) ([]Sample, error)
-	enrichFunc             func(context.Context, string) (EnrichmentResult, error)
+	classifyIdentifierFunc   func(context.Context, string) (Match, error)
+	resolveStudyFunc         func(context.Context, string) (Match, error)
+	samplesForStudyFunc      func(context.Context, string, int, int) ([]Sample, error)
+	enrichFunc               func(context.Context, string) (EnrichmentResult, error)
+	expandIdentifierFunc     func(context.Context, IdentifierKind, string) ([]TaggedID, error)
+	searchStudiesFunc        func(context.Context, string, int, int) ([]Study, error)
+	searchSamplesFunc        func(context.Context, string, int, int) ([]Sample, error)
+	countStudySearchFunc     func(context.Context, string) (Count, error)
+	countSampleSearchFunc    func(context.Context, string) (Count, error)
+	countStudiesFunc         func(context.Context) (Count, error)
+	countSamplesForStudyFunc func(context.Context, string) (Count, error)
+	freshnessFunc            func(context.Context) (Freshness, error)
 
 	samplesForStudyCall struct {
 		studyLimsID string
 		limit       int
 		offset      int
+	}
+
+	searchCall struct {
+		term   string
+		limit  int
+		offset int
+	}
+
+	countCall struct {
+		term        string
+		studyLimsID string
 	}
 }
 
@@ -169,8 +189,82 @@ func (q *serverFakeQueryer) FindSamplesByLibraryType(_ context.Context, _ string
 	panic("unexpected FindSamplesByLibraryType call")
 }
 
-func (q *serverFakeQueryer) ExpandIdentifier(_ context.Context, _ IdentifierKind, _ string) ([]TaggedID, error) {
-	panic("unexpected ExpandIdentifier call")
+func (q *serverFakeQueryer) ExpandIdentifier(ctx context.Context, kind IdentifierKind, raw string) ([]TaggedID, error) {
+	if q.expandIdentifierFunc == nil {
+		panic("unexpected ExpandIdentifier call")
+	}
+
+	return q.expandIdentifierFunc(ctx, kind, raw)
+}
+
+func (q *serverFakeQueryer) SearchStudies(ctx context.Context, term string, limit, offset int) ([]Study, error) {
+	if q.searchStudiesFunc == nil {
+		panic("unexpected SearchStudies call")
+	}
+
+	q.searchCall.term = term
+	q.searchCall.limit = limit
+	q.searchCall.offset = offset
+
+	return q.searchStudiesFunc(ctx, term, limit, offset)
+}
+
+func (q *serverFakeQueryer) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
+	if q.searchSamplesFunc == nil {
+		panic("unexpected SearchSamples call")
+	}
+
+	q.searchCall.term = term
+	q.searchCall.limit = limit
+	q.searchCall.offset = offset
+
+	return q.searchSamplesFunc(ctx, term, limit, offset)
+}
+
+func (q *serverFakeQueryer) CountStudySearch(ctx context.Context, term string) (Count, error) {
+	if q.countStudySearchFunc == nil {
+		panic("unexpected CountStudySearch call")
+	}
+
+	q.countCall.term = term
+
+	return q.countStudySearchFunc(ctx, term)
+}
+
+func (q *serverFakeQueryer) CountSampleSearch(ctx context.Context, term string) (Count, error) {
+	if q.countSampleSearchFunc == nil {
+		panic("unexpected CountSampleSearch call")
+	}
+
+	q.countCall.term = term
+
+	return q.countSampleSearchFunc(ctx, term)
+}
+
+func (q *serverFakeQueryer) CountStudies(ctx context.Context) (Count, error) {
+	if q.countStudiesFunc == nil {
+		panic("unexpected CountStudies call")
+	}
+
+	return q.countStudiesFunc(ctx)
+}
+
+func (q *serverFakeQueryer) CountSamplesForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	if q.countSamplesForStudyFunc == nil {
+		panic("unexpected CountSamplesForStudy call")
+	}
+
+	q.countCall.studyLimsID = studyLimsID
+
+	return q.countSamplesForStudyFunc(ctx, studyLimsID)
+}
+
+func (q *serverFakeQueryer) Freshness(ctx context.Context) (Freshness, error) {
+	if q.freshnessFunc == nil {
+		panic("unexpected Freshness call")
+	}
+
+	return q.freshnessFunc(ctx)
 }
 
 func (q *serverFakeQueryer) ExpandSearchValues(_ context.Context, _ IdentifierKind, _ string) (SearchValues, error) {
@@ -352,5 +446,376 @@ func TestServerEnrichB2(t *testing.T) {
 		convey.So(graph, convey.ShouldContainKey, "study")
 		convey.So(graph, convey.ShouldNotContainKey, "project")
 		convey.So(graph, convey.ShouldNotContainKey, "users")
+	})
+}
+
+func TestServerClassifyJSONCasingE1(t *testing.T) {
+	convey.Convey("E1.2: Given GET /classify/6568 returns a Match with a Study, then the top-level keys are snake_case and the nested study keeps its snake_case keys", t, func() {
+		queryer := &serverFakeQueryer{
+			classifyIdentifierFunc: func(_ context.Context, raw string) (Match, error) {
+				return Match{
+					Kind:      KindStudyLimsID,
+					Canonical: raw,
+					Study:     &Study{IDStudyLims: raw, Name: "Malaria genomics"},
+				}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/classify/6568")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var payload map[string]any
+		decodeMLWHJSONResponseForTest(t, response, &payload)
+
+		convey.So(payload, convey.ShouldContainKey, "kind")
+		convey.So(payload, convey.ShouldContainKey, "canonical")
+		convey.So(payload, convey.ShouldContainKey, "study")
+		convey.So(payload, convey.ShouldNotContainKey, "Kind")
+		convey.So(payload, convey.ShouldNotContainKey, "Canonical")
+		convey.So(payload, convey.ShouldNotContainKey, "Study")
+
+		convey.So(payload["kind"], convey.ShouldEqual, string(KindStudyLimsID))
+		convey.So(payload["canonical"], convey.ShouldEqual, "6568")
+
+		study, ok := payload["study"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(study["id_study_lims"], convey.ShouldEqual, "6568")
+		convey.So(study, convey.ShouldNotContainKey, "IDStudyLims")
+	})
+}
+
+func TestServerSearchStudiesA4(t *testing.T) {
+	convey.Convey("A4.1: Given a server over a fake Queryer whose SearchStudies returns two studies, when GET /search/study/malar is served with no auth, then status is 200 and the body is a 2-element Study array", t, func() {
+		queryer := &serverFakeQueryer{
+			searchStudiesFunc: func(_ context.Context, term string, _, _ int) ([]Study, error) {
+				return []Study{
+					{IDStudyLims: "1", Name: term + "-A"},
+					{IDStudyLims: "2", Name: term + "-B"},
+				}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/study/malar")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(queryer.searchCall.term, convey.ShouldEqual, "malar")
+		convey.So(queryer.searchCall.limit, convey.ShouldEqual, mlwhSearchDefaultLimit)
+		convey.So(queryer.searchCall.offset, convey.ShouldEqual, 0)
+
+		var studies []Study
+		decodeMLWHJSONResponseForTest(t, response, &studies)
+		convey.So(studies, convey.ShouldResemble, []Study{
+			{IDStudyLims: "1", Name: "malar-A"},
+			{IDStudyLims: "2", Name: "malar-B"},
+		})
+	})
+
+	convey.Convey("A4.2: Given GET /search/sample/acme?limit=2&offset=1, then the fake queryer receives term=acme, limit=2, offset=1", t, func() {
+		queryer := &serverFakeQueryer{
+			searchSamplesFunc: func(_ context.Context, _ string, _, _ int) ([]Sample, error) {
+				return []Sample{}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/sample/acme?limit=2&offset=1")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(queryer.searchCall.term, convey.ShouldEqual, "acme")
+		convey.So(queryer.searchCall.limit, convey.ShouldEqual, 2)
+		convey.So(queryer.searchCall.offset, convey.ShouldEqual, 1)
+	})
+}
+
+func TestServerSearchPaginationGuardA4(t *testing.T) {
+	convey.Convey("A4.3: Given GET /search/study/malar?limit=1001, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchStudiesFunc: func(_ context.Context, _ string, _, _ int) ([]Study, error) {
+				panic("queryer must not be called when limit exceeds the maximum")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/study/malar?limit=1001")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("A4.4: Given GET /search/study/malar?limit=abc, then status is 400 with code bad_request", t, func() {
+		queryer := &serverFakeQueryer{
+			searchStudiesFunc: func(_ context.Context, _ string, _, _ int) ([]Study, error) {
+				panic("queryer must not be called when limit is not an integer")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/study/malar?limit=abc")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+	})
+
+	convey.Convey("Given GET /search/sample/acme?limit=1000 (the maximum), then status is 200 and the queryer receives limit=1000", t, func() {
+		queryer := &serverFakeQueryer{
+			searchSamplesFunc: func(_ context.Context, _ string, _, _ int) ([]Sample, error) {
+				return []Sample{}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/sample/acme?limit=1000")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(queryer.searchCall.limit, convey.ShouldEqual, mlwhSearchMaxLimit)
+	})
+
+	convey.Convey("Given GET /search/study/malar?limit=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchStudiesFunc: func(_ context.Context, _ string, _, _ int) ([]Study, error) {
+				panic("queryer must not be called when limit is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/study/malar?limit=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given GET /search/sample/acme?limit=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchSamplesFunc: func(_ context.Context, _ string, _, _ int) ([]Sample, error) {
+				panic("queryer must not be called when limit is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/sample/acme?limit=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given GET /search/study/malar?offset=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchStudiesFunc: func(_ context.Context, _ string, _, _ int) ([]Study, error) {
+				panic("queryer must not be called when offset is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/study/malar?offset=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Given GET /search/sample/acme?offset=-1, then status is 400 with code bad_request and the queryer is not called", t, func() {
+		queryer := &serverFakeQueryer{
+			searchSamplesFunc: func(_ context.Context, _ string, _, _ int) ([]Sample, error) {
+				panic("queryer must not be called when offset is negative")
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/sample/acme?offset=-1")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusBadRequest, "bad_request")
+		convey.So(queryer.searchCall.term, convey.ShouldBeEmpty)
+	})
+}
+
+func TestServerCountEndpointsF3(t *testing.T) {
+	convey.Convey("F3.1: Given a fake Queryer whose CountStudies returns Count{7}, when GET /studies/count is served, then status is 200 and body is {\"count\":7}", t, func() {
+		queryer := &serverFakeQueryer{
+			countStudiesFunc: func(_ context.Context) (Count, error) {
+				return Count{Count: 7}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/studies/count")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var count Count
+		decodeMLWHJSONResponseForTest(t, response, &count)
+		convey.So(count, convey.ShouldResemble, Count{Count: 7})
+		convey.So(strings.TrimSpace(response.Body.String()), convey.ShouldEqual, `{"count":7}`)
+	})
+
+	convey.Convey("F3.2: Given GET /study/6568/samples/count, then the queryer receives id=6568 and the body is {\"count\":N}", t, func() {
+		queryer := &serverFakeQueryer{
+			countSamplesForStudyFunc: func(_ context.Context, studyLimsID string) (Count, error) {
+				convey.So(studyLimsID, convey.ShouldEqual, "6568")
+
+				return Count{Count: 13}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/6568/samples/count")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(queryer.countCall.studyLimsID, convey.ShouldEqual, "6568")
+
+		var count Count
+		decodeMLWHJSONResponseForTest(t, response, &count)
+		convey.So(count, convey.ShouldResemble, Count{Count: 13})
+	})
+
+	convey.Convey("F3.3: Given GET /search/sample/acme/count, then the queryer receives term=acme", t, func() {
+		queryer := &serverFakeQueryer{
+			countSampleSearchFunc: func(_ context.Context, term string) (Count, error) {
+				convey.So(term, convey.ShouldEqual, "acme")
+
+				return Count{Count: 3}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/sample/acme/count")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(queryer.countCall.term, convey.ShouldEqual, "acme")
+
+		var count Count
+		decodeMLWHJSONResponseForTest(t, response, &count)
+		convey.So(count, convey.ShouldResemble, Count{Count: 3})
+	})
+
+	convey.Convey("Given GET /search/study/malar/count, then the queryer receives term=malar and the body is {\"count\":N}", t, func() {
+		queryer := &serverFakeQueryer{
+			countStudySearchFunc: func(_ context.Context, term string) (Count, error) {
+				convey.So(term, convey.ShouldEqual, "malar")
+
+				return Count{Count: 2}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/search/study/malar/count")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(queryer.countCall.term, convey.ShouldEqual, "malar")
+
+		var count Count
+		decodeMLWHJSONResponseForTest(t, response, &count)
+		convey.So(count, convey.ShouldResemble, Count{Count: 2})
+	})
+}
+
+func TestServerCountCacheNeverSyncedF3(t *testing.T) {
+	convey.Convey("F3.5: Given GET /study/6568/samples/count where the queryer returns ErrCacheNeverSynced, then status is 503 with code cache_never_synced", t, func() {
+		queryer := &serverFakeQueryer{
+			countSamplesForStudyFunc: func(_ context.Context, _ string) (Count, error) {
+				return Count{}, ErrCacheNeverSynced
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/6568/samples/count")
+
+		assertMLWHErrorEnvelopeForTest(t, response, http.StatusServiceUnavailable, "cache_never_synced")
+	})
+}
+
+func TestServerHealthD1(t *testing.T) {
+	convey.Convey("D1.1: Given a server with any Queryer, when GET /health is served with no auth, then status is 200 and the body is {\"status\":\"ok\"}", t, func() {
+		// The fake panics on every cache-backed method, so a 200 with the
+		// expected body proves /health performs no cache read (D1.2).
+		queryer := &serverFakeQueryer{}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/health")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(strings.TrimSpace(response.Body.String()), convey.ShouldEqual, `{"status":"ok"}`)
+	})
+}
+
+func TestServerExpandJSONCasingE1(t *testing.T) {
+	convey.Convey("E1.4: Given GET /expand/run_id/100 returns TaggedIDs, then each array element has snake_case keys kind and canonical", t, func() {
+		queryer := &serverFakeQueryer{
+			expandIdentifierFunc: func(_ context.Context, kind IdentifierKind, raw string) ([]TaggedID, error) {
+				convey.So(kind, convey.ShouldEqual, KindRunID)
+				convey.So(raw, convey.ShouldEqual, "100")
+
+				return []TaggedID{
+					{Kind: KindRunID, Canonical: raw},
+					{Kind: KindSangerSampleName, Canonical: "DN1234"},
+				}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/expand/run_id/100")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var payload []map[string]any
+		decodeMLWHJSONResponseForTest(t, response, &payload)
+
+		convey.So(payload, convey.ShouldHaveLength, 2)
+		for _, element := range payload {
+			convey.So(element, convey.ShouldContainKey, "kind")
+			convey.So(element, convey.ShouldContainKey, "canonical")
+			convey.So(element, convey.ShouldNotContainKey, "Kind")
+			convey.So(element, convey.ShouldNotContainKey, "Canonical")
+		}
+
+		convey.So(payload[0]["kind"], convey.ShouldEqual, string(KindRunID))
+		convey.So(payload[0]["canonical"], convey.ShouldEqual, "100")
+	})
+}
+
+func TestServerUnauthenticatedReachabilityG3(t *testing.T) {
+	convey.Convey("G3.1: Given a server over a synced cache (seeded with a malaria study) and no auth group", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedStudyMirrorSearchRow(t, cache.DB(), 1, "6568", "Malaria genomics", "Malaria study title", "Genomics", "Sponsor A")
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when search, counts, freshness, health, and openapi are each requested with no auth, then all return 200", func() {
+			for _, path := range []string{"/search/study/malar", "/studies/count", "/freshness", "/health", "/openapi.json"} {
+				response := performMLWHRequestForTest(t, client, http.MethodGet, path)
+				convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+			}
+		})
+
+		convey.Convey("when GET /search/study/malar is served, then the seeded malaria study is returned (malar matches seeded studies)", func() {
+			response := performMLWHRequestForTest(t, client, http.MethodGet, "/search/study/malar")
+
+			convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+			var studies []Study
+			decodeMLWHJSONResponseForTest(t, response, &studies)
+			convey.So(studies, convey.ShouldHaveLength, 1)
+			convey.So(studies[0].Name, convey.ShouldEqual, "Malaria genomics")
+		})
+	})
+}
+
+func TestServerFreshnessNeverSyncedReturns200G3(t *testing.T) {
+	convey.Convey("G3.3: Given a server over a never-synced cache with no auth group, when GET /freshness is served, then status is 200 and not 503 (freshness degrades gracefully)", t, func() {
+		client := newParityClient(t)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/freshness")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(response.Code, convey.ShouldNotEqual, http.StatusServiceUnavailable)
+
+		var freshness Freshness
+		decodeMLWHJSONResponseForTest(t, response, &freshness)
+		convey.So(freshness.Tables, convey.ShouldHaveLength, len(freshnessSyncTables))
+		for _, table := range freshness.Tables {
+			convey.So(table.EverSynced, convey.ShouldBeFalse)
+		}
+	})
+}
+
+func TestServerHealthDoesNotReadCacheD1(t *testing.T) {
+	convey.Convey("D1.2: Given the server handler source, when audited, then /health performs no cache read (it does not call the Queryer)", t, func() {
+		// Behavioural proof: a never-synced real cache would surface
+		// cache_never_synced from any Queryer method; /health must still be a
+		// cheap 200 because it never touches the Queryer.
+		client := newParityClient(t)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/health")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(strings.TrimSpace(response.Body.String()), convey.ShouldEqual, `{"status":"ok"}`)
 	})
 }

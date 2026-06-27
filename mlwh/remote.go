@@ -237,6 +237,41 @@ func (rc *RemoteClient) ExpandSampleSearchValues(ctx context.Context, kind Ident
 	return remoteCall[[]string](rc, ctx, "ExpandSampleSearchValues", []string{string(kind), canonical}, nil)
 }
 
+// SearchStudies runs a study substring search through the remote server.
+func (rc *RemoteClient) SearchStudies(ctx context.Context, term string, limit, offset int) ([]Study, error) {
+	return remoteCall[[]Study](rc, ctx, "SearchStudies", []string{term}, remotePagination(limit, offset))
+}
+
+// SearchSamples runs a sample substring search through the remote server.
+func (rc *RemoteClient) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
+	return remoteCall[[]Sample](rc, ctx, "SearchSamples", []string{term}, remotePagination(limit, offset))
+}
+
+// CountStudySearch counts the studies matching term through the remote server.
+func (rc *RemoteClient) CountStudySearch(ctx context.Context, term string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudySearch", []string{term}, nil)
+}
+
+// CountSampleSearch counts the samples matching term through the remote server.
+func (rc *RemoteClient) CountSampleSearch(ctx context.Context, term string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSampleSearch", []string{term}, nil)
+}
+
+// CountStudies counts the mirrored studies through the remote server.
+func (rc *RemoteClient) CountStudies(ctx context.Context) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudies", nil, nil)
+}
+
+// CountSamplesForStudy counts the distinct samples for a study through the remote server.
+func (rc *RemoteClient) CountSamplesForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSamplesForStudy", []string{studyLimsID}, nil)
+}
+
+// Freshness reports per-table sync freshness through the remote server.
+func (rc *RemoteClient) Freshness(ctx context.Context) (Freshness, error) {
+	return remoteCall[Freshness](rc, ctx, "Freshness", nil, nil)
+}
+
 // Enrich returns an enrichment graph through the remote server.
 func (rc *RemoteClient) Enrich(ctx context.Context, identifier string) (EnrichmentResult, error) {
 	return remoteCall[EnrichmentResult](rc, ctx, "Enrich", []string{identifier}, nil)

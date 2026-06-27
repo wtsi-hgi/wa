@@ -1116,10 +1116,27 @@ const schemaNames = [
   "donor_samples",
   "iseq_product_metrics_mirror",
   "seq_product_irods_locations_mirror",
+  "sample_search_token",
   "sync_state",
   "schema_version",
   "sync_lock",
 ];
+
+// sampleSearchTokens mirrors mlwh.sampleSearchTokens: the distinct lowercased
+// [a-z0-9]+ words of the searchable fields, used to populate sample_search_token.
+function sampleSearchTokens(values) {
+  const seen = new Set();
+  const tokens = [];
+  for (const value of values) {
+    for (const token of String(value ?? "").toLowerCase().match(/[a-z0-9]+/g) ?? []) {
+      if (!seen.has(token)) {
+        seen.add(token);
+        tokens.push(token);
+      }
+    }
+  }
+  return tokens;
+}
 const syncedAt = "2026-05-15T10:00:00Z";
 
 function run(statement, values) {
@@ -1133,8 +1150,12 @@ try {
     db.exec(fs.readFileSync(path.join(schemaDir, `${name}.sql`), "utf8"));
   }
 
+  // The schema version must stay in lockstep with mlwh.CacheSchemaVersion so
+  // opening this seeded cache does not trigger a drop/recreate migration that
+  // would clear the data. The sample_search_token prefix index is one of the
+  // ordinary schema tables above; it is populated from sample_mirror below.
   db.exec("DELETE FROM schema_version");
-  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [3]);
+  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [6]);
 
   for (const tableName of ["sample", "study", "iseq_flowcell", "iseq_product_metrics", "seq_product_irods_locations"]) {
     run(
@@ -1288,6 +1309,26 @@ try {
       syncedAt,
     ],
   );
+
+  // Populate the sample_search_token prefix index from sample_mirror, the same
+  // cold-load rebuild mlwh sync performs: one row per distinct word token of the
+  // four searchable fields per sample.
+  const tokenInsert = db.prepare(
+    "INSERT INTO sample_search_token(token, id_sample_tmp) VALUES (?, ?)",
+  );
+  const sampleRows = db
+    .prepare("SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror")
+    .all();
+  for (const sampleRow of sampleRows) {
+    for (const token of sampleSearchTokens([
+      sampleRow.name,
+      sampleRow.supplier_name,
+      sampleRow.common_name,
+      sampleRow.donor_id,
+    ])) {
+      tokenInsert.run(token, sampleRow.id_sample_tmp);
+    }
+  }
 
   db.exec("COMMIT");
 } catch (error) {

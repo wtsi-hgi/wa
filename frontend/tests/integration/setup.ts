@@ -236,8 +236,8 @@ function handleFakeMLWHRequest(
 
         if (kind) {
             writeFakeMLWHJSON(response, 200, {
-                Canonical: identifier,
-                Kind: kind,
+                canonical: identifier,
+                kind,
             });
 
             return;
