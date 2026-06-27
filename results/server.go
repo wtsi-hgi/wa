@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -132,6 +133,18 @@ const mlwhSubstringSearchCap = mlwh.SearchMaxLimit
 // rune count, so a short multi-byte term is forwarded exactly when mlwh would
 // search it.
 const searchSuggestionSubstringMinLength = 3
+
+// mlwhSuggestionSearchTimeout bounds how long the substring-suggestion phase
+// waits on the MLWH substring search (SearchStudies/SearchSamples) before it
+// gives up and degrades to "no MLWH substring suggestion". It is a safety cap,
+// not a target: a normal substring search returns in well under a second on the
+// real cache, but a term of two unrelated common words can intersect millions
+// of token rows and take ~30s (260627-9), which would otherwise tie up this hot
+// suggestions path. The deadline propagates through the RemoteClient's HTTP
+// request, so the mlwh server cancels its query too. It is a var (not a const)
+// so tests can shorten it. Exact-classify and store suggestions are unaffected:
+// they run before this phase and always return promptly.
+var mlwhSuggestionSearchTimeout = 2 * time.Second
 
 type sampleMetadataSearchKey struct {
 	key  string
@@ -1366,12 +1379,20 @@ func (s *Server) appendSubstringMLWHSearchSuggestions(ctx context.Context, term 
 		seen[searchSuggestionKey{fieldKey: suggestion.FieldKey, value: suggestion.Value}] = struct{}{}
 	}
 
-	suggestions, err := s.appendRegisteredStudySearchSuggestions(ctx, searcher, term, limit, suggestions, seen)
+	// Bound the MLWH substring search so a slow term (e.g. two unrelated common
+	// words) cannot tie up this suggestions path; on the deadline the searches
+	// return a cancellation error that substringSearchDegrades treats as "no
+	// MLWH substring suggestion". The deadline propagates through the
+	// RemoteClient's HTTP request, cancelling the mlwh server's query too.
+	sctx, cancel := context.WithTimeout(ctx, mlwhSuggestionSearchTimeout)
+	defer cancel()
+
+	suggestions, err := s.appendRegisteredStudySearchSuggestions(sctx, searcher, term, limit, suggestions, seen)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.appendRegisteredSampleSearchSuggestions(ctx, searcher, term, limit, suggestions, seen)
+	return s.appendRegisteredSampleSearchSuggestions(sctx, searcher, term, limit, suggestions, seen)
 }
 
 func (s *Server) appendRegisteredStudySearchSuggestions(ctx context.Context, searcher mlwhSubstringSearcher, term string, limit int, suggestions []SearchSuggestion, seen map[searchSuggestionKey]struct{}) ([]SearchSuggestion, error) {
@@ -1430,10 +1451,17 @@ func (s *Server) appendRegisteredStudySearchSuggestions(ctx context.Context, sea
 
 // substringSearchDegrades reports whether a substring-search error should degrade
 // to "no MLWH substring suggestions" rather than surfacing as an upstream failure.
+// A search cancelled by the suggestion deadline (260627-9) degrades too: the
+// RemoteClient wraps the context error inside ErrUpstreamImpaired, but the
+// %w chain still satisfies errors.Is for context.DeadlineExceeded /
+// context.Canceled, so this matches without string-matching the message. A
+// genuine upstream failure that is NOT a deadline/cancellation still surfaces.
 func substringSearchDegrades(err error) bool {
 	return errors.Is(err, mlwh.ErrCacheNeverSynced) ||
 		errors.Is(err, mlwh.ErrNotFound) ||
-		errors.Is(err, mlwh.ErrUnsupportedIdentifier)
+		errors.Is(err, mlwh.ErrUnsupportedIdentifier) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, context.Canceled)
 }
 
 // studySuggestionLabel returns human-readable text for a study suggestion,

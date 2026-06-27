@@ -3337,6 +3337,66 @@ func TestServerGetSearchSuggestions(t *testing.T) {
 		convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
 	})
 
+	convey.Convey("Bug 260627-9: Given a substring sample search that runs longer than the suggestion deadline, GET /results/search-suggestions degrades to no MLWH substring suggestion promptly with a 200 (not a 502) while keeping store/exact suggestions", t, func() {
+		restore := mlwhSuggestionSearchTimeout
+		mlwhSuggestionSearchTimeout = 50 * time.Millisecond
+		t.Cleanup(func() { mlwhSuggestionSearchTimeout = restore })
+
+		store := newSQLiteStoreForTest(t)
+		// The registered sample name deliberately does NOT contain the query term,
+		// so the only way a "sample" suggestion could appear is via the MLWH
+		// substring search; the store's own substring suggestion (the requester)
+		// does contain the term and must still come through promptly.
+		const registeredSampleName = "7607STDY99999999"
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-suggestion-timeout", func(reg *Registration) {
+			reg.Requester = "diversity-requester"
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: registeredSampleName}
+		}))
+
+		searchStarted := make(chan struct{})
+		expander := &mockSearchExpander{
+			searchSamplesFunc: func(ctx context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
+				close(searchStarted)
+
+				// Block until the deadline cancels the context, then return its
+				// error, exactly as the mlwh server's cancelled query would
+				// surface through the RemoteClient. Had it completed it would have
+				// matched the registered sample below and offered it.
+				<-ctx.Done()
+
+				return []mlwh.Sample{{Name: registeredSampleName}}, ctx.Err()
+			},
+		}
+
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			done <- performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=diversity", nil)
+		}()
+
+		select {
+		case <-searchStarted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("substring sample search was never invoked")
+		}
+
+		var response *httptest.ResponseRecorder
+		select {
+		case response = <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("search-suggestions did not return after the suggestion deadline; it is blocking on the slow MLWH search")
+		}
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+
+		// The store-backed user suggestion is still returned promptly.
+		convey.So(suggestionByFieldValueForTest(suggestions, "user", "diversity-requester"), convey.ShouldNotBeNil)
+		// The slow MLWH substring sample suggestion is simply omitted, not a 502.
+		convey.So(suggestionByFieldValueForTest(suggestions, "sample", registeredSampleName), convey.ShouldBeNil)
+	})
+
 	convey.Convey("GET /results/search-suggestions skips store and MLWH suggestions for one-character generic queries", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-short-suggestion", func(reg *Registration) {

@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -450,6 +451,34 @@ func TestMLWHSearchCommandNeverSyncedJSONOmitsSyncHint(t *testing.T) {
 		convey.So(ok, convey.ShouldBeTrue)
 		convey.So(sampleResults, convey.ShouldNotBeNil)
 		convey.So(sampleResults, convey.ShouldBeEmpty)
+	})
+}
+
+func TestMLWHSearchCommandTimeoutSuggestsNarrowingTheTerm(t *testing.T) {
+	convey.Convey("Bug 260627-9: Given a search that hits the deadline, when wa mlwh search runs, then it prints a clear timeout message advising a more specific term and no raw error or sync hint", t, func() {
+		// Mirror the RemoteClient path: a query cancelled at the deadline surfaces
+		// as ErrUpstreamImpaired wrapping context.DeadlineExceeded, and
+		// errors.Is(err, context.DeadlineExceeded) still holds through the chain.
+		timeoutErr := fmt.Errorf("%w: SearchSamples request failed: %w", mlwh.ErrUpstreamImpaired, context.DeadlineExceeded)
+		stub := &stubMLWHSearchClient{
+			searchSamples: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
+				return nil, timeoutErr
+			},
+			countSampleSearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				return mlwh.Count{}, timeoutErr
+			},
+		}
+
+		withStubMLWHSearchClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "search", "homo sapiens", "--type", "sample"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "timed out")
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "more specific")
+		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrUpstreamImpaired.Error())
+		convey.So(output, convey.ShouldNotContainSubstring, context.DeadlineExceeded.Error())
 	})
 }
 

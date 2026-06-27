@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/wa/mlwh"
@@ -53,6 +54,18 @@ const (
 	// "wa mlwh sync" hint because end-users going via the server cannot sync. It is
 	// shared with the never-synced rendering of `wa mlwh info` (see mlwh_info.go).
 	mlwhCacheUnavailableMessage = "the MLWH cache is not available yet"
+
+	// mlwhSearchTimeout bounds a single `wa mlwh search` invocation so a slow term
+	// (two unrelated common words can match millions of token rows and take ~30s;
+	// see 260627-9) cannot hang the CLI. It is generous, well above any normal
+	// query (~0.1s) and below the RemoteClient's own 30s server-mode cap, and it
+	// also bounds local-cache mode, which has no such cap of its own.
+	mlwhSearchTimeout = 15 * time.Second
+
+	// mlwhSearchTimedOutMessage is shown when a search is cut off by
+	// mlwhSearchTimeout (or otherwise reports a deadline). It explains the likely
+	// cause and the action to take without printing a raw error or any sync hint.
+	mlwhSearchTimedOutMessage = "search timed out: a term of two common words can match a very large number of samples; try a more specific term"
 )
 
 var openMLWHSearchClient = func(ctx context.Context, cfg mlwh.Config) (mlwhSearchClient, error) {
@@ -171,13 +184,19 @@ func newMLWHSearchCommand() *cobra.Command {
 				return errors.New("usage: wa mlwh search <term>")
 			}
 
-			client, err := openMLWHSearchConfiguredClient(cmd.Context(), serverURL)
+			// Bound the whole invocation so a slow term cannot hang the CLI; the
+			// deadline propagates to the search (and, in server mode, the remote
+			// query). runMLWHSearch turns a resulting deadline into a clear message.
+			ctx, cancel := context.WithTimeout(cmd.Context(), mlwhSearchTimeout)
+			defer cancel()
+
+			client, err := openMLWHSearchConfiguredClient(ctx, serverURL)
 			if err != nil {
 				return fmt.Errorf("open mlwh client: %w", err)
 			}
 			defer func() { _ = client.Close() }()
 
-			return runMLWHSearch(cmd.Context(), client, cmd.OutOrStdout(), term, typeFlag, limit, offset, jsonOut)
+			return runMLWHSearch(ctx, client, cmd.OutOrStdout(), term, typeFlag, limit, offset, jsonOut)
 		},
 	}
 
@@ -207,6 +226,12 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 	if wantStudies {
 		section, emptyCache, sectionErr := buildStudySearchSection(ctx, client, term, limit, offset)
 		if sectionErr != nil {
+			if isSearchTimeoutError(sectionErr) {
+				_, _ = fmt.Fprintf(out, "%s\n", mlwhSearchTimedOutMessage)
+
+				return nil
+			}
+
 			return sectionErr
 		}
 
@@ -217,6 +242,12 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 	if wantSamples {
 		section, emptyCache, sectionErr := buildSampleSearchSection(ctx, client, term, limit, offset)
 		if sectionErr != nil {
+			if isSearchTimeoutError(sectionErr) {
+				_, _ = fmt.Fprintf(out, "%s\n", mlwhSearchTimedOutMessage)
+
+				return nil
+			}
+
 			return sectionErr
 		}
 
@@ -280,6 +311,15 @@ func buildStudySearchSection(ctx context.Context, client mlwhSearchClient, term 
 // "cache not available" message without any sync hint.
 func isEmptyCacheSearchError(err error) bool {
 	return errors.Is(err, mlwh.ErrCacheNeverSynced)
+}
+
+// isSearchTimeoutError reports whether err is a search cut off by the CLI
+// deadline (or a query the server cancelled at its own deadline). The
+// RemoteClient wraps the context error inside ErrUpstreamImpaired, but the
+// %w chain still satisfies errors.Is for context.DeadlineExceeded, so this
+// matches without string-matching the message.
+func isSearchTimeoutError(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term string, limit, offset int) (*sampleSearchSection, bool, error) {
