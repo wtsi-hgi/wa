@@ -69,14 +69,40 @@ const searchLIKEEscapeChar = `!`
 // substring search (and its count sibling).
 var studySearchFields = []string{"name", "study_title", "programme", "faculty_sponsor"}
 
+// sampleTokenPrefixRangeClause is the half-open index range that selects every
+// token starting with the lowercased search term: `token >= ? AND token < ?`,
+// bound to [term, prefix-successor(term)). Unlike `token LIKE 'term%' ESCAPE
+// '!'`, this is a true index RANGE seek on (token, id_sample_tmp) in BOTH
+// dialects (verified via EXPLAIN QUERY PLAN: "SEARCH ... USING COVERING INDEX
+// ... (token>? AND token<?)"). On SQLite the default LIKE is case-insensitive
+// while the index uses BINARY collation, so the LIKE-prefix index optimisation
+// does not apply and `token LIKE 'term%'` scans the whole covering index
+// (~700-825ms on a 6M-token cache); the explicit range restores the index
+// SEARCH (~60µs) without any schema change.
+const sampleTokenPrefixRangeClause = `token >= ? AND token < ?`
+
+// sampleTokenPrefixLowerClause is the open-ended degenerate fallback used only
+// when the term has no finite prefix successor (every byte is 0xFF, or the term
+// is empty - practically impossible for real `[a-z0-9]` tokens): `token >= ?`
+// alone still seeks the index from the lower bound rather than producing a wrong
+// finite range.
+const sampleTokenPrefixLowerClause = `token >= ?`
+
 // sampleSearchTokenPageSQL pages the (token, id_sample_tmp) prefix index in
-// index order: a `token LIKE 'prefix%'` range scan streamed in (token,
-// id_sample_tmp) order with LIMIT/OFFSET. Because the index covers exactly these
-// columns and the order matches it, the page is served from the index with no
-// global sort or table touch - measured 48-62ms at any cardinality. Ids are
-// de-duplicated app-side (a sample may own several prefix-matching tokens).
+// index order: the half-open token range (sampleTokenPrefixRangeClause) streamed
+// in (token, id_sample_tmp) order with LIMIT/OFFSET. Because the index covers
+// exactly these columns, the range is a covering-index SEARCH and the order
+// matches it, so the page is served from the index with no global sort or table
+// touch - measured 48-62ms at any cardinality. Ids are de-duplicated app-side (a
+// sample may own several prefix-matching tokens).
 var sampleSearchTokenPageSQL = `SELECT token, id_sample_tmp FROM ` + sampleSearchTokenTable +
-	` WHERE token LIKE ? ESCAPE '` + searchLIKEEscapeChar + `' ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
+	` WHERE ` + sampleTokenPrefixRangeClause + ` ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
+
+// sampleSearchTokenPageOpenSQL is the open-ended-range variant of
+// sampleSearchTokenPageSQL for the degenerate no-upper-bound term (see
+// sampleTokenPrefixLowerClause).
+var sampleSearchTokenPageOpenSQL = `SELECT token, id_sample_tmp FROM ` + sampleSearchTokenTable +
+	` WHERE ` + sampleTokenPrefixLowerClause + ` ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
 
 // sampleSearchByIDsSQLPrefix selects full sample rows by id_sample_tmp (the
 // matching samples a prefix page resolved to), scoped to SQSCP and ordered by
@@ -84,11 +110,17 @@ var sampleSearchTokenPageSQL = `SELECT token, id_sample_tmp FROM ` + sampleSearc
 var sampleSearchByIDsSQLPrefix = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN `
 
 // sampleSearchCountSQL counts the distinct samples matching the token prefix,
-// bounded by sampleSearchCountCap: the inner SELECT DISTINCT over the prefix
-// range is itself capped with LIMIT so a mega-term stops scanning once the cap
-// is reached, then the outer COUNT(*) reports that bounded distinct count.
+// bounded by sampleSearchCountCap: the inner SELECT DISTINCT over the half-open
+// token range (sampleTokenPrefixRangeClause, a covering-index SEARCH) is itself
+// capped with LIMIT so a mega-term stops scanning once the cap is reached, then
+// the outer COUNT(*) reports that bounded distinct count.
 var sampleSearchCountSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_sample_tmp FROM ` + sampleSearchTokenTable +
-	` WHERE token LIKE ? ESCAPE '` + searchLIKEEscapeChar + `' LIMIT ?) AS bounded_sample_search`
+	` WHERE ` + sampleTokenPrefixRangeClause + ` LIMIT ?) AS bounded_sample_search`
+
+// sampleSearchCountOpenSQL is the open-ended-range variant of sampleSearchCountSQL
+// for the degenerate no-upper-bound term (see sampleTokenPrefixLowerClause).
+var sampleSearchCountOpenSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_sample_tmp FROM ` + sampleSearchTokenTable +
+	` WHERE ` + sampleTokenPrefixLowerClause + ` LIMIT ?) AS bounded_sample_search`
 
 // studySearchWhereClause is the WHERE body shared by SearchStudies and its
 // count sibling: SQSCP rows whose searchable fields contain the term.
@@ -149,22 +181,64 @@ func likeContainsArgs(pattern string, fields []string) []any {
 	return args
 }
 
-// escapeLIKEPrefix lowercases term and renders it as a `prefix%` LIKE pattern
-// matching tokens that start with the term: the LIKE wildcards ('%', '_') and
-// the escape character within the term are escaped so they match literally, and
-// a single trailing '%' makes it a prefix (start-of-token) match. The pattern is
-// bound as a parameter paired with an explicit `ESCAPE '!'` clause (see
-// searchLIKEEscapeChar). The term is lowercased to match the lowercased stored
-// tokens; the escape character is replaced first so an already-escaped
-// occurrence is not reprocessed by the wildcard rules.
-func escapeLIKEPrefix(term string) string {
-	replacer := strings.NewReplacer(
-		searchLIKEEscapeChar, searchLIKEEscapeChar+searchLIKEEscapeChar,
-		"%", searchLIKEEscapeChar+"%",
-		"_", searchLIKEEscapeChar+"_",
-	)
+// sampleTokenPrefixQuery picks the token-prefix range SQL and the leading bound
+// arguments for term: the half-open `token >= ? AND token < ?` form bound to
+// [lower, upper) for any real token, or the open-ended `token >= ?` form bound to
+// [lower) for the degenerate no-upper-bound term (see sampleTokenPrefixBounds).
+// Callers append their pagination or cap arguments after the returned bounds.
+func sampleTokenPrefixQuery(term, rangeSQL, openSQL string) (string, []any) {
+	lower, upper, hasUpper := sampleTokenPrefixBounds(term)
+	if !hasUpper {
+		return openSQL, []any{lower}
+	}
 
-	return replacer.Replace(strings.ToLower(term)) + "%"
+	return rangeSQL, []any{lower, upper}
+}
+
+// sampleTokenPrefixBounds returns the half-open byte range [lower, upper) that
+// selects exactly the tokens starting with term, for the (token, id_sample_tmp)
+// index range seek (sampleTokenPrefixRangeClause). Tokens are stored lowercased
+// (sampleSearchTokens lowercases ASCII letters), so lower is the lowercased term
+// - the same lowercasing the previous LIKE prefix used - and upper is its prefix
+// successor (bytePrefixSuccessor). For real `[a-z0-9]` tokens hasUpper is always
+// true; only a term that is empty or all 0xFF after lowercasing has no finite
+// successor, in which case hasUpper is false and the caller falls back to the
+// open-ended `token >= ?` range (sampleTokenPrefixLowerClause) rather than
+// fabricating a wrong upper bound.
+//
+// Matching a literal byte prefix - not a LIKE pattern - means a term carrying a
+// character that cannot appear in a token ('%', '_', '-', a space, etc.) yields
+// a range no token falls in, so it matches nothing, exactly as the escaped
+// `LIKE 'term%'` predicate did before.
+func sampleTokenPrefixBounds(term string) (lower, upper string, hasUpper bool) {
+	lower = strings.ToLower(term)
+	upper, hasUpper = bytePrefixSuccessor(lower)
+
+	return lower, upper, hasUpper
+}
+
+// bytePrefixSuccessor returns the smallest byte string strictly greater than
+// every string that has prefix as a prefix: prefix with its last byte that is
+// < 0xFF incremented and all bytes after it dropped. Trailing 0xFF bytes have no
+// in-place successor, so they are dropped and the increment carries to the last
+// byte below 0xFF. If prefix is empty or every byte is 0xFF there is no finite
+// successor (ok is false): the prefix range is open above and the caller must use
+// a lower-bound-only predicate. ok is true for any prefix with at least one byte
+// below 0xFF.
+func bytePrefixSuccessor(prefix string) (successor string, ok bool) {
+	bytes := []byte(prefix)
+	for len(bytes) > 0 {
+		last := len(bytes) - 1
+		if bytes[last] < 0xFF {
+			bytes[last]++
+
+			return string(bytes), true
+		}
+
+		bytes = bytes[:last]
+	}
+
+	return "", false
 }
 
 // SearchStudies returns studies whose name, study_title, programme, or
@@ -222,7 +296,7 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	ids, err := c.sampleSearchTokenPage(ctx, db, escapeLIKEPrefix(term), limit, offset)
+	ids, err := c.sampleSearchTokenPage(ctx, db, term, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -251,10 +325,12 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
 // tokens, so the index-ordered token stream is de-duplicated app-side; it
 // over-fetches token rows in bounded pages and loops only when duplicates
 // exhaust an over-fetch, keeping the common case to one index-ordered read.
-func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, prefix string, limit, offset int) ([]int64, error) {
+func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, term string, limit, offset int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
+
+	query, bounds := sampleTokenPrefixQuery(term, sampleSearchTokenPageSQL, sampleSearchTokenPageOpenSQL)
 
 	need := offset + limit
 	seen := make(map[int64]struct{}, need)
@@ -263,7 +339,9 @@ func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, prefix s
 	fetch := need*sampleSearchTokenPageMultiplier + sampleSearchTokenPageMargin
 
 	for len(ordered) < need {
-		rows, err := db.QueryContext(ctx, sampleSearchTokenPageSQL, prefix, fetch, tokenOffset)
+		args := append(append([]any(nil), bounds...), fetch, tokenOffset)
+
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
 		}
@@ -370,7 +448,10 @@ func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, err
 		return Count{Count: 0}, nil
 	}
 
-	count, err := c.queryCount(ctx, sampleSearchCountSQL, "count sample search", escapeLIKEPrefix(term), sampleSearchCountCap)
+	query, bounds := sampleTokenPrefixQuery(term, sampleSearchCountSQL, sampleSearchCountOpenSQL)
+	args := append(append([]any(nil), bounds...), sampleSearchCountCap)
+
+	count, err := c.queryCount(ctx, query, "count sample search", args...)
 	if err != nil {
 		return Count{}, err
 	}

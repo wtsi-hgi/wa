@@ -31,6 +31,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +102,88 @@ func TestCountSampleSearchNeverSyncedReturnsJoinedSentinel(t *testing.T) {
 			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
 			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 			convey.So(count, convey.ShouldResemble, Count{})
+		})
+	})
+}
+
+func TestSampleTokenPrefixBoundsComputesPrefixSuccessor(t *testing.T) {
+	convey.Convey("Given sampleTokenPrefixBounds over representative search terms", t, func() {
+		convey.Convey("when the term ends in an ordinary byte (donor), then the lower bound is the term and the upper increments only the last byte", func() {
+			lower, upper, hasUpper := sampleTokenPrefixBounds("donor")
+			convey.So(hasUpper, convey.ShouldBeTrue)
+			convey.So(lower, convey.ShouldEqual, "donor")
+			convey.So(upper, convey.ShouldEqual, "donos")
+		})
+
+		convey.Convey("when the term is mixed case, then the lower bound is lowercased (tokens are stored lowercased)", func() {
+			lower, upper, hasUpper := sampleTokenPrefixBounds("AcMe")
+			convey.So(hasUpper, convey.ShouldBeTrue)
+			convey.So(lower, convey.ShouldEqual, "acme")
+			convey.So(upper, convey.ShouldEqual, "acmf")
+		})
+
+		convey.Convey("when the term ends in 'z' or '9' (the top of the token byte range), then the successor is still the next byte", func() {
+			_, zUpper, zHas := sampleTokenPrefixBounds("buzz")
+			convey.So(zHas, convey.ShouldBeTrue)
+			convey.So(zUpper, convey.ShouldEqual, "bu"+string([]byte{'z', 'z' + 1}))
+
+			_, nineUpper, nineHas := sampleTokenPrefixBounds("rs9")
+			convey.So(nineHas, convey.ShouldBeTrue)
+			convey.So(nineUpper, convey.ShouldEqual, "rs"+string([]byte{'9' + 1}))
+		})
+
+		convey.Convey("when the term is empty, then there is no finite upper bound (degenerate open range)", func() {
+			lower, upper, hasUpper := sampleTokenPrefixBounds("")
+			convey.So(hasUpper, convey.ShouldBeFalse)
+			convey.So(lower, convey.ShouldEqual, "")
+			convey.So(upper, convey.ShouldEqual, "")
+		})
+	})
+}
+
+func TestBytePrefixSuccessorHandlesCarryDropAndDegenerateInput(t *testing.T) {
+	convey.Convey("Given bytePrefixSuccessor over byte prefixes", t, func() {
+		convey.Convey("when the last byte is below 0xFF, then only that byte is incremented", func() {
+			successor, ok := bytePrefixSuccessor("donor")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(successor, convey.ShouldEqual, "donos")
+		})
+
+		convey.Convey("when trailing bytes are 0xFF, then they are dropped and the increment carries to the last byte below 0xFF", func() {
+			successor, ok := bytePrefixSuccessor(string([]byte{'a', 'b', 0xFF, 0xFF}))
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(successor, convey.ShouldEqual, "ac")
+		})
+
+		convey.Convey("when every byte is 0xFF, then there is no finite successor", func() {
+			successor, ok := bytePrefixSuccessor(string([]byte{0xFF, 0xFF, 0xFF}))
+			convey.So(ok, convey.ShouldBeFalse)
+			convey.So(successor, convey.ShouldEqual, "")
+		})
+
+		convey.Convey("when the prefix is empty, then there is no finite successor", func() {
+			successor, ok := bytePrefixSuccessor("")
+			convey.So(ok, convey.ShouldBeFalse)
+			convey.So(successor, convey.ShouldEqual, "")
+		})
+	})
+}
+
+func TestSampleTokenPrefixQuerySelectsRangeOrOpenForm(t *testing.T) {
+	convey.Convey("Given sampleTokenPrefixQuery choosing between the range and open-ended SQL", t, func() {
+		convey.Convey("when the term has a finite successor, then the half-open range SQL and two bound args are returned", func() {
+			query, bounds := sampleTokenPrefixQuery("acme", sampleSearchTokenPageSQL, sampleSearchTokenPageOpenSQL)
+			convey.So(query, convey.ShouldEqual, sampleSearchTokenPageSQL)
+			convey.So(bounds, convey.ShouldResemble, []any{"acme", "acmf"})
+		})
+
+		// An empty term is the reachable no-successor case (any [a-z0-9] token has a
+		// successor); the open-ended `token >= ?` SQL with a single lower bound is
+		// then chosen rather than a fabricated finite range.
+		convey.Convey("when the term has no finite successor, then the open-ended SQL and a single lower-bound arg are returned", func() {
+			query, bounds := sampleTokenPrefixQuery("", sampleSearchCountSQL, sampleSearchCountOpenSQL)
+			convey.So(query, convey.ShouldEqual, sampleSearchCountOpenSQL)
+			convey.So(bounds, convey.ShouldResemble, []any{""})
 		})
 	})
 }
@@ -519,10 +602,11 @@ func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsLiteralPrefixChars(t *te
 			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
 		})
 
-		// If '%' were a LIKE wildcard rather than escaped, "abc%" would still
-		// prefix-match "abcxyz"; escaping it to a literal '%' means it matches
-		// only tokens that literally start with "abc%", of which there are none.
-		convey.Convey("when the term embeds a percent (abc%), then it is escaped to a literal and matches nothing", func() {
+		// The term is matched as a literal byte prefix (an index range), not a LIKE
+		// pattern: '%' is an ordinary byte that cannot appear in a [a-z0-9] token,
+		// so "abc%" matches only tokens literally starting with "abc%", of which
+		// there are none (it must not behave as a wildcard prefix-matching "abcxyz").
+		convey.Convey("when the term embeds a percent (abc%), then it is a literal prefix byte and matches nothing", func() {
 			samples, err := client.SearchSamples(context.Background(), "abc%", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(samples, convey.ShouldBeEmpty)
@@ -532,9 +616,9 @@ func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsLiteralPrefixChars(t *te
 			convey.So(count, convey.ShouldResemble, Count{})
 		})
 
-		// Likewise the underscore single-character wildcard is escaped: "ab_"
-		// must not match "abcxyz" by treating '_' as "any character".
-		convey.Convey("when the term embeds an underscore (ab_), then it is escaped to a literal and matches nothing", func() {
+		// Likewise the underscore is a literal prefix byte, not a single-character
+		// wildcard: "ab_" must not match "abcxyz" by treating '_' as "any character".
+		convey.Convey("when the term embeds an underscore (ab_), then it is a literal prefix byte and matches nothing", func() {
 			samples, err := client.SearchSamples(context.Background(), "ab_", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(samples, convey.ShouldBeEmpty)
@@ -542,8 +626,8 @@ func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsLiteralPrefixChars(t *te
 	})
 }
 
-func TestSearchSamplesEscapeCharInTermIsLiteral(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache and a term containing the LIKE escape character", t, func() {
+func TestSearchSamplesPunctuationInTermIsLiteralPrefixByte(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache and a term containing a non-token punctuation byte", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -554,15 +638,16 @@ func TestSearchSamplesEscapeCharInTermIsLiteral(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		// A term containing the escape character itself must be escaped so the
-		// LIKE clause stays well-formed and the escape char is matched literally;
-		// "ab"+escape has no token starting with that literal sequence.
-		convey.Convey("when the term embeds the escape character, then the query is well-formed and matches nothing", func() {
-			samples, err := client.SearchSamples(context.Background(), "ab"+searchLIKEEscapeChar, 100, 0)
+		// A term carrying a byte that cannot appear in a [a-z0-9] token (here the
+		// punctuation '!') is matched as a literal prefix byte, so the range query
+		// stays well-formed and "ab!" matches no token starting with that literal
+		// sequence.
+		convey.Convey("when the term embeds a non-token punctuation byte, then the query is well-formed and matches nothing", func() {
+			samples, err := client.SearchSamples(context.Background(), "ab!", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(samples, convey.ShouldBeEmpty)
 
-			count, countErr := client.CountSampleSearch(context.Background(), "ab"+searchLIKEEscapeChar)
+			count, countErr := client.CountSampleSearch(context.Background(), "ab!")
 			convey.So(countErr, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldResemble, Count{})
 		})
@@ -785,6 +870,56 @@ func TestColdLoadTokenRebuildPagesMirrorAndKeepsEverySampleSearchable(t *testing
 	})
 }
 
+// TestSampleSearchTokenQueriesSeekIndexRangeNotFullScan locks in the
+// performance fix as an observable contract via SQLite's query planner: the
+// sample token page query and the bounded count query must resolve the
+// token-prefix predicate as an index RANGE SEARCH on sample_search_token_idx
+// (detail carries "SEARCH", the index name, and the "token>?"/"token<?" range
+// bounds), never the whole-index "SCAN" the old `token LIKE 'prefix%' ESCAPE
+// '!'` predicate produced (SQLite's case-insensitive LIKE cannot use the
+// BINARY-collated index, so it scanned the full covering index ~700-825ms on a
+// 6M-token cache). Asserting the EXPLAIN QUERY PLAN is the legitimate
+// behavioural proxy for "uses the index range, not a full scan" - the same kind
+// of check as asserting a query uses a named index - because the wall-clock
+// contract is exactly "index seek, not full scan". This test fails on the old
+// LIKE SQL (a "SCAN ... USING COVERING INDEX" with no range bounds) and passes
+// on the range SQL.
+func TestSampleSearchTokenQueriesSeekIndexRangeNotFullScan(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache reachable through its read handle", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// A spread of tokens so the planner has a populated index to reason about;
+		// the chosen plan is independent of the bound values.
+		for id := 1; id <= 64; id++ {
+			seedSampleMirrorSearchRow(t, cache.DB(), int64(id), "specimen-"+formatInt(int64(id)), "ACME-"+formatInt(int64(id)), "Homo sapiens", "donor-"+formatInt(int64(id)))
+		}
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		readDB := cacheReadDB(cache)
+		convey.So(readDB, convey.ShouldNotBeNil)
+
+		lower, upper, hasUpper := sampleTokenPrefixBounds("acme")
+		convey.So(hasUpper, convey.ShouldBeTrue)
+
+		convey.Convey("when the token page query is planned, then it is an index range SEARCH using sample_search_token_idx, not a full SCAN", func() {
+			details := explainQueryPlanDetails(t, readDB, sampleSearchTokenPageSQL,
+				lower, upper, 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0)
+
+			convey.So(planUsesIndexRangeSearch(details), convey.ShouldBeTrue)
+			convey.So(planHasFullTokenScan(details), convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when the bounded count query is planned, then its inner token scan is an index range SEARCH using sample_search_token_idx, not a full SCAN", func() {
+			details := explainQueryPlanDetails(t, readDB, sampleSearchCountSQL, lower, upper, sampleSearchCountCap)
+
+			convey.So(planUsesIndexRangeSearch(details), convey.ShouldBeTrue)
+			convey.So(planHasFullTokenScan(details), convey.ShouldBeFalse)
+		})
+	})
+}
+
 // seedSampleMirrorSearchRow inserts a sample_mirror row letting the caller set
 // the four searchable fields (name, supplier_name, common_name, donor_id)
 // independently, so word-prefix-search coverage can target each field. Callers
@@ -842,6 +977,66 @@ func rebuildSampleSearchIndexForTestDialect(t *testing.T, db *sql.DB, dialect st
 	if err = tx.Commit(); err != nil {
 		t.Fatalf("rebuildSampleSearchIndexForTest() commit: %v", err)
 	}
+}
+
+// explainQueryPlanDetails returns the detail column of every EXPLAIN QUERY PLAN
+// row for query under the given bind args, the SQLite planner's description of
+// how each table/index is accessed.
+func explainQueryPlanDetails(t *testing.T, db *sql.DB, query string, args ...any) []string {
+	t.Helper()
+
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("explainQueryPlanDetails(): %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	details := make([]string, 0)
+	for rows.Next() {
+		var (
+			id, parent, notUsed int
+			detail              string
+		)
+		if scanErr := rows.Scan(&id, &parent, &notUsed, &detail); scanErr != nil {
+			t.Fatalf("explainQueryPlanDetails() scan: %v", scanErr)
+		}
+
+		details = append(details, detail)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("explainQueryPlanDetails() rows: %v", err)
+	}
+
+	return details
+}
+
+// planUsesIndexRangeSearch reports whether any plan row is an index range SEARCH
+// on sample_search_token_idx bounded on both sides of token (SQLite renders the
+// half-open `token >= ? AND token < ?` range as "token>? AND token<?").
+func planUsesIndexRangeSearch(details []string) bool {
+	for _, detail := range details {
+		if strings.Contains(detail, "SEARCH") &&
+			strings.Contains(detail, sampleSearchTokenIndex.Name) &&
+			strings.Contains(detail, "token>?") &&
+			strings.Contains(detail, "token<?") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// planHasFullTokenScan reports whether any plan row is a full SCAN of
+// sample_search_token (the old LIKE predicate's whole-covering-index scan),
+// which the index range must avoid.
+func planHasFullTokenScan(details []string) bool {
+	for _, detail := range details {
+		if strings.HasPrefix(detail, "SCAN "+sampleSearchTokenTable) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func sampleTmpIDs(samples []Sample) []int64 {

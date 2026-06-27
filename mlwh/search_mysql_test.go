@@ -35,17 +35,18 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-// TestSearchSQLEscapeClauseIsDialectSafe guards the LIKE ESCAPE clause baked
-// into the substring/prefix-search SQL strings against a regression that breaks
+// TestStudySearchSQLEscapeClauseIsDialectSafe guards the LIKE ESCAPE clause baked
+// into the study substring-search SQL strings against a regression that breaks
 // the MySQL backend. On MySQL under the default sql_mode (NO_BACKSLASH_ESCAPES
 // off), the string literal `'\'` is a backslash escaping the closing quote, so
 // an `ESCAPE '\'` clause is an unterminated literal and MySQL rejects the whole
 // statement with a syntax error (Error 1064). This asserts the SQL contract
-// directly: each search SQL string carries valid `ESCAPE '!'` clauses (one per
-// study field; one for the sample token prefix and one for its count) and never
-// the broken lone-backslash form, so the clauses are valid on both backends.
-func TestSearchSQLEscapeClauseIsDialectSafe(t *testing.T) {
-	convey.Convey("Given the search SQL strings built for both dialects", t, func() {
+// directly: each study search SQL string carries valid `ESCAPE '!'` clauses (one
+// per study field) and never the broken lone-backslash form, so the clauses are
+// valid on both backends. (Study search is a substring LIKE scan and is
+// unchanged by the sample token-range fix.)
+func TestStudySearchSQLEscapeClauseIsDialectSafe(t *testing.T) {
+	convey.Convey("Given the study search SQL strings built for both dialects", t, func() {
 		studyFieldCount := len(studySearchFields)
 
 		cases := []struct {
@@ -55,8 +56,6 @@ func TestSearchSQLEscapeClauseIsDialectSafe(t *testing.T) {
 		}{
 			{"studySearchSQL", studySearchSQL, studyFieldCount},
 			{"studySearchCountSQL", studySearchCountSQL, studyFieldCount},
-			{"sampleSearchTokenPageSQL", sampleSearchTokenPageSQL, 1},
-			{"sampleSearchCountSQL", sampleSearchCountSQL, 1},
 		}
 
 		for _, testCase := range cases {
@@ -69,6 +68,40 @@ func TestSearchSQLEscapeClauseIsDialectSafe(t *testing.T) {
 					convey.So(strings.Contains(testCase.sql, `ESCAPE '!'`), convey.ShouldBeTrue)
 					convey.So(strings.Count(testCase.sql, "ESCAPE "), convey.ShouldEqual, testCase.expectedClause)
 					convey.So(strings.Count(testCase.sql, `ESCAPE '!'`), convey.ShouldEqual, testCase.expectedClause)
+				})
+			})
+		}
+	})
+}
+
+// TestSampleSearchSQLUsesDialectSafeTokenRange asserts the sample token-prefix
+// SQL queries the (token, id_sample_tmp) index via a half-open byte range
+// (`token >= ? AND token < ?`) rather than a `token LIKE 'prefix%'` pattern. The
+// range is what makes the query a true index SEARCH on SQLite (whose default
+// case-insensitive LIKE cannot use the BINARY-collated index, forcing a full
+// covering-index scan), and it is one shared SQL form valid and index-using on
+// both backends. Asserting the SQL carries no LIKE/ESCAPE clause and does carry
+// the range predicate locks that contract in at the string level (the EXPLAIN
+// plan test proves the index is actually used).
+func TestSampleSearchSQLUsesDialectSafeTokenRange(t *testing.T) {
+	convey.Convey("Given the sample token-prefix search SQL strings", t, func() {
+		cases := []struct {
+			name string
+			sql  string
+		}{
+			{"sampleSearchTokenPageSQL", sampleSearchTokenPageSQL},
+			{"sampleSearchCountSQL", sampleSearchCountSQL},
+		}
+
+		for _, testCase := range cases {
+			convey.Convey("the "+testCase.name+" predicate is a dialect-safe token range", func() {
+				convey.Convey("then it carries the half-open `token >= ? AND token < ?` range", func() {
+					convey.So(strings.Contains(testCase.sql, `token >= ? AND token < ?`), convey.ShouldBeTrue)
+				})
+
+				convey.Convey("then it uses no LIKE/ESCAPE clause (which would defeat the SQLite index)", func() {
+					convey.So(strings.Contains(testCase.sql, "LIKE"), convey.ShouldBeFalse)
+					convey.So(strings.Contains(testCase.sql, "ESCAPE"), convey.ShouldBeFalse)
 				})
 			})
 		}
@@ -106,13 +139,15 @@ func TestSearchSamplesMySQLPagesTokenIndexThenFetchesByID(t *testing.T) {
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		}()
 
-		// The page SQL must scan the (token, id_sample_tmp) index by prefix in
-		// index order with LIMIT/OFFSET (a bounded over-fetch of token rows), and
-		// must not be a global SELECT DISTINCT ... ORDER BY id_sample_tmp.
+		// The page SQL must seek the (token, id_sample_tmp) index by a half-open
+		// token range in index order with LIMIT/OFFSET (a bounded over-fetch of
+		// token rows), and must not be a global SELECT DISTINCT ... ORDER BY
+		// id_sample_tmp. The bound args are [lower, upper) for the prefix "acme"
+		// (upper increments the last byte: "acme" -> "acmf").
 		pageSQL := `SELECT token, id_sample_tmp FROM sample_search_token` +
-			` WHERE token LIKE \? ESCAPE '!' ORDER BY token, id_sample_tmp LIMIT \? OFFSET \?`
+			` WHERE token >= \? AND token < \? ORDER BY token, id_sample_tmp LIMIT \? OFFSET \?`
 		roMock.ExpectQuery(pageSQL).
-			WithArgs("acme%", 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
+			WithArgs("acme", "acmf", 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
 			WillReturnRows(sqlmock.NewRows([]string{"token", "id_sample_tmp"}).
 				AddRow("acme", int64(1)).
 				AddRow("acme", int64(2)))
@@ -152,9 +187,11 @@ func TestSearchSamplesDeDuplicatesIdsSharingThePrefix(t *testing.T) {
 		}()
 
 		// id 1 owns two prefix-matching tokens ("mus", "musculus"); the page must
-		// de-duplicate it to a single sample id before the by-id fetch.
+		// de-duplicate it to a single sample id before the by-id fetch. The prefix
+		// "mus" seeks the half-open range [mus, mut) (upper increments the last
+		// byte: "mus" -> "mut").
 		roMock.ExpectQuery(`SELECT token, id_sample_tmp FROM sample_search_token`).
-			WithArgs("mus%", 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
+			WithArgs("mus", "mut", 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
 			WillReturnRows(sqlmock.NewRows([]string{"token", "id_sample_tmp"}).
 				AddRow("mus", int64(1)).
 				AddRow("musculus", int64(1)).
@@ -213,13 +250,13 @@ func TestCountSampleSearchMySQLBuildsBoundedDistinctCount(t *testing.T) {
 		}()
 
 		// The count is an exact COUNT over a bounded inner SELECT DISTINCT
-		// id_sample_tmp of the token prefix range, capped with LIMIT so a
-		// mega-term stops at the cap. The bound args are the escaped prefix and
-		// the cap.
+		// id_sample_tmp of the half-open token range, capped with LIMIT so a
+		// mega-term stops at the cap. The bound args are the range [lower, upper)
+		// for the prefix "acme" ("acme" -> "acmf") followed by the cap.
 		countSQL := `(?s)SELECT COUNT\(\*\) FROM \(SELECT DISTINCT id_sample_tmp FROM sample_search_token` +
-			` WHERE token LIKE \? ESCAPE '!' LIMIT \?\)`
+			` WHERE token >= \? AND token < \? LIMIT \?\)`
 		roMock.ExpectQuery(countSQL).
-			WithArgs("acme%", sampleSearchCountCap).
+			WithArgs("acme", "acmf", sampleSearchCountCap).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
 		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
