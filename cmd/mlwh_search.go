@@ -267,6 +267,10 @@ func buildStudySearchSection(ctx context.Context, client mlwhSearchClient, term 
 		emptyCache = true
 	}
 
+	if studies == nil {
+		studies = []mlwh.Study{}
+	}
+
 	return &studySearchSection{Count: count.Count, Results: studies}, emptyCache, nil
 }
 
@@ -297,6 +301,10 @@ func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term
 		}
 
 		emptyCache = true
+	}
+
+	if samples == nil {
+		samples = []mlwh.Sample{}
 	}
 
 	return &sampleSearchSection{Count: count.Count, Results: samples}, emptyCache, nil
@@ -372,11 +380,17 @@ func writeSampleSearchSection(out io.Writer, section *sampleSearchSection) {
 	}
 }
 
+// studySearchSection is the JSON shape of the studies block. Results is always a
+// present array (no omitempty): the build path normalizes a nil slice to an
+// empty slice so an empty/never-synced cache serialises "results": [], matching
+// the synced no-match success path, never "results": null.
 type studySearchSection struct {
 	Count   int          `json:"count"`
 	Results []mlwh.Study `json:"results"`
 }
 
+// sampleSearchSection is the JSON shape of the samples block; see
+// studySearchSection for the always-present Results array contract.
 type sampleSearchSection struct {
 	Count   int           `json:"count"`
 	Results []mlwh.Sample `json:"results"`

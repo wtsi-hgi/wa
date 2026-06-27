@@ -34,6 +34,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -41,6 +42,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/smartystreets/goconvey/convey"
@@ -3289,6 +3291,42 @@ func TestServerGetSearchSuggestions(t *testing.T) {
 		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
 		convey.So(response.Body.String(), convey.ShouldEqual, "[]\n")
 		convey.So(expander.classifyCalls, convey.ShouldBeEmpty)
+	})
+
+	convey.Convey("Bug 260627-5: Given a 2-rune but 4-byte term that the mlwh layer would search (byte length >= 3), GET /results/search-suggestions runs the substring search and offers the registered study", t, func() {
+		// "ßß" is 2 runes but 4 bytes. mlwh gates substring/word-prefix search on
+		// byte length (len(term) >= 3), so it would search this term; the
+		// suggestion substring gate must agree and forward it to the searcher
+		// rather than skipping it on rune count.
+		const multiByteTerm = "ßß"
+		convey.So(utf8.RuneCountInString(multiByteTerm), convey.ShouldEqual, 2)
+		convey.So(len(multiByteTerm), convey.ShouldEqual, 4)
+
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-multibyte-term", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaIDStudyLimsKey: "6568"}
+		}))
+
+		var searchedTerms []string
+		expander := &mockSearchExpander{
+			searchStudiesFunc: func(_ context.Context, term string, _, _ int) ([]mlwh.Study, error) {
+				searchedTerms = append(searchedTerms, term)
+
+				return []mlwh.Study{
+					{IDStudyLims: "6568", Name: "DIV", StudyTitle: "Microbial diversity of soil"},
+				}, nil
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q="+url.QueryEscape(multiByteTerm), nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+
+		convey.So(searchedTerms, convey.ShouldResemble, []string{multiByteTerm})
+		convey.So(suggestionByFieldValueForTest(suggestions, "study", "6568"), convey.ShouldNotBeNil)
 	})
 
 	convey.Convey("GET /results/search-suggestions rejects invalid limits", t, func() {

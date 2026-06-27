@@ -402,16 +402,19 @@ func TestMLWHSearchCommandNeverSyncedDoesNotMentionSync(t *testing.T) {
 }
 
 func TestMLWHSearchCommandNeverSyncedJSONOmitsSyncHint(t *testing.T) {
-	convey.Convey("Given a never-synced cache and --json, when wa mlwh search runs, then the JSON object parses and mentions no sync", t, func() {
+	convey.Convey("Given a never-synced cache and --json, when wa mlwh search runs, then the JSON object parses, mentions no sync and has empty (not null) result arrays", t, func() {
+		// The real RemoteClient returns a nil slice alongside the never-synced
+		// error (remoteCall returns the zero value of []Study/[]Sample on
+		// error), so the stub mirrors that to exercise the actual path.
 		stub := &stubMLWHSearchClient{
 			searchStudies: func(_ context.Context, _ string, _, _ int) ([]mlwh.Study, error) {
-				return []mlwh.Study{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
+				return nil, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
 			},
 			countStudySearch: func(_ context.Context, _ string) (mlwh.Count, error) {
 				return mlwh.Count{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
 			},
 			searchSamples: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
-				return []mlwh.Sample{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
+				return nil, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
 			},
 			countSampleSearch: func(_ context.Context, _ string) (mlwh.Count, error) {
 				return mlwh.Count{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
@@ -425,11 +428,28 @@ func TestMLWHSearchCommandNeverSyncedJSONOmitsSyncHint(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
 
+		// An empty cache must still serialise results as [] (an always-present
+		// array), never null, matching the synced no-match success path.
+		convey.So(output, convey.ShouldContainSubstring, "\"results\": []")
+		convey.So(output, convey.ShouldNotContainSubstring, "\"results\": null")
+
 		decoded := map[string]any{}
 		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
 		convey.So(decoded["term"], convey.ShouldEqual, "malaria")
+
 		studies := decoded["studies"].(map[string]any)
 		convey.So(studies["count"], convey.ShouldEqual, 0)
+		studyResults, ok := studies["results"].([]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(studyResults, convey.ShouldNotBeNil)
+		convey.So(studyResults, convey.ShouldBeEmpty)
+
+		samples := decoded["samples"].(map[string]any)
+		convey.So(samples["count"], convey.ShouldEqual, 0)
+		sampleResults, ok := samples["results"].([]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(sampleResults, convey.ShouldNotBeNil)
+		convey.So(sampleResults, convey.ShouldBeEmpty)
 	})
 }
 

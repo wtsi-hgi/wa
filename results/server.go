@@ -34,7 +34,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -119,7 +118,10 @@ var combinedSampleSearchKinds = []mlwh.IdentifierKind{
 const mlwhSubstringSearchCap = 50
 
 // searchSuggestionSubstringMinLength matches the mlwh package's minimum search
-// term length, below which substring/word-prefix search returns nothing.
+// term length (its searchTermMinLength), below which substring/word-prefix
+// search returns nothing. Like mlwh, the gate is on byte length (len(term)), not
+// rune count, so a short multi-byte term is forwarded exactly when mlwh would
+// search it.
 const searchSuggestionSubstringMinLength = 3
 
 type sampleMetadataSearchKey struct {
@@ -1339,7 +1341,7 @@ func mlwhSearchSuggestionTargets(match mlwh.Match, raw string) []mlwhSearchSugge
 // for term, keeps matches that have registered results, and appends them (labelled
 // with human-readable context) after the exact suggestions until limit is reached.
 func (s *Server) appendSubstringMLWHSearchSuggestions(ctx context.Context, term string, limit int, suggestions []SearchSuggestion) ([]SearchSuggestion, error) {
-	if len(suggestions) >= limit || utf8.RuneCountInString(term) < searchSuggestionSubstringMinLength {
+	if len(suggestions) >= limit || len(term) < searchSuggestionSubstringMinLength {
 		return suggestions, nil
 	}
 
