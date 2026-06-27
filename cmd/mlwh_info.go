@@ -128,22 +128,48 @@ func activeMLWHPort() string {
 	}
 }
 
+// infoQueryError renders a failed-query error for `wa mlwh info`. When canSync is
+// false (server or cache-only mode) it omits any 'wa mlwh sync' hint: the
+// never-synced case becomes a neutral cache-unavailable message that does not
+// embed mlwh.ErrCacheNeverSynced.Error() (whose text contains the sync hint), and
+// other errors drop the sync suffix. When canSync is true (local operator
+// upstream-DSN mode) the actionable sync hints are kept.
+func infoQueryError(identifier string, err error, canSync bool) error {
+	if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+		if canSync {
+			return fmt.Errorf("resolve %q: %w", identifier, err)
+		}
+
+		return fmt.Errorf("resolve %q: %s", identifier, mlwhCacheUnavailableMessage)
+	}
+
+	if errors.Is(err, mlwh.ErrNotFound) {
+		if canSync {
+			return fmt.Errorf("no match for identifier %q (run 'wa mlwh sync' if you think the cache is stale)", identifier)
+		}
+
+		return fmt.Errorf("no match for identifier %q", identifier)
+	}
+
+	if canSync {
+		return fmt.Errorf("resolve %q: %w (run 'wa mlwh sync' if your local cache is empty or stale)", identifier, err)
+	}
+
+	return fmt.Errorf("resolve %q: %w", identifier, err)
+}
+
 type mlwhInfoSampleNameResolver interface {
 	ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error)
 }
 
-func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag string, jsonOut bool) error {
+// runMLWHInfo resolves identifier and prints its report. canSync reports whether
+// the caller is in local operator upstream-DSN mode (the only mode where
+// 'wa mlwh sync' works); when false the failed-query messages omit any sync hint,
+// because an end-user going via the server or a cache-only path cannot sync.
+func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag string, jsonOut, canSync bool) error {
 	match, err := classifyForInfo(ctx, client, identifier, typeFlag)
 	if err != nil {
-		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
-			return fmt.Errorf("resolve %q: %w", identifier, err)
-		}
-
-		if errors.Is(err, mlwh.ErrNotFound) {
-			return fmt.Errorf("no match for identifier %q (run 'wa mlwh sync' if you think the cache is stale)", identifier)
-		}
-
-		return fmt.Errorf("resolve %q: %w (run 'wa mlwh sync' if your local cache is empty or stale)", identifier, err)
+		return infoQueryError(identifier, err, canSync)
 	}
 
 	report := buildInfoReport(ctx, client, identifier, match)
@@ -621,7 +647,13 @@ func newMLWHInfoCommand() *cobra.Command {
 			}
 			defer func() { _ = client.Close() }()
 
-			return runMLWHInfo(cmd.Context(), client, cmd.OutOrStdout(), identifier, typeFlag, jsonOut)
+			// The user can sync only in local operator upstream-DSN mode (no
+			// server URL and WA_MLWH_DSN set); that is the only mode where
+			// 'wa mlwh sync' works. Otherwise failed-query errors must not
+			// mention sync.
+			canSync := strings.TrimSpace(serverURL) == "" && strings.TrimSpace(firstEnv("WA_MLWH_DSN")) != ""
+
+			return runMLWHInfo(cmd.Context(), client, cmd.OutOrStdout(), identifier, typeFlag, jsonOut, canSync)
 		},
 	}
 

@@ -50,7 +50,8 @@ const (
 
 	// mlwhCacheUnavailableMessage is the neutral message shown when the MLWH cache
 	// has never been synced (or is otherwise empty). It deliberately omits any
-	// "wa mlwh sync" hint because end-users going via the server cannot sync.
+	// "wa mlwh sync" hint because end-users going via the server cannot sync. It is
+	// shared with the never-synced rendering of `wa mlwh info` (see mlwh_info.go).
 	mlwhCacheUnavailableMessage = "the MLWH cache is not available yet"
 )
 
