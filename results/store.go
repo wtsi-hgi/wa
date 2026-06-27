@@ -1554,6 +1554,60 @@ func (s *Store) DistinctMetadataValues(ctx context.Context, keys []string) ([]st
 	return values, nil
 }
 
+// registeredMetadataValues returns the subset of candidate values that appear as
+// metadata for any of the supplied keys, matched case-insensitively, in a single
+// query. The returned set is keyed by the lower-cased candidate value, so callers
+// can test registration with lower(candidate). An empty key or candidate list
+// yields an empty set.
+func (s *Store) registeredMetadataValues(ctx context.Context, keys []string, values []string) (map[string]struct{}, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: nil store", ErrInvalidInput)
+	}
+
+	keys = nonEmptySearchValues(keys)
+	values = nonEmptySearchValues(values)
+	if len(keys) == 0 || len(values) == 0 {
+		return map[string]struct{}{}, nil
+	}
+
+	keyPlaceholders := strings.TrimSuffix(strings.Repeat("?, ", len(keys)), ", ")
+	valuePlaceholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
+	args := make([]any, 0, len(keys)+len(values))
+	for _, key := range keys {
+		args = append(args, key)
+	}
+	for _, value := range values {
+		args = append(args, strings.ToLower(value))
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		fmt.Sprintf(`SELECT DISTINCT lower(value) FROM result_metadata WHERE meta_key IN (%s) AND lower(value) IN (%s)`, keyPlaceholders, valuePlaceholders),
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query registered metadata values: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	registered := map[string]struct{}{}
+	for rows.Next() {
+		var value string
+		if err = rows.Scan(&value); err != nil {
+			return nil, fmt.Errorf("scan registered metadata value: %w", err)
+		}
+
+		registered[value] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate registered metadata values: %w", err)
+	}
+
+	return registered, nil
+}
+
 // Stats returns aggregate counts and recent result sets for dashboard loading.
 func (s *Store) Stats(ctx context.Context, recent, days int) (*StatsResult, error) {
 	if s == nil || s.db == nil {

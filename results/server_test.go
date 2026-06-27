@@ -302,6 +302,8 @@ type mockSearchExpander struct {
 	resolveRunFunc        func(context.Context, string) (mlwh.Match, error)
 	libraryFunc           func(context.Context, string) (mlwh.Match, error)
 	libraryIdentifierFunc func(context.Context, string) (mlwh.Match, error)
+	searchStudiesFunc     func(context.Context, string, int, int) ([]mlwh.Study, error)
+	searchSamplesFunc     func(context.Context, string, int, int) ([]mlwh.Sample, error)
 }
 
 func (m *mockSearchExpander) ExpandSearchValues(ctx context.Context, kind mlwh.IdentifierKind, canonical string) (mlwh.SearchValues, error) {
@@ -368,6 +370,22 @@ func (m *mockSearchExpander) ResolveLibraryIdentifier(ctx context.Context, raw s
 	}
 
 	return mlwh.Match{}, mlwh.ErrNotFound
+}
+
+func (m *mockSearchExpander) SearchStudies(ctx context.Context, term string, limit, offset int) ([]mlwh.Study, error) {
+	if m.searchStudiesFunc != nil {
+		return m.searchStudiesFunc(ctx, term, limit, offset)
+	}
+
+	return []mlwh.Study{}, nil
+}
+
+func (m *mockSearchExpander) SearchSamples(ctx context.Context, term string, limit, offset int) ([]mlwh.Sample, error) {
+	if m.searchSamplesFunc != nil {
+		return m.searchSamplesFunc(ctx, term, limit, offset)
+	}
+
+	return []mlwh.Sample{}, nil
 }
 
 func TestResolveRegistrationSample(t *testing.T) {
@@ -3087,6 +3105,176 @@ func TestServerGetSearchSuggestions(t *testing.T) {
 		decodeJSONResponseForTest(t, response, &suggestions)
 		convey.So(expander.classifyCalls, convey.ShouldResemble, []string{"Hek_R1"})
 		convey.So(suggestionValuesByFieldForTest(suggestions)["sample"], convey.ShouldContain, "Hek_R1")
+	})
+
+	convey.Convey("Bug 260627-4: Given a study whose title contains the typed word and is registered by its LIMS id, GET /results/search-suggestions offers a Study filter for the LIMS id labelled with the title", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-title-word", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaIDStudyLimsKey: "6568"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchStudiesFunc: func(_ context.Context, term string, _, _ int) ([]mlwh.Study, error) {
+				if term == "diversity" {
+					return []mlwh.Study{
+						{IDStudyLims: "6568", Name: "DIV", StudyTitle: "Microbial diversity of soil"},
+					}, nil
+				}
+
+				return []mlwh.Study{}, nil
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=diversity", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		studySuggestion := suggestionByFieldValueForTest(suggestions, "study", "6568")
+		convey.So(studySuggestion, convey.ShouldNotBeNil)
+		convey.So(studySuggestion.Label, convey.ShouldContainSubstring, "Microbial diversity of soil")
+	})
+
+	convey.Convey("Bug 260627-4: Given a study whose title contains the typed word but is NOT registered, GET /results/search-suggestions offers no Study filter", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-title-unregistered", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaIDStudyLimsKey: "9999"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchStudiesFunc: func(_ context.Context, term string, _, _ int) ([]mlwh.Study, error) {
+				if term == "diversity" {
+					return []mlwh.Study{
+						{IDStudyLims: "6568", Name: "DIV", StudyTitle: "Microbial diversity of soil"},
+					}, nil
+				}
+
+				return []mlwh.Study{}, nil
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=diversity", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(suggestionByFieldValueForTest(suggestions, "study", "6568"), convey.ShouldBeNil)
+	})
+
+	convey.Convey("Bug 260627-4: Given a sample matched by word-prefix on its supplier name and registered, GET /results/search-suggestions offers a Sample filter for the canonical name", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-word-prefix", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "SANG1"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchSamplesFunc: func(_ context.Context, term string, _, _ int) ([]mlwh.Sample, error) {
+				if term == "musculus" {
+					return []mlwh.Sample{
+						{Name: "SANG1", SupplierName: "Mus musculus liver", CommonName: "house mouse"},
+					}, nil
+				}
+
+				return []mlwh.Sample{}, nil
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=musculus", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(suggestionByFieldValueForTest(suggestions, "sample", "SANG1"), convey.ShouldNotBeNil)
+	})
+
+	convey.Convey("Bug 260627-4: Given both an exact-classify match and a title-word study match, exact-classify suggestions still come first", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-exact-and-substring", func(reg *Registration) {
+			reg.Metadata = map[string]string{
+				SeqmetaIDStudyLimsKey: "6568",
+				SeqmetaSampleNameKey:  "diversitySAMPLE",
+			}
+		}))
+
+		expander := &mockSearchExpander{
+			classifyFunc: func(_ context.Context, raw string) (mlwh.Match, error) {
+				if raw == "diversitySAMPLE" {
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: "diversitySAMPLE",
+						Sample:    &mlwh.Sample{Name: "diversitySAMPLE"},
+					}, nil
+				}
+
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+			searchStudiesFunc: func(_ context.Context, term string, _, _ int) ([]mlwh.Study, error) {
+				if strings.HasPrefix("diversitySAMPLE", term) || term == "diversitySAMPLE" {
+					return []mlwh.Study{
+						{IDStudyLims: "6568", StudyTitle: "diversitySAMPLE study"},
+					}, nil
+				}
+
+				return []mlwh.Study{}, nil
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=diversitySAMPLE", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(len(suggestions), convey.ShouldBeGreaterThanOrEqualTo, 2)
+		exactIndex := suggestionIndexForFieldValueForTest(suggestions, "sample", "diversitySAMPLE")
+		substringIndex := suggestionIndexForFieldValueForTest(suggestions, "study", "6568")
+		convey.So(exactIndex, convey.ShouldBeGreaterThanOrEqualTo, 0)
+		convey.So(substringIndex, convey.ShouldBeGreaterThanOrEqualTo, 0)
+		convey.So(exactIndex, convey.ShouldBeLessThan, substringIndex)
+	})
+
+	convey.Convey("Bug 260627-4: Given the MLWH cache has never been synced, substring search degrades to no MLWH suggestions without a 502", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-never-synced", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaIDStudyLimsKey: "6568"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchStudiesFunc: func(context.Context, string, int, int) ([]mlwh.Study, error) {
+				return nil, fmt.Errorf("%w: %w", mlwh.ErrCacheNeverSynced, mlwh.ErrNotFound)
+			},
+			searchSamplesFunc: func(context.Context, string, int, int) ([]mlwh.Sample, error) {
+				return nil, fmt.Errorf("%w: %w", mlwh.ErrCacheNeverSynced, mlwh.ErrNotFound)
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=diversity", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(suggestionByFieldValueForTest(suggestions, "study", "6568"), convey.ShouldBeNil)
+	})
+
+	convey.Convey("Bug 260627-4: Given a genuine upstream MLWH failure during substring search, GET /results/search-suggestions surfaces a 502", t, func() {
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-upstream-failure", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaIDStudyLimsKey: "6568"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchStudiesFunc: func(context.Context, string, int, int) ([]mlwh.Study, error) {
+				return nil, errors.New("connection refused")
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=diversity", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusBadGateway)
 	})
 
 	convey.Convey("GET /results/search-suggestions skips store and MLWH suggestions for one-character generic queries", t, func() {

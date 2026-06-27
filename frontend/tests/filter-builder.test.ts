@@ -826,4 +826,53 @@ describe("K1 filter builder component", () => {
             "/?output_directory=output-substring-260618",
         );
     });
+
+    it("shows a labelled suggestion's label while applying its value as the filter", async () => {
+        fetchMock.mockResolvedValue({
+            json: async () => [
+                {
+                    field_key: "study",
+                    value: "6568",
+                    label: "Microbial diversity of soil",
+                },
+            ],
+            ok: true,
+        });
+
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: [],
+                seqmetaAvailable: true,
+                studies: [],
+            }),
+        );
+
+        fireEvent.change(screen.getByLabelText(/generic all-field search/i), {
+            target: { value: "diversity" },
+        });
+
+        const labelledOption = await screen.findByRole("option", {
+            name: /add study filter microbial diversity of soil/i,
+        });
+
+        expect(labelledOption.textContent).toContain(
+            "Microbial diversity of soil",
+        );
+        expect(labelledOption.textContent).not.toContain("6568");
+
+        // The labelled study match must not also produce a synthetic option that
+        // applies the typed word ("diversity") as a study filter.
+        expect(
+            screen.queryByRole("option", {
+                name: /add study filter diversity$/i,
+            }),
+        ).toBeNull();
+
+        fireEvent.click(labelledOption);
+
+        expect(pushMock).toHaveBeenCalledWith("/?study=6568");
+    });
 });

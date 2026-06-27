@@ -238,9 +238,13 @@ type SearchResult struct {
 }
 
 // SearchSuggestion is a field/value match for generic registration search.
+// Label, when set, is the human-readable text to display for the suggestion; it
+// can differ from the applied filter Value (for example a study title shown for
+// a study LIMS id value).
 type SearchSuggestion struct {
 	FieldKey string `json:"field_key"`
 	Value    string `json:"value"`
+	Label    string `json:"label,omitempty"`
 }
 
 // Store persists result sets in SQL.

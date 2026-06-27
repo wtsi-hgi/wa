@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -110,6 +111,16 @@ var combinedSampleSearchKinds = []mlwh.IdentifierKind{
 	mlwh.KindSampleUUID,
 	mlwh.KindDonorID,
 }
+
+// mlwhSubstringSearchCap bounds how many studies/samples the substring search
+// over-fetches per dimension. Only up to limit registered ones are surfaced, but
+// some matches will not have registered results, so over-fetch a fixed amount to
+// keep the bounded "which are registered" filter able to find enough.
+const mlwhSubstringSearchCap = 50
+
+// searchSuggestionSubstringMinLength matches the mlwh package's minimum search
+// term length, below which substring/word-prefix search returns nothing.
+const searchSuggestionSubstringMinLength = 3
 
 type sampleMetadataSearchKey struct {
 	key  string
@@ -256,6 +267,13 @@ type LockedResponse struct {
 	Locked   bool   `json:"locked"`
 	ResultID string `json:"result_id,omitempty"`
 	Message  string `json:"message"`
+}
+
+// searchSuggestionKey dedups suggestions by their applied filter (field + value)
+// while allowing the displayed Label to differ between otherwise-equal entries.
+type searchSuggestionKey struct {
+	fieldKey string
+	value    string
 }
 
 // Server serves the results REST API.
@@ -1231,16 +1249,18 @@ func appendUniqueSearchSuggestions(existing []SearchSuggestion, incoming []Searc
 	}
 
 	merged := make([]SearchSuggestion, 0, min(limit, len(existing)+len(incoming)))
-	seen := make(map[SearchSuggestion]struct{}, len(existing)+len(incoming))
+	seen := make(map[searchSuggestionKey]struct{}, len(existing)+len(incoming))
 	for _, suggestion := range append(existing, incoming...) {
 		if suggestion.FieldKey == "" || suggestion.Value == "" {
 			continue
 		}
-		if _, ok := seen[suggestion]; ok {
+
+		key := searchSuggestionKey{fieldKey: suggestion.FieldKey, value: suggestion.Value}
+		if _, ok := seen[key]; ok {
 			continue
 		}
 
-		seen[suggestion] = struct{}{}
+		seen[key] = struct{}{}
 		merged = append(merged, suggestion)
 		if len(merged) >= limit {
 			break
@@ -1256,6 +1276,15 @@ func (s *Server) mlwhSearchSuggestions(ctx context.Context, query string, limit 
 		return []SearchSuggestion{}, nil
 	}
 
+	suggestions, err := s.exactMLWHSearchSuggestions(ctx, term, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.appendSubstringMLWHSearchSuggestions(ctx, term, limit, suggestions)
+}
+
+func (s *Server) exactMLWHSearchSuggestions(ctx context.Context, term string, limit int) ([]SearchSuggestion, error) {
 	classifier, ok := s.resolver.(searchSuggestionClassifier)
 	if !ok {
 		return []SearchSuggestion{}, nil
@@ -1304,6 +1333,171 @@ func mlwhSearchSuggestionTargets(match mlwh.Match, raw string) []mlwhSearchSugge
 	default:
 		return []mlwhSearchSuggestionTarget{}
 	}
+}
+
+// appendSubstringMLWHSearchSuggestions runs the mlwh substring/word-prefix search
+// for term, keeps matches that have registered results, and appends them (labelled
+// with human-readable context) after the exact suggestions until limit is reached.
+func (s *Server) appendSubstringMLWHSearchSuggestions(ctx context.Context, term string, limit int, suggestions []SearchSuggestion) ([]SearchSuggestion, error) {
+	if len(suggestions) >= limit || utf8.RuneCountInString(term) < searchSuggestionSubstringMinLength {
+		return suggestions, nil
+	}
+
+	searcher, ok := s.resolver.(mlwhSubstringSearcher)
+	if !ok {
+		return suggestions, nil
+	}
+
+	seen := make(map[searchSuggestionKey]struct{}, len(suggestions))
+	for _, suggestion := range suggestions {
+		seen[searchSuggestionKey{fieldKey: suggestion.FieldKey, value: suggestion.Value}] = struct{}{}
+	}
+
+	suggestions, err := s.appendRegisteredStudySearchSuggestions(ctx, searcher, term, limit, suggestions, seen)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.appendRegisteredSampleSearchSuggestions(ctx, searcher, term, limit, suggestions, seen)
+}
+
+func (s *Server) appendRegisteredStudySearchSuggestions(ctx context.Context, searcher mlwhSubstringSearcher, term string, limit int, suggestions []SearchSuggestion, seen map[searchSuggestionKey]struct{}) ([]SearchSuggestion, error) {
+	if len(suggestions) >= limit {
+		return suggestions, nil
+	}
+
+	studies, err := searcher.SearchStudies(ctx, term, mlwhSubstringSearchCap, 0)
+	if err != nil {
+		if substringSearchDegrades(err) {
+			return suggestions, nil
+		}
+
+		return nil, fmt.Errorf("%w: search studies suggestion: %w", ErrMLWHFailed, err)
+	}
+	if len(studies) == 0 {
+		return suggestions, nil
+	}
+
+	candidates := make([]string, 0, len(studies))
+	for _, study := range studies {
+		candidates = append(candidates, study.IDStudyLims)
+	}
+
+	registered, err := s.store.registeredMetadataValues(ctx, combinedStudyMetaKeys, candidates)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, study := range studies {
+		if study.IDStudyLims == "" {
+			continue
+		}
+		if _, ok := registered[strings.ToLower(study.IDStudyLims)]; !ok {
+			continue
+		}
+
+		key := searchSuggestionKey{fieldKey: "study", value: study.IDStudyLims}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		suggestions = append(suggestions, SearchSuggestion{
+			FieldKey: "study",
+			Value:    study.IDStudyLims,
+			Label:    studySuggestionLabel(study),
+		})
+		if len(suggestions) >= limit {
+			break
+		}
+	}
+
+	return suggestions, nil
+}
+
+// substringSearchDegrades reports whether a substring-search error should degrade
+// to "no MLWH substring suggestions" rather than surfacing as an upstream failure.
+func substringSearchDegrades(err error) bool {
+	return errors.Is(err, mlwh.ErrCacheNeverSynced) ||
+		errors.Is(err, mlwh.ErrNotFound) ||
+		errors.Is(err, mlwh.ErrUnsupportedIdentifier)
+}
+
+// studySuggestionLabel returns human-readable text for a study suggestion,
+// preferring the title, then the name; empty when it would equal the LIMS id.
+func studySuggestionLabel(study mlwh.Study) string {
+	label := firstNonEmptySearchValue(study.StudyTitle, study.Name)
+	if label == "" || label == study.IDStudyLims {
+		return ""
+	}
+
+	return label
+}
+
+func (s *Server) appendRegisteredSampleSearchSuggestions(ctx context.Context, searcher mlwhSubstringSearcher, term string, limit int, suggestions []SearchSuggestion, seen map[searchSuggestionKey]struct{}) ([]SearchSuggestion, error) {
+	if len(suggestions) >= limit {
+		return suggestions, nil
+	}
+
+	samples, err := searcher.SearchSamples(ctx, term, mlwhSubstringSearchCap, 0)
+	if err != nil {
+		if substringSearchDegrades(err) {
+			return suggestions, nil
+		}
+
+		return nil, fmt.Errorf("%w: search samples suggestion: %w", ErrMLWHFailed, err)
+	}
+	if len(samples) == 0 {
+		return suggestions, nil
+	}
+
+	candidates := make([]string, 0, len(samples))
+	for _, sample := range samples {
+		candidates = append(candidates, sample.Name)
+	}
+
+	registered, err := s.store.registeredMetadataValues(ctx, combinedSampleMetaKeys, candidates)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, sample := range samples {
+		if sample.Name == "" {
+			continue
+		}
+		if _, ok := registered[strings.ToLower(sample.Name)]; !ok {
+			continue
+		}
+
+		key := searchSuggestionKey{fieldKey: "sample", value: sample.Name}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		suggestions = append(suggestions, SearchSuggestion{
+			FieldKey: "sample",
+			Value:    sample.Name,
+			Label:    sampleSuggestionLabel(sample),
+		})
+		if len(suggestions) >= limit {
+			break
+		}
+	}
+
+	return suggestions, nil
+}
+
+// sampleSuggestionLabel returns human-readable context for a sample suggestion,
+// combining the name with its common/supplier name when present; empty when the
+// label would add nothing beyond the canonical name.
+func sampleSuggestionLabel(sample mlwh.Sample) string {
+	context := firstNonEmptySearchValue(sample.CommonName, sample.SupplierName)
+	if context == "" || context == sample.Name {
+		return ""
+	}
+
+	return sample.Name + " (" + context + ")"
 }
 
 func (s *Server) hasRegisteredMLWHSearchSuggestionTarget(ctx context.Context, target mlwhSearchSuggestionTarget) (bool, error) {
