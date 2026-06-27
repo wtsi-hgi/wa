@@ -185,7 +185,7 @@ case "${1:-} ${2:-}" in
 		;;
 	"mlwh serve")
 		port="$(port_arg "$@")"
-		exec node -e 'const http = require("node:http"); const port = Number(process.argv[1]); const server = http.createServer((request, response) => { if (request.url === "/studies") { response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
+		exec node -e 'const http = require("node:http"); const port = Number(process.argv[1]); const tables = ["study","sample","iseq_flowcell","iseq_product_metrics","seq_product_irods_locations"]; const server = http.createServer((request, response) => { if (request.url === "/freshness") { response.writeHead(200, {"content-type":"application/json"}); response.end(JSON.stringify({tables: tables.map((table) => ({table, high_water: "2026-05-15T10:00:00Z", last_run: "2026-05-15T10:00:00Z", ever_synced: true}))})); return; } if (request.url === "/studies") { response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
 		;;
 esac
 
@@ -205,6 +205,148 @@ exit 2
 
 func runDevUnsetSeqmetaEnvForTest() []string {
 	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL"}
+}
+
+func TestRunDevAutoManagedMLWHBackendSyncsColdCacheBeforeStudiesReadiness(t *testing.T) {
+	convey.Convey("run-dev.sh syncs a never-synced MLWH cache before the studies readiness gate", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		cachePath := filepath.Join(t.TempDir(), "mlwh-cache.sqlite")
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+
+		writeRunDevColdMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "dev",
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env: map[string]string{
+				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"WA_ENV":                                "development",
+				"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+				"WA_MLWH_DSN":                           "mlwh_humgen@tcp(localhost:3306)/mlwarehouse_test",
+				"WA_MLWH_CACHE_PATH":                    cachePath,
+				"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+				"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_RESULTS_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/rest/v1/results/stats", resultsPort),
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		snapshot := waitForRunDevSnapshotForTest(t, process, snapshotPath)
+		invocations := waitForRunDevStepsForTest(t, invocationsPath, 3)
+		invocationText := strings.Join(invocations, "\n")
+
+		convey.So(snapshot.MLWHBackendURL, convey.ShouldEqual, fmt.Sprintf("http://127.0.0.1:%d", seqmetaPort))
+		convey.So(snapshot.MLWHCachePath, convey.ShouldEqual, cachePath)
+
+		serveIndex := slices.IndexFunc(invocations, func(line string) bool {
+			return strings.Contains(line, "mlwh serve --port")
+		})
+		syncIndex := slices.IndexFunc(invocations, func(line string) bool {
+			return strings.HasPrefix(line, "mlwh sync")
+		})
+		convey.So(serveIndex, convey.ShouldBeGreaterThanOrEqualTo, 0)
+		convey.So(syncIndex, convey.ShouldBeGreaterThan, serveIndex)
+		convey.So(invocationText, convey.ShouldNotContainSubstring, "mlwhdiff serve")
+		convey.So(
+			process.stdout.String(),
+			convey.ShouldContainSubstring,
+			fmt.Sprintf("Waiting for MLWH studies readiness at http://127.0.0.1:%d/studies", seqmetaPort),
+		)
+		convey.So(waitForRunDevStdoutForTest(t, process, "Development environment is ready."), convey.ShouldBeTrue)
+
+		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
+		convey.So(process.Wait(), convey.ShouldBeNil)
+	})
+}
+
+// writeRunDevColdMLWHServeToolchainForTest writes a fake `go`/`wa` toolchain whose
+// MLWH cache starts never-synced. The serve stub reports ever_synced=false on
+// /freshness and HTTP 503 on /studies until a `mlwh sync` runs; sync marks the
+// cache (a sibling marker beside WA_MLWH_CACHE_PATH) synced, after which serve
+// reports ever_synced=true and /studies returns 200, mirroring how a real sync
+// populates the cache that serve reads.
+func writeRunDevColdMLWHServeToolchainForTest(t *testing.T, binDir string, invocationsPath string) {
+	t.Helper()
+
+	fakeGo := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "build" && "${2:-}" == "-o" && -n "${3:-}" ]]; then
+	output="$3"
+	mkdir -p "$(dirname "$output")"
+	cat >"$output" <<'WAEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+invocations_path=%q
+
+port_arg() {
+	local previous=""
+	local arg
+
+	for arg in "$@"; do
+		if [[ "$previous" == "--port" ]]; then
+			printf '%%s' "$arg"
+			return
+		fi
+
+		case "$arg" in
+			--port=*)
+				printf '%%s' "${arg#*=}"
+				return
+				;;
+		esac
+
+		previous="$arg"
+	done
+
+	printf '0'
+}
+
+printf '%%s\n' "$*" >> "$invocations_path"
+
+case "${1:-} ${2:-}" in
+	"results serve")
+		port="$(port_arg "$@")"
+		exec node -e 'const http = require("node:http"); const port = Number(process.argv[1]); const server = http.createServer((_, response) => { response.writeHead(200, {"content-type":"application/json"}); response.end("{}"); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
+		;;
+	"mlwh sync")
+		: > "${WA_MLWH_CACHE_PATH}.synced"
+		exit 0
+		;;
+	"mlwh serve")
+		port="$(port_arg "$@")"
+		WA_MLWH_SYNCED_MARKER="${WA_MLWH_CACHE_PATH}.synced" \
+			exec node -e 'const fs = require("node:fs"); const http = require("node:http"); const port = Number(process.argv[1]); const marker = process.env.WA_MLWH_SYNCED_MARKER; const tables = ["study","sample","iseq_flowcell","iseq_product_metrics","seq_product_irods_locations"]; const synced = () => { try { fs.accessSync(marker); return true; } catch { return false; } }; const server = http.createServer((request, response) => { if (request.url === "/freshness") { const ever = synced(); response.writeHead(200, {"content-type":"application/json"}); response.end(JSON.stringify({tables: tables.map((table) => ({table, high_water: ever ? "2026-05-15T10:00:00Z" : "", last_run: ever ? "2026-05-15T10:00:00Z" : "", ever_synced: ever}))})); return; } if (request.url === "/studies") { if (!synced()) { response.writeHead(503, {"content-type":"application/json"}); response.end(JSON.stringify({error: {code: "cache_never_synced"}})); return; } response.writeHead(200, {"content-type":"application/json"}); response.end("[]"); return; } response.writeHead(404); response.end(); }); const shutdown = () => server.close(() => process.exit(0)); process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); server.listen(port, "127.0.0.1");' "$port"
+		;;
+esac
+
+printf 'unexpected fake wa args: %%s\n' "$*" >&2
+exit 2
+WAEOF
+	chmod +x "$output"
+	exit 0
+fi
+
+printf 'unexpected fake go args: %%s\n' "$*" >&2
+exit 2
+`, invocationsPath)
+
+	convey.So(os.WriteFile(filepath.Join(binDir, "go"), []byte(fakeGo), 0o755), convey.ShouldBeNil)
 }
 
 func TestRunDevAutoManagedMLWHBackendCanServeConfiguredCacheWithoutDSN(t *testing.T) {
@@ -411,6 +553,56 @@ func runDevSeedFixtureCountForTest(t *testing.T, repoRoot string) int {
 	}
 
 	return len(fixtures)
+}
+
+func TestRunDevAutoManagedMLWHBackendFailsFastOnColdCacheWithoutDSN(t *testing.T) {
+	convey.Convey("run-dev.sh fails fast when the MLWH cache is never-synced and no WA_MLWH_DSN can populate it", t, func() {
+		repoRoot := runDevRepoRootForTest(t)
+		frontendPort := runDevFreePortForTest(t)
+		resultsPort := runDevFreePortForTest(t)
+		seqmetaPort := runDevFreePortForTest(t)
+		cachePath := filepath.Join(t.TempDir(), "mlwh-cache.sqlite")
+		snapshotPath := filepath.Join(t.TempDir(), "frontend-env.json")
+		invocationsPath := filepath.Join(t.TempDir(), "wa-invocations.log")
+		binDir := t.TempDir()
+
+		writeRunDevColdMLWHServeToolchainForTest(t, binDir, invocationsPath)
+
+		process := startRunDevForTest(t, repoRoot, runDevStartOptions{
+			mode:         "dev",
+			frontendPort: frontendPort,
+			resultsPort:  resultsPort,
+			seqmetaPort:  seqmetaPort,
+			unsetEnv:     runDevUnsetSeqmetaEnvForTest(),
+			env: map[string]string{
+				"PATH":                                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"WA_ENV":                                "development",
+				"WA_RESULTS_DB_PATH":                    filepath.Join(t.TempDir(), "results-dev.sqlite"),
+				"WA_MLWH_CACHE_PATH":                    cachePath,
+				"WA_RESULTS_LDAP_SERVER":                "ldap.example.org",
+				"WA_RESULTS_LDAP_DN":                    "uid=%s,ou=people,dc=example,dc=org",
+				"WA_RUN_DEV_ENV_SNAPSHOT":               snapshotPath,
+				"WA_RUN_DEV_RESULTS_HEALTH_URL":         fmt.Sprintf("http://127.0.0.1:%d/rest/v1/results/stats", resultsPort),
+				"WA_RUN_DEV_FRONTEND_CHANGED_FILES_CMD": `:`,
+				"WA_RUN_DEV_FRONTEND_LINT_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_FORMAT_CMD":        `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_TEST_CMD":          `node -e "process.exit(0)"`,
+				"WA_RUN_DEV_FRONTEND_DEV_CMD":           fmt.Sprintf(`node %q %d`, filepath.Join(repoRoot, "cmd", "testdata", "run-dev-frontend-stub.mjs"), frontendPort),
+				"WA_RUN_DEV_FRONTEND_HEALTH_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/health", frontendPort),
+			},
+		})
+
+		convey.So(runDevProcessExitedWithinForTest(process, 90*time.Second), convey.ShouldBeTrue)
+		convey.So(process.Wait(), convey.ShouldNotBeNil)
+		convey.So(process.Stderr(), convey.ShouldContainSubstring, "never been synced")
+		convey.So(process.Stderr(), convey.ShouldContainSubstring, "WA_MLWH_DSN")
+
+		invocations := strings.Join(waitForRunDevStepsForTest(t, invocationsPath, 1), "\n")
+		convey.So(invocations, convey.ShouldNotContainSubstring, "mlwh sync")
+
+		_, snapshotErr := os.Stat(snapshotPath)
+		convey.So(os.IsNotExist(snapshotErr), convey.ShouldBeTrue)
+	})
 }
 
 func runDevCommandModeForTest(process *runDevProcess) string {

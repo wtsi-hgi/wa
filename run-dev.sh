@@ -424,6 +424,10 @@ SEQMETA_HEALTH_MAX_ATTEMPTS="${WA_RUN_DEV_SEQMETA_HEALTH_MAX_ATTEMPTS:-1200}"
 RESULTS_HEALTH_URL="${WA_RUN_DEV_RESULTS_HEALTH_URL:-https://127.0.0.1:$results_port/rest/v1/results/stats}"
 FRONTEND_HEALTH_URL="${WA_RUN_DEV_FRONTEND_HEALTH_URL:-https://127.0.0.1:$frontend_port/api/health}"
 SEQMETA_HEALTH_URL="${WA_RUN_DEV_SEQMETA_HEALTH_URL:-http://127.0.0.1:$seqmeta_port/studies}"
+# GET /freshness reports per-table ever_synced and, by design, returns HTTP 200
+# even on a never-synced cache, so it is the readiness probe used to tell a cold
+# (needs sync) cache from a warm one without tripping the /studies 503.
+SEQMETA_FRESHNESS_URL="${WA_RUN_DEV_SEQMETA_FRESHNESS_URL:-http://127.0.0.1:$seqmeta_port/freshness}"
 
 results_bind_host_for_scenario() {
   local host=""
@@ -983,6 +987,85 @@ http_is_healthy() {
   curl_probe "$url" "$ca_cert"
 }
 
+# mlwh_freshness_is_cold fetches GET /freshness and decides whether the cache
+# needs a sync. It returns 0 (cold) when the body parses and any mirrored table
+# reports ever_synced=false, 1 (warm) when every table reports ever_synced=true,
+# and 2 when the body could not be fetched or parsed (caller treats as warm so a
+# parse hiccup never forces an unwanted sync of an already-populated cache).
+mlwh_freshness_is_cold() {
+  local url="$1"
+  local body
+
+  if ! body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)"; then
+    return 2
+  fi
+
+  WA_RUN_DEV_FRESHNESS_BODY="$body" node --no-warnings -e '
+const body = process.env.WA_RUN_DEV_FRESHNESS_BODY ?? "";
+let parsed;
+try {
+  parsed = JSON.parse(body);
+} catch {
+  process.exit(2);
+}
+const tables = Array.isArray(parsed?.tables) ? parsed.tables : null;
+if (!tables || tables.length === 0) {
+  process.exit(2);
+}
+const cold = tables.some((table) => table?.ever_synced !== true);
+process.exit(cold ? 0 : 1);
+'
+}
+
+# ensure_mlwh_synced_after_serve brings a freshly started MLWH server to studies
+# readiness. It first waits for /freshness (which is 200 even on a never-synced
+# cache) to confirm the server is listening, then uses it to tell a cold cache
+# from a warm one. A warm cache proceeds straight to the existing /studies gate.
+# A cold cache is synced first -- run to completion in the foreground with no
+# timeout, because the cold load is legitimately long and the sample-first sync
+# order means /studies cannot pass until the study table lands -- and only then
+# is /studies awaited. A cold cache with no WA_MLWH_DSN to populate it fails fast
+# with an actionable message instead of hanging on the /studies readiness gate.
+ensure_mlwh_synced_after_serve() {
+  local pid="$1"
+
+  if ! wait_for_http "MLWH server" "$SEQMETA_FRESHNESS_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$pid" "$SEQMETA_LOG"; then
+    return 1
+  fi
+
+  local cold_status=0
+  mlwh_freshness_is_cold "$SEQMETA_FRESHNESS_URL" || cold_status=$?
+  case "$cold_status" in
+    0)
+      if ! has_nonblank_value "${WA_MLWH_DSN:-}"; then
+        printf 'run-dev.sh: the MLWH cache at %s has never been synced and WA_MLWH_DSN is not set, so it cannot be populated.\n' "${MLWH_CACHE_PATH:-<unset>}" >&2
+        printf 'Set WA_MLWH_DSN (and WA_MLWH_PASSWORD) to the upstream MLWH so run-dev.sh can run "wa mlwh sync", or point WA_MLWH_CACHE_PATH at an already-synced cache.\n' >&2
+
+        return 1
+      fi
+
+      printf 'MLWH cache at %s is empty; running "wa mlwh sync" before studies readiness (a cold load can take a while).\n' "${MLWH_CACHE_PATH:-<unset>}"
+      if ! "${BIN_PATH}" mlwh sync 2>&1 | tee -a "$SEQMETA_LOG"; then
+        printf 'run-dev.sh: "wa mlwh sync" failed to populate the MLWH cache.\n' >&2
+
+        return 1
+      fi
+      ;;
+    1) : ;;
+    *)
+      printf 'Could not read MLWH freshness at %s; assuming the cache is already populated.\n' "$SEQMETA_FRESHNESS_URL" >&2
+      ;;
+  esac
+
+  printf 'Waiting for MLWH studies readiness at %s' "$SEQMETA_HEALTH_URL"
+  if [[ -n "$MLWH_CACHE_PATH" ]]; then
+    printf ' (MLWH cache: %s)' "$MLWH_CACHE_PATH"
+  fi
+  printf '\n'
+
+  wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$pid" "$SEQMETA_LOG"
+}
+
 tcp_port_is_open() {
   local port="$1"
 
@@ -1486,14 +1569,10 @@ elif [[ -n "$SEQMETA_CMD" ]]; then
     WA_RUN_DEV_SEQMETA_CMD="$SEQMETA_CMD" \
       bash -lc 'eval "exec $WA_RUN_DEV_SEQMETA_CMD"' \
       >>"$SEQMETA_LOG" 2>&1 &
-    PIDS+=("$!")
+    seqmeta_pid="$!"
+    PIDS+=("$seqmeta_pid")
     SEQMETA_STARTED=1
-    printf 'Waiting for MLWH studies readiness at %s' "$SEQMETA_HEALTH_URL"
-    if [[ -n "$MLWH_CACHE_PATH" ]]; then
-      printf ' (MLWH cache: %s; a cold cache can take a while on first run)' "$MLWH_CACHE_PATH"
-    fi
-    printf '\n'
-    wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
+    ensure_mlwh_synced_after_serve "$seqmeta_pid"
   fi
 elif [[ -n "${WA_MLWH_DSN:-}" || -n "$MLWH_CACHE_PATH" ]]; then
   export WA_MLWH_BACKEND_URL="http://127.0.0.1:$seqmeta_port"
@@ -1508,14 +1587,10 @@ elif [[ -n "${WA_MLWH_DSN:-}" || -n "$MLWH_CACHE_PATH" ]]; then
       mlwh_args+=(--mlwh-cache "$MLWH_CACHE_PATH")
     fi
     "${BIN_PATH}" "${mlwh_args[@]}" >>"$SEQMETA_LOG" 2>&1 &
-    PIDS+=("$!")
+    seqmeta_pid="$!"
+    PIDS+=("$seqmeta_pid")
     SEQMETA_STARTED=1
-    printf 'Waiting for MLWH studies readiness at %s' "$SEQMETA_HEALTH_URL"
-    if [[ -n "$MLWH_CACHE_PATH" ]]; then
-      printf ' (MLWH cache: %s; a cold cache can take a while on first run)' "$MLWH_CACHE_PATH"
-    fi
-    printf '\n'
-    wait_for_http "MLWH server" "$SEQMETA_HEALTH_URL" "strict" "$SEQMETA_HEALTH_MAX_ATTEMPTS" "$!" "$SEQMETA_LOG"
+    ensure_mlwh_synced_after_serve "$seqmeta_pid"
   fi
 else
 	printf 'MLWH server skipped because no explicit command, MLWH DSN, or MLWH cache path is set\n' >"$SEQMETA_LOG"
