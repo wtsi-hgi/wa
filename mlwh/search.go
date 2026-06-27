@@ -162,17 +162,20 @@ type sampleSearchTokenBound struct {
 }
 
 // sampleSearchQueryBounds tokenises term exactly as stored search values are
-// tokenised (sampleSearchTokens: maximal runs of ASCII [a-z0-9], lowercased) and
-// returns the distinct per-token half-open byte ranges to AND together. A term
+// tokenised (sampleSearchTokens: maximal runs of ASCII [a-z0-9], lowercased),
+// drops any query token subsumed by a more-specific one (dropPrefixSubsumedTokens),
+// and returns the distinct per-token half-open byte ranges to AND together. A term
 // whose runes are all separators or non-ASCII (e.g. "___", "ÿ") yields no tokens
 // and so an empty slice (nothing to query); duplicate tokens collapse to one
-// range. Because every query token is [a-z0-9] (all bytes < 0x80),
+// range, and a token that is a prefix of another retained token is dropped (so
+// "mus musculus" collapses to the single "musculus" bound and takes the fast
+// single-range path). Because every query token is [a-z0-9] (all bytes < 0x80),
 // bytePrefixSuccessor always yields a finite, valid-UTF-8 upper bound, so the
 // invalid-UTF-8 concern that motivated gating non-ASCII terms out (resolved PR
 // #23 Copilot thread) cannot arise: a non-ASCII term simply searches its [a-z0-9]
 // tokens instead of being rejected.
 func sampleSearchQueryBounds(term string) []sampleSearchTokenBound {
-	tokens := sampleSearchTokens(term)
+	tokens := dropPrefixSubsumedTokens(sampleSearchTokens(term))
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -187,6 +190,50 @@ func sampleSearchQueryBounds(term string) []sampleSearchTokenBound {
 	}
 
 	return bounds
+}
+
+// dropPrefixSubsumedTokens removes every query token that is a prefix of another
+// retained query token, keeping the longer/more-specific one (tokens equal to
+// each other have already been collapsed by sampleSearchTokens, so only proper
+// prefixes are dropped here). This is AND-correctness preserving: if query token
+// A is a prefix of query token B (A != B), then "a word with prefix A" AND "a
+// word with prefix B" is equivalent to just "a word with prefix B", because any
+// word matching B's prefix also matches A's prefix (the SAME word satisfies
+// both). So removing A does not change the result set. Running this BEFORE the
+// single-vs-multi-token branch lets a term like "mus musculus" (tokens
+// "mus","musculus", and "mus" is a prefix of "musculus") collapse to the single
+// token "musculus", which then takes the fast single-range index seek instead of
+// the multi-token GROUP BY over the OR-union (whose cost is O(sum of per-token
+// range sizes) and cannot stop at the page limit). Chains ("mus","musc",
+// "musculus" -> "musculus") and order ("musculus","mus") are handled; genuinely
+// unrelated tokens (e.g. "homo","sapiens" or "hek","r1") are all retained so
+// their AND still applies. Order of the retained tokens is preserved.
+func dropPrefixSubsumedTokens(tokens []string) []string {
+	if len(tokens) <= 1 {
+		return tokens
+	}
+
+	kept := make([]string, 0, len(tokens))
+	for i, token := range tokens {
+		subsumed := false
+		for j, other := range tokens {
+			// token is subsumed if a different, strictly longer token has it as a
+			// prefix. The length guard makes the relation antisymmetric, so two
+			// distinct tokens never drop each other (already-equal tokens cannot
+			// occur after sampleSearchTokens' dedup).
+			if i != j && len(other) > len(token) && strings.HasPrefix(other, token) {
+				subsumed = true
+
+				break
+			}
+		}
+
+		if !subsumed {
+			kept = append(kept, token)
+		}
+	}
+
+	return kept
 }
 
 // sampleSearchPage returns the distinct id_sample_tmps for the page

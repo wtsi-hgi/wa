@@ -215,6 +215,16 @@ func TestSampleSearchQueryBoundsTokenisesTermLikeStoredValues(t *testing.T) {
 			convey.So(bounds, convey.ShouldResemble, []sampleSearchTokenBound{{Lower: "mus", Upper: "mut"}})
 		})
 
+		// "mus" is a prefix of "musculus", so requiring a "mus*" word AND a
+		// "musculus*" word is equivalent to requiring just a "musculus*" word (the
+		// same word satisfies both). The redundant shorter token is dropped, so the
+		// term collapses to the single bound for "musculus" and flows through the
+		// fast single-range path rather than the multi-token GROUP BY.
+		convey.Convey("when one token is a prefix of another (mus musculus), then only the more-specific token yields a bound", func() {
+			bounds := sampleSearchQueryBounds("mus musculus")
+			convey.So(bounds, convey.ShouldResemble, []sampleSearchTokenBound{{Lower: "musculus", Upper: "musculut"}})
+		})
+
 		// A non-ASCII term tokenises to its [a-z0-9] runs (here "caf"); the é is a
 		// separator, so no bound is ever formed from a non-ASCII byte and
 		// bytePrefixSuccessor only sees ASCII.
@@ -226,6 +236,54 @@ func TestSampleSearchQueryBoundsTokenisesTermLikeStoredValues(t *testing.T) {
 		convey.Convey("when the term is all separators or all non-ASCII, then no bounds are returned (nothing to query)", func() {
 			convey.So(sampleSearchQueryBounds("___"), convey.ShouldBeEmpty)
 			convey.So(sampleSearchQueryBounds("ÿÿÿ"), convey.ShouldBeEmpty)
+		})
+	})
+}
+
+// TestDropPrefixSubsumedTokensKeepsOnlyMostSpecificTokens pins the
+// prefix-subsumption reduction that runs before the single-vs-multi-token
+// branch: any query token that is a prefix of another retained query token is
+// dropped (the longer/more-specific one is kept). This is AND-correctness
+// preserving - a word matching the longer prefix necessarily matches the
+// shorter one, so requiring both is equivalent to requiring just the longer -
+// and it lets a term like "mus musculus" collapse to one token and take the
+// fast single-range path. Unrelated tokens are left to AND as before, the
+// reduction handles prefix chains and is order-independent, and the
+// already-deduped identical tokens are unaffected.
+func TestDropPrefixSubsumedTokensKeepsOnlyMostSpecificTokens(t *testing.T) {
+	convey.Convey("Given dropPrefixSubsumedTokens over representative token sets", t, func() {
+		convey.Convey("when one token is a prefix of another, then only the longer token survives", func() {
+			convey.So(dropPrefixSubsumedTokens([]string{"mus", "musculus"}), convey.ShouldResemble, []string{"musculus"})
+		})
+
+		convey.Convey("when the prefix appears after the longer token, then the result is order-independent", func() {
+			convey.So(dropPrefixSubsumedTokens([]string{"musculus", "mus"}), convey.ShouldResemble, []string{"musculus"})
+		})
+
+		convey.Convey("when tokens form a prefix chain, then only the most-specific token survives", func() {
+			convey.So(dropPrefixSubsumedTokens([]string{"mus", "musc", "musculus"}), convey.ShouldResemble, []string{"musculus"})
+		})
+
+		convey.Convey("when no token is a prefix of another (homo sapiens), then both tokens are retained in order", func() {
+			convey.So(dropPrefixSubsumedTokens([]string{"homo", "sapiens"}), convey.ShouldResemble, []string{"homo", "sapiens"})
+		})
+
+		// "hek" and "r1" are genuinely unrelated (neither is a prefix of the
+		// other), so the AND across them must be preserved.
+		convey.Convey("when the tokens are unrelated (hek r1), then both are retained so the AND still applies", func() {
+			convey.So(dropPrefixSubsumedTokens([]string{"hek", "r1"}), convey.ShouldResemble, []string{"hek", "r1"})
+		})
+
+		convey.Convey("when only one prefix branch subsumes, then the unrelated token is kept alongside the surviving longer token", func() {
+			convey.So(dropPrefixSubsumedTokens([]string{"mus", "musculus", "homo"}), convey.ShouldResemble, []string{"musculus", "homo"})
+		})
+
+		convey.Convey("when a single token is given, then it is returned unchanged", func() {
+			convey.So(dropPrefixSubsumedTokens([]string{"musculus"}), convey.ShouldResemble, []string{"musculus"})
+		})
+
+		convey.Convey("when no tokens are given, then an empty slice is returned", func() {
+			convey.So(dropPrefixSubsumedTokens(nil), convey.ShouldBeEmpty)
 		})
 	})
 }
@@ -569,6 +627,104 @@ func TestSearchSamplesMultiWordTermRequiresEveryTokenAsWordPrefix(t *testing.T) 
 			samples, err := client.SearchSamples(context.Background(), "mus", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
+		})
+	})
+}
+
+// TestSearchSamplesPrefixSubsumedTermEqualsMoreSpecificTerm is the
+// prefix-subsumption correctness repro (260627-8): the query token "mus" is a
+// prefix of the query token "musculus", so searching "mus musculus" must return
+// exactly the same samples as searching "musculus" alone - only the sample with
+// a "musculus*" word, NOT a sample that merely has a "mus*" word (e.g. "Mus
+// spretus"). Before the reduction the multi-token AND over the OR-union still
+// produced the right answer but scanned the huge redundant "mus*" range; this
+// test pins that the answer is identical to the single more-specific token (and
+// the next test pins that it now takes the fast single-range plan).
+func TestSearchSamplesPrefixSubsumedTermEqualsMoreSpecificTerm(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with a musculus sample, a mus-only sample, and a decoy", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// id 1 "Mus musculus" -> "mus","musculus": has a "musculus*" word.
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "name-1", "supplier-1", "Mus musculus", "donor-1")
+		// id 2 "Mus spretus" -> "mus","spretus": has a "mus*" word but NO
+		// "musculus*" word, so a "musculus" search (and therefore the equivalent
+		// "mus musculus" search) must reject it.
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "supplier-2", "Mus spretus", "donor-2")
+		// id 3 "Homo sapiens" -> matches neither token.
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "name-3", "supplier-3", "Homo sapiens", "donor-3")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchSamples runs for \"mus musculus\", then it returns exactly the same samples as \"musculus\" (only the musculus sample)", func() {
+			subsumed, err := client.SearchSamples(context.Background(), "mus musculus", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			specific, err := client.SearchSamples(context.Background(), "musculus", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(sampleTmpIDs(subsumed), convey.ShouldResemble, []int64{1})
+			convey.So(sampleTmpIDs(subsumed), convey.ShouldResemble, sampleTmpIDs(specific))
+		})
+
+		convey.Convey("when CountSampleSearch runs for \"mus musculus\", then it equals the count for \"musculus\"", func() {
+			subsumed, err := client.CountSampleSearch(context.Background(), "mus musculus")
+			convey.So(err, convey.ShouldBeNil)
+
+			specific, err := client.CountSampleSearch(context.Background(), "musculus")
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(subsumed, convey.ShouldResemble, Count{Count: 1})
+			convey.So(subsumed, convey.ShouldResemble, specific)
+		})
+	})
+}
+
+// TestSearchSamplesPrefixSubsumedTermUsesSingleRangePlanNotGroupBy locks in that
+// a term that collapses to one token after prefix-subsumption ("mus musculus" ->
+// "musculus") takes the fast single-range index seek, NOT the multi-token
+// GROUP BY/per-token-MAX HAVING path. This is the performance contract behind
+// 260627-8 (the GROUP BY over the OR-union of per-token ranges is O(sum of range
+// sizes) and cannot stop at the limit; the single-range plan is an index SEARCH
+// with LIMIT). Asserting the EXPLAIN QUERY PLAN is the same behavioural proxy
+// used by TestSampleSearchTokenQueriesSeekIndexRangeNotFullScan: an index range
+// SEARCH and no GROUP BY/multi-range union.
+func TestSearchSamplesPrefixSubsumedTermUsesSingleRangePlanNotGroupBy(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache reachable through its read handle", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		for id := 1; id <= 64; id++ {
+			seedSampleMirrorSearchRow(t, cache.DB(), int64(id), "name-"+formatInt(int64(id)), "supplier-"+formatInt(int64(id)), "Mus musculus", "donor-"+formatInt(int64(id)))
+		}
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		readDB := cacheReadDB(cache)
+		convey.So(readDB, convey.ShouldNotBeNil)
+
+		// "mus musculus" collapses to the single token "musculus", so the page
+		// query is the single-range page SQL, not the multi-token page SQL.
+		bounds := sampleSearchQueryBounds("mus musculus")
+		convey.So(bounds, convey.ShouldHaveLength, 1)
+
+		convey.Convey("when the prefix-subsumed term's page query is planned, then it is the single-range index SEARCH with no GROUP BY", func() {
+			details := explainQueryPlanDetails(t, readDB, sampleSearchTokenPageSQL,
+				bounds[0].Lower, bounds[0].Upper, 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0)
+
+			convey.So(planUsesIndexRangeSearch(details), convey.ShouldBeTrue)
+			convey.So(planHasFullTokenScan(details), convey.ShouldBeFalse)
+			convey.So(planUsesGroupBy(details), convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when the prefix-subsumed term's count query is planned, then its inner token scan is the single-range index SEARCH with no GROUP BY", func() {
+			details := explainQueryPlanDetails(t, readDB, sampleSearchCountSQL, bounds[0].Lower, bounds[0].Upper, sampleSearchCountCap)
+
+			convey.So(planUsesIndexRangeSearch(details), convey.ShouldBeTrue)
+			convey.So(planHasFullTokenScan(details), convey.ShouldBeFalse)
+			convey.So(planUsesGroupBy(details), convey.ShouldBeFalse)
 		})
 	})
 }
@@ -1293,4 +1449,18 @@ func sampleTmpIDs(samples []Sample) []int64 {
 	}
 
 	return ids
+}
+
+// planUsesGroupBy reports whether any plan row indicates the multi-token
+// GROUP BY aggregation (SQLite renders the grouped scan as a "USE TEMP B-TREE
+// FOR GROUP BY" row). The single-range fast path has no GROUP BY, so a
+// prefix-subsumed term that collapses to one token must show no such row.
+func planUsesGroupBy(details []string) bool {
+	for _, detail := range details {
+		if strings.Contains(detail, "GROUP BY") {
+			return true
+		}
+	}
+
+	return false
 }
