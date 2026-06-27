@@ -36,20 +36,17 @@ import (
 )
 
 // TestSearchSQLEscapeClauseIsDialectSafe guards the LIKE ESCAPE clause baked
-// into every substring-search SQL string against a regression that breaks the
-// MySQL backend. On MySQL under the default sql_mode (NO_BACKSLASH_ESCAPES off),
-// the string literal `'\'` is a backslash escaping the closing quote, so an
-// `ESCAPE '\'` clause is an unterminated literal and MySQL rejects the whole
-// statement with a syntax error (Error 1064). The sqlmock matchers below assert
-// only the MATCH/LIKE skeleton and never the ESCAPE fragment, so they cannot
-// catch this; this test asserts the SQL contract directly: every search SQL
-// string must carry a single, valid `ESCAPE '!'` clause per searchable field
-// and must never contain the broken lone-backslash form, so the clause is valid
-// on both MySQL and SQLite.
+// into the substring/prefix-search SQL strings against a regression that breaks
+// the MySQL backend. On MySQL under the default sql_mode (NO_BACKSLASH_ESCAPES
+// off), the string literal `'\'` is a backslash escaping the closing quote, so
+// an `ESCAPE '\'` clause is an unterminated literal and MySQL rejects the whole
+// statement with a syntax error (Error 1064). This asserts the SQL contract
+// directly: each search SQL string carries valid `ESCAPE '!'` clauses (one per
+// study field; one for the sample token prefix and one for its count) and never
+// the broken lone-backslash form, so the clauses are valid on both backends.
 func TestSearchSQLEscapeClauseIsDialectSafe(t *testing.T) {
-	convey.Convey("Given the substring-search SQL strings built for both dialects", t, func() {
+	convey.Convey("Given the search SQL strings built for both dialects", t, func() {
 		studyFieldCount := len(studySearchFields)
-		sampleFieldCount := len(sampleSearchFields)
 
 		cases := []struct {
 			name           string
@@ -58,10 +55,8 @@ func TestSearchSQLEscapeClauseIsDialectSafe(t *testing.T) {
 		}{
 			{"studySearchSQL", studySearchSQL, studyFieldCount},
 			{"studySearchCountSQL", studySearchCountSQL, studyFieldCount},
-			{"sampleSearchSQL (SQLite)", sampleSearchSQL, sampleFieldCount},
-			{"sampleSearchCountSQL (SQLite)", sampleSearchCountSQL, sampleFieldCount},
-			{"sampleSearchMySQLSQL", sampleSearchMySQLSQL, sampleFieldCount},
-			{"sampleSearchMySQLCountSQL", sampleSearchMySQLCountSQL, sampleFieldCount},
+			{"sampleSearchTokenPageSQL", sampleSearchTokenPageSQL, 1},
+			{"sampleSearchCountSQL", sampleSearchCountSQL, 1},
 		}
 
 		for _, testCase := range cases {
@@ -70,7 +65,7 @@ func TestSearchSQLEscapeClauseIsDialectSafe(t *testing.T) {
 					convey.So(strings.Contains(testCase.sql, `ESCAPE '\'`), convey.ShouldBeFalse)
 				})
 
-				convey.Convey("then it renders a valid ESCAPE '!' clause once per searchable field", func() {
+				convey.Convey("then it renders a valid ESCAPE '!' clause the expected number of times", func() {
 					convey.So(strings.Contains(testCase.sql, `ESCAPE '!'`), convey.ShouldBeTrue)
 					convey.So(strings.Count(testCase.sql, "ESCAPE "), convey.ShouldEqual, testCase.expectedClause)
 					convey.So(strings.Count(testCase.sql, `ESCAPE '!'`), convey.ShouldEqual, testCase.expectedClause)
@@ -101,58 +96,87 @@ func TestSearchSamplesMySQLShortTermIssuesNoQuery(t *testing.T) {
 	})
 }
 
-func TestSearchSamplesDialectDispatchRoutesByBackend(t *testing.T) {
-	convey.Convey("Given the SearchSamples dialect dispatch", t, func() {
-		convey.Convey("when SearchSamples runs on a MySQL Client, then the ngram AGAINST path is emitted", func() {
-			roDB, roMock, err := sqlmock.New()
+func TestSearchSamplesMySQLPagesTokenIndexThenFetchesByID(t *testing.T) {
+	convey.Convey("Given a sqlmock MySQL Client", t, func() {
+		roDB, roMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			roMock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		}()
+
+		// The page SQL must scan the (token, id_sample_tmp) index by prefix in
+		// index order with LIMIT/OFFSET (a bounded over-fetch of token rows), and
+		// must not be a global SELECT DISTINCT ... ORDER BY id_sample_tmp.
+		pageSQL := `SELECT token, id_sample_tmp FROM sample_search_token` +
+			` WHERE token LIKE \? ESCAPE '!' ORDER BY token, id_sample_tmp LIMIT \? OFFSET \?`
+		roMock.ExpectQuery(pageSQL).
+			WithArgs("acme%", 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
+			WillReturnRows(sqlmock.NewRows([]string{"token", "id_sample_tmp"}).
+				AddRow("acme", int64(1)).
+				AddRow("acme", int64(2)))
+
+		// The matching samples are then fetched by id, SQSCP-scoped, ordered by
+		// id_sample_tmp.
+		roMock.ExpectQuery(`SELECT .* FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
+			WithArgs(int64(1), int64(2)).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
+				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "ACME-001", "sanger-1", "ACME-supplier-1", "accession-1", "donor-1")...).
+				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "ACME-002", "sanger-2", "ACME-supplier-2", "accession-2", "donor-2")...))
+
+		// hydrateSampleFanOut issues one fan-out query for the returned rows.
+		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
+			WithArgs(int64(1), int64(2)).
+			WillReturnRows(sqlmock.NewRows(sampleFanOutColumnsForTest()))
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		samples, err := client.SearchSamples(context.Background(), "acme", 100, 0)
+
+		convey.Convey("when SearchSamples runs, then the token-prefix page SQL and the by-id fetch SQL are built with the prefix and pagination args", func() {
 			convey.So(err, convey.ShouldBeNil)
-			defer func() {
-				roMock.ExpectClose()
-				convey.So(roDB.Close(), convey.ShouldBeNil)
-				convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-			}()
-
-			roMock.ExpectQuery(`AGAINST\(\? IN BOOLEAN MODE\)`).
-				WithArgs(`"acme"`, "%acme%", "%acme%", "%acme%", "%acme%", 100, 0).
-				WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-
-			// A never-synced sqlmock cache: with no rows the never-synced sync
-			// state probe runs, so satisfy it (the SQL it ran is the assertion).
-			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
-				WithArgs(syncTableSample).
-				WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow("2026-01-02T03:04:05Z", nil, 0))
-
-			client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
-
-			samples, err := client.SearchSamples(context.Background(), "acme", 100, 0)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(samples, convey.ShouldResemble, []Sample{})
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
 		})
+	})
+}
 
-		convey.Convey("when SearchSamples runs on a SQLite Client, then the FTS5 sample_search MATCH path is emitted (no AGAINST)", func() {
-			roDB, roMock, err := sqlmock.New()
+func TestSearchSamplesDeDuplicatesIdsSharingThePrefix(t *testing.T) {
+	convey.Convey("Given a sqlmock MySQL Client whose token page repeats an id across prefix-matching tokens", t, func() {
+		roDB, roMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			roMock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		}()
+
+		// id 1 owns two prefix-matching tokens ("mus", "musculus"); the page must
+		// de-duplicate it to a single sample id before the by-id fetch.
+		roMock.ExpectQuery(`SELECT token, id_sample_tmp FROM sample_search_token`).
+			WithArgs("mus%", 100*sampleSearchTokenPageMultiplier+sampleSearchTokenPageMargin, 0).
+			WillReturnRows(sqlmock.NewRows([]string{"token", "id_sample_tmp"}).
+				AddRow("mus", int64(1)).
+				AddRow("musculus", int64(1)).
+				AddRow("muscle", int64(2)))
+
+		roMock.ExpectQuery(`FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
+			WithArgs(int64(1), int64(2)).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
+				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "mus-1", "sanger-1", "supplier-1", "accession-1", "donor-1")...).
+				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "muscle-2", "sanger-2", "supplier-2", "accession-2", "donor-2")...))
+
+		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
+			WithArgs(int64(1), int64(2)).
+			WillReturnRows(sqlmock.NewRows(sampleFanOutColumnsForTest()))
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		samples, err := client.SearchSamples(context.Background(), "mus", 100, 0)
+
+		convey.Convey("when SearchSamples runs, then the duplicated id is fetched once and two distinct samples are returned", func() {
 			convey.So(err, convey.ShouldBeNil)
-			defer func() {
-				roMock.ExpectClose()
-				convey.So(roDB.Close(), convey.ShouldBeNil)
-				convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-			}()
-
-			roMock.ExpectQuery(`sample_search MATCH \?`).
-				WithArgs(`"acme"`, "%acme%", "%acme%", "%acme%", "%acme%", 100, 0).
-				WillReturnRows(sqlmock.NewRows(sampleResolverColumns()))
-
-			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
-				WithArgs(syncTableSample).
-				WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow("2026-01-02T03:04:05Z", nil, 0))
-
-			// Dialect() drives the dispatch (sqliteCache -> SQLite path); the
-			// sqlmock cacheReader captures the SQL the SQLite path emits.
-			client := &Client{cache: &sqliteCache{}, cacheReader: roDB}
-
-			samples, err := client.SearchSamples(context.Background(), "acme", 100, 0)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(samples, convey.ShouldResemble, []Sample{})
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
 		})
 	})
 }
@@ -178,63 +202,7 @@ func TestCountSampleSearchShortTermIssuesNoQuery(t *testing.T) {
 	})
 }
 
-func TestCountSampleSearchDialectDispatchRoutesByBackend(t *testing.T) {
-	convey.Convey("Given the CountSampleSearch dialect dispatch", t, func() {
-		convey.Convey("when CountSampleSearch runs on a MySQL Client, then the ngram AGAINST COUNT path is emitted", func() {
-			roDB, roMock, err := sqlmock.New()
-			convey.So(err, convey.ShouldBeNil)
-			defer func() {
-				roMock.ExpectClose()
-				convey.So(roDB.Close(), convey.ShouldBeNil)
-				convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-			}()
-
-			roMock.ExpectQuery(`SELECT COUNT\(\*\).*AGAINST\(\? IN BOOLEAN MODE\)`).
-				WithArgs(`"acme"`, "%acme%", "%acme%", "%acme%", "%acme%").
-				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-
-			// A zero count triggers the never-synced sync state probe; satisfy it
-			// (the count SQL it ran is the assertion).
-			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
-				WithArgs(syncTableSample).
-				WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow("2026-01-02T03:04:05Z", nil, 0))
-
-			client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
-
-			count, err := client.CountSampleSearch(context.Background(), "acme")
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(count, convey.ShouldResemble, Count{Count: 0})
-		})
-
-		convey.Convey("when CountSampleSearch runs on a SQLite Client, then the FTS5 sample_search MATCH COUNT path is emitted (no AGAINST)", func() {
-			roDB, roMock, err := sqlmock.New()
-			convey.So(err, convey.ShouldBeNil)
-			defer func() {
-				roMock.ExpectClose()
-				convey.So(roDB.Close(), convey.ShouldBeNil)
-				convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-			}()
-
-			roMock.ExpectQuery(`SELECT COUNT\(\*\).*sample_search MATCH \?`).
-				WithArgs(`"acme"`, "%acme%", "%acme%", "%acme%", "%acme%").
-				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-
-			roMock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, resume_cursor, indexes_dropped FROM sync_state WHERE table_name = ?`)).
-				WithArgs(syncTableSample).
-				WillReturnRows(sqlmock.NewRows([]string{"high_water", "resume_cursor", "indexes_dropped"}).AddRow("2026-01-02T03:04:05Z", nil, 0))
-
-			// Dialect() drives the dispatch (sqliteCache -> SQLite path); the
-			// sqlmock cacheReader captures the SQL the SQLite path emits.
-			client := &Client{cache: &sqliteCache{}, cacheReader: roDB}
-
-			count, err := client.CountSampleSearch(context.Background(), "acme")
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(count, convey.ShouldResemble, Count{Count: 0})
-		})
-	})
-}
-
-func TestCountSampleSearchMySQLBuildsNgramBooleanMatchCountWithLIKEPostFilterNoLimit(t *testing.T) {
+func TestCountSampleSearchMySQLBuildsBoundedDistinctCount(t *testing.T) {
 	convey.Convey("Given a sqlmock MySQL Client", t, func() {
 		roDB, roMock, err := sqlmock.New()
 		convey.So(err, convey.ShouldBeNil)
@@ -244,81 +212,23 @@ func TestCountSampleSearchMySQLBuildsNgramBooleanMatchCountWithLIKEPostFilterNoL
 			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
 		}()
 
-		// The captured COUNT SQL must reuse SearchSamples' MySQL WHERE verbatim:
-		// the boolean-mode ngram FULLTEXT MATCH(...) AGAINST(...) over the four
-		// sample fields, the case-insensitive LIKE post-filter over the same four
-		// fields, and id_lims = 'SQSCP'; it must carry no LIMIT/OFFSET so the
-		// count equals the unpaginated search length.
-		countSQL := `(?s)SELECT COUNT\(\*\).*MATCH\(name, supplier_name, common_name, donor_id\)` +
-			` AGAINST\(\? IN BOOLEAN MODE\).*` +
-			`id_lims = 'SQSCP'.*` +
-			`sample_mirror\.name LIKE \?.*` +
-			`sample_mirror\.supplier_name LIKE \?.*` +
-			`sample_mirror\.common_name LIKE \?.*` +
-			`sample_mirror\.donor_id LIKE \?`
-
+		// The count is an exact COUNT over a bounded inner SELECT DISTINCT
+		// id_sample_tmp of the token prefix range, capped with LIMIT so a
+		// mega-term stops at the cap. The bound args are the escaped prefix and
+		// the cap.
+		countSQL := `(?s)SELECT COUNT\(\*\) FROM \(SELECT DISTINCT id_sample_tmp FROM sample_search_token` +
+			` WHERE token LIKE \? ESCAPE '!' LIMIT \?\)`
 		roMock.ExpectQuery(countSQL).
-			WithArgs(`"acme"`, "%acme%", "%acme%", "%acme%", "%acme%").
+			WithArgs("acme%", sampleSearchCountCap).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
 		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
 
 		count, err := client.CountSampleSearch(context.Background(), "acme")
 
-		convey.Convey("when CountSampleSearch runs, then the ngram boolean MATCH/AGAINST COUNT and LIKE post-filter SQL is built with the term args and no pagination", func() {
+		convey.Convey("when CountSampleSearch runs, then the bounded DISTINCT-count SQL is built with the prefix and the cap", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldResemble, Count{Count: 2})
-
-			// The matched SQL must not paginate: a LIMIT/OFFSET would have
-			// required two extra bound args beyond the five term args.
-			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		})
-	})
-}
-
-func TestSearchSamplesMySQLBuildsNgramBooleanMatchWithLIKEPostFilter(t *testing.T) {
-	convey.Convey("Given a sqlmock MySQL Client", t, func() {
-		roDB, roMock, err := sqlmock.New()
-		convey.So(err, convey.ShouldBeNil)
-		defer func() {
-			roMock.ExpectClose()
-			convey.So(roDB.Close(), convey.ShouldBeNil)
-			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
-		}()
-
-		// The captured SQL must narrow via a boolean-mode ngram FULLTEXT
-		// MATCH(...) AGAINST(...) over the four sample fields and then confirm
-		// via a case-insensitive LIKE post-filter over the same four fields,
-		// honour id_lims = 'SQSCP', order by id_sample_tmp, and paginate with
-		// LIMIT ? OFFSET ?.
-		searchSQL := `(?s)MATCH\(name, supplier_name, common_name, donor_id\)` +
-			` AGAINST\(\? IN BOOLEAN MODE\).*` +
-			`id_lims = 'SQSCP'.*` +
-			`sample_mirror\.name LIKE \?.*` +
-			`sample_mirror\.supplier_name LIKE \?.*` +
-			`sample_mirror\.common_name LIKE \?.*` +
-			`sample_mirror\.donor_id LIKE \?.*` +
-			`ORDER BY sample_mirror\.id_sample_tmp.*` +
-			`LIMIT \? OFFSET \?`
-
-		roMock.ExpectQuery(searchSQL).
-			WithArgs(`"acme"`, "%acme%", "%acme%", "%acme%", "%acme%", 100, 0).
-			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
-				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "ACME-001", "sanger-1", "ACME-supplier-1", "accession-1", "donor-1")...).
-				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "ACME-002", "sanger-2", "ACME-supplier-2", "accession-2", "donor-2")...))
-
-		// hydrateSampleFanOut issues one fan-out query for the returned rows.
-		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
-			WithArgs(int64(1), int64(2)).
-			WillReturnRows(sqlmock.NewRows(sampleFanOutColumnsForTest()))
-
-		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
-
-		samples, err := client.SearchSamples(context.Background(), "acme", 100, 0)
-
-		convey.Convey("when SearchSamples runs, then the ngram boolean MATCH/AGAINST and LIKE post-filter SQL is built with the term and pagination args", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
 		})
 	})
 }

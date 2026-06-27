@@ -60,126 +60,75 @@ func TestLoadSchema(t *testing.T) {
 	})
 }
 
-func TestSampleSearchSchemaSQLiteDeclaresTrigramVirtualTable(t *testing.T) {
-	convey.Convey("B1.1: Given the embedded SQLite sample search schema", t, func() {
-		ddl, err := loadSearchIndexSchema("sqlite")
+func TestSampleSearchTokenSchemaSQLiteDeclaresTokenTableAndIndex(t *testing.T) {
+	convey.Convey("Given the embedded SQLite sample_search_token schema", t, func() {
+		stmts, err := loadSchema("sqlite")
 		convey.So(err, convey.ShouldBeNil)
 
-		convey.Convey("when inspected, then it declares an fts5 virtual table over the four sample fields with the trigram tokenizer", func() {
-			upper := strings.ToUpper(ddl)
-			convey.So(upper, convey.ShouldContainSubstring, "CREATE VIRTUAL TABLE")
-			convey.So(upper, convey.ShouldContainSubstring, "USING FTS5")
-			convey.So(ddl, convey.ShouldContainSubstring, "sample_search")
-			convey.So(ddl, convey.ShouldContainSubstring, "content='sample_mirror'")
-			convey.So(ddl, convey.ShouldContainSubstring, "content_rowid='id_sample_tmp'")
-			convey.So(ddl, convey.ShouldContainSubstring, "tokenize='trigram'")
+		ddl, err := cacheSchemaFS.ReadFile("cache_schema/sqlite/sample_search_token.sql")
+		convey.So(err, convey.ShouldBeNil)
 
-			for _, column := range []string{"name", "supplier_name", "common_name", "donor_id"} {
-				convey.So(ddl, convey.ShouldContainSubstring, column)
-			}
+		convey.Convey("when inspected, then it declares a normal token table over (token, id_sample_tmp) with a covering index on the same columns", func() {
+			upper := strings.ToUpper(string(ddl))
+			convey.So(upper, convey.ShouldContainSubstring, "CREATE TABLE IF NOT EXISTS SAMPLE_SEARCH_TOKEN")
+			convey.So(upper, convey.ShouldNotContainSubstring, "VIRTUAL TABLE")
+			convey.So(upper, convey.ShouldNotContainSubstring, "FTS5")
+			convey.So(string(ddl), convey.ShouldContainSubstring, "token")
+			convey.So(string(ddl), convey.ShouldContainSubstring, "id_sample_tmp")
+			convey.So(string(ddl), convey.ShouldContainSubstring, "ON sample_search_token(token, id_sample_tmp)")
+
+			// The token table is one of the ordinary schema tables loaded by
+			// loadSchema, not a separately applied search index.
+			joined := strings.Join(stmts, "\n")
+			convey.So(joined, convey.ShouldContainSubstring, "sample_search_token")
 		})
 	})
 }
 
-func TestSampleSearchSchemaMySQLDeclaresNgramFulltextIndex(t *testing.T) {
-	convey.Convey("B1.2: Given the embedded MySQL sample search schema string", t, func() {
-		ddl, err := loadSearchIndexSchema("mysql")
+func TestSampleSearchTokenSchemaMySQLDeclaresTokenTableAndIndex(t *testing.T) {
+	convey.Convey("Given the embedded MySQL sample_search_token schema string", t, func() {
+		ddl, err := cacheSchemaFS.ReadFile("cache_schema/mysql/sample_search_token.sql")
 		convey.So(err, convey.ShouldBeNil)
 
-		convey.Convey("when parsed, then it declares one ngram FULLTEXT index over exactly the four columns on sample_mirror", func() {
-			statements := splitSQLStatements(ddl)
-			convey.So(statements, convey.ShouldHaveLength, 1)
+		convey.Convey("when parsed, then it declares a normal token table and a (token, id_sample_tmp) index, with no FULLTEXT", func() {
+			statements := splitSQLStatements(string(ddl))
+			convey.So(statements, convey.ShouldHaveLength, 2)
 
-			table, columns, parser, err := parseMySQLFulltextIndex(statements[0])
+			table, columns, _, err := parseCreateTable(statements[0])
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(table, convey.ShouldEqual, "sample_mirror")
-			convey.So(parser, convey.ShouldEqual, "ngram")
-			convey.So(columns, convey.ShouldResemble, []string{"name", "supplier_name", "common_name", "donor_id"})
+			convey.So(table, convey.ShouldEqual, "sample_search_token")
+			convey.So(columns, convey.ShouldContainKey, "token")
+			convey.So(columns, convey.ShouldContainKey, "id_sample_tmp")
+
+			indexTable, indexColumns, err := parseCreateIndex(statements[1])
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(indexTable, convey.ShouldEqual, "sample_search_token")
+			convey.So(indexColumns, convey.ShouldResemble, []string{"token", "id_sample_tmp"})
+
+			convey.So(strings.ToUpper(string(ddl)), convey.ShouldNotContainSubstring, "FULLTEXT")
 		})
 	})
 }
 
-func TestParseSchemaShapeRecordsSearchIndex(t *testing.T) {
-	convey.Convey("B2.1: Given the SQLite and MySQL full schemas at the current version", t, func() {
-		sqliteFull, err := loadFullSchema("sqlite")
+func TestParseSchemaShapeRecordsTokenIndexAsNormalTable(t *testing.T) {
+	convey.Convey("Given the SQLite and MySQL schemas at the current version", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
 		convey.So(err, convey.ShouldBeNil)
-		mysqlFull, err := loadFullSchema("mysql")
-		convey.So(err, convey.ShouldBeNil)
-
-		sqliteShape, err := parseSchemaShape(sqliteFull)
-		convey.So(err, convey.ShouldBeNil)
-		mysqlShape, err := parseSchemaShape(mysqlFull)
+		mysqlSchema, err := loadSchema("mysql")
 		convey.So(err, convey.ShouldBeNil)
 
-		wantColumns := []string{"common_name", "donor_id", "name", "supplier_name"}
-
-		convey.Convey("when parseSchemaShape runs on each, then both record a full-text search index over the same column set on sample_mirror", func() {
-			convey.So(sqliteShape.FullText["sample_mirror"], convey.ShouldResemble, wantColumns)
-			convey.So(mysqlShape.FullText["sample_mirror"], convey.ShouldResemble, wantColumns)
-			convey.So(sqliteShape.FullText, convey.ShouldResemble, mysqlShape.FullText)
-		})
-	})
-}
-
-func TestParseSchemaShapeFullTextIsColumnSetSensitive(t *testing.T) {
-	convey.Convey("B2.3: Given a deliberately divergent search index (SQLite fts5 over three fields, MySQL FULLTEXT over four)", t, func() {
-		mysqlFull, err := loadFullSchema("mysql")
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
 		convey.So(err, convey.ShouldBeNil)
 
-		// Replace the real four-column SQLite fts5 search index with a divergent
-		// three-column one, leaving the rest of the schema identical to MySQL.
-		sqliteBase, err := loadSchema("sqlite")
-		convey.So(err, convey.ShouldBeNil)
-		sqliteDivergent := append(sqliteBase, `CREATE VIRTUAL TABLE sample_search USING fts5(
-			name, supplier_name, common_name,
-			content='sample_mirror', content_rowid='id_sample_tmp', tokenize='trigram')`)
-
-		sqliteShape, err := parseSchemaShape(sqliteDivergent)
-		convey.So(err, convey.ShouldBeNil)
-		mysqlShape, err := parseSchemaShape(mysqlFull)
-		convey.So(err, convey.ShouldBeNil)
-
-		convey.Convey("when the parity model compares them, then the full-text representations differ and the parity comparison fails", func() {
-			convey.So(sqliteShape.FullText["sample_mirror"], convey.ShouldResemble, []string{"common_name", "name", "supplier_name"})
-			convey.So(sqliteShape.FullText, convey.ShouldNotResemble, mysqlShape.FullText)
-			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldNotBeNil)
-			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldNotBeNil)
-		})
-	})
-}
-
-func TestParseSchemaShapeRecognisesInlineMySQLFulltext(t *testing.T) {
-	convey.Convey("Given a MySQL CREATE TABLE with an inline FULLTEXT ... WITH PARSER ngram clause", t, func() {
-		stmts := []string{`CREATE TABLE sample_mirror (
-			id_sample_tmp INTEGER NOT NULL,
-			name VARCHAR(255) NOT NULL,
-			supplier_name VARCHAR(255) NOT NULL,
-			common_name VARCHAR(255) NOT NULL,
-			donor_id VARCHAR(255) NOT NULL,
-			FULLTEXT (name, supplier_name, common_name, donor_id) WITH PARSER ngram
-		)`}
-
-		shape, err := parseSchemaShape(stmts)
-		convey.So(err, convey.ShouldBeNil)
-
-		convey.Convey("when parsed, then the inline full-text index is recorded as the normalised search column set, not as a table column", func() {
-			convey.So(shape.FullText["sample_mirror"], convey.ShouldResemble, []string{"common_name", "donor_id", "name", "supplier_name"})
-			convey.So(shape.Tables["sample_mirror"], convey.ShouldNotContainKey, "FULLTEXT")
-		})
-	})
-}
-
-func TestCompareCacheSchemaShapesDetectsFullTextDivergence(t *testing.T) {
-	convey.Convey("Given two shapes that agree on tables, indexes, and unique constraints but differ on the full-text search index", t, func() {
-		expected := schemaShape{FullText: map[string][]string{"sample_mirror": {"common_name", "donor_id", "name", "supplier_name"}}}
-		actual := schemaShape{FullText: map[string][]string{"sample_mirror": {"common_name", "donor_id", "name"}}}
-
-		convey.Convey("when compared, then the comparison reports a full-text search index mismatch", func() {
-			convey.So(compareCacheSchemaShapes(expected, actual), convey.ShouldNotBeNil)
-		})
-
-		convey.Convey("when an identical full-text shape is compared, then the comparison passes", func() {
-			convey.So(compareCacheSchemaShapes(expected, expected), convey.ShouldBeNil)
+		convey.Convey("when parseSchemaShape runs on each, then both record sample_search_token as a normal table with a (token, id_sample_tmp) index", func() {
+			convey.So(sqliteShape.Tables, convey.ShouldContainKey, "sample_search_token")
+			convey.So(mysqlShape.Tables, convey.ShouldContainKey, "sample_search_token")
+			convey.So(sqliteShape.Tables["sample_search_token"], convey.ShouldResemble, map[string]string{"token": "text", "id_sample_tmp": "integer"})
+			convey.So(sqliteShape.Tables["sample_search_token"], convey.ShouldResemble, mysqlShape.Tables["sample_search_token"])
+			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, []string{"token,id_sample_tmp"})
+			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, mysqlShape.Index["sample_search_token"])
 		})
 	})
 }
@@ -194,7 +143,7 @@ func TestParseSchemaShapeParity(t *testing.T) {
 		sqliteShape, sqliteErr := parseSchemaShape(sqliteSchema)
 		mysqlShape, mysqlErr := parseSchemaShape(mysqlSchema)
 
-		convey.Convey("when the parsed schema shapes are compared, then the v2 table names match exactly", func() {
+		convey.Convey("when the parsed schema shapes are compared, then the table names match exactly", func() {
 			convey.So(sqliteErr, convey.ShouldBeNil)
 			convey.So(mysqlErr, convey.ShouldBeNil)
 			convey.So(tableNames(sqliteShape.Tables), convey.ShouldResemble, sortedSchemaTableNames())
@@ -207,10 +156,11 @@ func TestParseSchemaShapeParity(t *testing.T) {
 			convey.So(sqliteShape.Tables, convey.ShouldResemble, mysqlShape.Tables)
 		})
 
-		convey.Convey("when comparing the per-table index column lists, then they match across dialects", func() {
+		convey.Convey("when comparing the per-table index column lists, then they match across dialects (including the sample_search_token prefix index)", func() {
 			convey.So(sqliteErr, convey.ShouldBeNil)
 			convey.So(mysqlErr, convey.ShouldBeNil)
 			convey.So(sqliteShape.Index, convey.ShouldResemble, mysqlShape.Index)
+			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, []string{"token,id_sample_tmp"})
 		})
 
 		convey.Convey("when comparing unique constraints, then the per-table column tuples match across dialects", func() {
@@ -223,22 +173,11 @@ func TestParseSchemaShapeParity(t *testing.T) {
 			})
 		})
 
-		convey.Convey("B2.2: when the full schema (including the search index) is parsed, then the full-text search representation matches across dialects along with tables, columns, indexes, and unique constraints", func() {
-			sqliteFull, sqliteFullErr := loadFullSchema("sqlite")
-			mysqlFull, mysqlFullErr := loadFullSchema("mysql")
-			convey.So(sqliteFullErr, convey.ShouldBeNil)
-			convey.So(mysqlFullErr, convey.ShouldBeNil)
-
-			sqliteFullShape, sqliteFullErr := parseSchemaShape(sqliteFull)
-			mysqlFullShape, mysqlFullErr := parseSchemaShape(mysqlFull)
-			convey.So(sqliteFullErr, convey.ShouldBeNil)
-			convey.So(mysqlFullErr, convey.ShouldBeNil)
-
-			convey.So(sqliteFullShape.Tables, convey.ShouldResemble, mysqlFullShape.Tables)
-			convey.So(sqliteFullShape.Index, convey.ShouldResemble, mysqlFullShape.Index)
-			convey.So(sqliteFullShape.Unique, convey.ShouldResemble, mysqlFullShape.Unique)
-			convey.So(sqliteFullShape.FullText, convey.ShouldResemble, mysqlFullShape.FullText)
-			convey.So(compareCacheSchemaShapes(sqliteFullShape, mysqlFullShape), convey.ShouldBeNil)
+		convey.Convey("when the full schema parity is compared, then tables, columns, indexes, and unique constraints all match across dialects", func() {
+			convey.So(sqliteErr, convey.ShouldBeNil)
+			convey.So(mysqlErr, convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
 		})
 	})
 }
@@ -325,12 +264,12 @@ func TestSQLiteSchemaExecutionViaOpenCache(t *testing.T) {
 			tables = append(tables, table)
 		}
 
-		convey.Convey("when the schema loader runs, then the nine cache tables and the sample_search index exist", func() {
+		convey.Convey("when the schema loader runs, then every cache table (including sample_search_token) exists", func() {
 			convey.So(rows.Err(), convey.ShouldBeNil)
 			for _, table := range schemaStatementOrder {
 				convey.So(tables, convey.ShouldContain, table)
 			}
-			convey.So(tables, convey.ShouldContain, sampleSearchTable)
+			convey.So(tables, convey.ShouldContain, "sample_search_token")
 		})
 	})
 }

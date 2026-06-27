@@ -29,9 +29,10 @@ indexed, web-responsive discipline of `.docs/mlwh-overhaul/spec.md` and
    domain glossary + data-exposure/security posture), placed in `.docs/mcp/`.
 7. **Unauthenticated HTTP posture** preserved and documented.
 
-Plus a **startup backend refusal**: because sample substring search relies on
-full-text indexes (SQLite FTS5 trigram / MySQL ngram), the whole server
-requires SQLite or MySQL >= 8 and exits non-zero on MariaDB or MySQL < 8.
+> Round-4 update: the former startup backend refusal is removed. Sample search
+> now uses a word-token prefix index with no full-text dependency, so
+> `wa mlwh serve` runs on any supported cache backend (including MariaDB and
+> MySQL < 8) with no flavor or version check.
 
 The work is additive except for the single coordinated casing break (Goal 4).
 Existing endpoints keep their paths, bodies, and the `mlwhServerFetchAllLimit
@@ -267,19 +268,30 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
    then it returns an empty slice and an error satisfying both
    `errors.Is(err, ErrCacheNeverSynced)` and `errors.Is(err, ErrNotFound)`.
 
-### A2: sample substring search (SQLite, index-backed + post-filter)
+### A2: sample word-prefix search (word-token prefix index)
 
-As the MCP server, I want `GET /search/sample/:term` to return samples whose
-`name`, `supplier_name`, `common_name`, or `donor_id` contains `term`, served
-by the FTS5 trigram index plus a `LIKE` post-filter so it is fast on the ~10M
-row table and exact.
+> Superseded the round-3 FTS5/`LIKE`-post-filter design: see "Clarifications -
+> round 4" in `prompt.md`. Sample search is now a **word-prefix** match served
+> by the `sample_search_token` prefix index, identical across dialects (no FTS5
+> trigram / MySQL ngram FULLTEXT, no `LIKE` post-filter on the sample hot path).
 
-`SearchSamples` (SQLite path) issues an FTS5 `MATCH` against the trigram
-virtual table to narrow candidate `id_sample_tmp`s, joins back to
-`sample_mirror` (`id_lims = 'SQSCP'`), applies a case-insensitive `LIKE
-'%term%'` post-filter across the four fields, orders by `id_sample_tmp`, and
-applies `LIMIT ? OFFSET ?`. Term length < 3 returns `[]Sample{}` without
-querying. Returns `[]Sample` (full rows, fan-out populated as in `Find*`).
+As the MCP server, I want `GET /search/sample/:term` to return samples having a
+word in `name`, `supplier_name`, `common_name`, or `donor_id` that starts with
+`term`, served by a word-token prefix index so it is fast on the ~10M-row table.
+
+`SearchSamples` lowercases `term`, escapes its `LIKE` wildcards (`%`, `_`, and
+the escape char), and pages the `sample_search_token` index in index order:
+`WHERE token LIKE 'prefix%' ESCAPE '!' ORDER BY token, id_sample_tmp
+LIMIT ? OFFSET ?`. Because the index covers `(token, id_sample_tmp)`, the page
+streams from the index with no global sort (measured 48-62ms at any
+cardinality, vs 4-21s for `SELECT DISTINCT ... ORDER BY id_sample_tmp`). A
+sample can own several prefix-matching tokens, so ids are de-duplicated app-side
+over the index-ordered stream (bounded over-fetch), then the matching
+`sample_mirror` rows are fetched by id (`id_lims = 'SQSCP'`) and the fan-out is
+populated as in `Find*`. Term length < 3 returns `[]Sample{}` without querying.
+Matching is start-of-word: `musculus` and `mus` both match "Mus Musculus", but a
+mid-word substring (`usculus`) does not - an accepted trade-off (the exact
+`Find*` finders cover precise lookups). Returns `[]Sample` (full rows).
 
 **Package:** `mlwh/`
 **File:** `mlwh/search.go`
@@ -297,12 +309,13 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
    are returned, ordered by `id_sample_tmp`.
 2. Given a sample whose only match is in `common_name = "Homo sapiens"`, when
    `SearchSamples(ctx, "sapien", 100, 0)` runs, then that sample is returned
-   (search covers all four sample fields).
-3. Given a trigram candidate that does not actually contain the term as a
-   substring (a trigram false positive), when `SearchSamples` runs, then it is
-   excluded by the `LIKE` post-filter and not returned.
+   (search covers all four sample fields, matching the `sapiens` word prefix).
+3. Given a sample whose `common_name` is "Mus Musculus", when
+   `SearchSamples(ctx, "musculus", ...)` and `SearchSamples(ctx, "mus", ...)`
+   run, then the sample matches both; when `SearchSamples(ctx, "usculus", ...)`
+   runs (a mid-word substring), then it does not match.
 4. Given term `"ac"` (length 2), when `SearchSamples(ctx, "ac", 100, 0)` runs,
-   then it returns `[]Sample{}` and issues no FTS/LIKE query.
+   then it returns `[]Sample{}` and issues no query.
 5. Given >3 matching samples, when `SearchSamples(ctx, "acme", 2, 1)` runs,
    then exactly 2 rows are returned starting at offset 1, in `id_sample_tmp`
    order.
@@ -310,18 +323,23 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
    then the result is an empty slice and the error satisfies both
    `errors.Is(err, ErrCacheNeverSynced)` and `errors.Is(err, ErrNotFound)`.
 
-### A3: sample search constructs the MySQL ngram query
+### A3: sample search query construction and bounded count
 
-As a maintainer, I want the MySQL `SearchSamples` path to build a `FULLTEXT
-... MATCH ... AGAINST` boolean-mode predicate over the ngram index plus the
-same `LIKE` post-filter, so MySQL substring search is index-backed and exact.
+> Superseded the round-3 MySQL ngram `MATCH ... AGAINST` design. The token-prefix
+> SQL is identical across dialects (one code path, no dialect branch), so the
+> MySQL unit tests assert the same `sample_search_token` SQL the SQLite path
+> emits.
 
-Because `sqlmock` cannot evaluate the MySQL full-text predicate, MySQL unit
-tests assert **query construction** (the SQL contains `MATCH(...)
-AGAINST(... IN BOOLEAN MODE)` over the four sample fields, the `LIKE '%' ||
-? || '%'` post-filter over the four fields, `id_lims = 'SQSCP'`, `ORDER BY ...
-id_sample_tmp`, and `LIMIT ? OFFSET ?`). Real MySQL matching is exercised only
-under `WA_MLWH_DSN` (see B3).
+As a maintainer, I want the `SearchSamples` page query and the
+`CountSampleSearch` query to be built correctly, so a sqlmock MySQL `Client`
+(which cannot evaluate a real index) proves the SQL shape. The page query scans
+`sample_search_token` by `token LIKE 'prefix%' ESCAPE '!' ORDER BY token,
+id_sample_tmp LIMIT ? OFFSET ?` then fetches `sample_mirror` rows by id; it is
+**not** a `SELECT DISTINCT ... ORDER BY id_sample_tmp`. `CountSampleSearch` is a
+`SELECT COUNT(*) FROM (SELECT DISTINCT id_sample_tmp FROM sample_search_token
+WHERE token LIKE ? ESCAPE '!' LIMIT ?)` bounded by a cap, so a mega-term counts
+to the cap quickly and reports it as a floor. Real index matching is exercised
+under a writable MySQL cache (see B3).
 
 **Package:** `mlwh/`
 **File:** `mlwh/search.go`
@@ -330,16 +348,19 @@ under `WA_MLWH_DSN` (see B3).
 **Acceptance tests:**
 
 1. Given a `sqlmock` MySQL `Client`, when `SearchSamples(ctx, "acme", 100, 0)`
-   runs, then the captured SQL contains `MATCH` and `AGAINST` referencing the
-   ngram index and a `LIKE` post-filter over `name`, `supplier_name`,
-   `common_name`, `donor_id`, and the bound args include the term and
-   `limit=100`, `offset=0`.
+   runs, then the captured page SQL scans `sample_search_token` with
+   `token LIKE ? ESCAPE '!' ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
+   (prefix `"acme%"`) and the by-id fetch selects `sample_mirror` rows
+   `WHERE id_lims = 'SQSCP' AND id_sample_tmp IN (...)`.
 2. Given a `sqlmock` MySQL `Client`, when `SearchSamples(ctx, "ab", 100, 0)`
    runs (term length 2), then no query is sent to the mock and the result is
    `[]Sample{}`.
-3. Given the dialect dispatch, when `SearchSamples` runs on a SQLite `Client`,
-   then the SQLite FTS5 path is taken; on a MySQL `Client`, the ngram path is
-   taken (asserted by the distinct SQL each emits).
+3. Given a token page that repeats an id across prefix-matching tokens (e.g.
+   `mus`, `musculus` for the same sample), when `SearchSamples` runs, then the
+   id is de-duplicated and the sample fetched once.
+4. Given a `sqlmock` MySQL `Client`, when `CountSampleSearch(ctx, "acme")` runs,
+   then the captured SQL is the bounded `COUNT(*)` over a `SELECT DISTINCT
+   id_sample_tmp ... LIMIT ?` (cap), with the prefix and cap bound.
 
 ### A4: search routes, pagination guard, and RemoteClient
 
@@ -379,57 +400,61 @@ the term path segment.
 
 ## B. Search index schema and dialect parity
 
-### B1: sample search index in both dialect schemas
+### B1: sample search token index in both dialect schemas
 
-As a developer, I want the sample search index declared in both dialect
+> Superseded the round-3 FTS5/FULLTEXT schema. The search index is now a normal
+> `sample_search_token(token, id_sample_tmp)` table+index in both dialects.
+
+As a developer, I want the sample search token index declared in both dialect
 schemas and built/maintained by `wa mlwh sync`, so search is index-backed.
 
-- SQLite (`cache_schema/sqlite/sample_search.sql`): a `CREATE VIRTUAL TABLE ...
-  USING fts5(name, supplier_name, common_name, donor_id,
-  content='sample_mirror', content_rowid='id_sample_tmp', tokenize='trigram')`
-  external-content table,
-  kept in sync with `sample_mirror` (rebuilt/repopulated by the sample sync,
-  consistent with the cold-load index discipline of `.docs/mlwh-sync/spec.md`).
-- MySQL (`cache_schema/mysql/sample_search.sql`): a single `CREATE FULLTEXT
-  INDEX sample_mirror_search_ftx ON sample_mirror (name, supplier_name,
-  common_name, donor_id) WITH PARSER ngram`.
+- Both dialects (`cache_schema/{sqlite,mysql}/sample_search_token.sql`): a
+  normal table `sample_search_token(token, id_sample_tmp)` with index
+  `(token, id_sample_tmp)`. Tokens are the distinct lowercased `[a-z0-9]+` words
+  of `name`, `supplier_name`, `common_name`, `donor_id`. Built/maintained by the
+  sample sync: cold-load bulk build with the covering index added after
+  (mirroring the secondary-index discipline of `.docs/mlwh-sync/spec.md`), and
+  incremental upsert/delete on sample writes. Measured ~4 tokens/row, ~1.7GB,
+  ~7.5min to build at 10.35M samples.
 - `CacheSchemaVersion` bumps by 1; `OpenCache` migration drops/recreates the
-  affected tables (the FTS5 table is added to the SQLite recreate path) and
-  prints the existing one-line migration message.
+  affected tables (`sample_search_token` is in the migration drop/recreate set)
+  and prints the existing one-line migration message.
 
 **Package:** `mlwh/`
-**File:** `mlwh/cache_schema/{sqlite,mysql}/sample_search.sql`,
+**File:** `mlwh/cache_schema/{sqlite,mysql}/sample_search_token.sql`,
 `mlwh/cache_schema.go`, `mlwh/cache.go`
 **Test file:** `mlwh/cache_schema_test.go`, `mlwh/cache_test.go`
 
 **Acceptance tests:**
 
 1. Given the SQLite schema, when applied via `OpenCache` on an empty cache,
-   then a virtual table over the four sample fields with the `trigram`
-   tokenizer exists and is queryable with `MATCH`.
-2. Given the MySQL schema string, when parsed, then it declares one FULLTEXT
-   index `WITH PARSER ngram` over exactly `name`, `supplier_name`,
-   `common_name`, `donor_id` on `sample_mirror`.
+   then a `sample_search_token(token, id_sample_tmp)` table with a
+   `(token, id_sample_tmp)` index exists and is queryable by token prefix.
+2. Given both dialect schema strings, when parsed, then each declares the token
+   table and its `(token, id_sample_tmp)` index (no FTS5 / FULLTEXT).
 3. Given a cache at the previous `CacheSchemaVersion`, when `OpenCache` runs at
    the new version, then it prints exactly one
-   `mlwh cache: schema vX->vY, recreated tables: [...]` line and the sample
-   search index is present afterwards.
-4. Given a populated SQLite `sample_mirror` and a sync that maintains the FTS5
-   table, when a sample is searched by `name`, then the FTS5 `MATCH` returns
-   its rowid (proving the index is populated, not empty).
+   `mlwh cache: schema vX->vY, recreated tables: [...]` line (now including
+   `sample_search_token`) and the token table is present afterwards.
+4. Given a populated SQLite `sample_mirror` and a cold-load sync, when the
+   token rebuild runs, then `sample_search_token` is populated (one row per
+   distinct word token per sample), proving the index is built, not empty.
 
-### B2: schema-shape parity represents the search index
+### B2: schema-shape parity represents the token index
 
-As a developer, I want the two-dialect parity model to represent the SQLite
-FTS5 virtual table and the MySQL FULLTEXT index, so the dialects cannot
-silently diverge on search support.
+> Superseded the FTS5/FULLTEXT shape model. `sample_search_token` is an ordinary
+> table+index, so the parity model represents it like any other table - the
+> `FullText` shape field and the FTS5/FULLTEXT/`CREATE TRIGGER` parsing special
+> cases are removed.
 
-Extend `parseSchemaShape`/`schemaShape`/`compareCacheSchemaShapes`
-(`cache_schema.go`) to recognise `CREATE VIRTUAL TABLE ... USING fts5(...)`
-and MySQL `FULLTEXT (...) WITH PARSER ngram` (whether inline in `CREATE TABLE`
-or a separate `CREATE FULLTEXT INDEX`), recording a normalised "full-text
-search index over columns {name, supplier_name, common_name, donor_id} on
-sample_mirror" entry that compares equal across dialects.
+As a developer, I want the two-dialect parity model to represent the
+`sample_search_token` table+index, so the dialects cannot silently diverge on
+search support.
+
+`parseSchemaShape`/`schemaShape`/`compareCacheSchemaShapes` (`cache_schema.go`)
+record `sample_search_token` in `Tables`/`Index` like every other table, so its
+columns and `(token, id_sample_tmp)` index compare equal across dialects through
+the existing table/index parity checks.
 
 **Package:** `mlwh/`
 **File:** `mlwh/cache_schema.go`
@@ -438,15 +463,11 @@ sample_mirror" entry that compares equal across dialects.
 **Acceptance tests:**
 
 1. Given the SQLite and MySQL schemas at the new version, when
-   `parseSchemaShape` runs on each, then both shapes record a full-text search
-   index over the same column set on `sample_mirror`.
+   `parseSchemaShape` runs on each, then both shapes record `sample_search_token`
+   as a normal table with a `(token, id_sample_tmp)` index.
 2. Given the parity comparison (`compareCacheSchemaShapes` or the existing
-   parity test), when run, then the table sets, column sets, indexes, unique
-   constraints, and the new full-text search representation all match across
-   dialects.
-3. Given a deliberately divergent fixture (e.g. SQLite FTS5 over three fields,
-   MySQL over four), when the parity test runs, then it fails (the
-   representation is sensitive to the search column set).
+   parity test), when run, then the table sets, column sets, indexes, and unique
+   constraints (including `sample_search_token`) all match across dialects.
 
 ### B3: cross-dialect search set-equality (ASCII fixtures)
 
@@ -896,43 +917,30 @@ in `cmd/mlwh.go`) registers all new `Registry` endpoints plus `/health` and
 
 ---
 
-## H. Startup backend refusal
+## H. Startup backend handling
 
-### H1: refuse MariaDB / MySQL < 8
+### H1: no backend refusal (runs on any supported cache backend)
 
-As an operator, I want `wa mlwh serve` to refuse to start on a backend that
-cannot support ngram full-text search, so search is never silently broken.
+> Superseded the round-3 startup refusal. The word-token prefix index has no
+> full-text dependency and works on MariaDB and MySQL < 8, so `wa mlwh serve`
+> no longer inspects the backend flavor/version. `SupportsFullTextSearch` and
+> the `cmd/mlwh.go` serve guard are removed.
 
-After `mlwh.OpenCacheOnly`, before wiring routes, `wa mlwh serve` inspects the
-cache backend. For a MySQL backend it reads `VERSION()` (reuse
-`mySQLServerVersion`/`mySQLMajorVersion`, `mlwh/cache.go:1378-1398`): if the
-version string contains `mariadb` (case-insensitive) or the major version is
-< 8, the command exits non-zero with an error like `wa mlwh serve requires
-SQLite or MySQL >= 8 for full-text search` and does not start the server.
-SQLite and MySQL >= 8 proceed. A small exported helper on `*Client` (e.g.
-`SupportsFullTextSearch(ctx) (bool, error)` or a backend-flavor accessor) is
-acceptable so the check lives in `mlwh` and `cmd` only wires it.
+As an operator, I want `wa mlwh serve` to start on any supported cache backend,
+so a MariaDB or MySQL < 8 cache is not gratuitously refused.
+
+After `mlwh.OpenCacheOnly`, `wa mlwh serve` wires routes and starts directly -
+there is no `VERSION()` probe and no flavor/version refusal.
 
 **Package:** `mlwh/`, `cmd/`
-**File:** `mlwh/cache.go` (or `mlwh/search.go`), `cmd/mlwh.go`
-**Test file:** `mlwh/cache_test.go` or `mlwh/search_test.go`, `cmd/mlwh_test.go`
+**File:** `mlwh/search.go`, `cmd/mlwh.go`
+**Test file:** `cmd/mlwh_test.go`
 
 **Acceptance tests:**
 
-1. Given a SQLite cache, when the backend check runs, then it reports supported
-   and `wa mlwh serve` proceeds to register routes.
-2. Given a `sqlmock`/stub MySQL backend whose `VERSION()` returns
-   `"8.4.7"`, when the check runs, then it reports supported.
-3. Given a stub MySQL backend whose `VERSION()` returns `"5.7.40"`, when the
-   check runs, then it reports unsupported and `wa mlwh serve` returns a
-   non-nil error naming the SQLite-or-MySQL->=8 requirement and never starts
-   the server.
-4. Given a stub MySQL backend whose `VERSION()` returns
-   `"10.11.2-MariaDB"`, when the check runs, then it reports unsupported and
-   `wa mlwh serve` exits non-zero with the same requirement message.
-5. Given the unsupported-backend path, when `wa mlwh serve` returns, then it
-   never called `server.RegisterRoutes` / never bound a listener (verified via
-   the command's wiring seam).
+1. Given a cache opened on any supported backend, when `wa mlwh serve` runs,
+   then it registers routes, binds a listener, and serves requests, with no
+   backend-flavor or version refusal.
 
 ---
 
@@ -959,8 +967,9 @@ parallel unless noted.
 5. **Phase 5 - OpenAPI + docs.** C1 (enriched metadata + `doc:` tags), C2
    (OpenAPI document + coverage), G1 (generated reference + glossary). Depends
    on Phases 3-4 (registry entries and snake_case final).
-6. **Phase 6 - startup refusal.** H1. Depends on Phase 1 (search exists) and
-   Phase 4 (serve wiring). Independent of Phase 5.
+6. **Phase 6 - startup refusal.** H1. (Round-4: the refusal is removed; the
+   word-token prefix index has no full-text dependency, so `wa mlwh serve` runs
+   on any supported backend.)
 7. **Phase 7 - frontend + posture docs.** E3 (frontend Zod + tests), G2
    (security/posture doc), G3 (unauthenticated reachability tests). E3 depends
    on E1 shipping in the same change set (atomic break). G3 depends on
@@ -970,16 +979,20 @@ parallel unless noted.
 
 ## Appendix: Key Decisions
 
-- **Substring is post-filtered, never index-only.** The FTS5 trigram / MySQL
-  ngram index only narrows candidates; a case-insensitive `LIKE '%term%'`
-  post-filter applied on every backend guarantees identical "contains"
-  semantics and exact cross-dialect set-equality. No relevance score; order by
-  id for stable pagination. The >=3-char floor matches what trigram/ngram can
-  serve; shorter terms short-circuit to empty/0.
-- **Study search has no FTS index.** `study_mirror` is ~8k rows, so an OR'd
-  `LIKE '%term%'` scan is web-responsive without an index, avoiding a second
-  FTS table and keeping the parity model simpler (only `sample_mirror` carries
-  a full-text index, represented in both dialects).
+- **Sample search is a word-token prefix index (round-4).** The FTS5 trigram /
+  MySQL ngram full-text approach was abandoned: at 10.35M rows ngram FULLTEXT
+  threw `Error 188` for most terms (and 20-32s otherwise), and a trigram inverted
+  index cost ~16GB and 1-4s queries. Instead `sample_search_token(token,
+  id_sample_tmp)` stores the distinct lowercased `[a-z0-9]+` words of the four
+  fields, and search pages it in `(token, id_sample_tmp)` index order
+  (`token LIKE 'prefix%'`) - 48-62ms at any cardinality, identical SQL across
+  dialects. Semantics are start-of-word (not mid-word substring); the >=3-char
+  floor stands. `CountSampleSearch` is an exact `COUNT(DISTINCT id_sample_tmp)`
+  bounded by a cap (reported as a floor for mega-terms) so it stays ~80ms.
+- **Study search is an un-indexed substring scan.** `study_mirror` is ~8k rows,
+  so an OR'd `LIKE '%term%'` scan (3-9ms) is web-responsive without an index.
+  It is deliberately left as substring (unchanged by round-4), so only
+  `sample_mirror` carries a derived search index.
 - **Counts are separate endpoints, not a list envelope.** Existing list
   endpoints keep bare-array bodies and the `mlwhServerFetchAllLimit =
   1_000_000` fetch-all default, so the frontend study-samples / library-samples

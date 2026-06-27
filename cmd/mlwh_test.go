@@ -785,8 +785,8 @@ func TestMLWHServeScenarioBindDefaults(t *testing.T) {
 	})
 }
 
-func TestMLWHServeProceedsOnSupportedBackend(t *testing.T) {
-	convey.Convey("H1.1: Given a SQLite cache whose backend supports full-text search, when wa mlwh serve runs, then it registers routes and binds a listener", t, func() {
+func TestMLWHServeStartsOnAnyBackendWithoutFlavorRefusal(t *testing.T) {
+	convey.Convey("Given any supported cache backend, when wa mlwh serve runs, then it registers routes and binds a listener with no backend-flavor or version refusal", t, func() {
 		cachePath := prepareMLWHServeCacheForTest(t, true)
 		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
 		fakeAuth := newFakeMLWHServeAuthServer()
@@ -804,41 +804,6 @@ func TestMLWHServeProceedsOnSupportedBackend(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 1)
-	})
-}
-
-func TestMLWHServeRefusesUnsupportedBackend(t *testing.T) {
-	convey.Convey("H1.3/H1.4/H1.5: Given a backend that does not support full-text search, when wa mlwh serve runs, then it exits non-zero naming the SQLite-or-MySQL->=8 requirement and never binds a listener", t, func() {
-		cachePath := prepareMLWHServeCacheForTest(t, true)
-		t.Setenv("WA_MLWH_CACHE_PATH", cachePath)
-		fakeAuth := newFakeMLWHServeAuthServer()
-		fakeAuth.onStart = func(*fakeMLWHServeAuthServer) error {
-			t.Fatal("serve must not start when the backend is unsupported")
-
-			return nil
-		}
-		installFakeMLWHServeAuthServer(t, fakeAuth)
-		stubMLWHServeFullTextSupport(t, false, nil)
-
-		_, err := executeRootCommandForTest(t, []string{"mlwh", "serve", "--port", "0"})
-
-		convey.So(err, convey.ShouldNotBeNil)
-		convey.So(err.Error(), convey.ShouldContainSubstring, "SQLite or MySQL >= 8")
-		convey.So(err.Error(), convey.ShouldContainSubstring, "full-text search")
-		convey.So(fakeAuth.startCalls, convey.ShouldHaveLength, 0)
-		convey.So(fakeAuth.enableCalls, convey.ShouldHaveLength, 0)
-	})
-}
-
-func stubMLWHServeFullTextSupport(t *testing.T, supported bool, err error) {
-	t.Helper()
-
-	original := mlwhServeSupportsFullTextSearch
-	mlwhServeSupportsFullTextSearch = func(context.Context, *mlwh.Client) (bool, error) {
-		return supported, err
-	}
-	t.Cleanup(func() {
-		mlwhServeSupportsFullTextSearch = original
 	})
 }
 

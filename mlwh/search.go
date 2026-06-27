@@ -32,10 +32,27 @@ import (
 	"strings"
 )
 
-// searchTermMinLength is the minimum effective length of a substring search
-// term. Shorter terms short-circuit to an empty result without querying,
-// matching what the trigram/ngram indexes can serve.
+// searchTermMinLength is the minimum effective length of a search term. Shorter
+// terms short-circuit to an empty result without querying.
 const searchTermMinLength = 3
+
+// sampleSearchCountCap bounds the exact CountSampleSearch scan. The count is
+// exact up to the cap; a term whose distinct matching samples reach the cap
+// reports the cap as a floor (e.g. "10000+"), so a mega-term matching ~1.9M
+// rows stays fast (~80ms) instead of scanning every matching token row.
+const sampleSearchCountCap = 10000
+
+// sampleSearchTokenPageMultiplier bounds the per-fetch over-fetch when paging
+// distinct samples out of the (token, id_sample_tmp) index. A single sample can
+// own several tokens sharing the query prefix, so a page of N distinct samples
+// may span more than N token rows; each index-order fetch reads
+// (need * multiplier + margin) token rows, looping only if duplicates exhaust
+// the over-fetch, which keeps the common case to one bounded, index-ordered
+// read.
+const (
+	sampleSearchTokenPageMultiplier = 4
+	sampleSearchTokenPageMargin     = 64
+)
 
 // searchLIKEEscapeChar is the escape character bound via an explicit LIKE
 // ESCAPE clause so that user-supplied '%' and '_' are matched literally rather
@@ -52,76 +69,26 @@ const searchLIKEEscapeChar = `!`
 // substring search (and its count sibling).
 var studySearchFields = []string{"name", "study_title", "programme", "faculty_sponsor"}
 
-// sampleSearchFields are the sample_mirror columns OR'd together by the sample
-// substring search LIKE post-filter (and its count sibling), qualified so they
-// are unambiguous when sample_mirror is joined to the sample_search FTS5 table
-// (whose virtual columns share these names).
-var sampleSearchFields = []string{
-	"sample_mirror.name",
-	"sample_mirror.supplier_name",
-	"sample_mirror.common_name",
-	"sample_mirror.donor_id",
-}
+// sampleSearchTokenPageSQL pages the (token, id_sample_tmp) prefix index in
+// index order: a `token LIKE 'prefix%'` range scan streamed in (token,
+// id_sample_tmp) order with LIMIT/OFFSET. Because the index covers exactly these
+// columns and the order matches it, the page is served from the index with no
+// global sort or table touch - measured 48-62ms at any cardinality. Ids are
+// de-duplicated app-side (a sample may own several prefix-matching tokens).
+var sampleSearchTokenPageSQL = `SELECT token, id_sample_tmp FROM ` + sampleSearchTokenTable +
+	` WHERE token LIKE ? ESCAPE '` + searchLIKEEscapeChar + `' ORDER BY token, id_sample_tmp LIMIT ? OFFSET ?`
 
-// sampleSearchWhereClause is the WHERE body shared by SearchSamples (SQLite
-// path) and its count sibling: an FTS5 MATCH narrows candidates, then SQSCP
-// rows whose searchable fields actually contain the term are kept by the LIKE
-// post-filter that guarantees exact substring semantics.
-var sampleSearchWhereClause = sampleSearchTable + ` MATCH ? AND sample_mirror.id_lims = 'SQSCP' AND ` +
-	likeContainsClause(sampleSearchFields)
+// sampleSearchByIDsSQLPrefix selects full sample rows by id_sample_tmp (the
+// matching samples a prefix page resolved to), scoped to SQSCP and ordered by
+// id_sample_tmp; the id placeholders and ORDER BY are appended per call.
+var sampleSearchByIDsSQLPrefix = `SELECT ` + sampleMirrorSelectColumns + ` FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN `
 
-// sampleSearchFromWhere is the FROM/JOIN/WHERE body shared by the SQLite path
-// of SearchSamples and its count sibling: the FTS5 trigram virtual table joined
-// back to sample_mirror, filtered by sampleSearchWhereClause. Both the row
-// SELECT and the COUNT(*) reuse it so the count equals the search length.
-var sampleSearchFromWhere = ` FROM ` + sampleSearchTable +
-	` INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = ` + sampleSearchTable + `.rowid` +
-	` WHERE ` + sampleSearchWhereClause
-
-// sampleSearchSQL selects full sample rows matching the term via the FTS5
-// trigram index joined back to sample_mirror, ordered by id_sample_tmp for
-// stable pagination.
-var sampleSearchSQL = `SELECT ` + sampleMirrorSelectColumns + sampleSearchFromWhere +
-	` ORDER BY sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
-
-// sampleSearchCountSQL counts the sample rows SearchSamples (SQLite path) would
-// return for the term: the same FTS5 MATCH narrowing and LIKE post-filter, with
-// no LIMIT, so the count equals len(SearchSamples(...)) for the term.
-var sampleSearchCountSQL = `SELECT COUNT(*)` + sampleSearchFromWhere
-
-// sampleSearchMySQLMatchClause is the boolean-mode ngram FULLTEXT predicate
-// that narrows candidate sample_mirror rows on the MySQL backend, matching the
-// columns covered by the sample_mirror_search_ftx FULLTEXT index. The term is
-// bound as a quoted phrase (see fts5MatchPhrase) so arbitrary boolean-mode
-// operators (+, -, *, ", (, ), ~, <) are treated literally and cannot error or
-// change semantics; the LIKE post-filter still guarantees exact substring.
-const sampleSearchMySQLMatchClause = `MATCH(name, supplier_name, common_name, donor_id) AGAINST(? IN BOOLEAN MODE)`
-
-// sampleSearchMySQLWhereClause is the WHERE body shared by the MySQL path of
-// SearchSamples and its count sibling: the ngram FULLTEXT MATCH narrows
-// candidates, then SQSCP rows whose searchable fields actually contain the term
-// are kept by the same LIKE post-filter used by the SQLite path, guaranteeing
-// identical exact-substring semantics across dialects.
-var sampleSearchMySQLWhereClause = sampleSearchMySQLMatchClause + ` AND sample_mirror.id_lims = 'SQSCP' AND ` +
-	likeContainsClause(sampleSearchFields)
-
-// sampleSearchMySQLFromWhere is the FROM/WHERE body shared by the MySQL path of
-// SearchSamples and its count sibling: sample_mirror filtered by
-// sampleSearchMySQLWhereClause (ngram FULLTEXT MATCH plus the LIKE post-filter).
-// Both the row SELECT and the COUNT(*) reuse it so the count equals the search
-// length.
-var sampleSearchMySQLFromWhere = ` FROM sample_mirror WHERE ` + sampleSearchMySQLWhereClause
-
-// sampleSearchMySQLSQL selects full sample rows matching the term via the ngram
-// FULLTEXT index on sample_mirror, ordered by id_sample_tmp for stable
-// pagination.
-var sampleSearchMySQLSQL = `SELECT ` + sampleMirrorSelectColumns + sampleSearchMySQLFromWhere +
-	` ORDER BY sample_mirror.id_sample_tmp LIMIT ? OFFSET ?`
-
-// sampleSearchMySQLCountSQL counts the sample rows SearchSamples (MySQL path)
-// would return for the term: the same ngram FULLTEXT MATCH narrowing and LIKE
-// post-filter, with no LIMIT, so the count equals len(SearchSamples(...)).
-var sampleSearchMySQLCountSQL = `SELECT COUNT(*)` + sampleSearchMySQLFromWhere
+// sampleSearchCountSQL counts the distinct samples matching the token prefix,
+// bounded by sampleSearchCountCap: the inner SELECT DISTINCT over the prefix
+// range is itself capped with LIMIT so a mega-term stops scanning once the cap
+// is reached, then the outer COUNT(*) reports that bounded distinct count.
+var sampleSearchCountSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_sample_tmp FROM ` + sampleSearchTokenTable +
+	` WHERE token LIKE ? ESCAPE '` + searchLIKEEscapeChar + `' LIMIT ?) AS bounded_sample_search`
 
 // studySearchWhereClause is the WHERE body shared by SearchStudies and its
 // count sibling: SQSCP rows whose searchable fields contain the term.
@@ -182,14 +149,22 @@ func likeContainsArgs(pattern string, fields []string) []any {
 	return args
 }
 
-// fts5MatchPhrase renders term as a single FTS5 string literal (a quoted
-// phrase): the term is wrapped in double quotes with any embedded double quotes
-// doubled. This makes arbitrary user input a safe MATCH query for the trigram
-// tokenizer - FTS5 operators (OR, NEAR, *, :, -, parentheses) and quotes are
-// treated as literal characters rather than query syntax, so terms cannot error
-// or inject. Exactness is still guaranteed by the LIKE post-filter.
-func fts5MatchPhrase(term string) string {
-	return `"` + strings.ReplaceAll(term, `"`, `""`) + `"`
+// escapeLIKEPrefix lowercases term and renders it as a `prefix%` LIKE pattern
+// matching tokens that start with the term: the LIKE wildcards ('%', '_') and
+// the escape character within the term are escaped so they match literally, and
+// a single trailing '%' makes it a prefix (start-of-token) match. The pattern is
+// bound as a parameter paired with an explicit `ESCAPE '!'` clause (see
+// searchLIKEEscapeChar). The term is lowercased to match the lowercased stored
+// tokens; the escape character is replaced first so an already-escaped
+// occurrence is not reprocessed by the wildcard rules.
+func escapeLIKEPrefix(term string) string {
+	replacer := strings.NewReplacer(
+		searchLIKEEscapeChar, searchLIKEEscapeChar+searchLIKEEscapeChar,
+		"%", searchLIKEEscapeChar+"%",
+		"_", searchLIKEEscapeChar+"_",
+	)
+
+	return replacer.Replace(strings.ToLower(term)) + "%"
 }
 
 // SearchStudies returns studies whose name, study_title, programme, or
@@ -224,90 +199,132 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
 	return []Study{}, nil
 }
 
-// SearchSamples returns samples whose name, supplier_name, common_name, or
-// donor_id contains term (case-insensitive substring), ordered by id_sample_tmp
-// for stable pagination, with their library/study fan-out populated as the
-// Find* sample methods do. Terms shorter than searchTermMinLength return an
-// empty slice without querying. A never-synced cache returns an empty slice
-// joined with ErrCacheNeverSynced and ErrNotFound.
+// SearchSamples returns samples having a word in name, supplier_name,
+// common_name, or donor_id that starts with term (case-insensitive word-prefix
+// match), ordered by id_sample_tmp for stable pagination, with their
+// library/study fan-out populated as the Find* sample methods do. So "musculus"
+// and "mus" both match "Mus Musculus"; a substring inside a single word (e.g.
+// "usculus") does not. Terms shorter than searchTermMinLength return an empty
+// slice without querying. A never-synced cache returns an empty slice joined
+// with ErrCacheNeverSynced and ErrNotFound.
 //
-// The query is dialect-branched via the cache backend: SQLite uses an FTS5
-// trigram MATCH to narrow candidates, MySQL an ngram FULLTEXT match; both apply
-// the same LIKE post-filter for exact substring semantics.
+// The matching id_sample_tmps are paged out of the (token, id_sample_tmp) prefix
+// index in index order (no global DISTINCT+id sort), then the sample rows are
+// fetched by id and hydrated. The same path serves both dialects; the prefix
+// index has no FTS dependency, so it works on MariaDB and MySQL < 8 too.
 func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
 	if len(term) < searchTermMinLength {
 		return []Sample{}, nil
 	}
 
-	switch c.cache.Dialect() {
-	case "mysql":
-		return c.searchSamplesMySQL(ctx, term, limit, offset)
-	default:
-		return c.searchSamplesSQLite(ctx, term, limit, offset)
-	}
-}
-
-// searchSamplesSQLite is the SQLite FTS5 path of SearchSamples: an FTS5 trigram
-// MATCH narrows candidate id_sample_tmps, joined back to sample_mirror, with a
-// LIKE post-filter guaranteeing exact substring semantics.
-func (c *Client) searchSamplesSQLite(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
 	db := c.readCacheDB()
 	if db == nil {
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	args := append([]any{fts5MatchPhrase(term)}, likeContainsArgs(escapeLIKEPattern(term), sampleSearchFields)...)
-	args = append(args, limit, offset)
-
-	samples, err := querySamples(ctx, db, sampleSearchSQL, "query sample search", args...)
+	ids, err := c.sampleSearchTokenPage(ctx, db, escapeLIKEPrefix(term), limit, offset)
 	if err != nil {
 		return nil, err
 	}
-	if len(samples) > 0 {
-		if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
-			return nil, err
+	if len(ids) == 0 {
+		if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
+			return []Sample{}, err
 		}
 
-		return samples, nil
+		return []Sample{}, nil
 	}
 
-	if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
-		return []Sample{}, err
+	samples, err := c.fetchSamplesByID(ctx, db, ids)
+	if err != nil {
+		return nil, err
+	}
+	if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
+		return nil, err
 	}
 
-	return []Sample{}, nil
+	return samples, nil
 }
 
-// searchSamplesMySQL is the MySQL ngram path of SearchSamples: a boolean-mode
-// FULLTEXT MATCH ... AGAINST over the ngram index narrows candidate
-// sample_mirror rows (id_lims = 'SQSCP'), with the same LIKE post-filter as the
-// SQLite path guaranteeing exact substring semantics, ordered by id_sample_tmp.
-func (c *Client) searchSamplesMySQL(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
-	db := c.readCacheDB()
-	if db == nil {
-		return nil, fmt.Errorf("mlwh: cache reader not configured")
+// sampleSearchTokenPage returns the distinct id_sample_tmps for the page
+// [offset, offset+limit) of samples matching the token prefix, in
+// (token, id_sample_tmp) index order. A sample can own several prefix-matching
+// tokens, so the index-ordered token stream is de-duplicated app-side; it
+// over-fetches token rows in bounded pages and loops only when duplicates
+// exhaust an over-fetch, keeping the common case to one index-ordered read.
+func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, prefix string, limit, offset int) ([]int64, error) {
+	if limit <= 0 {
+		return nil, nil
 	}
 
-	args := append([]any{fts5MatchPhrase(term)}, likeContainsArgs(escapeLIKEPattern(term), sampleSearchFields)...)
-	args = append(args, limit, offset)
+	need := offset + limit
+	seen := make(map[int64]struct{}, need)
+	ordered := make([]int64, 0, need)
+	tokenOffset := 0
+	fetch := need*sampleSearchTokenPageMultiplier + sampleSearchTokenPageMargin
 
-	samples, err := querySamples(ctx, db, sampleSearchMySQLSQL, "query sample search", args...)
-	if err != nil {
-		return nil, err
-	}
-	if len(samples) > 0 {
-		if err = hydrateSampleFanOut(ctx, c, samples); err != nil {
-			return nil, err
+	for len(ordered) < need {
+		rows, err := db.QueryContext(ctx, sampleSearchTokenPageSQL, prefix, fetch, tokenOffset)
+		if err != nil {
+			return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
 		}
 
-		return samples, nil
+		scanned := 0
+		for rows.Next() {
+			var (
+				token string
+				id    int64
+			)
+			if scanErr := rows.Scan(&token, &id); scanErr != nil {
+				_ = rows.Close()
+
+				return nil, fmt.Errorf("%w: scan sample search: %w", ErrUpstreamImpaired, scanErr)
+			}
+
+			scanned++
+			if _, ok := seen[id]; ok {
+				continue
+			}
+
+			seen[id] = struct{}{}
+			ordered = append(ordered, id)
+		}
+		if err = rows.Err(); err != nil {
+			_ = rows.Close()
+
+			return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+		}
+		if err = rows.Close(); err != nil {
+			return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+		}
+
+		if scanned < fetch {
+			break
+		}
+
+		tokenOffset += fetch
 	}
 
-	if err = c.requireAnySyncState(ctx, syncTableSample); err != nil {
-		return []Sample{}, err
+	if offset >= len(ordered) {
+		return []int64{}, nil
 	}
 
-	return []Sample{}, nil
+	return ordered[offset:min(offset+limit, len(ordered))], nil
+}
+
+// fetchSamplesByID loads the full sample rows for the given id_sample_tmps
+// (SQSCP-scoped), ordered by id_sample_tmp so a page is returned in stable id
+// order. It reuses the Find* sample row shape via querySamples.
+func (c *Client) fetchSamplesByID(ctx context.Context, db *sql.DB, ids []int64) ([]Sample, error) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		placeholders[index] = "?"
+		args[index] = id
+	}
+
+	query := sampleSearchByIDsSQLPrefix + "(" + strings.Join(placeholders, ", ") + ") ORDER BY id_sample_tmp"
+
+	return querySamples(ctx, db, query, "query sample search", args...)
 }
 
 // CountStudySearch counts the studies SearchStudies would return for term: a
@@ -339,37 +356,21 @@ func (c *Client) CountStudySearch(ctx context.Context, term string) (Count, erro
 	return Count{Count: 0}, nil
 }
 
-// CountSampleSearch counts the samples SearchSamples would return for term: a
-// SELECT COUNT(*) over the identical sample WHERE clause (the FTS5 trigram MATCH
-// on SQLite or the ngram FULLTEXT MATCH on MySQL, plus the shared LIKE
-// post-filter and id_lims = 'SQSCP') with no LIMIT, so CountSampleSearch(term)
-// equals len(SearchSamples(term, all)) for any term. The query is
-// dialect-branched via the cache backend exactly as SearchSamples is. Terms
-// shorter than searchTermMinLength return Count{Count: 0} without querying. A
-// never-synced cache returns Count{} with an error satisfying both
-// ErrCacheNeverSynced and ErrNotFound, mirroring SearchSamples.
+// CountSampleSearch counts the distinct samples SearchSamples would match for
+// term: an exact COUNT(DISTINCT id_sample_tmp) over the token-prefix range,
+// bounded by sampleSearchCountCap. For normal result sets the count is exact and
+// equals len(SearchSamples(term, all)); for a very common token the scan stops
+// at the cap and reports the cap as a floor (e.g. a token matching ~1.9M rows
+// counts to the cap in ~80ms instead of scanning every row). Terms shorter than
+// searchTermMinLength return Count{Count: 0} without querying. A never-synced
+// cache returns Count{} with an error satisfying both ErrCacheNeverSynced and
+// ErrNotFound, mirroring SearchSamples.
 func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, error) {
 	if len(term) < searchTermMinLength {
 		return Count{Count: 0}, nil
 	}
 
-	switch c.cache.Dialect() {
-	case "mysql":
-		return c.countSampleSearch(ctx, term, sampleSearchMySQLCountSQL)
-	default:
-		return c.countSampleSearch(ctx, term, sampleSearchCountSQL)
-	}
-}
-
-// countSampleSearch runs the given dialect-specific sample-search COUNT(*)
-// query, binding the FTS5/ngram MATCH phrase followed by the LIKE post-filter
-// args (the same arg shape as SearchSamples minus the pagination args), and
-// resolves a zero count against the sample sync state so the count and the
-// search agree on a never-synced cache.
-func (c *Client) countSampleSearch(ctx context.Context, term, query string) (Count, error) {
-	args := append([]any{fts5MatchPhrase(term)}, likeContainsArgs(escapeLIKEPattern(term), sampleSearchFields)...)
-
-	count, err := c.queryCount(ctx, query, "count sample search", args...)
+	count, err := c.queryCount(ctx, sampleSearchCountSQL, "count sample search", escapeLIKEPrefix(term), sampleSearchCountCap)
 	if err != nil {
 		return Count{}, err
 	}
@@ -382,46 +383,6 @@ func (c *Client) countSampleSearch(ctx context.Context, term, query string) (Cou
 	}
 
 	return Count{Count: 0}, nil
-}
-
-// SupportsFullTextSearch reports whether the cache backend can serve the
-// index-backed sample substring search (the SQLite FTS5 trigram table or the
-// MySQL ngram FULLTEXT index). SQLite always qualifies. A MySQL backend
-// qualifies only when it is genuine MySQL >= 8: it does not qualify when the
-// reported VERSION() string contains "mariadb" (case-insensitive) or when its
-// major version is below 8, because neither can provide the ngram full-text
-// search the sample search relies on. The version check reuses the same
-// VERSION() logic (mySQLServerVersion/mySQLMajorVersion) the schema collation
-// selection uses.
-func (c *Client) SupportsFullTextSearch(ctx context.Context) (bool, error) {
-	if c == nil || c.cache == nil {
-		return false, fmt.Errorf("mlwh: cache client not configured")
-	}
-
-	if c.cache.Dialect() != "mysql" {
-		return true, nil
-	}
-
-	db := c.readCacheDB()
-	if db == nil {
-		return false, fmt.Errorf("mlwh: cache reader not configured")
-	}
-
-	version, err := mySQLServerVersion(ctx, db)
-	if err != nil {
-		return false, fmt.Errorf("mlwh: query mysql version for full-text search support: %w", err)
-	}
-
-	if strings.Contains(strings.ToLower(version), "mariadb") {
-		return false, nil
-	}
-
-	major, err := mySQLMajorVersion(version)
-	if err != nil {
-		return false, fmt.Errorf("mlwh: parse mysql version %q: %w", version, err)
-	}
-
-	return major >= 8, nil
 }
 
 func (c *Client) queryStudySearch(ctx context.Context, db *sql.DB, query string, args ...any) ([]Study, error) {

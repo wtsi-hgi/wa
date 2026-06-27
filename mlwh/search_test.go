@@ -385,42 +385,39 @@ func TestSearchSamplesMatchesAcrossAllFourSearchableFields(t *testing.T) {
 	})
 }
 
-func TestSearchSamplesExcludesTrigramFalsePositiveViaLIKEPostFilter(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache with a genuine trigram false positive for the term", t, func() {
+func TestSearchSamplesMatchesWordPrefixNotMidWord(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache whose samples carry multi-word searchable fields", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// Row 1 contains the literal ASCII substring "kelvin".
-		seedSampleMirrorSearchRow(t, cache.DB(), 1, "kelvin sample", "supplier-1", "common-1", "donor-1")
-		// Row 2 begins with the Kelvin sign U+212A ("Kelvin"). The FTS5
-		// trigram tokenizer Unicode-case-folds U+212A to 'k', so an FTS5 MATCH
-		// for "kelvin" surfaces this row as a candidate, but it does not contain
-		// the ASCII substring "kelvin": SQLite LIKE folds only ASCII A-Z, so the
-		// post-filter must exclude it.
-		seedSampleMirrorSearchRow(t, cache.DB(), 2, "Kelvin sample", "supplier-2", "common-2", "donor-2")
+		// "Mus Musculus" tokenises to the words "mus" and "musculus".
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "supplier-1", "Mus Musculus", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "specimen-2", "supplier-2", "Homo Sapiens", "donor-2")
 		rebuildSampleSearchIndexForTest(t, cache.DB())
 		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("the FTS5 MATCH alone surfaces the false positive's rowid as a candidate", func() {
-			var matchedIDs []int64
-			rows, qErr := cache.DB().Query(`SELECT rowid FROM sample_search WHERE sample_search MATCH ? ORDER BY rowid`, `"kelvin"`)
-			convey.So(qErr, convey.ShouldBeNil)
-			for rows.Next() {
-				var id int64
-				convey.So(rows.Scan(&id), convey.ShouldBeNil)
-				matchedIDs = append(matchedIDs, id)
-			}
-			convey.So(rows.Close(), convey.ShouldBeNil)
-			convey.So(matchedIDs, convey.ShouldResemble, []int64{1, 2})
-		})
-
-		samples, err := client.SearchSamples(context.Background(), "kelvin", 100, 0)
-
-		convey.Convey("when SearchSamples runs, then the LIKE post-filter excludes the false positive", func() {
+		convey.Convey("when the term is a whole later word (musculus), then the Mus Musculus sample matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "musculus", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+		})
+
+		convey.Convey("when the term is a prefix of the first word (mus), then the Mus Musculus sample matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "mus", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+		})
+
+		convey.Convey("when the term is a mid-word substring (usculus), then it does not match (accepted word-prefix semantics)", func() {
+			samples, err := client.SearchSamples(context.Background(), "usculus", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldBeEmpty)
+
+			count, countErr := client.CountSampleSearch(context.Background(), "usculus")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{})
 		})
 	})
 }
@@ -503,98 +500,70 @@ func TestSearchSamplesReturnsFullRowsWithFanOut(t *testing.T) {
 	})
 }
 
-func TestSearchSamplesTreatsFTS5OperatorCharactersAsLiteralSubstring(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache whose rows exercise FTS5 operator and special characters", t, func() {
+func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsLiteralPrefixChars(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache whose tokens are plain words and a query carrying LIKE/operator characters", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// id 1 holds the literal phrase "alpha OR beta"; ids 2 and 3 hold only
-		// one operand each. If the term were parsed as a boolean OR rather than
-		// a literal phrase, ids 2 and 3 would match too; the quoted-phrase MATCH
-		// plus the LIKE post-filter mean only the literal substring (id 1) does.
-		seedSampleMirrorSearchRow(t, cache.DB(), 1, "alpha OR beta sample", "supplier-1", "common-1", "donor-1")
-		seedSampleMirrorSearchRow(t, cache.DB(), 2, "alpha sample", "supplier-2", "common-2", "donor-2")
-		seedSampleMirrorSearchRow(t, cache.DB(), 3, "beta sample", "supplier-3", "common-3", "donor-3")
-		// id 4 holds an embedded double quote; id 5 a NEAR( token; id 6 a
-		// leading asterisk (prefix operator); id 7 a leading hyphen (negation).
-		// Each is a real FTS5 operator/special character that would error or
-		// change semantics if not quoted as a literal phrase.
-		seedSampleMirrorSearchRow(t, cache.DB(), 4, `say "hello" now`, "supplier-4", "common-4", "donor-4")
-		seedSampleMirrorSearchRow(t, cache.DB(), 5, "NEAR(gene) region", "supplier-5", "common-5", "donor-5")
-		seedSampleMirrorSearchRow(t, cache.DB(), 6, "*wildcard tail", "supplier-6", "common-6", "donor-6")
-		seedSampleMirrorSearchRow(t, cache.DB(), 7, "-minus prefix", "supplier-7", "common-7", "donor-7")
-		// id 8 contains only "wildcard" (no leading asterisk): a bare prefix
-		// search "*wildcard*" would surface it, but the literal substring
-		// "*wildcard" must not.
-		seedSampleMirrorSearchRow(t, cache.DB(), 8, "plain wildcard tail", "supplier-8", "common-8", "donor-8")
+		// supplier_name "abcXYZ" tokenises to the single word "abcxyz".
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "abcXYZ", "common-1", "donor-1")
 		rebuildSampleSearchIndexForTest(t, cache.DB())
 		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		cases := []struct {
-			name    string
-			term    string
-			matched []int64
-		}{
-			{"boolean OR is literal, not a disjunction", "alpha OR beta", []int64{1}},
-			{"embedded double quote is literal", `"hello"`, []int64{4}},
-			{"NEAR( token is literal", "NEAR(gene)", []int64{5}},
-			{"leading asterisk is literal, not a prefix operator", "*wildcard", []int64{6}},
-			{"leading hyphen is literal, not a negation", "-minus", []int64{7}},
-		}
+		convey.Convey("when the term is a plain prefix (abc), then the token matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "abc", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+		})
 
-		for _, testCase := range cases {
-			convey.Convey("when SearchSamples runs for "+testCase.name, func() {
-				samples, err := client.SearchSamples(context.Background(), testCase.term, 100, 0)
+		// If '%' were a LIKE wildcard rather than escaped, "abc%" would still
+		// prefix-match "abcxyz"; escaping it to a literal '%' means it matches
+		// only tokens that literally start with "abc%", of which there are none.
+		convey.Convey("when the term embeds a percent (abc%), then it is escaped to a literal and matches nothing", func() {
+			samples, err := client.SearchSamples(context.Background(), "abc%", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldBeEmpty)
 
-				convey.So(err, convey.ShouldBeNil)
-				convey.So(sampleTmpIDs(samples), convey.ShouldResemble, testCase.matched)
-			})
-		}
+			count, countErr := client.CountSampleSearch(context.Background(), "abc%")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{})
+		})
+
+		// Likewise the underscore single-character wildcard is escaped: "ab_"
+		// must not match "abcxyz" by treating '_' as "any character".
+		convey.Convey("when the term embeds an underscore (ab_), then it is escaped to a literal and matches nothing", func() {
+			samples, err := client.SearchSamples(context.Background(), "ab_", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldBeEmpty)
+		})
 	})
 }
 
-func TestSearchSamplesMatchesUnderscoreAndEscapeCharAsLiteralSubstring(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache whose names exercise the LIKE wildcard and escape characters", t, func() {
+func TestSearchSamplesEscapeCharInTermIsLiteral(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache and a term containing the LIKE escape character", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// Row 1 holds a literal underscore in supplier_name; row 2 holds the same
-		// letters with a different separator. If the underscore were the LIKE
-		// single-character wildcard rather than a literal, both would match
-		// "wid_get"; the escape clause means only the literal-underscore row does.
-		seedSampleMirrorSearchRow(t, cache.DB(), 1, "name-1", "wid_get supplier", "common-1", "donor-1")
-		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "widxget supplier", "common-2", "donor-2")
-		// Row 3 holds a literal occurrence of whatever character the search uses
-		// as its LIKE escape character; row 4 holds the same letters without it.
-		// The escape character must be matched literally (substring), so only row
-		// 3 matches a term containing it.
-		seedSampleMirrorSearchRow(t, cache.DB(), 3, "name-3", "wow"+searchLIKEEscapeChar+"yes supplier", "common-3", "donor-3")
-		seedSampleMirrorSearchRow(t, cache.DB(), 4, "name-4", "wowyes supplier", "common-4", "donor-4")
+		// "abc" is an ordinary alphanumeric token.
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "abc supplier", "common-1", "donor-1")
 		rebuildSampleSearchIndexForTest(t, cache.DB())
 		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("when SearchSamples runs for a term containing an underscore, then only the literal-underscore sample matches", func() {
-			samples, err := client.SearchSamples(context.Background(), "wid_get", 100, 0)
+		// A term containing the escape character itself must be escaped so the
+		// LIKE clause stays well-formed and the escape char is matched literally;
+		// "ab"+escape has no token starting with that literal sequence.
+		convey.Convey("when the term embeds the escape character, then the query is well-formed and matches nothing", func() {
+			samples, err := client.SearchSamples(context.Background(), "ab"+searchLIKEEscapeChar, 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+			convey.So(samples, convey.ShouldBeEmpty)
 
-			count, countErr := client.CountSampleSearch(context.Background(), "wid_get")
+			count, countErr := client.CountSampleSearch(context.Background(), "ab"+searchLIKEEscapeChar)
 			convey.So(countErr, convey.ShouldBeNil)
-			convey.So(count.Count, convey.ShouldEqual, len(samples))
-		})
-
-		convey.Convey("when SearchSamples runs for a term containing the escape character, then only the literal-escape-char sample matches", func() {
-			samples, err := client.SearchSamples(context.Background(), "wow"+searchLIKEEscapeChar+"yes", 100, 0)
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{3})
-
-			count, countErr := client.CountSampleSearch(context.Background(), "wow"+searchLIKEEscapeChar+"yes")
-			convey.So(countErr, convey.ShouldBeNil)
-			convey.So(count.Count, convey.ShouldEqual, len(samples))
+			convey.So(count, convey.ShouldResemble, Count{})
 		})
 	})
 }
@@ -711,57 +680,45 @@ func runSampleSyncForTest(t *testing.T, client *Client, rows ...[]driver.Value) 
 	}
 }
 
-func TestCountSampleSearchExcludesTrigramFalsePositiveLikeSearch(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache with a trigram false positive for the term", t, func() {
+func TestCountSampleSearchBoundedByCap(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache where many distinct samples share a common token prefix", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// Row 1 contains the literal ASCII substring "kelvin". Row 2 begins with
-		// the Kelvin sign U+212A (spelled with an explicit rune escape so the
-		// source bytes are unambiguous): the FTS5 trigram tokenizer Unicode-case-
-		// folds U+212A to 'k', so an FTS5 MATCH for "kelvin" surfaces row 2 as a
-		// candidate, but it does not contain the ASCII substring "kelvin" (SQLite
-		// LIKE folds only ASCII A-Z). The count must apply the same LIKE
-		// post-filter as the search and exclude row 2, so the count equals the
-		// post-filtered search length, not the raw FTS5 MATCH candidate set.
-		seedSampleMirrorSearchRow(t, cache.DB(), 1, "kelvin sample", "supplier-1", "common-1", "donor-1")
-		seedSampleMirrorSearchRow(t, cache.DB(), 2, "Kelvin sample", "supplier-2", "common-2", "donor-2")
+		// One sample below the cap proves the count is exact for normal sets.
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "ZEBRA-001", "common-1", "donor-1")
+
+		// A block of distinct samples sharing the "homo" token, exceeding the
+		// bounded count cap, proves the count stops at the cap (a floor) rather
+		// than scanning every matching row.
+		over := sampleSearchCountCap + 5
+		for id := 2; id <= over+1; id++ {
+			seedSampleMirrorSearchRow(t, cache.DB(), int64(id), "specimen-"+formatInt(int64(id)), "supplier-"+formatInt(int64(id)), "Homo sapiens", "donor-"+formatInt(int64(id)))
+		}
 		rebuildSampleSearchIndexForTest(t, cache.DB())
 		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("the FTS5 MATCH alone surfaces both rows as candidates", func() {
-			var matchedIDs []int64
-			rows, qErr := cache.DB().Query(`SELECT rowid FROM sample_search WHERE sample_search MATCH ? ORDER BY rowid`, `"kelvin"`)
-			convey.So(qErr, convey.ShouldBeNil)
-			for rows.Next() {
-				var id int64
-				convey.So(rows.Scan(&id), convey.ShouldBeNil)
-				matchedIDs = append(matchedIDs, id)
-			}
-			convey.So(rows.Close(), convey.ShouldBeNil)
-			convey.So(matchedIDs, convey.ShouldResemble, []int64{1, 2})
+		convey.Convey("when the matching set is small, then CountSampleSearch is exact", func() {
+			count, err := client.CountSampleSearch(context.Background(), "zebra")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
 		})
 
-		count, err := client.CountSampleSearch(context.Background(), "kelvin")
-
-		convey.Convey("when CountSampleSearch runs, then the LIKE post-filter narrows the count to the search length", func() {
+		convey.Convey("when the matching set exceeds the cap, then CountSampleSearch reports the cap as a floor (fast, not a full scan)", func() {
+			count, err := client.CountSampleSearch(context.Background(), "homo")
 			convey.So(err, convey.ShouldBeNil)
-
-			samples, searchErr := client.SearchSamples(context.Background(), "kelvin", 1000, 0)
-			convey.So(searchErr, convey.ShouldBeNil)
-			convey.So(count.Count, convey.ShouldEqual, len(samples))
-			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+			convey.So(count, convey.ShouldResemble, Count{Count: sampleSearchCountCap})
 		})
 	})
 }
 
 // seedSampleMirrorSearchRow inserts a sample_mirror row letting the caller set
 // the four searchable fields (name, supplier_name, common_name, donor_id)
-// independently, so substring-search coverage can target each field. Callers
-// must rebuildSampleSearchIndexForTest afterwards because sample_search is an
-// external-content FTS5 table that is not auto-populated by direct inserts.
+// independently, so word-prefix-search coverage can target each field. Callers
+// must rebuildSampleSearchIndexForTest afterwards because sample_search_token is
+// a derived prefix index that direct sample_mirror inserts do not populate.
 func seedSampleMirrorSearchRow(t *testing.T, db *sql.DB, id int64, name, supplierName, commonName, donorID string) {
 	t.Helper()
 
@@ -786,13 +743,33 @@ func seedSampleMirrorSearchRow(t *testing.T, db *sql.DB, id int64, name, supplie
 	}
 }
 
-// rebuildSampleSearchIndexForTest repopulates the external-content FTS5
-// sample_search table from sample_mirror, mirroring what the sample sync does.
+// rebuildSampleSearchIndexForTest repopulates the SQLite sample_search_token
+// prefix index from sample_mirror via the same code path the sample sync uses,
+// so seeded sample_mirror rows become word-prefix searchable.
 func rebuildSampleSearchIndexForTest(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	if _, err := db.Exec(`INSERT INTO sample_search(sample_search) VALUES('rebuild')`); err != nil {
+	rebuildSampleSearchIndexForTestDialect(t, db, "sqlite")
+}
+
+// rebuildSampleSearchIndexForTestDialect rebuilds the sample_search_token prefix
+// index for the given dialect, so both SQLite and MySQL parity fixtures become
+// searchable after direct sample_mirror inserts.
+func rebuildSampleSearchIndexForTestDialect(t *testing.T, db *sql.DB, dialect string) {
+	t.Helper()
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("rebuildSampleSearchIndexForTest() begin: %v", err)
+	}
+
+	if err = rebuildSampleSearchTokenIndex(context.Background(), tx, dialect); err != nil {
+		_ = tx.Rollback()
 		t.Fatalf("rebuildSampleSearchIndexForTest(): %v", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		t.Fatalf("rebuildSampleSearchIndexForTest() commit: %v", err)
 	}
 }
 

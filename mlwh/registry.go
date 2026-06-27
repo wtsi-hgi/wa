@@ -426,8 +426,8 @@ var Registry = []Endpoint{
 		Query:       []string{},
 		Paginated:   true,
 		NewResult:   newSliceResult[Sample],
-		Summary:     "Search samples by substring",
-		Description: "Returns samples whose name, supplier name, common name, or donor id contains the term (case-insensitive substring, minimum 3 characters), index-backed for the large sample table. Defaults to a page of 100, maximum 1000.",
+		Summary:     "Search samples by word prefix",
+		Description: "Returns samples having a word in name, supplier name, common name, or donor id that starts with the term (case-insensitive word-prefix match, minimum 3 characters), backed by a word-token prefix index for the large sample table. So \"musculus\" and \"mus\" both match \"Mus Musculus\"; a substring inside a word does not. Defaults to a page of 100, maximum 1000.",
 		QueryParams: searchPaginationParams(),
 	},
 	{
@@ -447,8 +447,8 @@ var Registry = []Endpoint{
 		PathParams:  []string{"term"},
 		Query:       []string{},
 		NewResult:   newResult[Count],
-		Summary:     "Count samples matching a substring",
-		Description: "Returns the number of samples matching the same substring search as /search/sample/:term, without transferring rows.",
+		Summary:     "Count samples matching a word prefix",
+		Description: "Returns the number of samples matching the same word-prefix search as /search/sample/:term, without transferring rows. The count is exact up to a bound and reports that bound as a floor for very common terms.",
 	},
 	{
 		Method:      "CountStudies",

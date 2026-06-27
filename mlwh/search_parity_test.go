@@ -35,11 +35,10 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-// searchParityTerm is the ASCII-only substring term the parity tests search
-// for. ASCII is deliberate: accent handling is a documented backend divergence
-// (MySQL utf8mb4_0900_ai_ci is accent-insensitive, SQLite trigram is
-// accent-sensitive), so cross-dialect set-equality is only guaranteed for ASCII
-// fixtures.
+// searchParityTerm is the ASCII-only word-prefix term the sample parity tests
+// search for. ASCII is deliberate: the tokeniser only emits [a-z0-9] tokens, so
+// cross-dialect set-equality is guaranteed for ASCII fixtures (the seeded
+// supplier_name "ACME-..." tokenises to the word "acme").
 const searchParityTerm = "acme"
 
 // searchParityStudyTerm is the ASCII-only study substring term; the seeded
@@ -132,9 +131,9 @@ func TestSearchParitySampleCountsEqualAcrossDialects(t *testing.T) {
 
 // B3.1 / B3.2 / B3.3 for studies: identical ASCII study fixtures return equal
 // id_study_tmp sets and equal CountStudySearch counts across SQLite and (gated)
-// MySQL. Study search shares the same exact-substring LIKE contract as sample
-// search, so the same set-equality holds; the MySQL half skips when no writable
-// MySQL cache is configured.
+// MySQL. Study search is a plain substring LIKE scan (unchanged), so the same
+// cross-dialect set-equality holds; the MySQL half skips when no writable MySQL
+// cache is configured.
 func TestSearchParityStudyIDSetsAndCountsEqualAcrossDialects(t *testing.T) {
 	convey.Convey("Given identical ASCII study fixtures in a SQLite cache", t, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), searchParityDeadline)
@@ -238,9 +237,9 @@ func newSeededSearchParityMySQLClient(t *testing.T) (*Client, string) {
 // seedSearchParityFixtures seeds identical ASCII-only study and sample rows into
 // the given cache and marks the study/sample sync state present, so the same
 // fixtures back both the SQLite and MySQL halves of the parity assertions. The
-// SQLite external-content FTS5 table is rebuilt from sample_mirror (the MySQL
-// FULLTEXT index is maintained automatically by the inserts), and the sync
-// state is written in the cache's own dialect.
+// sample_search_token prefix index is rebuilt from sample_mirror for the cache's
+// dialect (both dialects use the same derived table), and the sync state is
+// written in the cache's own dialect.
 func seedSearchParityFixtures(t *testing.T, cache Cache) {
 	t.Helper()
 
@@ -252,18 +251,19 @@ func seedSearchParityFixtures(t *testing.T, cache Cache) {
 	seedStudyMirrorSearchRow(t, db, 2, "6566", "study-b", "Malaria vaccine", "Vaccines", "Sponsor B")
 	seedStudyMirrorSearchRow(t, db, 3, "6567", "study-c", "Cancer atlas", "Oncology", "Sponsor C")
 
-	// Two samples whose supplier_name contains the ASCII term "acme", one that
-	// matches only via a different searchable field, and two that do not match
-	// at all, so the sample match set is non-trivial and exercises the LIKE
-	// post-filter shared by both dialects.
+	// Two samples whose supplier_name carries the ASCII word-prefix term "acme"
+	// (tokenised from "ACME-001"/"ACME-002") and two that do not match, so the
+	// sample match set is non-trivial and exercises the token-prefix index shared
+	// by both dialects.
 	seedSampleMirrorSearchRow(t, db, 1, "name-a", "ACME-001", "common-a", "donor-a")
 	seedSampleMirrorSearchRow(t, db, 2, "name-b", "ACME-002", "common-b", "donor-b")
 	seedSampleMirrorSearchRow(t, db, 3, "name-c", "OTHER-1", "common-c", "donor-c")
 	seedSampleMirrorSearchRow(t, db, 4, "name-d", "supplier-d", "common-d", "donor-d")
 
-	if cache.Dialect() != "mysql" {
-		rebuildSampleSearchIndexForTest(t, db)
-	}
+	// sample_search_token is a derived prefix index in both dialects, so it must
+	// be rebuilt from the seeded sample_mirror rows for whichever backend this
+	// cache is (there is no engine-maintained search index any more).
+	rebuildSampleSearchIndexForTestDialect(t, db, cache.Dialect())
 
 	seedSearchParitySyncState(t, db, cache.Dialect(), syncTableStudy)
 	seedSearchParitySyncState(t, db, cache.Dialect(), syncTableSample)

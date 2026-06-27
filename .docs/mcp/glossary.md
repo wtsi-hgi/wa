@@ -154,3 +154,21 @@ every value the API emits is one of these strings.
 - `id_library_lims` - the **LIMS library identifier** (`id_library_lims`), the
   library's identifier within the owning LIMS. (Note the value of this kind is
   the literal string `id_library_lims`, matching the underlying column name.)
+
+## Search semantics
+
+The open-ended `/search/*` endpoints differ in how the term is matched:
+
+- **Sample search** (`/search/sample/:term`) is a **word-prefix** match. The
+  term matches the start of any whitespace/punctuation-delimited word in a
+  sample's `name`, `supplier_name`, `common_name`, or `donor_id`
+  (case-insensitive). So `musculus` and `mus` both match a sample whose
+  `common_name` is "Mus Musculus", but a mid-word substring (e.g. `usculus`)
+  does **not** match. This is backed by a word-token prefix index so it stays
+  fast on the ~10M-row sample table; use the exact `Find*`/resolver lookups for
+  precise identifier matches. The minimum term length is 3; shorter terms return
+  nothing.
+- **Study search** (`/search/study/:term`) is a plain **substring** match
+  (case-insensitive `contains`) over a study's `name`, `study_title`,
+  `programme`, or `faculty_sponsor`, on the small (~8k-row) study table. The
+  minimum term length is 3.

@@ -51,7 +51,7 @@ const (
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	CacheSchemaVersion = 5
+	CacheSchemaVersion = 6
 )
 
 var (
@@ -230,33 +230,6 @@ func sampleMirrorSecondaryIndexesIncomplete(ctx context.Context, db *sql.DB, dia
 	}
 
 	return false, nil
-}
-
-// readMySQLTableFulltextColumns returns the normalised search column set of the
-// table's FULLTEXT index (the ngram search index on sample_mirror), or nil when
-// none exists. FULLTEXT columns are excluded from the column-index shape by
-// readMySQLTableIndexes and surfaced here instead, so the parity model
-// represents the search index explicitly rather than dropping it.
-func readMySQLTableFulltextColumns(ctx context.Context, db *sql.DB, table string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_TYPE = 'FULLTEXT' ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table)
-	if err != nil {
-		return nil, fmt.Errorf("mlwh: read mysql fulltext index for %s: %w", table, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	columns := make([]string, 0, 4)
-	for rows.Next() {
-		var columnName string
-		if err := rows.Scan(&columnName); err != nil {
-			return nil, fmt.Errorf("mlwh: scan mysql fulltext index for %s: %w", table, err)
-		}
-		columns = append(columns, columnName)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("mlwh: read mysql fulltext index for %s: %w", table, err)
-	}
-
-	return normaliseFullTextColumns(columns), nil
 }
 
 // Client owns the cache connections used by sync and read paths.
@@ -600,24 +573,6 @@ func prepareCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 	}
 }
 
-// applySampleSearchIndexSchema creates the sample_mirror full-text search index
-// after the base tables exist: the SQLite fts5 external-content virtual table or
-// the MySQL ngram FULLTEXT index.
-func applySampleSearchIndexSchema(ctx context.Context, db *sql.DB, dialect string) error {
-	ddl, err := loadSearchIndexSchema(dialect)
-	if err != nil {
-		return err
-	}
-
-	for _, stmt := range splitSQLStatements(ddl) {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("mlwh: apply %s sample search schema: %w", dialect, err)
-		}
-	}
-
-	return nil
-}
-
 func validateCurrentCacheSchema(ctx context.Context, db *sql.DB, dialect string) error {
 	expected, err := expectedCacheSchemaShape(dialect)
 	if err != nil {
@@ -686,7 +641,7 @@ func ensureAdditiveCurrentCacheIndexes(ctx context.Context, db *sql.DB, dialect 
 }
 
 func expectedCacheSchemaShape(dialect string) (schemaShape, error) {
-	stmts, err := loadFullSchema(dialect)
+	stmts, err := loadSchema(dialect)
 	if err != nil {
 		return schemaShape{}, err
 	}
@@ -710,37 +665,6 @@ func readCacheSchemaShape(ctx context.Context, db *sql.DB, dialect string) (sche
 	}
 }
 
-// readSQLiteSampleSearchColumns returns the normalised search column set of the
-// sample_search fts5 virtual table (keyed in the shape under its content table
-// sample_mirror), or nil when the virtual table is absent. The fts5 user
-// columns are exactly the searchable columns, so PRAGMA table_info yields the
-// same set the schema DDL declares.
-func readSQLiteSampleSearchColumns(ctx context.Context, db *sql.DB) ([]string, error) {
-	var exists int
-	if err := db.QueryRowContext(
-		ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`,
-		sampleSearchTable,
-	).Scan(&exists); err != nil {
-		return nil, fmt.Errorf("mlwh: detect sqlite sample search table: %w", err)
-	}
-	if exists == 0 {
-		return nil, nil
-	}
-
-	columns, err := readSQLiteTableColumns(ctx, db, sampleSearchTable)
-	if err != nil {
-		return nil, err
-	}
-
-	names := make([]string, 0, len(columns))
-	for name := range columns {
-		names = append(names, name)
-	}
-
-	return normaliseFullTextColumns(names), nil
-}
-
 func compareCacheSchemaShapes(expected, actual schemaShape) error {
 	for table, expectedColumns := range expected.Tables {
 		actualColumns, ok := actual.Tables[table]
@@ -761,18 +685,6 @@ func compareCacheSchemaShapes(expected, actual schemaShape) error {
 		}
 		if !stringSlicesEqual(expected.Unique[table], actual.Unique[table]) {
 			return fmt.Errorf("mlwh: cache schema unique constraint mismatch for %s", table)
-		}
-		if !stringSlicesEqual(expected.FullText[table], actual.FullText[table]) {
-			return fmt.Errorf("mlwh: cache schema full-text search index mismatch for %s", table)
-		}
-	}
-
-	for table := range expected.FullText {
-		if _, covered := expected.Tables[table]; covered {
-			continue
-		}
-		if !stringSlicesEqual(expected.FullText[table], actual.FullText[table]) {
-			return fmt.Errorf("mlwh: cache schema full-text search index mismatch for %s", table)
 		}
 	}
 
@@ -911,10 +823,9 @@ func allowMissingMirrorIndexesForRecovery(ctx context.Context, db *sql.DB, expec
 
 func readSQLiteCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, error) {
 	shape := schemaShape{
-		Tables:   make(map[string]map[string]string, len(schemaStatementOrder)),
-		Index:    make(map[string][]string, len(schemaStatementOrder)),
-		Unique:   make(map[string][]string, len(schemaStatementOrder)),
-		FullText: make(map[string][]string, 1),
+		Tables: make(map[string]map[string]string, len(schemaStatementOrder)),
+		Index:  make(map[string][]string, len(schemaStatementOrder)),
+		Unique: make(map[string][]string, len(schemaStatementOrder)),
 	}
 
 	for _, table := range schemaStatementOrder {
@@ -934,14 +845,6 @@ func readSQLiteCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, e
 		if len(uniques) > 0 {
 			shape.Unique[table] = uniques
 		}
-	}
-
-	searchColumns, err := readSQLiteSampleSearchColumns(ctx, db)
-	if err != nil {
-		return schemaShape{}, err
-	}
-	if len(searchColumns) > 0 {
-		shape.FullText["sample_mirror"] = searchColumns
 	}
 
 	return shape, nil
@@ -1062,10 +965,9 @@ func readSQLiteIndexColumns(ctx context.Context, db *sql.DB, indexName string) (
 
 func readMySQLCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, error) {
 	shape := schemaShape{
-		Tables:   make(map[string]map[string]string, len(schemaStatementOrder)),
-		Index:    make(map[string][]string, len(schemaStatementOrder)),
-		Unique:   make(map[string][]string, len(schemaStatementOrder)),
-		FullText: make(map[string][]string, 1),
+		Tables: make(map[string]map[string]string, len(schemaStatementOrder)),
+		Index:  make(map[string][]string, len(schemaStatementOrder)),
+		Unique: make(map[string][]string, len(schemaStatementOrder)),
 	}
 
 	for _, table := range schemaStatementOrder {
@@ -1084,14 +986,6 @@ func readMySQLCacheSchemaShape(ctx context.Context, db *sql.DB) (schemaShape, er
 		}
 		if len(uniques) > 0 {
 			shape.Unique[table] = uniques
-		}
-
-		fulltext, err := readMySQLTableFulltextColumns(ctx, db, table)
-		if err != nil {
-			return schemaShape{}, err
-		}
-		if len(fulltext) > 0 {
-			shape.FullText[table] = fulltext
 		}
 	}
 
@@ -1121,13 +1015,7 @@ func readMySQLTableColumns(ctx context.Context, db *sql.DB, table string) (map[s
 }
 
 func readMySQLTableIndexes(ctx context.Context, db *sql.DB, table string) ([]string, []string, error) {
-	// FULLTEXT indexes (the sample_mirror ngram search index) are excluded from
-	// the column-index parity shape because the SQLite fts5 search index is not a
-	// column index either; the full-text search index is represented separately
-	// in schemaShape.FullText (see readMySQLTableFulltextColumns) so the two
-	// dialects compare equal on search support without it appearing as a regular
-	// column index.
-	rows, err := db.QueryContext(ctx, `SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME <> 'PRIMARY' AND INDEX_TYPE <> 'FULLTEXT' ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table)
+	rows, err := db.QueryContext(ctx, `SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME, SEQ_IN_INDEX`, table)
 	if err != nil {
 		return nil, nil, fmt.Errorf("mlwh: read mysql indexes for %s: %w", table, err)
 	}
@@ -1351,7 +1239,7 @@ func applySchema(ctx context.Context, db *sql.DB, dialect string) error {
 		}
 	}
 
-	return applySampleSearchIndexSchema(ctx, db, dialect)
+	return nil
 }
 
 func repairDroppedMirrorIndexes(ctx context.Context, db *sql.DB, dialect string) error {

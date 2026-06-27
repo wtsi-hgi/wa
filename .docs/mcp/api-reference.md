@@ -359,9 +359,9 @@ Returns studies whose name, title, programme, or faculty sponsor contains the te
 
 ### `GET /search/sample/:term`
 
-Search samples by substring
+Search samples by word prefix
 
-Returns samples whose name, supplier name, common name, or donor id contains the term (case-insensitive substring, minimum 3 characters), index-backed for the large sample table. Defaults to a page of 100, maximum 1000.
+Returns samples having a word in name, supplier name, common name, or donor id that starts with the term (case-insensitive word-prefix match, minimum 3 characters), backed by a word-token prefix index for the large sample table. So "musculus" and "mus" both match "Mus Musculus"; a substring inside a word does not. Defaults to a page of 100, maximum 1000.
 
 - Path parameters: `term`
 - Query parameters: `limit` (integer): maximum number of rows to return; defaults to 100, maximum 1000 (a larger limit is rejected); `offset` (integer): number of leading rows to skip before returning results; defaults to 0
@@ -379,9 +379,9 @@ Returns the number of studies matching the same substring search as /search/stud
 
 ### `GET /search/sample/:term/count`
 
-Count samples matching a substring
+Count samples matching a word prefix
 
-Returns the number of samples matching the same substring search as /search/sample/:term, without transferring rows.
+Returns the number of samples matching the same word-prefix search as /search/sample/:term, without transferring rows. The count is exact up to a bound and reports that bound as a floor for very common terms.
 
 - Path parameters: `term`
 - Query parameters: none

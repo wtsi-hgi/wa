@@ -137,38 +137,24 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
 
-// sampleSearchTriggerNames are the SQLite triggers that maintain the
-// sample_search fts5 external-content table from sample_mirror writes. They are
-// declared in cache_schema/sqlite/sample_search.sql (created with the fts5
-// table) and managed like the secondary indexes during cold load: dropped
-// before the bulk insert and recreated at finalize.
-var sampleSearchTriggerNames = []string{
-	"sample_search_ai",
-	"sample_search_ad",
-	"sample_search_au",
-}
+// sampleSearchTokenColumns are the sample_search_token columns written in
+// declaration order by the cold-load bulk build and the incremental
+// maintenance.
+var sampleSearchTokenColumns = []string{"token", "id_sample_tmp"}
 
-// sampleSearchTriggerStatements are the CREATE TRIGGER statements that keep the
-// fts5 external-content table consistent with sample_mirror. They mirror the
-// definitions in cache_schema/sqlite/sample_search.sql so cold-load recreate
-// produces the same triggers a fresh OpenCache installs.
-var sampleSearchTriggerStatements = []string{
-	`CREATE TRIGGER IF NOT EXISTS sample_search_ai AFTER INSERT ON sample_mirror BEGIN ` +
-		`INSERT INTO sample_search(rowid, name, supplier_name, common_name, donor_id) ` +
-		`VALUES (new.id_sample_tmp, new.name, new.supplier_name, new.common_name, new.donor_id); END`,
-	`CREATE TRIGGER IF NOT EXISTS sample_search_ad AFTER DELETE ON sample_mirror BEGIN ` +
-		`INSERT INTO sample_search(sample_search, rowid, name, supplier_name, common_name, donor_id) ` +
-		`VALUES ('delete', old.id_sample_tmp, old.name, old.supplier_name, old.common_name, old.donor_id); END`,
-	`CREATE TRIGGER IF NOT EXISTS sample_search_au AFTER UPDATE ON sample_mirror BEGIN ` +
-		`INSERT INTO sample_search(sample_search, rowid, name, supplier_name, common_name, donor_id) ` +
-		`VALUES ('delete', old.id_sample_tmp, old.name, old.supplier_name, old.common_name, old.donor_id); ` +
-		`INSERT INTO sample_search(rowid, name, supplier_name, common_name, donor_id) ` +
-		`VALUES (new.id_sample_tmp, new.name, new.supplier_name, new.common_name, new.donor_id); END`,
-}
+// sampleSearchTokenIndex is the (token, id_sample_tmp) covering index that backs
+// the index-order sample search page. It is dropped before the cold-load bulk
+// token build and recreated after, mirroring the secondary-index discipline.
+var sampleSearchTokenIndex = syncIndexSpec{Name: "sample_search_token_idx", Column: "token, id_sample_tmp"}
 
 type studySourceColumnSpec struct {
 	canonical string
 	aliases   []string
+}
+
+type syncIndexSpec struct {
+	Name   string
+	Column string
 }
 
 var studySourceColumnSpecs = []studySourceColumnSpec{
@@ -193,11 +179,6 @@ var studySourceColumnSpecs = []studySourceColumnSpec{
 	{canonical: "ega_dac_accession_number", aliases: []string{"egadac_accession_number"}},
 	{canonical: "ega_policy_accession_number"},
 	{canonical: "data_release_timing"},
-}
-
-type syncIndexSpec struct {
-	Name   string
-	Column string
 }
 
 var sampleMirrorSecondaryIndexes = []syncIndexSpec{
@@ -270,55 +251,219 @@ const (
 	sampleSyncModeColdID
 )
 
-// dropSampleSearchTriggers removes the SQLite fts5 maintenance triggers so the
-// cold-load bulk insert does not fire them per row (which would defeat the
-// drop-for-speed optimisation and double-populate alongside the subsequent
-// 'rebuild'). On MySQL the search index is engine-maintained, so this is a
-// no-op.
-func dropSampleSearchTriggers(ctx context.Context, tx *sql.Tx, dialect string) error {
-	if dialect != "sqlite" {
+// sampleSearchTokenRow is one (token, id_sample_tmp) entry of the prefix index.
+type sampleSearchTokenRow struct {
+	Token       string
+	IDSampleTmp int64
+}
+
+// insertSampleSearchTokensFromMirror reads every sample's id and searchable
+// fields from sample_mirror, tokenises them, and bulk-inserts the resulting
+// (token, id_sample_tmp) rows. Rows are buffered into bounded chunks so a 10M+
+// sample_mirror builds without an unbounded in-memory slice.
+func insertSampleSearchTokensFromMirror(ctx context.Context, tx *sql.Tx, dialect string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id_sample_tmp, name, supplier_name, common_name, donor_id FROM sample_mirror`)
+	if err != nil {
+		return fmt.Errorf("mlwh: read sample_mirror for token rebuild: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	chunkRowLimit := syncStatementRowLimit(len(sampleSearchTokenColumns))
+	buffer := make([]sampleSearchTokenRow, 0, chunkRowLimit)
+	flush := func() error {
+		if len(buffer) == 0 {
+			return nil
+		}
+
+		if err := insertSampleSearchTokenRows(ctx, tx, dialect, buffer); err != nil {
+			return err
+		}
+
+		buffer = buffer[:0]
+
 		return nil
 	}
 
-	for _, name := range sampleSearchTriggerNames {
-		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name); err != nil {
-			return fmt.Errorf("mlwh: drop sample search trigger %s: %w", name, err)
+	for rows.Next() {
+		var (
+			id                                      int64
+			name, supplierName, commonName, donorID string
+		)
+		if err = rows.Scan(&id, &name, &supplierName, &commonName, &donorID); err != nil {
+			return fmt.Errorf("mlwh: scan sample_mirror for token rebuild: %w", err)
+		}
+
+		for _, token := range sampleSearchTokens(name, supplierName, commonName, donorID) {
+			buffer = append(buffer, sampleSearchTokenRow{Token: token, IDSampleTmp: id})
+			if len(buffer) == chunkRowLimit {
+				if err = flush(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("mlwh: read sample_mirror for token rebuild: %w", err)
+	}
+
+	return flush()
+}
+
+// sampleSearchTokens returns the distinct lowercased word tokens of the given
+// searchable field values. A token is a maximal run of ASCII [a-z0-9] (other
+// runes, including non-ASCII letters, split tokens); each rune is lowercased so
+// the stored tokens are case-insensitively prefix-searchable. Order is
+// stable-first-seen and duplicates across fields are collapsed, so a sample with
+// repeated words (e.g. "Homo sapiens" and common_name "homo") stores each token
+// once.
+func sampleSearchTokens(values ...string) []string {
+	seen := make(map[string]struct{})
+	tokens := make([]string, 0, len(values)*2)
+
+	var builder strings.Builder
+	flush := func() {
+		if builder.Len() == 0 {
+			return
+		}
+
+		token := builder.String()
+		builder.Reset()
+		if _, ok := seen[token]; ok {
+			return
+		}
+
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+
+	for _, value := range values {
+		for _, r := range value {
+			switch {
+			case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+				builder.WriteRune(r)
+			case r >= 'A' && r <= 'Z':
+				builder.WriteRune(r - 'A' + 'a')
+			default:
+				flush()
+			}
+		}
+
+		flush()
+	}
+
+	return tokens
+}
+
+// replaceSampleSearchTokensForBatch keeps sample_search_token consistent with an
+// incremental sample upsert: it deletes the existing token rows for the batch's
+// ids (so an updated sample's stale tokens are removed) and inserts the current
+// distinct tokens for each sample, making incrementally-synced samples
+// searchable. It runs only on the incremental path (the cold-load path rebuilds
+// the whole token table at finalize instead).
+func replaceSampleSearchTokensForBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []sampleSyncRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	if err := deleteSampleSearchTokensForKeys(ctx, tx, sampleBatchKeys(rows)); err != nil {
+		return err
+	}
+
+	tokenRows := make([]sampleSearchTokenRow, 0, len(rows)*4)
+	for _, row := range rows {
+		for _, token := range sampleSearchTokens(row.Sample.Name, row.Sample.SupplierName, row.Sample.CommonName, row.Sample.DonorID) {
+			tokenRows = append(tokenRows, sampleSearchTokenRow{Token: token, IDSampleTmp: row.Sample.IDSampleTmp})
+		}
+	}
+
+	return forEachRowChunk(tokenRows, syncStatementRowLimit(len(sampleSearchTokenColumns)), func(chunk []sampleSearchTokenRow) error {
+		return insertSampleSearchTokenRows(ctx, tx, dialect, chunk)
+	})
+}
+
+// deleteSampleSearchTokensForKeys removes all token rows owned by the given
+// id_sample_tmp keys, in bounded chunks.
+func deleteSampleSearchTokensForKeys(ctx context.Context, tx *sql.Tx, keys [][]any) error {
+	keyChunkLimit := syncStatementRowLimit(1)
+	for start := 0; start < len(keys); start += keyChunkLimit {
+		end := min(start+keyChunkLimit, len(keys))
+		whereClause, whereArgs := buildKeyInClause([]string{"id_sample_tmp"}, keys[start:end])
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE %s", sampleSearchTokenTable, whereClause), whereArgs...); err != nil {
+			return fmt.Errorf("mlwh: clear sample search token batch: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// rebuildSampleSearchIndex repopulates the sample_mirror full-text search index
-// from sample_mirror, mirroring the donor_samples cold-load rebuild discipline.
-// For SQLite this rebuilds the fts5 external-content virtual table (whose
-// contents are not maintained automatically); MySQL's FULLTEXT index is
-// maintained by the engine, so this is a no-op there.
-func rebuildSampleSearchIndex(ctx context.Context, tx *sql.Tx, dialect string) error {
-	if dialect != "sqlite" {
+// insertSampleSearchTokenRows bulk-inserts a chunk of token rows.
+func insertSampleSearchTokenRows(ctx context.Context, tx *sql.Tx, dialect string, rows []sampleSearchTokenRow) error {
+	if len(rows) == 0 {
 		return nil
 	}
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO `+sampleSearchTable+`(`+sampleSearchTable+`) VALUES('rebuild')`); err != nil {
-		return fmt.Errorf("mlwh: rebuild sample search index from sample_mirror: %w", err)
+	stmt := buildBulkInsertStatement(sampleSearchTokenTable, sampleSearchTokenColumns, len(rows))
+	args := make([]any, 0, len(rows)*len(sampleSearchTokenColumns))
+	for _, row := range rows {
+		args = append(args, row.Token, row.IDSampleTmp)
+	}
+
+	if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+		return fmt.Errorf("mlwh: insert sample search token batch: %w", err)
 	}
 
 	return nil
 }
 
-// createSampleSearchTriggers (re)creates the SQLite fts5 maintenance triggers so
-// that, after a cold load, subsequent incremental sample writes propagate into
-// sample_search. On MySQL the search index is engine-maintained, so this is a
-// no-op.
-func createSampleSearchTriggers(ctx context.Context, tx *sql.Tx, dialect string) error {
-	if dialect != "sqlite" {
-		return nil
+// rebuildSampleSearchTokenIndex repopulates sample_search_token from
+// sample_mirror, mirroring the donor_samples cold-load rebuild discipline: it
+// drops the covering index, clears the table, streams every SQSCP sample's
+// searchable fields and bulk-inserts their distinct word tokens, then recreates
+// the index. Runs in both dialects (the prefix index has no engine-maintained
+// counterpart).
+func rebuildSampleSearchTokenIndex(ctx context.Context, tx *sql.Tx, dialect string) error {
+	if err := dropSampleSearchTokenIndex(ctx, tx, dialect); err != nil {
+		return err
 	}
 
-	for _, stmt := range sampleSearchTriggerStatements {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("mlwh: create sample search trigger: %w", err)
-		}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM `+sampleSearchTokenTable); err != nil {
+		return fmt.Errorf("mlwh: clear sample search tokens before rebuild: %w", err)
+	}
+
+	if err := insertSampleSearchTokensFromMirror(ctx, tx, dialect); err != nil {
+		return err
+	}
+
+	return createSampleSearchTokenIndex(ctx, tx, dialect)
+}
+
+// dropSampleSearchTokenIndex drops the sample_search_token covering index so the
+// cold-load bulk token build inserts without per-row index maintenance,
+// mirroring the secondary-index drop-before-bulk-insert discipline. It is
+// recreated by createSampleSearchTokenIndex after the build.
+func dropSampleSearchTokenIndex(ctx context.Context, tx *sql.Tx, dialect string) error {
+	stmt := `DROP INDEX IF EXISTS ` + sampleSearchTokenIndex.Name
+	if dialect == "mysql" {
+		stmt = `DROP INDEX ` + sampleSearchTokenIndex.Name + ` ON ` + sampleSearchTokenTable
+	}
+
+	if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("mlwh: drop sample search token index: %w", err)
+	}
+
+	return nil
+}
+
+// createSampleSearchTokenIndex recreates the sample_search_token covering index
+// after the cold-load bulk token build.
+func createSampleSearchTokenIndex(ctx context.Context, tx *sql.Tx, dialect string) error {
+	stmt := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s(%s)`, sampleSearchTokenIndex.Name, sampleSearchTokenTable, sampleSearchTokenIndex.Column)
+	if dialect == "mysql" {
+		stmt = fmt.Sprintf(`CREATE INDEX %s ON %s(%s)`, sampleSearchTokenIndex.Name, sampleSearchTokenTable, sampleSearchTokenIndex.Column)
+	}
+
+	if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("mlwh: create sample search token index: %w", err)
 	}
 
 	return nil
@@ -1513,10 +1658,7 @@ func rebuildSampleMirrorColdLoadIndexes(ctx context.Context, tx *sql.Tx, dialect
 	if err := rebuildDonorSampleTable(ctx, tx, dialect); err != nil {
 		return false, err
 	}
-	if err := rebuildSampleSearchIndex(ctx, tx, dialect); err != nil {
-		return false, err
-	}
-	if err := createSampleSearchTriggers(ctx, tx, dialect); err != nil {
+	if err := rebuildSampleSearchTokenIndex(ctx, tx, dialect); err != nil {
 		return false, err
 	}
 	if err := createSampleMirrorSecondaryIndexes(ctx, tx, dialect); err != nil {
@@ -1552,9 +1694,6 @@ func prepareSampleMirrorIndexesForSync(ctx context.Context, cache Cache, state *
 
 	if err := withSyncWriteTx(ctx, cache, func(tx *sql.Tx) error {
 		if err := dropSampleMirrorSecondaryIndexes(ctx, tx, cache.Dialect()); err != nil {
-			return err
-		}
-		if err := dropSampleSearchTriggers(ctx, tx, cache.Dialect()); err != nil {
 			return err
 		}
 
@@ -2992,6 +3131,10 @@ func writeSampleBatch(ctx context.Context, cache Cache, rows []sampleSyncRow, hi
 					return err
 				}
 			} else if err := replaceDonorSampleBatch(ctx, tx, deduped); err != nil {
+				return err
+			}
+
+			if err := replaceSampleSearchTokensForBatch(ctx, tx, cache.Dialect(), deduped); err != nil {
 				return err
 			}
 		}

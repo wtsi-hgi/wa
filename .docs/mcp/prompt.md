@@ -442,3 +442,60 @@ and 2. The searchable field sets are unchanged (study: `name`, `study_title`,
 - **Over-maximum `limit` (Goal 5):** a search request with `limit` > 1000 is
   **rejected with the existing `bad_request` 400 envelope** (not silently
   clamped).
+
+### Clarifications — round 4 (live 10.4M-row test findings; supersedes the round-1/2/3 sample full-text design)
+
+A real `wa mlwh serve` against a freshly synced MySQL 8.4 cache (10.35M
+samples) showed the round-1/2/3 ngram-FULLTEXT **sample** search is not viable
+at scale, and a trigram spike confirmed the alternatives' costs. The decisions
+below **supersede** the round-1/2/3 sample full-text design. **Study search is
+unchanged** (plain `LIKE '%term%'` scan on the ~8k-row `study_mirror`; measured
+3-9ms — keep it).
+
+- **Why FULLTEXT was abandoned (measured):** MySQL ngram `FULLTEXT` boolean mode
+  throws `Error 188 (FTS query exceeds result cache limit)` for most terms —
+  even selective ones like `STDY7058331`, because `ngram_token_size=2` makes
+  sub-grams ubiquitous; natural-language mode returns in 20-32s. Not fixable by
+  config (`innodb_ft_result_cache_limit` is GLOBAL-only). A trigram inverted
+  index was spiked and rejected: ~16GB (≈8× `sample_mirror`), ~46min added to
+  cold sync, and still ~1-4s queries (term sub-grams like `std`/`tdy` hit ~1.76M
+  rows each).
+- **DECISION — word-token prefix index.** Replace the SQLite FTS5 trigram
+  virtual table and the MySQL ngram `FULLTEXT` index entirely with a new table
+  `sample_search_token(token, id_sample_tmp)` indexed `(token, id_sample_tmp)`,
+  in **both** dialects. Tokens are the distinct lowercased `[a-z0-9]+` words of
+  `name`, `supplier_name`, `common_name`, `donor_id`. Maintained by
+  `wa mlwh sync`: cold-load bulk-build with index-added-after (mirroring the
+  secondary-index discipline), incremental upsert/delete on sample writes.
+  Measured: ~4 tokens/row, **~1.7GB**, ~7.5min to build at 10.35M.
+- **`SearchSamples`:** match the lowercased query as a **prefix against tokens**.
+  Page via index-order — `WHERE token LIKE 'prefix%' ORDER BY token,
+  id_sample_tmp LIMIT ? OFFSET ?` — then fetch the sample rows (small over-fetch
+  + dedupe ids). This streams the page from the index with no global sort:
+  measured **48-62ms at any cardinality** (`homo`/1.9M matches = 62ms). All
+  sample rows are `id_lims='SQSCP'` (the sync invariant), so no scoping join is
+  needed in the hot path. Do NOT use `SELECT DISTINCT ... ORDER BY id` (measured
+  4-21s).
+- **`CountSampleSearch`:** exact `COUNT(DISTINCT id_sample_tmp)` for normal
+  result sets (≈sub-second up to a few hundred k), but **bounded** for very
+  common tokens — cap the scan (e.g. count up to 10000 and report "10000+") so
+  the count stays fast (measured ~80ms) on mega-terms like `homo` (1.9M).
+- **Semantics:** matches the **start of any word** in the searchable fields
+  (e.g. `musculus` matches "Mus Musculus"; `mus` matches both). It is **not**
+  mid-word infix (`tagenom` will not find "metagenome"; a substring inside a
+  single token like `STDY7058331` inside "3662STDY7058331" is not matched) — an
+  accepted trade-off; the exact `Find*` finders cover precise lookups. Min term
+  length stays 3; shorter returns empty/0.
+- **Remove the round-3 startup refusal (Goal/phase-6).** Token-prefix has no
+  FULLTEXT dependency and works on MariaDB and MySQL < 8 too, so `wa mlwh serve`
+  no longer inspects the backend flavor or refuses MariaDB/MySQL<8 — it runs on
+  any supported cache backend. Delete `SupportsFullTextSearch` and the serve
+  guard.
+- **Knock-on:** the schema-shape parity model now represents the
+  `sample_search_token` table+index (not the FTS5/FULLTEXT objects); the FTS5
+  maintenance triggers and the cross-dialect-divergence/`ESCAPE`-char concerns
+  for samples are removed; `CacheSchemaVersion` and `mlwhAPIVersion` bump again.
+  The `/search/*` routes, response types (`[]Sample`), and counts are unchanged
+  in shape, so the OpenAPI/registry/RemoteClient/frontend surfaces are
+  unaffected except for regenerating `api-reference.md` and noting prefix
+  semantics in the glossary.
