@@ -112,10 +112,19 @@ var combinedSampleSearchKinds = []mlwh.IdentifierKind{
 }
 
 // mlwhSubstringSearchCap bounds how many studies/samples the substring search
-// over-fetches per dimension. Only up to limit registered ones are surfaced, but
-// some matches will not have registered results, so over-fetch a fixed amount to
-// keep the bounded "which are registered" filter able to find enough.
-const mlwhSubstringSearchCap = 50
+// over-fetches per dimension before intersecting them with registered results.
+// Only up to limit registered ones are surfaced, but most matches will not have
+// registered results, so the scan must over-fetch enough that a registered
+// study/sample is not missed merely because it sits beyond a small window (e.g.
+// "Hek" matches 285 samples and the registered 7607STDY14643771 is ~#78 by id
+// order). It is set to mlwh.SearchMaxLimit, the mlwh server's maximum search
+// page (the server 400s a larger limit, so this is the effective ceiling). The
+// per-keystroke cost stays bounded: measured ~0.07s for a 285-match prefix and
+// ~0.37s for a 10000+-match prefix at this cap on the real cache. A prefix
+// matching more than this still won't surface a registered match beyond the
+// first page until narrowed, but that is the mlwh server's hard search-page
+// limit, not a separate cap here.
+const mlwhSubstringSearchCap = mlwh.SearchMaxLimit
 
 // searchSuggestionSubstringMinLength matches the mlwh package's minimum search
 // term length (its searchTermMinLength), below which substring/word-prefix

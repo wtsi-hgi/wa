@@ -3192,6 +3192,64 @@ func TestServerGetSearchSuggestions(t *testing.T) {
 		convey.So(suggestionByFieldValueForTest(suggestions, "sample", "SANG1"), convey.ShouldNotBeNil)
 	})
 
+	convey.Convey("Bug 260627-7: Given a registered sample that the MLWH substring search returns beyond the first 50 matches, GET /results/search-suggestions still offers a Sample filter for it", t, func() {
+		// Reproduces the real "#78 of 285" situation: typing "Hek" matches many
+		// samples and the registered one (7607STDY14643771, supplier_name Hek_R1)
+		// sits well past a small window. The scan must over-fetch enough that a
+		// registered match beyond the first 50 is still checked and surfaced.
+		const registeredSample = "7607STDY14643771"
+		const beyondSmallWindowIndex = 150
+		const totalMatches = 200
+
+		store := newSQLiteStoreForTest(t)
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-beyond-window", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: registeredSample}
+		}))
+
+		var requestedLimit int
+		expander := &mockSearchExpander{
+			searchSamplesFunc: func(_ context.Context, term string, limit, _ int) ([]mlwh.Sample, error) {
+				if term != "Hek" {
+					return []mlwh.Sample{}, nil
+				}
+
+				requestedLimit = limit
+
+				samples := make([]mlwh.Sample, 0, totalMatches)
+				for i := range totalMatches {
+					if i == beyondSmallWindowIndex {
+						samples = append(samples, mlwh.Sample{Name: registeredSample, SupplierName: "Hek_R1"})
+
+						continue
+					}
+
+					samples = append(samples, mlwh.Sample{
+						Name:         fmt.Sprintf("UNREG%04d", i),
+						SupplierName: fmt.Sprintf("Hek_x%04d", i),
+					})
+				}
+
+				// The searcher only ever returns up to limit matches; the
+				// registered sample is excluded when the cap is too small to
+				// reach its index, mirroring the mlwh server's paging.
+				if limit > 0 && limit < len(samples) {
+					samples = samples[:limit]
+				}
+
+				return samples, nil
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=Hek", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		convey.So(requestedLimit, convey.ShouldBeGreaterThan, beyondSmallWindowIndex)
+		convey.So(suggestionByFieldValueForTest(suggestions, "sample", registeredSample), convey.ShouldNotBeNil)
+	})
+
 	convey.Convey("Bug 260627-4: Given both an exact-classify match and a title-word study match, exact-classify suggestions still come first", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-exact-and-substring", func(reg *Registration) {
