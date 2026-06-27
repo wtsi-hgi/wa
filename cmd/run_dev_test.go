@@ -204,7 +204,7 @@ exit 2
 }
 
 func runDevUnsetSeqmetaEnvForTest() []string {
-	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL"}
+	return []string{"WA_RUN_DEV_SEQMETA_CMD", "WA_RUN_DEV_SEQMETA_HEALTH_URL", "WA_RUN_DEV_SEQMETA_FRESHNESS_URL"}
 }
 
 func TestRunDevAutoManagedMLWHBackendSyncsColdCacheBeforeStudiesReadiness(t *testing.T) {
