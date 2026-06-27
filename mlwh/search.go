@@ -181,11 +181,37 @@ func likeContainsArgs(pattern string, fields []string) []any {
 	return args
 }
 
+// sampleTokenPrefixMatchable reports whether term could prefix-match any stored
+// search token. Tokens are maximal runs of ASCII [a-z0-9] (sampleSearchTokens),
+// so a term whose lowercased form carries any other byte (non-ASCII, punctuation,
+// space, a LIKE wildcard, etc.) cannot be the prefix of a token and matches
+// nothing. The search entry points short-circuit such terms to an empty result,
+// which also guarantees bytePrefixSuccessor only ever sees [a-z0-9] input (all
+// bytes < 0x80) and so can never fabricate an invalid-UTF-8 upper bound from a
+// non-ASCII term. An empty term is not matchable (the length guard already
+// rejects terms shorter than searchTermMinLength).
+func sampleTokenPrefixMatchable(term string) bool {
+	lower := strings.ToLower(term)
+	if lower == "" {
+		return false
+	}
+
+	for index := range len(lower) {
+		b := lower[index]
+		if (b < 'a' || b > 'z') && (b < '0' || b > '9') {
+			return false
+		}
+	}
+
+	return true
+}
+
 // sampleTokenPrefixQuery picks the token-prefix range SQL and the leading bound
 // arguments for term: the half-open `token >= ? AND token < ?` form bound to
-// [lower, upper) for any real token, or the open-ended `token >= ?` form bound to
-// [lower) for the degenerate no-upper-bound term (see sampleTokenPrefixBounds).
-// Callers append their pagination or cap arguments after the returned bounds.
+// [lower, upper) for any matchable term, or the open-ended `token >= ?` form
+// bound to [lower) for the degenerate no-upper-bound case (see
+// sampleTokenPrefixBounds). Callers append their pagination or cap arguments
+// after the returned bounds.
 func sampleTokenPrefixQuery(term, rangeSQL, openSQL string) (string, []any) {
 	lower, upper, hasUpper := sampleTokenPrefixBounds(term)
 	if !hasUpper {
@@ -200,16 +226,16 @@ func sampleTokenPrefixQuery(term, rangeSQL, openSQL string) (string, []any) {
 // index range seek (sampleTokenPrefixRangeClause). Tokens are stored lowercased
 // (sampleSearchTokens lowercases ASCII letters), so lower is the lowercased term
 // - the same lowercasing the previous LIKE prefix used - and upper is its prefix
-// successor (bytePrefixSuccessor). For real `[a-z0-9]` tokens hasUpper is always
-// true; only a term that is empty or all 0xFF after lowercasing has no finite
-// successor, in which case hasUpper is false and the caller falls back to the
-// open-ended `token >= ?` range (sampleTokenPrefixLowerClause) rather than
-// fabricating a wrong upper bound.
+// successor (bytePrefixSuccessor).
 //
-// Matching a literal byte prefix - not a LIKE pattern - means a term carrying a
-// character that cannot appear in a token ('%', '_', '-', a space, etc.) yields
-// a range no token falls in, so it matches nothing, exactly as the escaped
-// `LIKE 'term%'` predicate did before.
+// The search entry points only reach this for a matchable term
+// (sampleTokenPrefixMatchable), i.e. one whose lowercased form is entirely
+// `[a-z0-9]` (all bytes < 0x80), for which a finite successor always exists, so
+// hasUpper is true on every search path. The open-ended fallback (hasUpper
+// false, caller uses sampleTokenPrefixLowerClause) is retained only as a defence
+// for the degenerate empty/all-0xFF prefix and is unreachable from
+// SearchSamples/CountSampleSearch, which short-circuit a non-matchable term to an
+// empty result before computing any bound.
 func sampleTokenPrefixBounds(term string) (lower, upper string, hasUpper bool) {
 	lower = strings.ToLower(term)
 	upper, hasUpper = bytePrefixSuccessor(lower)
@@ -225,6 +251,13 @@ func sampleTokenPrefixBounds(term string) (lower, upper string, hasUpper bool) {
 // successor (ok is false): the prefix range is open above and the caller must use
 // a lower-bound-only predicate. ok is true for any prefix with at least one byte
 // below 0xFF.
+//
+// From the search entry points prefix is always an all-`[a-z0-9]` lowercased
+// term (sampleTokenPrefixMatchable gates non-matchable terms out upstream), so
+// every byte is well below 0xFF: the successor increments one ASCII byte and is
+// always valid UTF-8. Incrementing the last raw byte of a multi-byte (non-ASCII)
+// rune could otherwise yield invalid UTF-8 (e.g. "ÿ" -> C3 BF -> C3 C0), which is
+// why such terms never reach here.
 func bytePrefixSuccessor(prefix string) (successor string, ok bool) {
 	bytes := []byte(prefix)
 	for len(bytes) > 0 {
@@ -288,6 +321,9 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
 // index has no FTS dependency, so it works on MariaDB and MySQL < 8 too.
 func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
 	if len(term) < searchTermMinLength {
+		return []Sample{}, nil
+	}
+	if !sampleTokenPrefixMatchable(term) {
 		return []Sample{}, nil
 	}
 
@@ -445,6 +481,9 @@ func (c *Client) CountStudySearch(ctx context.Context, term string) (Count, erro
 // ErrNotFound, mirroring SearchSamples.
 func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, error) {
 	if len(term) < searchTermMinLength {
+		return Count{Count: 0}, nil
+	}
+	if !sampleTokenPrefixMatchable(term) {
 		return Count{Count: 0}, nil
 	}
 

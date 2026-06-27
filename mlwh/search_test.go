@@ -188,6 +188,40 @@ func TestSampleTokenPrefixQuerySelectsRangeOrOpenForm(t *testing.T) {
 	})
 }
 
+func TestSampleTokenPrefixMatchableRejectsNonTokenTerms(t *testing.T) {
+	convey.Convey("Given sampleTokenPrefixMatchable over terms that could or could not prefix a [a-z0-9] token", t, func() {
+		convey.Convey("when the lowercased term is entirely [a-z0-9], then it is matchable", func() {
+			convey.So(sampleTokenPrefixMatchable("mus"), convey.ShouldBeTrue)
+			convey.So(sampleTokenPrefixMatchable("abc123"), convey.ShouldBeTrue)
+			convey.So(sampleTokenPrefixMatchable("AcMe"), convey.ShouldBeTrue)
+		})
+
+		// A non-ASCII term lowercases to bytes outside [a-z0-9]; matching it would
+		// require bytePrefixSuccessor to increment a multi-byte rune's last raw byte
+		// and could yield invalid UTF-8 (e.g. "ÿ" -> C3 BF -> C3 C0), so it is gated
+		// out before any bound is computed.
+		convey.Convey("when the term is non-ASCII, then it is not matchable", func() {
+			convey.So(sampleTokenPrefixMatchable("ÿ"), convey.ShouldBeFalse)
+			convey.So(sampleTokenPrefixMatchable("café"), convey.ShouldBeFalse)
+			convey.So(sampleTokenPrefixMatchable("ÿÿÿ"), convey.ShouldBeFalse)
+		})
+
+		// ASCII non-token characters (LIKE wildcards, punctuation, spaces) cannot
+		// appear in a token either, so such terms match nothing - unchanged from the
+		// prior literal-prefix behaviour, now decided upstream without a bound.
+		convey.Convey("when the term carries an ASCII non-token character, then it is not matchable", func() {
+			convey.So(sampleTokenPrefixMatchable("ab%"), convey.ShouldBeFalse)
+			convey.So(sampleTokenPrefixMatchable("a-b"), convey.ShouldBeFalse)
+			convey.So(sampleTokenPrefixMatchable("ab "), convey.ShouldBeFalse)
+			convey.So(sampleTokenPrefixMatchable("ab_"), convey.ShouldBeFalse)
+		})
+
+		convey.Convey("when the term is empty, then it is not matchable", func() {
+			convey.So(sampleTokenPrefixMatchable(""), convey.ShouldBeFalse)
+		})
+	})
+}
+
 func TestSearchStudiesMatchesTitleSubstringOrderedByLimsID(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache with three studies by title", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -651,6 +685,38 @@ func TestSearchSamplesPunctuationInTermIsLiteralPrefixByte(t *testing.T) {
 			convey.So(countErr, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldResemble, Count{})
 		})
+	})
+}
+
+func TestSearchSamplesNonASCIITermReturnsEmptyWithoutBadBound(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with an ordinary alphanumeric sample", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "abc supplier", "common-1", "donor-1")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		// A non-ASCII term cannot prefix any [a-z0-9] token, so it short-circuits to
+		// an empty result before any byte-prefix bound is computed. Incrementing the
+		// last raw byte of such a term ("ÿ" -> C3 BF -> C3 C0) would otherwise produce
+		// an invalid-UTF-8 upper bound that MySQL could reject; this proves no such
+		// bound is generated or bound and no error surfaces on either backend.
+		for _, term := range []string{"ÿÿÿ", "café"} {
+			convey.Convey("when SearchSamples runs with the non-ASCII term "+term+", then it returns empty with no error", func() {
+				samples, err := client.SearchSamples(context.Background(), term, 100, 0)
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(samples, convey.ShouldBeEmpty)
+			})
+
+			convey.Convey("when CountSampleSearch runs with the non-ASCII term "+term+", then it returns Count 0 with no error", func() {
+				count, err := client.CountSampleSearch(context.Background(), term)
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(count, convey.ShouldResemble, Count{})
+			})
+		}
 	})
 }
 

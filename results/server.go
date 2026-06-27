@@ -271,8 +271,10 @@ type LockedResponse struct {
 	Message  string `json:"message"`
 }
 
-// searchSuggestionKey dedups suggestions by their applied filter (field + value)
-// while allowing the displayed Label to differ between otherwise-equal entries.
+// searchSuggestionKey dedups suggestions by their applied filter (field +
+// value). Label is intentionally excluded from the key, so two suggestions with
+// the same field+value collapse to the first one seen regardless of their Label;
+// any differing Label on a later duplicate is dropped rather than preserved.
 type searchSuggestionKey struct {
 	fieldKey string
 	value    string
