@@ -91,6 +91,10 @@ func TestSampleSearchSQLUsesDialectSafeTokenRange(t *testing.T) {
 		}{
 			{"sampleSearchTokenPageSQL", sampleSearchTokenPageSQL},
 			{"sampleSearchCountSQL", sampleSearchCountSQL},
+			// The multi-token forms (built for >1 query token) must use the same
+			// dialect-safe range predicate, never a LIKE pattern.
+			{"sampleMultiTokenPageSQL(2)", sampleMultiTokenPageSQL(2)},
+			{"sampleMultiTokenCountSQL(2)", sampleMultiTokenCountSQL(2)},
 		}
 
 		for _, testCase := range cases {
@@ -105,6 +109,13 @@ func TestSampleSearchSQLUsesDialectSafeTokenRange(t *testing.T) {
 				})
 			})
 		}
+
+		convey.Convey("the multi-token forms enforce the per-token AND via the OR-union and a per-token MAX HAVING", func() {
+			pageSQL := sampleMultiTokenPageSQL(2)
+			convey.So(strings.Contains(pageSQL, `(token >= ? AND token < ?) OR (token >= ? AND token < ?)`), convey.ShouldBeTrue)
+			convey.So(strings.Count(pageSQL, `MAX(CASE WHEN token >= ? AND token < ? THEN 1 ELSE 0 END) = 1`), convey.ShouldEqual, 2)
+			convey.So(strings.Contains(pageSQL, `GROUP BY id_sample_tmp HAVING`), convey.ShouldBeTrue)
+		})
 	})
 }
 
@@ -125,6 +136,41 @@ func TestSearchSamplesMySQLShortTermIssuesNoQuery(t *testing.T) {
 		convey.Convey("when SearchSamples runs with a length-2 term, then no query is sent and the result is empty", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(samples, convey.ShouldResemble, []Sample{})
+		})
+	})
+}
+
+func TestCountSampleSearchMySQLMultiTokenBoundedAndCount(t *testing.T) {
+	convey.Convey("Given a sqlmock MySQL Client and a two-word term", t, func() {
+		roDB, roMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			roMock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		}()
+
+		// The multi-token count is COUNT(*) over the same grouped, per-token-MAX-AND
+		// id_sample_tmps, capped with an inner LIMIT so a common set stops at the cap.
+		// Args: both ranges for the WHERE union, both ranges again for the HAVING,
+		// then the cap.
+		countSQL := `(?s)SELECT COUNT\(\*\) FROM \(SELECT id_sample_tmp FROM sample_search_token WHERE ` +
+			`\(token >= \? AND token < \?\) OR \(token >= \? AND token < \?\) ` +
+			`GROUP BY id_sample_tmp HAVING ` +
+			`MAX\(CASE WHEN token >= \? AND token < \? THEN 1 ELSE 0 END\) = 1 AND ` +
+			`MAX\(CASE WHEN token >= \? AND token < \? THEN 1 ELSE 0 END\) = 1 ` +
+			`LIMIT \?\) AS bounded_sample_search`
+		roMock.ExpectQuery(countSQL).
+			WithArgs("hek", "hel", "r1", "r2", "hek", "hel", "r1", "r2", sampleSearchCountCap).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		count, err := client.CountSampleSearch(context.Background(), "Hek_R1")
+
+		convey.Convey("when CountSampleSearch runs, then the bounded multi-token AND-count SQL is built per token and capped", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 3})
 		})
 	})
 }
@@ -266,6 +312,55 @@ func TestCountSampleSearchMySQLBuildsBoundedDistinctCount(t *testing.T) {
 		convey.Convey("when CountSampleSearch runs, then the bounded DISTINCT-count SQL is built with the prefix and the cap", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(count, convey.ShouldResemble, Count{Count: 2})
+		})
+	})
+}
+
+func TestSearchSamplesMySQLMultiTokenAndsPerTokenRanges(t *testing.T) {
+	convey.Convey("Given a sqlmock MySQL Client and a two-word term", t, func() {
+		roDB, roMock, err := sqlmock.New()
+		convey.So(err, convey.ShouldBeNil)
+		defer func() {
+			roMock.ExpectClose()
+			convey.So(roDB.Close(), convey.ShouldBeNil)
+			convey.So(roMock.ExpectationsWereMet(), convey.ShouldBeNil)
+		}()
+
+		// A multi-token term must page distinct samples via the OR-union of each
+		// token's half-open range, grouped by sample, with a per-token MAX(CASE...)=1
+		// HAVING that enforces the logical AND (a word-prefix match for EVERY token).
+		// It must NOT be a LIKE pattern and must not collapse the AND into one range.
+		// Tokens "hek","r1" -> ranges [hek,hel),[r1,r2); the WHERE binds both ranges,
+		// then the HAVING repeats both ranges, then LIMIT/OFFSET.
+		pageSQL := `(?s)SELECT id_sample_tmp FROM sample_search_token WHERE ` +
+			`\(token >= \? AND token < \?\) OR \(token >= \? AND token < \?\) ` +
+			`GROUP BY id_sample_tmp HAVING ` +
+			`MAX\(CASE WHEN token >= \? AND token < \? THEN 1 ELSE 0 END\) = 1 AND ` +
+			`MAX\(CASE WHEN token >= \? AND token < \? THEN 1 ELSE 0 END\) = 1 ` +
+			`ORDER BY id_sample_tmp LIMIT \? OFFSET \?`
+		roMock.ExpectQuery(pageSQL).
+			WithArgs("hek", "hel", "r1", "r2", "hek", "hel", "r1", "r2", 100, 0).
+			WillReturnRows(sqlmock.NewRows([]string{"id_sample_tmp"}).
+				AddRow(int64(1)).
+				AddRow(int64(2)))
+
+		roMock.ExpectQuery(`FROM sample_mirror WHERE id_lims = 'SQSCP' AND id_sample_tmp IN \(\?, \?\) ORDER BY id_sample_tmp`).
+			WithArgs(int64(1), int64(2)).
+			WillReturnRows(sqlmock.NewRows(sampleResolverColumns()).
+				AddRow(sampleResolverRow(1, "uuid-1", "lims-1", "7607STDY", "sanger-1", "Hek_R1", "accession-1", "donor-1")...).
+				AddRow(sampleResolverRow(2, "uuid-2", "lims-2", "name-2", "sanger-2", "Hek_R1_a", "accession-2", "donor-2")...))
+
+		roMock.ExpectQuery(regexp.QuoteMeta(`FROM library_samples`)).
+			WithArgs(int64(1), int64(2)).
+			WillReturnRows(sqlmock.NewRows(sampleFanOutColumnsForTest()))
+
+		client := &Client{cache: &mysqlCache{roDB: roDB}, cacheReader: roDB}
+
+		samples, err := client.SearchSamples(context.Background(), "Hek_R1", 100, 0)
+
+		convey.Convey("when SearchSamples runs, then the multi-token AND page SQL is built per token and the by-id fetch resolves the samples", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
 		})
 	})
 }

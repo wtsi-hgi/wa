@@ -188,36 +188,44 @@ func TestSampleTokenPrefixQuerySelectsRangeOrOpenForm(t *testing.T) {
 	})
 }
 
-func TestSampleTokenPrefixMatchableRejectsNonTokenTerms(t *testing.T) {
-	convey.Convey("Given sampleTokenPrefixMatchable over terms that could or could not prefix a [a-z0-9] token", t, func() {
-		convey.Convey("when the lowercased term is entirely [a-z0-9], then it is matchable", func() {
-			convey.So(sampleTokenPrefixMatchable("mus"), convey.ShouldBeTrue)
-			convey.So(sampleTokenPrefixMatchable("abc123"), convey.ShouldBeTrue)
-			convey.So(sampleTokenPrefixMatchable("AcMe"), convey.ShouldBeTrue)
+// TestSampleSearchQueryBoundsTokenisesTermLikeStoredValues pins the query-token
+// derivation that drives the AND search: a term is split into the same distinct
+// lowercased [a-z0-9] words as stored values (sampleSearchTokens), duplicate
+// tokens collapse, and a term made only of separators or non-ASCII yields no
+// bounds (nothing to query). Each emitted bound is the half-open [token, successor)
+// range, so every bound's Upper exists (the input is always [a-z0-9]) and the
+// invalid-UTF-8 successor case never arises.
+func TestSampleSearchQueryBoundsTokenisesTermLikeStoredValues(t *testing.T) {
+	convey.Convey("Given sampleSearchQueryBounds over representative terms", t, func() {
+		convey.Convey("when the term is a single [a-z0-9] word, then one [token, successor) bound is returned", func() {
+			bounds := sampleSearchQueryBounds("mus")
+			convey.So(bounds, convey.ShouldResemble, []sampleSearchTokenBound{{Lower: "mus", Upper: "mut"}})
 		})
 
-		// A non-ASCII term lowercases to bytes outside [a-z0-9]; matching it would
-		// require bytePrefixSuccessor to increment a multi-byte rune's last raw byte
-		// and could yield invalid UTF-8 (e.g. "ÿ" -> C3 BF -> C3 C0), so it is gated
-		// out before any bound is computed.
-		convey.Convey("when the term is non-ASCII, then it is not matchable", func() {
-			convey.So(sampleTokenPrefixMatchable("ÿ"), convey.ShouldBeFalse)
-			convey.So(sampleTokenPrefixMatchable("café"), convey.ShouldBeFalse)
-			convey.So(sampleTokenPrefixMatchable("ÿÿÿ"), convey.ShouldBeFalse)
+		convey.Convey("when the term splits on a non-token byte (Hek_R1), then one bound per distinct word is returned", func() {
+			bounds := sampleSearchQueryBounds("Hek_R1")
+			convey.So(bounds, convey.ShouldResemble, []sampleSearchTokenBound{
+				{Lower: "hek", Upper: "hel"},
+				{Lower: "r1", Upper: "r2"},
+			})
 		})
 
-		// ASCII non-token characters (LIKE wildcards, punctuation, spaces) cannot
-		// appear in a token either, so such terms match nothing - unchanged from the
-		// prior literal-prefix behaviour, now decided upstream without a bound.
-		convey.Convey("when the term carries an ASCII non-token character, then it is not matchable", func() {
-			convey.So(sampleTokenPrefixMatchable("ab%"), convey.ShouldBeFalse)
-			convey.So(sampleTokenPrefixMatchable("a-b"), convey.ShouldBeFalse)
-			convey.So(sampleTokenPrefixMatchable("ab "), convey.ShouldBeFalse)
-			convey.So(sampleTokenPrefixMatchable("ab_"), convey.ShouldBeFalse)
+		convey.Convey("when a word repeats, then the duplicate token collapses to one bound", func() {
+			bounds := sampleSearchQueryBounds("mus mus")
+			convey.So(bounds, convey.ShouldResemble, []sampleSearchTokenBound{{Lower: "mus", Upper: "mut"}})
 		})
 
-		convey.Convey("when the term is empty, then it is not matchable", func() {
-			convey.So(sampleTokenPrefixMatchable(""), convey.ShouldBeFalse)
+		// A non-ASCII term tokenises to its [a-z0-9] runs (here "caf"); the é is a
+		// separator, so no bound is ever formed from a non-ASCII byte and
+		// bytePrefixSuccessor only sees ASCII.
+		convey.Convey("when the term carries a non-ASCII rune (café), then only its [a-z0-9] token yields a bound", func() {
+			bounds := sampleSearchQueryBounds("café")
+			convey.So(bounds, convey.ShouldResemble, []sampleSearchTokenBound{{Lower: "caf", Upper: "cag"}})
+		})
+
+		convey.Convey("when the term is all separators or all non-ASCII, then no bounds are returned (nothing to query)", func() {
+			convey.So(sampleSearchQueryBounds("___"), convey.ShouldBeEmpty)
+			convey.So(sampleSearchQueryBounds("ÿÿÿ"), convey.ShouldBeEmpty)
 		})
 	})
 }
@@ -482,6 +490,175 @@ func TestSearchSamplesMatchesSupplierNameOrderedByTmpID(t *testing.T) {
 	})
 }
 
+// TestSearchSamplesMatchesMultiTokenSupplierName is the 260627-6 regression: a
+// term that the tokeniser splits into several words (a supplier_name like
+// "Hek_R1" -> tokens "hek","r1") must match a sample that has a word-prefix for
+// EVERY query token, even though the term is neither a single token nor a single
+// token prefix. Before the fix SearchSamples/CountSampleSearch short-circuited
+// such a term (its '_' lies outside [a-z0-9]) to an empty result and never
+// queried, so the sample the user could resolve by `wa mlwh info Hek_R1` was
+// invisible to search.
+func TestSearchSamplesMatchesMultiTokenSupplierName(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache holding the Hek_R1 sample and decoys", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// id 1 is the target: supplier_name "Hek_R1" tokenises to "hek" + "r1".
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "7607STDY14643771", "Hek_R1", "Homo sapiens", "donor-1")
+		// id 2 has a "hek*" word but no "r1*" word, so the AND must reject it.
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "HEK293-clone", "Homo sapiens", "donor-2")
+		// id 3 has an "r1*" word but no "hek*" word, so the AND must reject it too.
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "name-3", "R1-batch", "Mus musculus", "donor-3")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when SearchSamples runs for the literal supplier_name Hek_R1, then only the sample with both words matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "Hek_R1", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+		})
+
+		convey.Convey("when CountSampleSearch runs for Hek_R1, then it counts exactly the one sample matching all tokens", func() {
+			count, err := client.CountSampleSearch(context.Background(), "Hek_R1")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+
+			samples, searchErr := client.SearchSamples(context.Background(), "Hek_R1", 1000, 0)
+			convey.So(searchErr, convey.ShouldBeNil)
+			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+	})
+}
+
+// TestSearchSamplesMultiWordTermRequiresEveryTokenAsWordPrefix locks in the
+// logical-AND, word-prefix semantics for a natural two-word term: "Mus muscu"
+// tokenises to "mus","muscu" and must match a "Mus musculus" sample (a word
+// prefix-matches each token) while a sample that only satisfies one token is
+// rejected. Single-word behaviour ("mus" alone) is unchanged.
+func TestSearchSamplesMultiWordTermRequiresEveryTokenAsWordPrefix(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with multi-word common_name fixtures", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// id 1 "Mus musculus" -> "mus","musculus": prefix-matches both "mus" and
+		// "muscu".
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "name-1", "supplier-1", "Mus musculus", "donor-1")
+		// id 2 "Mus spretus" -> "mus","spretus": prefix-matches "mus" but not
+		// "muscu", so the two-word AND rejects it.
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "supplier-2", "Mus spretus", "donor-2")
+		// id 3 "Homo sapiens" -> matches neither token.
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "name-3", "supplier-3", "Homo sapiens", "donor-3")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when the term is two words (Mus muscu), then only the sample with a word-prefix for each token matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "Mus muscu", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+
+			count, countErr := client.CountSampleSearch(context.Background(), "Mus muscu")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+		})
+
+		convey.Convey("when the term is a single word (mus), then every Mus sample still matches (single-word behaviour preserved)", func() {
+			samples, err := client.SearchSamples(context.Background(), "mus", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2})
+		})
+	})
+}
+
+// TestSearchSamplesMultiWordCountEqualsPagedResults proves CountSampleSearch
+// agrees with len(SearchSamples(...all)) for a multi-word term across a larger
+// match set, so the multi-token count uses the same AND as the multi-token page.
+func TestSearchSamplesMultiWordCountEqualsPagedResults(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache where several samples share two query words", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		// Five samples carry both "hek" and "r1" words; one carries only "hek".
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "name-1", "Hek_R1", "common-1", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "Hek_R1_a", "common-2", "donor-2")
+		seedSampleMirrorSearchRow(t, cache.DB(), 3, "hek R1", "supplier-3", "common-3", "donor-3")
+		seedSampleMirrorSearchRow(t, cache.DB(), 4, "name-4", "supplier-4", "hek r1cell", "donor-4")
+		seedSampleMirrorSearchRow(t, cache.DB(), 5, "name-5", "supplier-5", "common-5", "hek-r1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 6, "name-6", "HEK293", "common-6", "donor-6")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when CountSampleSearch and the full SearchSamples run for hek r1, then the count equals the row-set size", func() {
+			samples, err := client.SearchSamples(context.Background(), "hek r1", 1000, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1, 2, 3, 4, 5})
+
+			count, countErr := client.CountSampleSearch(context.Background(), "hek r1")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 5})
+			convey.So(count.Count, convey.ShouldEqual, len(samples))
+		})
+
+		convey.Convey("when SearchSamples pages a multi-word term (limit 2 offset 1), then it returns the second page in id order", func() {
+			samples, err := client.SearchSamples(context.Background(), "hek r1", 2, 1)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{2, 3})
+		})
+	})
+}
+
+// TestSearchSamplesNonASCIITermSearchesItsAsciiTokens proves the new tokenised
+// behaviour: a non-ASCII term is tokenised the same way stored values are, so
+// "café" searches its token "caf" (matching a sample with a "caf*" word) while a
+// term that tokenises to nothing ("ÿ", "___") returns empty without error and
+// without ever fabricating an invalid-UTF-8 bound.
+func TestSearchSamplesNonASCIITermSearchesItsAsciiTokens(t *testing.T) {
+	convey.Convey("Given a synced SQLite cache with a sample carrying a caf* word", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedSampleMirrorSearchRow(t, cache.DB(), 1, "cafeteria-sample", "supplier-1", "common-1", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "name-2", "supplier-2", "common-2", "donor-2")
+		rebuildSampleSearchIndexForTest(t, cache.DB())
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		convey.Convey("when the term is café (token caf), then the sample with a caf* word matches", func() {
+			samples, err := client.SearchSamples(context.Background(), "café", 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
+
+			count, countErr := client.CountSampleSearch(context.Background(), "café")
+			convey.So(countErr, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
+		})
+
+		// A term whose runes are all separators or non-ASCII yields zero query
+		// tokens, so there is nothing to query: the search returns empty without
+		// error, and bytePrefixSuccessor is never asked to increment a non-ASCII
+		// byte (no invalid-UTF-8 bound).
+		for _, term := range []string{"ÿ", "ÿÿÿ", "___"} {
+			convey.Convey("when the term "+term+" tokenises to nothing, then SearchSamples returns empty with no error", func() {
+				samples, err := client.SearchSamples(context.Background(), term, 100, 0)
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(samples, convey.ShouldBeEmpty)
+			})
+
+			convey.Convey("when the term "+term+" tokenises to nothing, then CountSampleSearch returns Count 0 with no error", func() {
+				count, err := client.CountSampleSearch(context.Background(), term)
+				convey.So(err, convey.ShouldBeNil)
+				convey.So(count, convey.ShouldResemble, Count{})
+			})
+		}
+	})
+}
+
 func TestSearchSamplesMatchesAcrossAllFourSearchableFields(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache whose only sapien hit is via common_name", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -618,78 +795,81 @@ func TestSearchSamplesReturnsFullRowsWithFanOut(t *testing.T) {
 	})
 }
 
-func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsLiteralPrefixChars(t *testing.T) {
+func TestSearchSamplesTreatsQueryWildcardsAndOperatorsAsTokenSeparatorsNotSQLWildcards(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache whose tokens are plain words and a query carrying LIKE/operator characters", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// supplier_name "abcXYZ" tokenises to the single word "abcxyz".
+		// supplier_name "abcXYZ" tokenises to the single word "abcxyz"; a second
+		// sample carries an unrelated word so a wildcard char cannot be smuggled
+		// through as a SQL wildcard matching everything.
 		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "abcXYZ", "common-1", "donor-1")
+		seedSampleMirrorSearchRow(t, cache.DB(), 2, "specimen-2", "zzzzz", "common-2", "donor-2")
 		rebuildSampleSearchIndexForTest(t, cache.DB())
 		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		convey.Convey("when the term is a plain prefix (abc), then the token matches", func() {
+		convey.Convey("when the term is a plain prefix (abc), then the word-prefix token matches", func() {
 			samples, err := client.SearchSamples(context.Background(), "abc", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
 		})
 
-		// The term is matched as a literal byte prefix (an index range), not a LIKE
-		// pattern: '%' is an ordinary byte that cannot appear in a [a-z0-9] token,
-		// so "abc%" matches only tokens literally starting with "abc%", of which
-		// there are none (it must not behave as a wildcard prefix-matching "abcxyz").
-		convey.Convey("when the term embeds a percent (abc%), then it is a literal prefix byte and matches nothing", func() {
+		// '%' is a token separator, not a SQL LIKE wildcard: "abc%" tokenises to the
+		// single word "abc", which prefix-matches "abcxyz" (and nothing else), so it
+		// must not act as a wildcard matching every sample.
+		convey.Convey("when the term embeds a percent (abc%), then it tokenises to abc and matches only the abc-prefixed sample", func() {
 			samples, err := client.SearchSamples(context.Background(), "abc%", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(samples, convey.ShouldBeEmpty)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
 
 			count, countErr := client.CountSampleSearch(context.Background(), "abc%")
 			convey.So(countErr, convey.ShouldBeNil)
-			convey.So(count, convey.ShouldResemble, Count{})
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
 		})
 
-		// Likewise the underscore is a literal prefix byte, not a single-character
-		// wildcard: "ab_" must not match "abcxyz" by treating '_' as "any character".
-		convey.Convey("when the term embeds an underscore (ab_), then it is a literal prefix byte and matches nothing", func() {
+		// Likewise the underscore is a token separator: "ab_" tokenises to the word
+		// "ab", which word-prefix-matches "abcxyz" - it is NOT treated as the LIKE
+		// single-character wildcard.
+		convey.Convey("when the term embeds an underscore (ab_), then it tokenises to ab and matches the ab-prefixed sample", func() {
 			samples, err := client.SearchSamples(context.Background(), "ab_", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(samples, convey.ShouldBeEmpty)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
 		})
 	})
 }
 
-func TestSearchSamplesPunctuationInTermIsLiteralPrefixByte(t *testing.T) {
+func TestSearchSamplesPunctuationInTermSeparatesTokens(t *testing.T) {
 	convey.Convey("Given a synced SQLite cache and a term containing a non-token punctuation byte", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
-		// "abc" is an ordinary alphanumeric token.
+		// "abc" is an ordinary alphanumeric token of supplier_name "abc supplier".
 		seedSampleMirrorSearchRow(t, cache.DB(), 1, "specimen-1", "abc supplier", "common-1", "donor-1")
 		rebuildSampleSearchIndexForTest(t, cache.DB())
 		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.May, 6, 17, 0, 0, 0, time.UTC))
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		// A term carrying a byte that cannot appear in a [a-z0-9] token (here the
-		// punctuation '!') is matched as a literal prefix byte, so the range query
-		// stays well-formed and "ab!" matches no token starting with that literal
-		// sequence.
-		convey.Convey("when the term embeds a non-token punctuation byte, then the query is well-formed and matches nothing", func() {
+		// A punctuation byte that cannot appear in a [a-z0-9] token (here '!') is a
+		// token separator, so "ab!" tokenises to the single word "ab", the query
+		// stays well-formed (an index range seek, no LIKE), and it word-prefix-matches
+		// the sample's "abc" word.
+		convey.Convey("when the term embeds a non-token punctuation byte (ab!), then it tokenises to ab and matches the abc-prefixed sample", func() {
 			samples, err := client.SearchSamples(context.Background(), "ab!", 100, 0)
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(samples, convey.ShouldBeEmpty)
+			convey.So(sampleTmpIDs(samples), convey.ShouldResemble, []int64{1})
 
 			count, countErr := client.CountSampleSearch(context.Background(), "ab!")
 			convey.So(countErr, convey.ShouldBeNil)
-			convey.So(count, convey.ShouldResemble, Count{})
+			convey.So(count, convey.ShouldResemble, Count{Count: 1})
 		})
 	})
 }
 
 func TestSearchSamplesNonASCIITermReturnsEmptyWithoutBadBound(t *testing.T) {
-	convey.Convey("Given a synced SQLite cache with an ordinary alphanumeric sample", t, func() {
+	convey.Convey("Given a synced SQLite cache with an ordinary alphanumeric sample and a term with no usable [a-z0-9] tokens", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -699,24 +879,25 @@ func TestSearchSamplesNonASCIITermReturnsEmptyWithoutBadBound(t *testing.T) {
 
 		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
 
-		// A non-ASCII term cannot prefix any [a-z0-9] token, so it short-circuits to
-		// an empty result before any byte-prefix bound is computed. Incrementing the
-		// last raw byte of such a term ("ÿ" -> C3 BF -> C3 C0) would otherwise produce
+		// "ÿÿÿ" is all non-ASCII runes, so it tokenises to zero [a-z0-9] tokens:
+		// there is nothing to query and the search short-circuits to an empty
+		// result before any byte-prefix bound is computed. Incrementing the last
+		// raw byte of such a term ("ÿ" -> C3 BF -> C3 C0) would otherwise produce
 		// an invalid-UTF-8 upper bound that MySQL could reject; this proves no such
-		// bound is generated or bound and no error surfaces on either backend.
-		for _, term := range []string{"ÿÿÿ", "café"} {
-			convey.Convey("when SearchSamples runs with the non-ASCII term "+term+", then it returns empty with no error", func() {
-				samples, err := client.SearchSamples(context.Background(), term, 100, 0)
-				convey.So(err, convey.ShouldBeNil)
-				convey.So(samples, convey.ShouldBeEmpty)
-			})
+		// bound is generated and no error surfaces on either backend.
+		const term = "ÿÿÿ"
 
-			convey.Convey("when CountSampleSearch runs with the non-ASCII term "+term+", then it returns Count 0 with no error", func() {
-				count, err := client.CountSampleSearch(context.Background(), term)
-				convey.So(err, convey.ShouldBeNil)
-				convey.So(count, convey.ShouldResemble, Count{})
-			})
-		}
+		convey.Convey("when SearchSamples runs with the zero-token non-ASCII term "+term+", then it returns empty with no error", func() {
+			samples, err := client.SearchSamples(context.Background(), term, 100, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(samples, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("when CountSampleSearch runs with the zero-token non-ASCII term "+term+", then it returns Count 0 with no error", func() {
+			count, err := client.CountSampleSearch(context.Background(), term)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{})
+		})
 	})
 }
 

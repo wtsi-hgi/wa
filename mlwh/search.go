@@ -154,6 +154,173 @@ func likeContainsClause(fields []string) string {
 	return "(" + strings.Join(predicates, " OR ") + ")"
 }
 
+// sampleSearchTokenBound is the half-open byte range [Lower, Upper) of one query
+// token: the lowercased token and its prefix successor (bytePrefixSuccessor).
+type sampleSearchTokenBound struct {
+	Lower string
+	Upper string
+}
+
+// sampleSearchQueryBounds tokenises term exactly as stored search values are
+// tokenised (sampleSearchTokens: maximal runs of ASCII [a-z0-9], lowercased) and
+// returns the distinct per-token half-open byte ranges to AND together. A term
+// whose runes are all separators or non-ASCII (e.g. "___", "ÿ") yields no tokens
+// and so an empty slice (nothing to query); duplicate tokens collapse to one
+// range. Because every query token is [a-z0-9] (all bytes < 0x80),
+// bytePrefixSuccessor always yields a finite, valid-UTF-8 upper bound, so the
+// invalid-UTF-8 concern that motivated gating non-ASCII terms out (resolved PR
+// #23 Copilot thread) cannot arise: a non-ASCII term simply searches its [a-z0-9]
+// tokens instead of being rejected.
+func sampleSearchQueryBounds(term string) []sampleSearchTokenBound {
+	tokens := sampleSearchTokens(term)
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	bounds := make([]sampleSearchTokenBound, 0, len(tokens))
+	for _, token := range tokens {
+		// sampleSearchTokens lowercases and yields only [a-z0-9], so an upper bound
+		// always exists; sampleTokenPrefixBounds returns it for the single-token
+		// path's symmetry.
+		lower, upper, _ := sampleTokenPrefixBounds(token)
+		bounds = append(bounds, sampleSearchTokenBound{Lower: lower, Upper: upper})
+	}
+
+	return bounds
+}
+
+// sampleSearchPage returns the distinct id_sample_tmps for the page
+// [offset, offset+limit) of samples matching the query-token bounds. A single
+// token takes the fast single-range index seek (sampleSearchTokenPage); several
+// tokens take the OR-union/GROUP BY/per-token-MAX HAVING form
+// (sampleSearchMultiTokenPage) that enforces the logical AND across tokens.
+func (c *Client) sampleSearchPage(ctx context.Context, db *sql.DB, bounds []sampleSearchTokenBound, limit, offset int) ([]int64, error) {
+	if len(bounds) == 1 {
+		return c.sampleSearchTokenPage(ctx, db, bounds[0].Lower, limit, offset)
+	}
+
+	return c.sampleSearchMultiTokenPage(ctx, db, bounds, limit, offset)
+}
+
+// sampleSearchMultiTokenPage returns the distinct id_sample_tmps for the page
+// [offset, offset+limit) of samples that have a word-prefix match for EVERY query
+// token, in id_sample_tmp order. The grouped query (sampleMultiTokenPageSQL)
+// already returns distinct samples in id order with LIMIT/OFFSET applied, so the
+// rows are read straight through with no app-side de-duplication or paging loop.
+func (c *Client) sampleSearchMultiTokenPage(ctx context.Context, db *sql.DB, bounds []sampleSearchTokenBound, limit, offset int) ([]int64, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	args := append(sampleMultiTokenWhereHavingArgs(bounds), limit, offset)
+
+	rows, err := db.QueryContext(ctx, sampleMultiTokenPageSQL(len(bounds)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	ids := make([]int64, 0, limit)
+	for rows.Next() {
+		var id int64
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return nil, fmt.Errorf("%w: scan sample search: %w", ErrUpstreamImpaired, scanErr)
+		}
+
+		ids = append(ids, id)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: query sample search: %w", ErrUpstreamImpaired, err)
+	}
+
+	return ids, nil
+}
+
+// sampleMultiTokenPageSQL builds the multi-token page query: the distinct
+// id_sample_tmps whose token set contains a word-prefix match for every query
+// token, in id order with LIMIT/OFFSET. The WHERE is the OR-union of the per-token
+// ranges (each an index seek) and the HAVING re-checks each range with an
+// independent MAX so the result is the logical AND across tokens. GROUP BY
+// collapses to distinct samples, so no app-side de-duplication is needed.
+func sampleMultiTokenPageSQL(count int) string {
+	return `SELECT id_sample_tmp FROM ` + sampleSearchTokenTable +
+		` WHERE ` + sampleMultiTokenRangeUnion(count) +
+		` GROUP BY id_sample_tmp HAVING ` + sampleMultiTokenHavingClause(count) +
+		` ORDER BY id_sample_tmp LIMIT ? OFFSET ?`
+}
+
+// sampleMultiTokenRangeUnion renders the parenthesised, OR'd union of the N
+// half-open token ranges for the multi-token WHERE clause (one
+// sampleTokenPrefixRangeClause per token), so the union is an index-backed seek
+// of each per-token prefix range on (token, id_sample_tmp).
+func sampleMultiTokenRangeUnion(count int) string {
+	clauses := make([]string, count)
+	for index := range count {
+		clauses[index] = "(" + sampleTokenPrefixRangeClause + ")"
+	}
+
+	return strings.Join(clauses, " OR ")
+}
+
+// sampleMultiTokenHavingClause renders the HAVING body that enforces the logical
+// AND across query tokens: a grouped sample is kept only if, for EVERY token
+// range, at least one of its rows fell in that range
+// (MAX(CASE ... THEN 1 ELSE 0 END) = 1 per token). Using an independent per-token
+// MAX (rather than COUNT(DISTINCT bucket) over a first-match CASE) is correct even
+// when token ranges overlap - one shared word that prefix-matches two query
+// tokens satisfies both their MAX predicates.
+func sampleMultiTokenHavingClause(count int) string {
+	predicates := make([]string, count)
+	for index := range count {
+		predicates[index] = "MAX(CASE WHEN " + sampleTokenPrefixRangeClause + " THEN 1 ELSE 0 END) = 1"
+	}
+
+	return strings.Join(predicates, " AND ")
+}
+
+// sampleSearchCountQuery builds the bounded distinct-count SQL and args for the
+// query-token bounds: a single token uses the fast single-range count
+// (sampleSearchCountSQL, capped); several tokens use the grouped per-token-MAX
+// HAVING count (sampleMultiTokenCountSQL, capped). Both report sampleSearchCountCap
+// as a floor when the match set reaches it.
+func sampleSearchCountQuery(bounds []sampleSearchTokenBound) (string, []any) {
+	if len(bounds) == 1 {
+		query, rangeArgs := sampleTokenPrefixQuery(bounds[0].Lower, sampleSearchCountSQL, sampleSearchCountOpenSQL)
+
+		return query, append(rangeArgs, sampleSearchCountCap)
+	}
+
+	return sampleMultiTokenCountSQL(len(bounds)), append(sampleMultiTokenWhereHavingArgs(bounds), sampleSearchCountCap)
+}
+
+// sampleMultiTokenCountSQL builds the multi-token bounded distinct count: the
+// COUNT(*) over the same AND-matched, GROUP BY'd id_sample_tmps, capped with an
+// inner LIMIT so a common multi-token set stops at sampleSearchCountCap (a floor),
+// mirroring the single-token count's cap semantics.
+func sampleMultiTokenCountSQL(count int) string {
+	return `SELECT COUNT(*) FROM (SELECT id_sample_tmp FROM ` + sampleSearchTokenTable +
+		` WHERE ` + sampleMultiTokenRangeUnion(count) +
+		` GROUP BY id_sample_tmp HAVING ` + sampleMultiTokenHavingClause(count) +
+		` LIMIT ?) AS bounded_sample_search`
+}
+
+// sampleMultiTokenWhereHavingArgs binds the per-token range bounds for the
+// multi-token query: the union WHERE takes [lower, upper) per token in token
+// order, then the HAVING repeats the same [lower, upper) per token in the same
+// order (the CASE predicates are emitted in token order). Callers append their
+// LIMIT/OFFSET or cap arguments after these.
+func sampleMultiTokenWhereHavingArgs(bounds []sampleSearchTokenBound) []any {
+	args := make([]any, 0, len(bounds)*4)
+	for _, bound := range bounds {
+		args = append(args, bound.Lower, bound.Upper)
+	}
+	for _, bound := range bounds {
+		args = append(args, bound.Lower, bound.Upper)
+	}
+
+	return args
+}
+
 // escapeLIKEPattern wraps term in '%...%' for a substring (contains) LIKE,
 // escaping the LIKE wildcards ('%', '_') and the escape character itself so the
 // term is matched literally. The returned pattern is bound as a parameter and
@@ -181,31 +348,6 @@ func likeContainsArgs(pattern string, fields []string) []any {
 	return args
 }
 
-// sampleTokenPrefixMatchable reports whether term could prefix-match any stored
-// search token. Tokens are maximal runs of ASCII [a-z0-9] (sampleSearchTokens),
-// so a term whose lowercased form carries any other byte (non-ASCII, punctuation,
-// space, a LIKE wildcard, etc.) cannot be the prefix of a token and matches
-// nothing. The search entry points short-circuit such terms to an empty result,
-// which also guarantees bytePrefixSuccessor only ever sees [a-z0-9] input (all
-// bytes < 0x80) and so can never fabricate an invalid-UTF-8 upper bound from a
-// non-ASCII term. An empty term is not matchable (the length guard already
-// rejects terms shorter than searchTermMinLength).
-func sampleTokenPrefixMatchable(term string) bool {
-	lower := strings.ToLower(term)
-	if lower == "" {
-		return false
-	}
-
-	for index := range len(lower) {
-		b := lower[index]
-		if (b < 'a' || b > 'z') && (b < '0' || b > '9') {
-			return false
-		}
-	}
-
-	return true
-}
-
 // sampleTokenPrefixQuery picks the token-prefix range SQL and the leading bound
 // arguments for term: the half-open `token >= ? AND token < ?` form bound to
 // [lower, upper) for any matchable term, or the open-ended `token >= ?` form
@@ -225,17 +367,16 @@ func sampleTokenPrefixQuery(term, rangeSQL, openSQL string) (string, []any) {
 // selects exactly the tokens starting with term, for the (token, id_sample_tmp)
 // index range seek (sampleTokenPrefixRangeClause). Tokens are stored lowercased
 // (sampleSearchTokens lowercases ASCII letters), so lower is the lowercased term
-// - the same lowercasing the previous LIKE prefix used - and upper is its prefix
-// successor (bytePrefixSuccessor).
+// and upper is its prefix successor (bytePrefixSuccessor).
 //
-// The search entry points only reach this for a matchable term
-// (sampleTokenPrefixMatchable), i.e. one whose lowercased form is entirely
-// `[a-z0-9]` (all bytes < 0x80), for which a finite successor always exists, so
-// hasUpper is true on every search path. The open-ended fallback (hasUpper
-// false, caller uses sampleTokenPrefixLowerClause) is retained only as a defence
-// for the degenerate empty/all-0xFF prefix and is unreachable from
-// SearchSamples/CountSampleSearch, which short-circuit a non-matchable term to an
-// empty result before computing any bound.
+// The search entry points only reach this with a query token produced by
+// sampleSearchTokens (via sampleSearchQueryBounds), i.e. a non-empty all-`[a-z0-9]`
+// string (every byte < 0x80), for which a finite successor always exists, so
+// hasUpper is true on every search path. The open-ended fallback (hasUpper false,
+// caller uses sampleTokenPrefixLowerClause) is retained only as a defence for the
+// degenerate empty/all-0xFF prefix and is unreachable from
+// SearchSamples/CountSampleSearch, which tokenise the term first and never form a
+// bound for a non-token term (it yields no query tokens at all).
 func sampleTokenPrefixBounds(term string) (lower, upper string, hasUpper bool) {
 	lower = strings.ToLower(term)
 	upper, hasUpper = bytePrefixSuccessor(lower)
@@ -252,12 +393,13 @@ func sampleTokenPrefixBounds(term string) (lower, upper string, hasUpper bool) {
 // a lower-bound-only predicate. ok is true for any prefix with at least one byte
 // below 0xFF.
 //
-// From the search entry points prefix is always an all-`[a-z0-9]` lowercased
-// term (sampleTokenPrefixMatchable gates non-matchable terms out upstream), so
-// every byte is well below 0xFF: the successor increments one ASCII byte and is
-// always valid UTF-8. Incrementing the last raw byte of a multi-byte (non-ASCII)
-// rune could otherwise yield invalid UTF-8 (e.g. "ÿ" -> C3 BF -> C3 C0), which is
-// why such terms never reach here.
+// From the search entry points prefix is always a query token emitted by
+// sampleSearchTokens (an all-`[a-z0-9]` lowercased word; non-token terms yield no
+// query tokens and never reach here), so every byte is well below 0xFF: the
+// successor increments one ASCII byte and is always valid UTF-8. Incrementing the
+// last raw byte of a multi-byte (non-ASCII) rune could otherwise yield invalid
+// UTF-8 (e.g. "ÿ" -> C3 BF -> C3 C0), which is why such terms are tokenised away
+// before any bound is formed.
 func bytePrefixSuccessor(prefix string) (successor string, ok bool) {
 	bytes := []byte(prefix)
 	for len(bytes) > 0 {
@@ -306,24 +448,32 @@ func (c *Client) SearchStudies(ctx context.Context, term string, limit, offset i
 	return []Study{}, nil
 }
 
-// SearchSamples returns samples having a word in name, supplier_name,
-// common_name, or donor_id that starts with term (case-insensitive word-prefix
-// match), ordered by id_sample_tmp for stable pagination, with their
-// library/study fan-out populated as the Find* sample methods do. So "musculus"
-// and "mus" both match "Mus Musculus"; a substring inside a single word (e.g.
-// "usculus") does not. Terms shorter than searchTermMinLength return an empty
-// slice without querying. A never-synced cache returns an empty slice joined
-// with ErrCacheNeverSynced and ErrNotFound.
+// SearchSamples returns samples having, for EVERY word of term, a word in name,
+// supplier_name, common_name, or donor_id that starts with it (case-insensitive
+// word-prefix AND), ordered by id_sample_tmp for stable pagination, with their
+// library/study fan-out populated as the Find* sample methods do. term is
+// tokenised exactly as stored values are (sampleSearchTokens: maximal [a-z0-9]
+// runs), so "musculus" and "mus" both match "Mus Musculus"; "Mus muscu" matches
+// it via both word-prefixes; "Hek_R1" matches a sample with both a "hek*" and an
+// "r1*" word; a substring inside a single word (e.g. "usculus") does not. A term
+// shorter than searchTermMinLength, or one that tokenises to nothing (e.g. "___"
+// or a non-ASCII-only term), returns an empty slice without querying. A
+// never-synced cache returns an empty slice joined with ErrCacheNeverSynced and
+// ErrNotFound.
 //
-// The matching id_sample_tmps are paged out of the (token, id_sample_tmp) prefix
-// index in index order (no global DISTINCT+id sort), then the sample rows are
-// fetched by id and hydrated. The same path serves both dialects; the prefix
-// index has no FTS dependency, so it works on MariaDB and MySQL < 8 too.
+// A single query token is paged out of the (token, id_sample_tmp) prefix index in
+// index order (the fast single-range seek). Several query tokens are matched by
+// the OR-union of their per-token ranges grouped by sample with a per-token MAX
+// HAVING (the logical AND). Either way the matching id_sample_tmps are fetched by
+// id and hydrated. The same path serves both dialects; the prefix index has no
+// FTS dependency, so it works on MariaDB and MySQL < 8 too.
 func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset int) ([]Sample, error) {
 	if len(term) < searchTermMinLength {
 		return []Sample{}, nil
 	}
-	if !sampleTokenPrefixMatchable(term) {
+
+	bounds := sampleSearchQueryBounds(term)
+	if len(bounds) == 0 {
 		return []Sample{}, nil
 	}
 
@@ -332,7 +482,7 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
 		return nil, fmt.Errorf("mlwh: cache reader not configured")
 	}
 
-	ids, err := c.sampleSearchTokenPage(ctx, db, term, limit, offset)
+	ids, err := c.sampleSearchPage(ctx, db, bounds, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -356,17 +506,17 @@ func (c *Client) SearchSamples(ctx context.Context, term string, limit, offset i
 }
 
 // sampleSearchTokenPage returns the distinct id_sample_tmps for the page
-// [offset, offset+limit) of samples matching the token prefix, in
+// [offset, offset+limit) of samples matching the single token prefix, in
 // (token, id_sample_tmp) index order. A sample can own several prefix-matching
 // tokens, so the index-ordered token stream is de-duplicated app-side; it
 // over-fetches token rows in bounded pages and loops only when duplicates
 // exhaust an over-fetch, keeping the common case to one index-ordered read.
-func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, term string, limit, offset int) ([]int64, error) {
+func (c *Client) sampleSearchTokenPage(ctx context.Context, db *sql.DB, token string, limit, offset int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
-	query, bounds := sampleTokenPrefixQuery(term, sampleSearchTokenPageSQL, sampleSearchTokenPageOpenSQL)
+	query, bounds := sampleTokenPrefixQuery(token, sampleSearchTokenPageSQL, sampleSearchTokenPageOpenSQL)
 
 	need := offset + limit
 	seen := make(map[int64]struct{}, need)
@@ -471,24 +621,26 @@ func (c *Client) CountStudySearch(ctx context.Context, term string) (Count, erro
 }
 
 // CountSampleSearch counts the distinct samples SearchSamples would match for
-// term: an exact COUNT(DISTINCT id_sample_tmp) over the token-prefix range,
-// bounded by sampleSearchCountCap. For normal result sets the count is exact and
-// equals len(SearchSamples(term, all)); for a very common token the scan stops
-// at the cap and reports the cap as a floor (e.g. a token matching ~1.9M rows
-// counts to the cap in ~80ms instead of scanning every row). Terms shorter than
-// searchTermMinLength return Count{Count: 0} without querying. A never-synced
-// cache returns Count{} with an error satisfying both ErrCacheNeverSynced and
-// ErrNotFound, mirroring SearchSamples.
+// term: an exact COUNT of the distinct id_sample_tmps having a word-prefix match
+// for EVERY query token (term tokenised as SearchSamples tokenises it), bounded by
+// sampleSearchCountCap. For normal result sets the count is exact and equals
+// len(SearchSamples(term, all)); for a very common match set the scan stops at the
+// cap and reports the cap as a floor (e.g. a token matching ~1.9M rows counts to
+// the cap in ~80ms instead of scanning every row). A term shorter than
+// searchTermMinLength, or one that tokenises to nothing, returns Count{Count: 0}
+// without querying. A never-synced cache returns Count{} with an error satisfying
+// both ErrCacheNeverSynced and ErrNotFound, mirroring SearchSamples.
 func (c *Client) CountSampleSearch(ctx context.Context, term string) (Count, error) {
 	if len(term) < searchTermMinLength {
 		return Count{Count: 0}, nil
 	}
-	if !sampleTokenPrefixMatchable(term) {
+
+	bounds := sampleSearchQueryBounds(term)
+	if len(bounds) == 0 {
 		return Count{Count: 0}, nil
 	}
 
-	query, bounds := sampleTokenPrefixQuery(term, sampleSearchCountSQL, sampleSearchCountOpenSQL)
-	args := append(append([]any(nil), bounds...), sampleSearchCountCap)
+	query, args := sampleSearchCountQuery(bounds)
 
 	count, err := c.queryCount(ctx, query, "count sample search", args...)
 	if err != nil {
