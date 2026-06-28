@@ -48,8 +48,8 @@ registered/not_tracked/`["ONT"]`; multi-platform most-advanced
 delivered). Depends on Phases 1 and 2 (reuses the delivered/availability
 SQL).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.2: F2 - within-sequencing run-status timeline (P5) [parallel with 4.1]
 
@@ -72,8 +72,8 @@ empty last duration and derived current; current is latest-date not
 description passes through; invalid run ErrNotFound). Depends on Phase 1
 (`iseq_run_status`/dict mirrors + per-platform status mirrors).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -110,8 +110,8 @@ unknown name ErrNotFound, never-synced
 ErrCacheNeverSynced+ErrNotFound). Depends on 4.1 (baseline) and 4.2
 (`RunStatusTimeline`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.4: F4 - study status-breakdown rollup (P3) [parallel with 4.3]
 
@@ -133,8 +133,8 @@ distinct; ONT counted in registered with distinct still summing to
 total; never-synced/unknown/empty cascade). Depends on 4.1 (baseline
 derivation) and Phase 2 (availability ladder SQL).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items

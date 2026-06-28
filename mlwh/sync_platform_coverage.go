@@ -67,6 +67,14 @@ type productMetricsMirrorSpec struct {
 	mirrorColumns []string
 	sourceQuery   func(state syncStateRecord) (string, []any)
 	qcColumns     int
+	// hasIDRun reports whether the mirror carries an id_run column (the NPG run
+	// id), populated from the source product-metrics row. Elembio and Ultimagen
+	// product-metrics carry id_run (it is their within-sequencing run-status join
+	// key, eseq_product_metrics.id_run -> eseq_run_lane_metrics.id_run and
+	// useq_product_metrics.id_run -> useq_run_metrics.id_run); PacBio does not (it
+	// joins its run-well metrics via id_pac_bio_rw_metrics_tmp instead), so its
+	// spec leaves this false.
+	hasIDRun bool
 }
 
 var pacBioProductMetricsMirrorColumns = []string{
@@ -81,6 +89,7 @@ var pacBioProductMetricsMirrorColumns = []string{
 var eseqProductMetricsMirrorColumns = []string{
 	"id_eseq_product",
 	"id_eseq_flowcell_tmp",
+	"id_run",
 	"id_sample_tmp",
 	"id_study_lims",
 	"qc",
@@ -92,6 +101,7 @@ var eseqProductMetricsMirrorColumns = []string{
 var useqProductMetricsMirrorColumns = []string{
 	"id_useq_product",
 	"id_useq_wafer_tmp",
+	"id_run",
 	"id_sample_tmp",
 	"id_study_lims",
 	"qc",
@@ -121,8 +131,9 @@ func eseqProductMetricsSpec() productMetricsMirrorSpec {
 		keyColumn:     "id_eseq_product",
 		mirrorColumns: eseqProductMetricsMirrorColumns,
 		qcColumns:     3,
+		hasIDRun:      true,
 		sourceQuery: func(state syncStateRecord) (string, []any) {
-			return `SELECT epm.id_eseq_product, epm.id_eseq_flowcell_tmp, efc.id_sample_tmp, study.id_study_lims, epm.qc, epm.qc_seq, epm.qc_lib, epm.last_changed FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE epm.last_changed >= ? ORDER BY epm.last_changed, epm.id_eseq_pr_metrics_tmp`,
+			return `SELECT epm.id_eseq_product, epm.id_eseq_flowcell_tmp, epm.id_run, efc.id_sample_tmp, study.id_study_lims, epm.qc, epm.qc_seq, epm.qc_lib, epm.last_changed FROM eseq_product_metrics epm INNER JOIN eseq_flowcell efc ON efc.id_eseq_flowcell_tmp = epm.id_eseq_flowcell_tmp INNER JOIN study ON study.id_study_tmp = efc.id_study_tmp AND study.id_lims = 'SQSCP' WHERE epm.last_changed >= ? ORDER BY epm.last_changed, epm.id_eseq_pr_metrics_tmp`,
 				[]any{formatSyncTime(state.HighWater)}
 		},
 	}
@@ -135,8 +146,9 @@ func useqProductMetricsSpec() productMetricsMirrorSpec {
 		keyColumn:     "id_useq_product",
 		mirrorColumns: useqProductMetricsMirrorColumns,
 		qcColumns:     3,
+		hasIDRun:      true,
 		sourceQuery: func(state syncStateRecord) (string, []any) {
-			return `SELECT upm.id_useq_product, upm.id_useq_wafer_tmp, uw.id_sample_tmp, study.id_study_lims, upm.qc, upm.qc_seq, upm.qc_lib, upm.last_changed FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP' WHERE upm.last_changed >= ? ORDER BY upm.last_changed, upm.id_useq_pr_metrics_tmp`,
+			return `SELECT upm.id_useq_product, upm.id_useq_wafer_tmp, upm.id_run, uw.id_sample_tmp, study.id_study_lims, upm.qc, upm.qc_seq, upm.qc_lib, upm.last_changed FROM useq_product_metrics upm INNER JOIN useq_wafer uw ON uw.id_useq_wafer_tmp = upm.id_useq_wafer_tmp INNER JOIN study ON study.id_study_tmp = uw.id_study_tmp AND study.id_lims = 'SQSCP' WHERE upm.last_changed >= ? ORDER BY upm.last_changed, upm.id_useq_pr_metrics_tmp`,
 				[]any{formatSyncTime(state.HighWater)}
 		},
 	}
@@ -148,6 +160,7 @@ func useqProductMetricsSpec() productMetricsMirrorSpec {
 type productMetricsMirrorSyncRow struct {
 	ProductID      string
 	LinkID         int64
+	IDRun          int64
 	IDSampleTmp    int64
 	IDStudyLims    string
 	QC             sql.NullInt64
@@ -155,6 +168,7 @@ type productMetricsMirrorSyncRow struct {
 	QCLib          sql.NullInt64
 	LastUpdated    time.Time
 	hasSecondaryQC bool
+	hasIDRun       bool
 }
 
 func syncPacBioProductMetricsTable(ctx context.Context, cache Cache, source Querier, state syncStateRecord) (SyncReport, bool, error) {
@@ -240,8 +254,13 @@ func syncProductMetricsMirrorTable(ctx context.Context, cache Cache, source Quer
 func scanProductMetricsMirrorSyncRow(rows *sql.Rows, spec productMetricsMirrorSpec) (productMetricsMirrorSyncRow, error) {
 	var row productMetricsMirrorSyncRow
 	row.hasSecondaryQC = spec.qcColumns == 3
+	row.hasIDRun = spec.hasIDRun
 	var lastChanged any
-	targets := []any{&row.ProductID, &row.LinkID, &row.IDSampleTmp, &row.IDStudyLims, &row.QC}
+	targets := []any{&row.ProductID, &row.LinkID}
+	if row.hasIDRun {
+		targets = append(targets, &row.IDRun)
+	}
+	targets = append(targets, &row.IDSampleTmp, &row.IDStudyLims, &row.QC)
 	if row.hasSecondaryQC {
 		targets = append(targets, &row.QCSeq, &row.QCLib)
 	}
@@ -261,7 +280,11 @@ func scanProductMetricsMirrorSyncRow(rows *sql.Rows, spec productMetricsMirrorSp
 }
 
 func productMetricsMirrorRowArgs(row productMetricsMirrorSyncRow) []any {
-	args := []any{row.ProductID, row.LinkID, row.IDSampleTmp, row.IDStudyLims, row.QC}
+	args := []any{row.ProductID, row.LinkID}
+	if row.hasIDRun {
+		args = append(args, row.IDRun)
+	}
+	args = append(args, row.IDSampleTmp, row.IDStudyLims, row.QC)
 	if row.hasSecondaryQC {
 		args = append(args, row.QCSeq, row.QCLib)
 	}
@@ -644,17 +667,17 @@ func eseqRunLaneMetricsWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableEseqRunLaneMetrics,
 		mirrorTable:   "eseq_run_lane_metrics_mirror",
-		mirrorColumns: []string{"id_eseq_rlm_tmp", "run_name", "lane", "run_complete", "last_updated"},
-		sourceQuery:   `SELECT id_eseq_rlm_tmp, run_name, lane, run_complete, last_changed FROM eseq_run_lane_metrics ORDER BY id_eseq_rlm_tmp`,
+		mirrorColumns: []string{"id_eseq_rlm_tmp", "id_run", "run_name", "lane", "run_started", "run_complete", "last_updated"},
+		sourceQuery:   `SELECT id_eseq_rlm_tmp, id_run, run_name, lane, run_started, run_complete, last_changed FROM eseq_run_lane_metrics ORDER BY id_eseq_rlm_tmp`,
 		scan: func(rows *sql.Rows) ([]any, error) {
-			var idTmp, lane int64
+			var idTmp, idRun, lane int64
 			var runName string
-			var runComplete, lastChanged sql.NullString
-			if err := rows.Scan(&idTmp, &runName, &lane, &runComplete, &lastChanged); err != nil {
+			var runStarted, runComplete, lastChanged sql.NullString
+			if err := rows.Scan(&idTmp, &idRun, &runName, &lane, &runStarted, &runComplete, &lastChanged); err != nil {
 				return nil, fmt.Errorf("mlwh: scan eseq_run_lane_metrics sync row: %w", err)
 			}
 
-			return []any{idTmp, runName, lane, runComplete, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idTmp, idRun, runName, lane, runStarted, runComplete, normalizeWholesaleTime(lastChanged)}, nil
 		},
 	}
 }
@@ -663,17 +686,17 @@ func useqRunMetricsWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableUseqRunMetrics,
 		mirrorTable:   "useq_run_metrics_mirror",
-		mirrorColumns: []string{"id_useq_run_metrics_tmp", "run_name", "run_status", "run_start", "run_complete", "last_updated"},
-		sourceQuery:   `SELECT id_useq_run_metrics_tmp, run_name, run_status, run_start, run_complete, last_changed FROM useq_run_metrics ORDER BY id_useq_run_metrics_tmp`,
+		mirrorColumns: []string{"id_useq_run_metrics_tmp", "id_run", "run_name", "run_status", "run_start", "run_complete", "last_updated"},
+		sourceQuery:   `SELECT id_useq_run_metrics_tmp, id_run, run_name, run_status, run_start, run_complete, last_changed FROM useq_run_metrics ORDER BY id_useq_run_metrics_tmp`,
 		scan: func(rows *sql.Rows) ([]any, error) {
-			var idTmp int64
+			var idTmp, idRun int64
 			var runName string
 			var runStatus, runStart, runComplete, lastChanged sql.NullString
-			if err := rows.Scan(&idTmp, &runName, &runStatus, &runStart, &runComplete, &lastChanged); err != nil {
+			if err := rows.Scan(&idTmp, &idRun, &runName, &runStatus, &runStart, &runComplete, &lastChanged); err != nil {
 				return nil, fmt.Errorf("mlwh: scan useq_run_metrics sync row: %w", err)
 			}
 
-			return []any{idTmp, runName, runStatus, runStart, runComplete, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idTmp, idRun, runName, runStatus, runStart, runComplete, normalizeWholesaleTime(lastChanged)}, nil
 		},
 	}
 }

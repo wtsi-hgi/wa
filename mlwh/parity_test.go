@@ -108,6 +108,9 @@ func parityQueryCases() []parityQueryCase {
 		{name: "RunsForStudy", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunsForStudy(ctx, parityStudyID, 100, 0) }},
 		{name: "StudyOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudyOverview(ctx, parityStudyID) }},
 		{name: "RunOverview", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunOverview(ctx, parityRunID) }},
+		{name: "RunStatus", call: func(ctx context.Context, q Queryer) (any, error) { return q.RunStatus(ctx, parityRunID) }},
+		{name: "SampleProgress", call: func(ctx context.Context, q Queryer) (any, error) { return q.SampleProgress(ctx, paritySampleName) }},
+		{name: "StatusBreakdown", call: func(ctx context.Context, q Queryer) (any, error) { return q.StatusBreakdown(ctx, parityStudyID) }},
 		{name: "SamplesWithData", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.SamplesWithData(ctx, parityStudyID, 100, 0)
 		}},

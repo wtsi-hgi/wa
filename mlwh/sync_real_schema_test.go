@@ -649,6 +649,7 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 	mustExec(t, db, `CREATE TABLE eseq_product_metrics (
 		id_eseq_pr_metrics_tmp INTEGER PRIMARY KEY,
 		id_eseq_flowcell_tmp   INTEGER,
+		id_run                 INTEGER NOT NULL,
 		id_eseq_product        TEXT NOT NULL,
 		qc                     INTEGER,
 		qc_seq                 INTEGER,
@@ -665,6 +666,7 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 	mustExec(t, db, `CREATE TABLE useq_product_metrics (
 		id_useq_pr_metrics_tmp INTEGER PRIMARY KEY,
 		id_useq_wafer_tmp      INTEGER,
+		id_run                 INTEGER NOT NULL,
 		id_useq_product        TEXT NOT NULL,
 		qc                     INTEGER,
 		qc_seq                 INTEGER,
@@ -725,14 +727,17 @@ func openRealMLWHSchemaSource(t *testing.T) *sql.DB {
 
 	mustExec(t, db, `CREATE TABLE eseq_run_lane_metrics (
 		id_eseq_rlm_tmp INTEGER PRIMARY KEY,
+		id_run          INTEGER NOT NULL,
 		run_name        TEXT NOT NULL,
 		lane            INTEGER NOT NULL,
+		run_started     TEXT,
 		run_complete    TEXT,
 		last_changed    TEXT
 	)`)
 
 	mustExec(t, db, `CREATE TABLE useq_run_metrics (
 		id_useq_run_metrics_tmp INTEGER PRIMARY KEY,
+		id_run                  INTEGER NOT NULL,
 		run_name                TEXT NOT NULL,
 		run_status              TEXT,
 		run_start               TEXT,

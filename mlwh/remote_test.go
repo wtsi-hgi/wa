@@ -290,6 +290,34 @@ func TestRemoteClientCountSamplesWithDataRoundTrips(t *testing.T) {
 	})
 }
 
+// G1 acceptance test 3 (StatusBreakdown): the new endpoint round-trips through the
+// RemoteClient to the same typed StatusBreakdown the local Client returns, over the
+// path /study/:id/status-breakdown.
+func TestRemoteClientStatusBreakdownRoundTrips(t *testing.T) {
+	convey.Convey("Given a RemoteClient over a server returning a StatusBreakdown", t, func() {
+		requestURIs := make(chan string, 1)
+		expected := StatusBreakdown{
+			IDStudyLims:          "S4",
+			Distinct:             PhaseLadder{WithData: 3, SequencedNoData: 1, Registered: 1},
+			PerPlatform:          []PlatformPhaseLadder{{Platform: "Illumina", Ladder: PhaseLadder{WithData: 3, SequencedNoData: 1}}},
+			WithDetailedTimeline: 2,
+			CacheSyncedAt:        "2026-06-27T07:00:00Z",
+		}
+		server := newRemoteClientJSONServerForTest(requestURIs, expected)
+		defer server.Close()
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when StatusBreakdown runs, then the path is /study/S4/status-breakdown and it returns the server's StatusBreakdown", func() {
+			breakdown, err := client.StatusBreakdown(context.Background(), "S4")
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(breakdown, convey.ShouldResemble, expected)
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/study/S4/status-breakdown")
+		})
+	})
+}
+
 func TestRemoteClientCallMatchesTypedResolveSample(t *testing.T) {
 	convey.Convey("Given a stub MLWH server returning a sample Match", t, func() {
 		requestURIs := make(chan string, 2)

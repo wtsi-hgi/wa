@@ -417,6 +417,33 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.RunOverview(c.Request.Context(), id)
 			writeMLWHResult(c, result, err)
 		}
+	case "RunStatus":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.RunStatus(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "SampleProgress":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.SampleProgress(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "StatusBreakdown":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.StatusBreakdown(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
 	case "SamplesWithData":
 		return func(c *gin.Context) {
 			id, pagination, ok := mlwhIDAndPagination(c)

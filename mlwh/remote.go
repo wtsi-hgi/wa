@@ -194,6 +194,26 @@ func (rc *RemoteClient) RunOverview(ctx context.Context, idRun string) (RunOverv
 	return remoteCall[RunOverview](rc, ctx, "RunOverview", []string{idRun}, nil)
 }
 
+// RunStatus returns a run's within-sequencing status timeline through the remote
+// server.
+func (rc *RemoteClient) RunStatus(ctx context.Context, idRun string) (RunStatusTimeline, error) {
+	return remoteCall[RunStatusTimeline](rc, ctx, "RunStatus", []string{idRun}, nil)
+}
+
+// SampleProgress returns a sample's unified progress (baseline, milestone
+// timeline and per-run status) through the remote server. id is the Sanger
+// sample name.
+func (rc *RemoteClient) SampleProgress(ctx context.Context, sangerName string) (SampleProgress, error) {
+	return remoteCall[SampleProgress](rc, ctx, "SampleProgress", []string{sangerName}, nil)
+}
+
+// StatusBreakdown returns a study's per-baseline-phase status breakdown (the
+// distinct and per-platform partitions, the detailed-timeline count and the
+// freshness) through the remote server. id is the LIMS study id.
+func (rc *RemoteClient) StatusBreakdown(ctx context.Context, studyLimsID string) (StatusBreakdown, error) {
+	return remoteCall[StatusBreakdown](rc, ctx, "StatusBreakdown", []string{studyLimsID}, nil)
+}
+
 // SamplesWithData lists a study's samples-with-data through the remote server.
 func (rc *RemoteClient) SamplesWithData(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleWithData, error) {
 	return remoteCall[[]SampleWithData](rc, ctx, "SamplesWithData", []string{studyLimsID}, remotePagination(limit, offset))

@@ -165,6 +165,126 @@ type RunOverview struct {
 	CacheSyncedAt       string     `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }
 
+// PhaseLadder is the mutually-exclusive baseline-phase ladder (spec F4, closed
+// enum) whose buckets sum per partition: with_data (samples with >=1 study-scoped
+// iRODS row), sequenced_no_data (samples with product-metrics in this study but
+// no iRODS rows), and registered (linked samples with no product-metrics,
+// including ONT).
+type PhaseLadder struct {
+	WithData        int `json:"with_data" doc:"samples with >=1 study-scoped iRODS row"`
+	SequencedNoData int `json:"sequenced_no_data" doc:"samples sequenced in this study but no iRODS rows"`
+	Registered      int `json:"registered" doc:"linked samples with no product-metrics (incl. ONT)"`
+}
+
+// PlatformPhaseLadder is one platform's slice of the per-platform partition: the
+// canonical platform name and the PhaseLadder whose buckets sum to that
+// platform's distinct sample count in the study.
+type PlatformPhaseLadder struct {
+	Platform string      `json:"platform" doc:"platform name"`
+	Ladder   PhaseLadder `json:"ladder" doc:"buckets summing to this platform's sample count"`
+}
+
+// StatusBreakdown is the per-baseline-phase study rollup (spec F4, layer P3),
+// answering "how many of my samples are at each phase" without a per-sample
+// fan-out. It carries TWO denominators. Distinct is the distinct-sample
+// partition over the study's library_samples-linked samples: a sample lands in
+// exactly one ladder bucket by its most-advanced phase (precedence with_data >
+// sequenced_no_data > registered), so the three buckets sum to samples_total.
+// PerPlatform is the per-platform partition: a sample's true state shows under
+// EACH of its platforms, so within a platform the buckets sum to that platform's
+// sample count but the grand total across platforms may EXCEED samples_total (a
+// multi-platform sample is counted under every platform it spans). Samples with
+// no product-metrics, including ONT, are registered (never folded into a separate
+// without-data negative). WithDetailedTimeline is the count of the study's
+// samples also present in the seq_ops_tracking_per_sample mirror. CacheSyncedAt
+// is the oldest last_run across the feeding tables, distinct from any data
+// timestamp (the freshness caveat).
+type StatusBreakdown struct {
+	IDStudyLims          string                `json:"id_study_lims" doc:"LIMS study id"`
+	Distinct             PhaseLadder           `json:"distinct" doc:"distinct-sample partition, sums to samples_total"`
+	PerPlatform          []PlatformPhaseLadder `json:"per_platform" doc:"per-platform partition; grand total may exceed samples_total"`
+	WithDetailedTimeline int                   `json:"with_detailed_timeline" doc:"samples also present in the tracking mirror"`
+	CacheSyncedAt        string                `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
+}
+
+// RunStatusEvent is one within-sequencing status transition (spec F2). It uses
+// entered_at (a run-lifecycle phase is ENTERED), deliberately distinct from a
+// milestone's reached_at though the value semantics are identical. Phase is the
+// native status description passed through verbatim (open vocabulary). Duration
+// is the ISO8601-style delta to the NEXT event and is empty for the current/open
+// (last) event.
+type RunStatusEvent struct {
+	Phase     string `json:"phase" doc:"native status description (open vocabulary)"`
+	EnteredAt string `json:"entered_at" doc:"when the phase was entered (UTC RFC3339)"`
+	Duration  string `json:"duration,omitempty" doc:"duration to the next event; empty for the current/open phase"`
+}
+
+// RunStatusTimeline is one run's normalized within-sequencing status timeline
+// (spec F2/P5). It is the SINGLE shared type returned by GET /run/:id/status AND
+// embedded per run in SampleProgress (spec F3), so the two surfaces never drift:
+// both build it via the same normalizer. Events are ordered by entered_at and
+// preserved faithfully (recurrences, on-hold, cancelled and stopped-early are
+// kept, not deduplicated, reordered or forced monotonic); Current is DERIVED from
+// the latest entered_at (never the source iscurrent). The phase vocabulary is an
+// OPEN dict/source pass-through (NOT a frozen list): an unknown native status
+// flows through verbatim. ONT, which has no within-sequencing status, yields
+// empty Events with NotTracked set rather than a false zero (HARD REQ 11).
+type RunStatusTimeline struct {
+	IDRun      int              `json:"id_run" doc:"Illumina NPG run id (0/empty for non-Illumina)"`
+	Platform   string           `json:"platform" doc:"platform of the run"`
+	Events     []RunStatusEvent `json:"events" doc:"ordered status events; empty for ONT"`
+	Current    string           `json:"current" doc:"phase of the event with the latest entered_at (derived, not source iscurrent)"`
+	NotTracked string           `json:"not_tracked,omitempty" doc:"set to a reason when status is not tracked for the platform"`
+}
+
+// Milestone is one wet-lab/sequencing milestone on the sample-progress timeline
+// (spec F3). Name is one of the 9 canonical milestone names (a closed enum,
+// reported verbatim). It uses reached_at -- a milestone is REACHED -- deliberately
+// distinct in name from a run lifecycle event's entered_at though the value
+// semantics are identical (RFC3339 + ISO8601 duration-to-next + open-phase
+// handling). DurationToNext is the ISO8601-style span to the NEXT reached
+// milestone and is empty for the open/current milestone (the latest reached one,
+// whose successor is NULL).
+type Milestone struct {
+	Name           string `json:"name" doc:"one of the 9 milestone names"`
+	ReachedAt      string `json:"reached_at" doc:"when the milestone was reached (UTC RFC3339)"`
+	DurationToNext string `json:"duration_to_next,omitempty" doc:"ISO8601-style duration to the next reached milestone; empty for the open current phase"`
+}
+
+// SampleProgress is the unified sample-progress response (spec F3, layers
+// P2/P4/P6). It is resolved by Sanger sample name and ALWAYS carries the
+// always-derivable P0 baseline (Sample / Platforms / BaselinePhase / QC /
+// DeliveredAt; see sampleBaseline), so it resolves for every sample on every
+// platform with no "works for this sample, not that one" cliff. When the sample
+// is present in seq_ops_tracking_per_sample_mirror it additionally carries the
+// ordered Milestones (each reached_at + duration_to_next) and CurrentMilestone
+// (the latest reached milestone whose successor is NULL) with
+// DetailedTimeline=true; otherwise DetailedTimeline is false with a non-empty
+// TimelineReason -- less detail, NEVER an error. Runs embeds one shared
+// RunStatusTimeline per run of the sample (Illumina via the same builder as GET
+// /run/:id/status so the embedded and standalone forms never drift; PacBio from
+// its own well-metrics status/dates). ONT has no within-sequencing runs, so Runs
+// is empty and QC is not_tracked from the baseline (HARD REQ 11), never a false
+// zero. The overall QC is authoritative (the per-sample roll-up fail > pending >
+// pass; not_tracked when the sample has no products). CacheSyncedAt is the oldest
+// last_run across the feeding tables (tracking + iseq_run_status + product-metrics
+// + iRODS), distinct from any data timestamp. The open/current milestone returns
+// its reached_at timestamp for the caller to compute elapsed (no server "now"
+// subtraction).
+type SampleProgress struct {
+	Sample           Sample              `json:"sample" doc:"the sample"`
+	Platforms        []string            `json:"platforms" doc:"detected platforms; [\"ONT\"] for ONT, empty when registered only"`
+	BaselinePhase    string              `json:"baseline_phase" doc:"registered|sequenced|delivered (most-advanced across platforms)"`
+	QC               string              `json:"qc" doc:"pass|fail|pending|not_tracked (overall verdict, rolled up)"`
+	DeliveredAt      string              `json:"delivered_at" doc:"earliest iRODS created (UTC RFC3339), empty if none"`
+	DetailedTimeline bool                `json:"detailed_timeline" doc:"true when the sample is in the tracking mirror"`
+	TimelineReason   string              `json:"timeline_reason,omitempty" doc:"why detailed_timeline is false (e.g. not in tracking window)"`
+	Milestones       []Milestone         `json:"milestones,omitempty" doc:"ordered milestone timeline when detailed_timeline"`
+	CurrentMilestone string              `json:"current_milestone,omitempty" doc:"latest reached milestone whose successor is NULL"`
+	Runs             []RunStatusTimeline `json:"runs,omitempty" doc:"per-run within-sequencing status timeline"`
+	CacheSyncedAt    string              `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
+}
+
 // SampleDetail groups a sample with its enrichment graph neighbours.
 type SampleDetail struct {
 	Sample     Sample      `json:"sample" doc:"the sample these details describe"`

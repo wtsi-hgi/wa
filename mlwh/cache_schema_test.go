@@ -53,11 +53,11 @@ import (
 var a4MirrorTables = map[string][]string{
 	"pac_bio_product_metrics_mirror":     {"id_sample_tmp", "id_study_lims"},
 	"pac_bio_run_well_metrics_mirror":    {"pac_bio_run_name,well_label"},
-	"eseq_product_metrics_mirror":        {"id_sample_tmp", "id_study_lims"},
+	"eseq_product_metrics_mirror":        {"id_run", "id_sample_tmp", "id_study_lims"},
 	"eseq_run_mirror":                    {"run_name"},
-	"eseq_run_lane_metrics_mirror":       {"run_name,lane"},
-	"useq_product_metrics_mirror":        {"id_sample_tmp", "id_study_lims", "id_useq_wafer_tmp"},
-	"useq_run_metrics_mirror":            {"run_name"},
+	"eseq_run_lane_metrics_mirror":       {"id_run", "run_name,lane"},
+	"useq_product_metrics_mirror":        {"id_run", "id_sample_tmp", "id_study_lims", "id_useq_wafer_tmp"},
+	"useq_run_metrics_mirror":            {"id_run", "run_name"},
 	"oseq_flowcell_mirror":               {"id_sample_tmp", "id_study_lims"},
 	"iseq_run_status_mirror":             {"id_run", "id_run,date"},
 	"iseq_run_status_dict_mirror":        nil,
@@ -1019,13 +1019,14 @@ func insertReadBackEseqProductMetricsMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO eseq_product_metrics_mirror(id_eseq_product, id_eseq_flowcell_tmp, id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		"eseq-prod-1", int64(21), int64(102), "6568", nil, nil, nil, "2026-06-26T10:00:00Z",
+		`INSERT INTO eseq_product_metrics_mirror(id_eseq_product, id_eseq_flowcell_tmp, id_run, id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"eseq-prod-1", int64(21), int64(7700), int64(102), "6568", nil, nil, nil, "2026-06-26T10:00:00Z",
 	); err != nil {
 		return err
 	}
 
 	var (
+		idRun       int64
 		idSampleTmp int64
 		idStudyLims string
 		qc          sql.NullInt64
@@ -1034,12 +1035,13 @@ func insertReadBackEseqProductMetricsMirror(t *testing.T, db *sql.DB) error {
 	)
 
 	if err := db.QueryRow(
-		`SELECT id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib FROM eseq_product_metrics_mirror WHERE id_eseq_product = ?`,
+		`SELECT id_run, id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib FROM eseq_product_metrics_mirror WHERE id_eseq_product = ?`,
 		"eseq-prod-1",
-	).Scan(&idSampleTmp, &idStudyLims, &qc, &qcSeq, &qcLib); err != nil {
+	).Scan(&idRun, &idSampleTmp, &idStudyLims, &qc, &qcSeq, &qcLib); err != nil {
 		return err
 	}
 
+	convey.So(idRun, convey.ShouldEqual, 7700)
 	convey.So(idSampleTmp, convey.ShouldEqual, 102)
 	convey.So(idStudyLims, convey.ShouldEqual, "6568")
 	convey.So(qc.Valid, convey.ShouldBeFalse)
@@ -1083,27 +1085,31 @@ func insertReadBackEseqRunLaneMetricsMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO eseq_run_lane_metrics_mirror(id_eseq_rlm_tmp, run_name, lane, run_complete, last_updated) VALUES (?, ?, ?, ?, ?)`,
-		int64(41), "eseq-run-A", int64(1), "2026-06-21T00:00:00Z", "2026-06-26T10:00:00Z",
+		`INSERT INTO eseq_run_lane_metrics_mirror(id_eseq_rlm_tmp, id_run, run_name, lane, run_started, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		int64(41), int64(7700), "eseq-run-A", int64(1), "2026-06-20T00:00:00Z", "2026-06-21T00:00:00Z", "2026-06-26T10:00:00Z",
 	); err != nil {
 		return err
 	}
 
 	var (
+		idRun       int64
 		runName     string
 		lane        int64
+		runStarted  sql.NullString
 		runComplete sql.NullString
 	)
 
 	if err := db.QueryRow(
-		`SELECT run_name, lane, run_complete FROM eseq_run_lane_metrics_mirror WHERE id_eseq_rlm_tmp = ?`,
+		`SELECT id_run, run_name, lane, run_started, run_complete FROM eseq_run_lane_metrics_mirror WHERE id_eseq_rlm_tmp = ?`,
 		int64(41),
-	).Scan(&runName, &lane, &runComplete); err != nil {
+	).Scan(&idRun, &runName, &lane, &runStarted, &runComplete); err != nil {
 		return err
 	}
 
+	convey.So(idRun, convey.ShouldEqual, 7700)
 	convey.So(runName, convey.ShouldEqual, "eseq-run-A")
 	convey.So(lane, convey.ShouldEqual, 1)
+	convey.So(runStarted.String, convey.ShouldEqual, "2026-06-20T00:00:00Z")
 	convey.So(runComplete.String, convey.ShouldEqual, "2026-06-21T00:00:00Z")
 
 	return nil
@@ -1113,27 +1119,29 @@ func insertReadBackUseqProductMetricsMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO useq_product_metrics_mirror(id_useq_product, id_useq_wafer_tmp, id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		"useq-prod-1", int64(51), int64(103), "6568", nil, nil, nil, "2026-06-26T10:00:00Z",
+		`INSERT INTO useq_product_metrics_mirror(id_useq_product, id_useq_wafer_tmp, id_run, id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"useq-prod-1", int64(51), int64(7800), int64(103), "6568", nil, nil, nil, "2026-06-26T10:00:00Z",
 	); err != nil {
 		return err
 	}
 
 	var (
 		idUseqWaferTmp int64
+		idRun          int64
 		idSampleTmp    int64
 		idStudyLims    string
 		qc             sql.NullInt64
 	)
 
 	if err := db.QueryRow(
-		`SELECT id_useq_wafer_tmp, id_sample_tmp, id_study_lims, qc FROM useq_product_metrics_mirror WHERE id_useq_product = ?`,
+		`SELECT id_useq_wafer_tmp, id_run, id_sample_tmp, id_study_lims, qc FROM useq_product_metrics_mirror WHERE id_useq_product = ?`,
 		"useq-prod-1",
-	).Scan(&idUseqWaferTmp, &idSampleTmp, &idStudyLims, &qc); err != nil {
+	).Scan(&idUseqWaferTmp, &idRun, &idSampleTmp, &idStudyLims, &qc); err != nil {
 		return err
 	}
 
 	convey.So(idUseqWaferTmp, convey.ShouldEqual, 51)
+	convey.So(idRun, convey.ShouldEqual, 7800)
 	convey.So(idSampleTmp, convey.ShouldEqual, 103)
 	convey.So(idStudyLims, convey.ShouldEqual, "6568")
 	convey.So(qc.Valid, convey.ShouldBeFalse)
@@ -1145,24 +1153,26 @@ func insertReadBackUseqRunMetricsMirror(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO useq_run_metrics_mirror(id_useq_run_metrics_tmp, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
-		int64(61), "useq-run-A", "Running", "2026-06-20T00:00:00Z", nil, "2026-06-26T10:00:00Z",
+		`INSERT INTO useq_run_metrics_mirror(id_useq_run_metrics_tmp, id_run, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		int64(61), int64(7800), "useq-run-A", "Running", "2026-06-20T00:00:00Z", nil, "2026-06-26T10:00:00Z",
 	); err != nil {
 		return err
 	}
 
 	var (
+		idRun     int64
 		runName   string
 		runStatus sql.NullString
 	)
 
 	if err := db.QueryRow(
-		`SELECT run_name, run_status FROM useq_run_metrics_mirror WHERE id_useq_run_metrics_tmp = ?`,
+		`SELECT id_run, run_name, run_status FROM useq_run_metrics_mirror WHERE id_useq_run_metrics_tmp = ?`,
 		int64(61),
-	).Scan(&runName, &runStatus); err != nil {
+	).Scan(&idRun, &runName, &runStatus); err != nil {
 		return err
 	}
 
+	convey.So(idRun, convey.ShouldEqual, 7800)
 	convey.So(runName, convey.ShouldEqual, "useq-run-A")
 	convey.So(runStatus.String, convey.ShouldEqual, "Running")
 

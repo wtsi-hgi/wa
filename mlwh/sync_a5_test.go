@@ -284,7 +284,7 @@ func TestClientSyncEseqProductMetricsIncrementalAdvancesOnSecondSync(t *testing.
 		base := time.Date(2026, time.June, 15, 9, 0, 0, 0, time.UTC)
 		seedRealMLWHStudyRow(t, source, 75, "SQSCP", "7501", "uuid-study-75", "Study Elembio", "acc-st-75", base)
 		seedRealMLWHEseqFlowcellRow(t, source, 9500, 951, 75)
-		seedRealMLWHEseqProductMetricRow(t, source, "eseq-metric-1", 9500, sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{}, sql.NullInt64{Int64: 0, Valid: true}, base)
+		seedRealMLWHEseqProductMetricRow(t, source, "eseq-metric-1", 9500, 7501, sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{}, sql.NullInt64{Int64: 0, Valid: true}, base)
 
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
@@ -297,7 +297,7 @@ func TestClientSyncEseqProductMetricsIncrementalAdvancesOnSecondSync(t *testing.
 
 		// A new row arrives after the first sync's high_water.
 		newer := base.Add(time.Hour)
-		seedRealMLWHEseqProductMetricRow(t, source, "eseq-metric-2", 9500, sql.NullInt64{Int64: 0, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, newer)
+		seedRealMLWHEseqProductMetricRow(t, source, "eseq-metric-2", 9500, 7502, sql.NullInt64{Int64: 0, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, sql.NullInt64{Int64: 1, Valid: true}, newer)
 
 		secondReports, err := syncSelectedTablesForTest(context.Background(), client, syncTableEseqProductMetrics)
 
@@ -308,9 +308,12 @@ func TestClientSyncEseqProductMetricsIncrementalAdvancesOnSecondSync(t *testing.
 
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM eseq_product_metrics_mirror`), convey.ShouldEqual, 2)
 
-			// Row 1: qc=1 (pass), qc_seq NULL (pending), qc_lib=0 (fail) preserved.
+			// Row 1: qc=1 (pass), qc_seq NULL (pending), qc_lib=0 (fail) preserved, and
+			// the source id_run (the eseq_run_lane_metrics join key) mirrors faithfully.
+			var idRun int64
 			var qc, qcSeq, qcLib sql.NullInt64
-			convey.So(cache.DB().QueryRow(`SELECT qc, qc_seq, qc_lib FROM eseq_product_metrics_mirror WHERE id_eseq_product = ?`, "eseq-metric-1").Scan(&qc, &qcSeq, &qcLib), convey.ShouldBeNil)
+			convey.So(cache.DB().QueryRow(`SELECT id_run, qc, qc_seq, qc_lib FROM eseq_product_metrics_mirror WHERE id_eseq_product = ?`, "eseq-metric-1").Scan(&idRun, &qc, &qcSeq, &qcLib), convey.ShouldBeNil)
+			convey.So(idRun, convey.ShouldEqual, 7501)
 			convey.So(qcString(qc), convey.ShouldEqual, "pass")
 			convey.So(qcSeq.Valid, convey.ShouldBeFalse)
 			convey.So(qcString(qcSeq), convey.ShouldEqual, "pending")
@@ -332,12 +335,12 @@ func seedRealMLWHEseqFlowcellRow(t *testing.T, db *sql.DB, idEseqFlowcellTmp, id
 	}
 }
 
-func seedRealMLWHEseqProductMetricRow(t *testing.T, db *sql.DB, idProduct string, idFlowcellTmp int64, qc, qcSeq, qcLib sql.NullInt64, lastChanged time.Time) {
+func seedRealMLWHEseqProductMetricRow(t *testing.T, db *sql.DB, idProduct string, idFlowcellTmp, idRun int64, qc, qcSeq, qcLib sql.NullInt64, lastChanged time.Time) {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO eseq_product_metrics(id_eseq_pr_metrics_tmp, id_eseq_flowcell_tmp, id_eseq_product, qc, qc_seq, qc_lib, last_changed) VALUES ((SELECT COALESCE(MAX(id_eseq_pr_metrics_tmp), 0) + 1 FROM eseq_product_metrics), ?, ?, ?, ?, ?, ?)`,
-		idFlowcellTmp, idProduct, qc, qcSeq, qcLib, formatSyncTime(lastChanged),
+		`INSERT INTO eseq_product_metrics(id_eseq_pr_metrics_tmp, id_eseq_flowcell_tmp, id_run, id_eseq_product, qc, qc_seq, qc_lib, last_changed) VALUES ((SELECT COALESCE(MAX(id_eseq_pr_metrics_tmp), 0) + 1 FROM eseq_product_metrics), ?, ?, ?, ?, ?, ?, ?)`,
+		idFlowcellTmp, idRun, idProduct, qc, qcSeq, qcLib, formatSyncTime(lastChanged),
 	); err != nil {
 		t.Fatalf("seedRealMLWHEseqProductMetricRow: %v", err)
 	}

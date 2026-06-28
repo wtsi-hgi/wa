@@ -163,6 +163,18 @@ func (q *serverFakeQueryer) RunOverview(_ context.Context, _ string) (RunOvervie
 	panic("unexpected RunOverview call")
 }
 
+func (q *serverFakeQueryer) RunStatus(_ context.Context, _ string) (RunStatusTimeline, error) {
+	panic("unexpected RunStatus call")
+}
+
+func (q *serverFakeQueryer) SampleProgress(_ context.Context, _ string) (SampleProgress, error) {
+	panic("unexpected SampleProgress call")
+}
+
+func (q *serverFakeQueryer) StatusBreakdown(_ context.Context, _ string) (StatusBreakdown, error) {
+	panic("unexpected StatusBreakdown call")
+}
+
 func (q *serverFakeQueryer) SamplesWithData(_ context.Context, _ string, _ int, _ int) ([]SampleWithData, error) {
 	panic("unexpected SamplesWithData call")
 }
