@@ -605,3 +605,127 @@ Each item below **will be built**; settle only the implementation:
    per-platform joins from it; ignore only its *cosmetic* enrichment labels (RunID /
    instrument / pipeline) and its HGI faculty-sponsor / 2-year filters (gst-specific,
    not wanted here).
+
+## Notes
+
+These notes settle open design decisions and override anything above that
+conflicts. They are authoritative.
+
+### Sizing metadata (M)
+
+- Carry list-sizing metadata as **response headers** (e.g. `X-Total-Count` and a
+  next-offset header) on the existing paginated list endpoints. Response **bodies
+  stay bare JSON arrays** — do not introduce an envelope. This keeps the current
+  bare-slice contract, its tests, the OpenAPI schemas, and the MCP surface
+  unchanged.
+- The `RemoteClient` must **expose these header values** to its callers so the Go
+  consumer (the downstream MCP) can actually read `total` / `next_offset` from a
+  page response.
+- The new `/count` counterparts (N) remain the **canonical** way to size a list
+  before transfer.
+
+### QC representation — pass / fail / pending (P0)
+
+- Make the mirrored QC columns (`qc`, `qc_seq`, `qc_lib`) **nullable** in **both**
+  dialects and **stop coercing NULL→0**, so *pending* (NULL) is distinct from
+  *fail* (0) and *pass* (1). Expose QC in responses as a **string** taking the
+  values `pass` / `fail` / `pending`.
+- Apply this to **every platform's product-metrics mirror** that carries QC
+  (Illumina, PacBio, Elembio, Ultimagen), not just Illumina.
+- Fold the QC backfill into the **same full resync** that deliverable R already
+  requires (one resync covers `created`, `platform`, and the now-nullable QC).
+- Each relevant endpoint `Description` must **pin the exact QC string mapping** and
+  state **which qc field is authoritative** (`qc` vs `qc_seq` vs `qc_lib`) for the
+  reported value.
+
+### Freshness surface (F, P6)
+
+- **Add every new mirror** to the freshness surface (`freshnessSyncTables`) so
+  `GET /freshness` reports them too, and update the `len == 5` count test to the
+  new total.
+- `high_water` becomes an **RFC3339-or-empty** value, per table by sync mode: the
+  **refresh time** for full-refresh tables (the tracking table), the **latest
+  `last_changed`** for incremental tables, and **empty** for ascending-id tables
+  (e.g. `iseq_run_status`).
+- `last_run` is the **universal** freshness signal across all sync modes.
+- Each availability / recency / progress response's freshness caveat must reflect
+  the **oldest `last_run` across all the tables that fed that response**.
+
+### Study aggregate endpoints (S, O1, P3)
+
+- Collapse (S) and (O1) into a **single `GET /study/:id/overview`** endpoint;
+  commit its field set now (availability with/without-data counts, the
+  `samples_sequenced_no_data` figure, data-object / run / library counts, the
+  library types present, the sequencing date range, the recency fields, and the
+  freshness caveat). There is **no** separate `sequencing-summary` endpoint and
+  **no** single mega-endpoint that also absorbs the phase rollup.
+- Keep **`GET /study/:id/status-breakdown`** as a **separate** endpoint for the P0
+  pipeline-phase rollup.
+
+### "Sequenced but not yet in iRODS" figure (overview + P3)
+
+- Report **`samples_sequenced_no_data`** both as a field on
+  `GET /study/:id/overview` and as a distinct P0 bucket in
+  `GET /study/:id/status-breakdown`. Scope it to *this study* via the
+  product-metrics `id_study_lims`, the same way iRODS data is scoped by
+  `seq_product_irods_locations_mirror.id_study_lims`.
+- Commit a **shared, mutually-exclusive phase ladder** —
+  **`with_data` / `sequenced_no_data` / `registered`** — whose buckets **sum to the
+  study's total per platform**.
+- Samples with **no product-metrics** (e.g. ONT) are reported as **`registered`
+  plus "not tracked for delivery"** — they are **never folded into
+  without-data**, so no platform produces a false negative.
+
+### Phase-entry field names (P2, P5)
+
+- The milestone timeline uses **`reached_at`**; the run-status timeline uses
+  **`entered_at`** — deliberately **distinct** names (a milestone is *reached*; a
+  run lifecycle phase is *entered*), with the rationale stated in both
+  `Description`s.
+- Keep the **value semantics identical** across both layers — an RFC3339
+  timestamp, a "duration to next" value, and the same open/current-phase handling
+  (return the timestamp for the caller to compute elapsed) — so **only the field
+  name differs** between the two timelines.
+
+### RemoteClient sizing-header exposure (M)
+
+- Add **typed** `Page[T]{Items, Total, NextOffset}` paged-variant methods
+  (following the existing `Count` envelope precedent), parsing the `X-Total-Count`
+  / next-offset headers in the single remote header path. Leave the existing
+  bare-slice methods unchanged.
+- Do **not** expose sizing only via the dynamic `Call` dispatcher (the MCP's list
+  tools are typed, not dynamic), and do **not** use a stateful "last page meta"
+  accessor (racy under the MCP's concurrent shared client).
+
+### samples-with-data / samples-without-data membership + platform (C, E, N)
+
+- `samples-with-data` = distinct samples with **≥1 study-scoped iRODS row**;
+  `samples-without-data` = the study's linked samples **minus** those (so it
+  includes `sequenced_no_data`, `registered`, **and** ONT). Membership is
+  **anchored on `library_samples`**, and `with_data + without_data =
+  samples_total`. The `/count` counterparts use the **same** membership.
+- Add `platform` at the **row level via an enriched list-row type** (NOT the
+  shared `Sample` struct), as **`platforms []string`** — **empty** for
+  `registered` (no products), **`["ONT"]`** for ONT — so HARD REQ 11 holds (no
+  bare "no data"; every negative is platform-qualified).
+
+### Run overview (O2) + run-status (P5) shaping
+
+- `GET /run/:id/status` returns a **single canonical, normalized** timeline type —
+  `{phase, entered_at, duration}` entries — with **all platforms mapped into it**
+  and ONT yielding empty / "not tracked". `GET /sample/:id/progress` **embeds this
+  same type per run** (one timeline per the sample's runs), so there is no drift.
+- O2 is a **separate small `RunOverview`** aggregate (samples / studies /
+  data-objects on the run, sequencing date range, freshness) — **not** folded into
+  the heavyweight `/run/:id/detail`, and **not** bloating the bare `Run` struct.
+- State the **run-id space** the status endpoint accepts (which run identifier
+  `:id` denotes).
+
+### Authoritative QC value (P0, progress)
+
+- The **overall `qc`** column is authoritative on **every** platform —
+  `NULL → pending`, `0 → fail`, `1 → pass` — which sidesteps any `qc_seq` /
+  `qc_lib` combination. Document it as the **overall verdict**.
+- Pin the **per-product → per-sample roll-up** in the `Description`: a sample is
+  **fail if any of its products fails, else pending if any is pending, else
+  pass**.
