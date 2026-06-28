@@ -202,6 +202,7 @@ var sampleMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "sample_mirror_supplier_name_idx", Column: "supplier_name"},
 	{Name: "sample_mirror_accession_number_idx", Column: "accession_number"},
 	{Name: "sample_mirror_donor_id_idx", Column: "donor_id"},
+	{Name: "sample_mirror_common_name_idx", Column: "common_name"},
 	{Name: "sample_mirror_last_updated_idx", Column: "last_updated"},
 }
 

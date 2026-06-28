@@ -1259,6 +1259,61 @@ func TestStoreSearchSuggestions(t *testing.T) {
 	})
 }
 
+func TestStoreRegisteredMetadataValues(t *testing.T) {
+	convey.Convey("Given registered metadata, registeredMetadataValues returns only the registered subset", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-registered-values-one", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaIDStudyLimsKey: "6568"}
+		}))
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-registered-values-two", func(reg *Registration) {
+			reg.Metadata = map[string]string{LegacySeqmetaStudyIDKey: "7000"}
+		}))
+
+		registered, err := store.registeredMetadataValues(ctx, combinedStudyMetaKeys, []string{"6568", "7000", "9999"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(registered, convey.ShouldResemble, map[string]struct{}{
+			"6568": {},
+			"7000": {},
+		})
+	})
+
+	convey.Convey("Given a candidate that differs only in case, registeredMetadataValues still reports it as registered", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-registered-values-case", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "Hek_R1"}
+		}))
+
+		registered, err := store.registeredMetadataValues(ctx, combinedSampleMetaKeys, []string{"hek_r1"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(registered, convey.ShouldContainKey, "hek_r1")
+	})
+
+	convey.Convey("Given no matching candidates, registeredMetadataValues returns an empty result", t, func() {
+		store := newSQLiteStoreForTest(t)
+		ctx := context.Background()
+
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-registered-values-none", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaIDStudyLimsKey: "6568"}
+		}))
+
+		registered, err := store.registeredMetadataValues(ctx, combinedStudyMetaKeys, []string{"9999"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(registered, convey.ShouldBeEmpty)
+
+		registered, err = store.registeredMetadataValues(ctx, combinedStudyMetaKeys, []string{})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(registered, convey.ShouldBeEmpty)
+	})
+}
+
 func suggestionValuesByFieldForTest(suggestions []SearchSuggestion) map[string][]string {
 	valuesByField := map[string][]string{}
 
@@ -1271,6 +1326,26 @@ func suggestionValuesByFieldForTest(suggestions []SearchSuggestion) map[string][
 	}
 
 	return valuesByField
+}
+
+func suggestionByFieldValueForTest(suggestions []SearchSuggestion, fieldKey, value string) *SearchSuggestion {
+	for i := range suggestions {
+		if suggestions[i].FieldKey == fieldKey && suggestions[i].Value == value {
+			return &suggestions[i]
+		}
+	}
+
+	return nil
+}
+
+func suggestionIndexForFieldValueForTest(suggestions []SearchSuggestion, fieldKey, value string) int {
+	for i := range suggestions {
+		if suggestions[i].FieldKey == fieldKey && suggestions[i].Value == value {
+			return i
+		}
+	}
+
+	return -1
 }
 
 func searchSuggestionArgsForTest(query string, limit int) []driver.Value {

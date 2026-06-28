@@ -1238,7 +1238,7 @@ try {
   // would clear the data. The sample_search_token prefix index is one of the
   // ordinary schema tables above; it is populated from sample_mirror below.
   db.exec("DELETE FROM schema_version");
-  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [6]);
+  run("INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", [7]);
 
   for (const tableName of ["sample", "study", "iseq_flowcell", "iseq_product_metrics", "seq_product_irods_locations"]) {
     run(

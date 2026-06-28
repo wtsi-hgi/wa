@@ -42,10 +42,18 @@ const mlwhServerFetchAllLimit = 1_000_000
 // contract: a bounded default page with a hard maximum.
 const mlwhSearchDefaultLimit = 100
 
-// mlwhSearchMaxLimit is the maximum limit the substring-search endpoints
-// accept. A larger limit is rejected with the bad_request 400 envelope rather
-// than clamped, so callers cannot request unbounded search pages.
-const mlwhSearchMaxLimit = 1000
+// SearchMaxLimit is the maximum limit the substring-search endpoints accept. A
+// larger limit is rejected with the bad_request 400 envelope rather than
+// clamped, so callers cannot request unbounded search pages. It is exported so a
+// client over-fetching search results (such as the results server's suggestion
+// scan) can derive its own cap from this ceiling instead of duplicating the
+// literal.
+const SearchMaxLimit = 1000
+
+// mlwhSearchMaxLimit is the unexported alias of SearchMaxLimit retained for
+// internal references; it shares SearchMaxLimit's single source of truth so the
+// enforced ceiling and the public symbol can never drift.
+const mlwhSearchMaxLimit = SearchMaxLimit
 
 // Server serves the MLWH read/query REST API.
 type Server struct {

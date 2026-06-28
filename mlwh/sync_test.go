@@ -2947,6 +2947,7 @@ func driverValuesForTest(args []any) []driver.Value {
 func sampleMirrorSecondaryIndexNames() []string {
 	return []string{
 		"sample_mirror_accession_number_idx",
+		"sample_mirror_common_name_idx",
 		"sample_mirror_donor_id_idx",
 		"sample_mirror_id_sample_lims_idx",
 		"sample_mirror_last_updated_idx",
@@ -2976,6 +2977,7 @@ func seqProductIRODSLocationsMirrorSecondaryIndexNames() []string {
 func sampleMirrorSecondaryIndexColumns() map[string][]string {
 	return map[string][]string{
 		"sample_mirror_accession_number_idx": {"accession_number"},
+		"sample_mirror_common_name_idx":      {"common_name"},
 		"sample_mirror_donor_id_idx":         {"donor_id"},
 		"sample_mirror_id_sample_lims_idx":   {"id_sample_lims"},
 		"sample_mirror_last_updated_idx":     {"last_updated"},

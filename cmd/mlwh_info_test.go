@@ -569,13 +569,16 @@ func TestMLWHInfoCommandNotFound(t *testing.T) {
 }
 
 func TestMLWHInfoCommandSurfacesEmptyCacheHint(t *testing.T) {
-	convey.Convey("Given a never-synced cache error, when wa mlwh info runs, then stderr contains the actionable sync hint", t, func() {
+	convey.Convey("Given a never-synced cache error in local operator mode (WA_MLWH_DSN set, no server), when wa mlwh info runs, then stderr contains the actionable sync hint", t, func() {
 		stub := &stubMLWHInfoClient{
 			classify: func(_ context.Context, _ string) (mlwh.Match, error) {
 				return mlwh.Match{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
 			},
 		}
 
+		// withStubMLWHInfoClient sets WA_MLWH_DSN and clears WA_MLWH_SERVER_URL,
+		// i.e. local operator mode: the only mode where the user can sync, so the
+		// sync hint is still correct here.
 		withStubMLWHInfoClient(t, stub)
 
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
@@ -602,4 +605,99 @@ func withStubMLWHInfoClient(t *testing.T, stub *stubMLWHInfoClient) {
 	openMLWHInfoClient = func(context.Context, mlwh.Config) (mlwhInfoClient, error) {
 		return stub, nil
 	}
+}
+
+func TestMLWHInfoCommandServerModeNeverSyncedDoesNotMentionSync(t *testing.T) {
+	convey.Convey("Given a never-synced result via the MLWH server (WA_MLWH_SERVER_URL set, no WA_MLWH_DSN), when wa mlwh info runs, then it gives a neutral cache-unavailable message with no sync instruction", t, func() {
+		stub := &stubMLWHInfoClient{
+			resolveStudy: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrCacheNeverSynced
+			},
+		}
+
+		withServerModeMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "not available")
+	})
+}
+
+func TestMLWHInfoCommandServerModeNotFoundDoesNotMentionSync(t *testing.T) {
+	convey.Convey("Given a not-found result via the MLWH server (WA_MLWH_SERVER_URL set, no WA_MLWH_DSN), when wa mlwh info runs, then it reports no match with no sync instruction", t, func() {
+		stub := &stubMLWHInfoClient{
+			classify: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, mlwh.ErrNotFound
+			},
+		}
+
+		withServerModeMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "no-such-thing"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "no-such-thing")
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "no match")
+		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+	})
+}
+
+// withServerModeMLWHInfoClient wires the command to talk to an MLWH server (the
+// normal end-user path): WA_MLWH_SERVER_URL is set and WA_MLWH_DSN is empty, so
+// the user cannot sync. The remote-client opener is stubbed to return stub.
+func withServerModeMLWHInfoClient(t *testing.T, stub *stubMLWHInfoClient) {
+	t.Helper()
+	t.Setenv("WA_MLWH_SERVER_URL", "http://mlwh.example:8091")
+	t.Setenv("WA_MLWH_DSN", "")
+	t.Setenv("WA_MLWH_PASSWORD", "")
+	t.Setenv("WA_MLWH_CACHE_PATH", "")
+	t.Setenv("WA_MLWH_CACHE_PASSWORD", "")
+	t.Setenv("WA_MLWH_BACKEND_URL", "")
+	t.Setenv("WA_ENV", "")
+	t.Setenv("WA_TEST_SEQMETA_PORT", "")
+	t.Setenv("WA_DEV_SEQMETA_PORT", "")
+	t.Setenv("WA_PROD_SEQMETA_PORT", "")
+
+	original := openMLWHInfoRemoteClient
+	t.Cleanup(func() { openMLWHInfoRemoteClient = original })
+
+	openMLWHInfoRemoteClient = func(context.Context, mlwh.RemoteConfig) (mlwhInfoClient, error) {
+		return stub, nil
+	}
+}
+
+func TestMLWHInfoCommandCacheOnlyNeverSyncedDoesNotMentionSync(t *testing.T) {
+	convey.Convey("Given a never-synced cache in local cache-only mode (WA_MLWH_CACHE_PATH set, no WA_MLWH_DSN, no server), when wa mlwh info runs, then it gives a neutral cache-unavailable message with no sync instruction", t, func() {
+		stub := &stubMLWHInfoClient{
+			classify: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{}, errors.Join(mlwh.ErrNotFound, mlwh.ErrCacheNeverSynced)
+			},
+		}
+
+		t.Setenv("WA_MLWH_DSN", "")
+		t.Setenv("WA_MLWH_SERVER_URL", "")
+		t.Setenv("WA_MLWH_BACKEND_URL", "")
+		t.Setenv("WA_MLWH_CACHE_PATH", "/tmp/does-not-matter-cache.sqlite")
+		t.Setenv("WA_ENV", "")
+		t.Setenv("WA_TEST_SEQMETA_PORT", "")
+		t.Setenv("WA_DEV_SEQMETA_PORT", "")
+		t.Setenv("WA_PROD_SEQMETA_PORT", "")
+
+		original := openMLWHInfoClient
+		t.Cleanup(func() { openMLWHInfoClient = original })
+
+		openMLWHInfoClient = func(context.Context, mlwh.Config) (mlwhInfoClient, error) {
+			return stub, nil
+		}
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
+
+		convey.So(err, convey.ShouldNotBeNil)
+		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrCacheNeverSynced.Error())
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "not available")
+	})
 }

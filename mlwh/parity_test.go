@@ -396,6 +396,39 @@ func TestRemoteClientClientParityNeverSyncedSentinelB4(t *testing.T) {
 	})
 }
 
+// TestServerOverNeverSyncedCacheStaysReadOnly locks in the guarantee that a user
+// going via the MLWH server (the only "via the server" path is the RemoteClient
+// over NewServer/RegisterRoutes) cannot trigger a sync: the read/query REST
+// surface (Queryer) has no Sync operation, so driving the server can never
+// populate a never-synced cache. The server surfaces the never-synced state on a
+// read, and the cache remains never-synced afterwards — observed through both the
+// remote freshness read and the local cache directly.
+func TestServerOverNeverSyncedCacheStaysReadOnly(t *testing.T) {
+	convey.Convey("Given a never-synced OpenCacheOnly SQLite cache served over HTTP and driven only through a RemoteClient", t, func() {
+		local := newParityClient(t)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		_, remoteErr := remote.SamplesForStudy(context.Background(), parityStudyID, 100, 0)
+
+		convey.Convey("then the server surfaces the never-synced state on a read", func() {
+			convey.So(errors.Is(remoteErr, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(remoteErr, ErrNotFound), convey.ShouldBeTrue)
+		})
+
+		convey.Convey("and the cache remains never-synced afterwards (the server never populated/synced it)", func() {
+			remoteFreshness, remoteFreshErr := remote.Freshness(context.Background())
+			localFreshness, localFreshErr := local.Freshness(context.Background())
+
+			convey.So(remoteFreshErr, convey.ShouldBeNil)
+			convey.So(localFreshErr, convey.ShouldBeNil)
+			convey.So(everSyncedCount(remoteFreshness), convey.ShouldEqual, 0)
+			convey.So(everSyncedCount(localFreshness), convey.ShouldEqual, 0)
+		})
+	})
+}
+
 func TestRemoteClientClientParityNotFoundSentinelB4(t *testing.T) {
 	convey.Convey("B4.3: Given a synced OpenCacheOnly SQLite cache without a requested study", t, func() {
 		local := newParityClient(t)
@@ -465,6 +498,19 @@ func newParityHTTPServerForTest(queryer Queryer) *httptest.Server {
 	NewServer(queryer).RegisterRoutes(router, nil)
 
 	return httptest.NewServer(router)
+}
+
+// everSyncedCount returns how many tables in freshness report ever_synced=true; it
+// is 0 for a never-synced cache.
+func everSyncedCount(freshness Freshness) int {
+	count := 0
+	for _, table := range freshness.Tables {
+		if table.EverSynced {
+			count++
+		}
+	}
+
+	return count
 }
 
 // queryerMethodCount returns the number of methods declared on the Queryer

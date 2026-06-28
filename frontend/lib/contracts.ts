@@ -46,6 +46,7 @@ export type SearchResult = z.input<typeof searchResultSchema>;
 export const searchSuggestionSchema = z.object({
     field_key: z.string(),
     value: z.string(),
+    label: z.string().optional(),
 });
 export type SearchSuggestion = z.infer<typeof searchSuggestionSchema>;
 

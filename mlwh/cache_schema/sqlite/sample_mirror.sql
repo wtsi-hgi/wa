@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS sample_mirror (
 	sanger_sample_id  TEXT    NOT NULL COLLATE NOCASE,
 	supplier_name     TEXT    NOT NULL COLLATE NOCASE,
 	accession_number  TEXT    NOT NULL COLLATE NOCASE,
-	donor_id          TEXT    NOT NULL,
+	donor_id          TEXT    NOT NULL COLLATE NOCASE,
 	taxon_id          INTEGER NOT NULL,
-	common_name       TEXT    NOT NULL,
+	common_name       TEXT    NOT NULL COLLATE NOCASE,
 	description       TEXT    NOT NULL,
 	last_updated      TEXT    NOT NULL
 );
@@ -34,6 +34,9 @@ CREATE INDEX IF NOT EXISTS sample_mirror_accession_number_idx
 
 CREATE INDEX IF NOT EXISTS sample_mirror_donor_id_idx
 	ON sample_mirror(donor_id);
+
+CREATE INDEX IF NOT EXISTS sample_mirror_common_name_idx
+	ON sample_mirror(common_name);
 
 CREATE INDEX IF NOT EXISTS sample_mirror_last_updated_idx
 	ON sample_mirror(last_updated);

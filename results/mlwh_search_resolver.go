@@ -54,6 +54,14 @@ type mlwhSampleNameResolver interface {
 	ResolveSampleName(context.Context, string) (mlwh.Match, error)
 }
 
+// mlwhSubstringSearcher is the optional client capability that runs the mlwh
+// substring/word-prefix searches added to the mlwh package. Both the in-process
+// Client and the RemoteClient satisfy it.
+type mlwhSubstringSearcher interface {
+	SearchStudies(ctx context.Context, term string, limit, offset int) ([]mlwh.Study, error)
+	SearchSamples(ctx context.Context, term string, limit, offset int) ([]mlwh.Sample, error)
+}
+
 type mlwhSearchResolvedValues struct {
 	samples []string
 	runs    []string
@@ -167,6 +175,38 @@ func (r *MLWHSearchResolver) ResolveSampleName(ctx context.Context, raw string) 
 	}
 
 	return resolver.ResolveSampleName(ctx, raw)
+}
+
+// SearchStudies delegates substring study search to the configured MLWH client
+// when it supports it, returning an empty slice otherwise.
+func (r *MLWHSearchResolver) SearchStudies(ctx context.Context, term string, limit, offset int) ([]mlwh.Study, error) {
+	searcher, ok := r.substringSearcher()
+	if !ok {
+		return []mlwh.Study{}, nil
+	}
+
+	return searcher.SearchStudies(ctx, term, limit, offset)
+}
+
+// SearchSamples delegates word-prefix sample search to the configured MLWH client
+// when it supports it, returning an empty slice otherwise.
+func (r *MLWHSearchResolver) SearchSamples(ctx context.Context, term string, limit, offset int) ([]mlwh.Sample, error) {
+	searcher, ok := r.substringSearcher()
+	if !ok {
+		return []mlwh.Sample{}, nil
+	}
+
+	return searcher.SearchSamples(ctx, term, limit, offset)
+}
+
+func (r *MLWHSearchResolver) substringSearcher() (mlwhSubstringSearcher, bool) {
+	if r == nil || r.client == nil {
+		return nil, false
+	}
+
+	searcher, ok := r.client.(mlwhSubstringSearcher)
+
+	return searcher, ok
 }
 
 // ResolveLibrary delegates registration library lookups to the configured MLWH client.

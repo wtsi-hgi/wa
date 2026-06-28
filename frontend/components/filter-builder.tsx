@@ -261,6 +261,10 @@ function isSearchSuggestion(value: unknown): value is SearchSuggestion {
 }
 
 function suggestionDisplayValue(suggestion: SearchSuggestion): string {
+    if (suggestion.label && suggestion.label.trim().length > 0) {
+        return suggestion.label;
+    }
+
     if (suggestion.field_key === "run_key") {
         return formatRegistrationUnique(suggestion.value);
     }
@@ -269,7 +273,15 @@ function suggestionDisplayValue(suggestion: SearchSuggestion): string {
 }
 
 function genericSuggestionIdentity(suggestion: SearchSuggestion): string {
-    return `${canonicalSearchFilterKey(suggestion.field_key)}:${suggestionDisplayValue(suggestion)}`;
+    const key = canonicalSearchFilterKey(suggestion.field_key);
+
+    // Labelled suggestions are deduped by their applied value so two matches that
+    // share a display label (e.g. an identical study title) both remain visible.
+    if (suggestion.label && suggestion.label.trim().length > 0) {
+        return `${key}:${suggestion.value}`;
+    }
+
+    return `${key}:${suggestionDisplayValue(suggestion)}`;
 }
 
 function getVisibleGenericSuggestions(
@@ -295,6 +307,13 @@ function getVisibleGenericSuggestions(
     };
 
     for (const suggestion of suggestions) {
+        // Labelled suggestions apply a value that differs from the typed term
+        // (e.g. a study LIMS id matched by a title word), so the typed term is
+        // not itself a valid filter value for that field.
+        if (suggestion.label && suggestion.label.trim().length > 0) {
+            continue;
+        }
+
         appendSuggestion({
             field_key: suggestion.field_key,
             value: trimmedValue,
