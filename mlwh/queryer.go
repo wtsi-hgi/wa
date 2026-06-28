@@ -48,6 +48,9 @@ type Queryer interface {
 	SamplesForLibraryType(ctx context.Context, pipelineIDLims string, limit, offset int) ([]Sample, error)
 	LibrariesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Library, error)
 	RunsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]Run, error)
+	StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error)
+	SamplesWithData(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleWithData, error)
+	SamplesWithoutData(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleWithData, error)
 	LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]Lane, error)
 	IRODSPathsForSample(ctx context.Context, sangerName string, limit, offset int) ([]IRODSPath, error)
 	IRODSPathsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]IRODSPath, error)
@@ -69,6 +72,7 @@ type Queryer interface {
 	CountSampleSearch(ctx context.Context, term string) (Count, error)
 	CountStudies(ctx context.Context) (Count, error)
 	CountSamplesForStudy(ctx context.Context, studyLimsID string) (Count, error)
+	CountSamplesWithData(ctx context.Context, studyLimsID string) (Count, error)
 
 	// Freshness (cache read; degrades gracefully on a never-synced cache).
 	Freshness(ctx context.Context) (Freshness, error)

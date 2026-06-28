@@ -827,8 +827,44 @@ func TestIRODSPathsForStudyReturnsJoinedPaths(t *testing.T) {
 
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(paths, convey.ShouldResemble, []IRODSPath{
-			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram"},
-			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram"},
+			{IDProduct: "5001", Collection: "/seq/5678", DataObject: "5678_1#1.cram", IRODSPath: "/seq/5678/5678_1#1.cram", IDSampleTmp: 91},
+			{IDProduct: "5002", Collection: "/seq/5678", DataObject: "5678_1#2.cram", IRODSPath: "/seq/5678/5678_1#2.cram", IDSampleTmp: 92},
+		})
+	})
+}
+
+// B3 acceptance test 5: each /study/:id/irods row carries the correct
+// id_sample_tmp and Sanger name, and grouping the rows by id_sample_tmp yields
+// exactly the three samples-with-data.
+func TestIRODSPathsForStudyCarrySampleIdentityGroupableBySample(t *testing.T) {
+	convey.Convey("Given study S1 with study-scoped iRODS rows across three samples", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB3AvailabilityScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		paths, err := client.IRODSPathsForStudy(context.Background(), "S1", availabilityFetchAll, 0)
+
+		convey.Convey("when the rows are fetched, then each carries its sample identity and they group to the 3 with-data samples", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(len(paths), convey.ShouldEqual, 6)
+
+			bySample := make(map[int64]string)
+			for _, path := range paths {
+				convey.So(path.IDSampleTmp, convey.ShouldBeGreaterThan, 0)
+				convey.So(path.Name, convey.ShouldNotBeEmpty)
+				bySample[path.IDSampleTmp] = path.Name
+			}
+
+			convey.So(len(bySample), convey.ShouldEqual, 3)
+			convey.So(bySample[b3IlluminaSampleA], convey.ShouldEqual, "sample-"+formatInt(b3IlluminaSampleA))
+			convey.So(bySample[b3IlluminaSampleB], convey.ShouldEqual, "sample-"+formatInt(b3IlluminaSampleB))
+			convey.So(bySample[b3PacBioSample], convey.ShouldEqual, "sample-"+formatInt(b3PacBioSample))
+
+			// The S2-scoped sample's data object must not appear under S1.
+			_, leaked := bySample[b3SharedWithS2]
+			convey.So(leaked, convey.ShouldBeFalse)
 		})
 	})
 }
@@ -1565,6 +1601,43 @@ func seedIRODSLocationMirrorRow(t *testing.T, db *sql.DB, idIseqProduct string, 
 
 	created := time.Date(2026, time.May, 6, 12, 11, 0, 0, time.UTC)
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, idIseqProduct, collection, fileName, idSampleTmp, idStudyLims, created, "illumina")
+}
+
+// seedPacBioProductMetricsMirrorRow inserts a PacBio product-metrics mirror row
+// linking a sample to a study, so the sample's canonical platform derives from
+// pac_bio_product_metrics membership (PacBio) per the availability fan-out.
+func seedPacBioProductMetricsMirrorRow(t *testing.T, db *sql.DB, idPacBioProduct string, idSampleTmp int64, idStudyLims string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO pac_bio_product_metrics_mirror(id_pac_bio_product, id_pac_bio_rw_metrics_tmp, id_sample_tmp, id_study_lims, qc, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		idPacBioProduct,
+		idSampleTmp,
+		idSampleTmp,
+		idStudyLims,
+		1,
+		formatSyncTime(time.Date(2026, time.May, 6, 12, 10, 0, 0, time.UTC)),
+	)
+	if err != nil {
+		t.Fatalf("seedPacBioProductMetricsMirrorRow(): %v", err)
+	}
+}
+
+// seedOseqFlowcellMirrorRow inserts an ONT identity row (oseq_flowcell_mirror)
+// linking a sample to a study. ONT carries no products, iRODS, or QC, so the
+// sample's platforms resolve to ["ONT"] from this membership alone.
+func seedOseqFlowcellMirrorRow(t *testing.T, db *sql.DB, idOseqFlowcellTmp, idSampleTmp int64, idStudyLims string) {
+	t.Helper()
+
+	_, err := db.Exec(
+		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
+		idOseqFlowcellTmp,
+		idSampleTmp,
+		idStudyLims,
+	)
+	if err != nil {
+		t.Fatalf("seedOseqFlowcellMirrorRow(): %v", err)
+	}
 }
 
 // seedIRODSLocationMirrorRowWithCreatedPlatform inserts an iRODS location mirror

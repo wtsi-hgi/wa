@@ -230,7 +230,7 @@ func TestRegistryCoversQueryer(t *testing.T) {
 		convey.Convey("when compared, then every Queryer method has exactly one Registry entry", func() {
 			missing, duplicate, unknown := registryCoverageIssues(queryer, registryMethods)
 
-			convey.So(Registry, convey.ShouldHaveLength, 40)
+			convey.So(Registry, convey.ShouldHaveLength, 44)
 			convey.So(missing, convey.ShouldBeEmpty)
 			convey.So(duplicate, convey.ShouldBeEmpty)
 			convey.So(unknown, convey.ShouldBeEmpty)
@@ -426,6 +426,16 @@ func TestRegistrySearchCountFreshnessEntries(t *testing.T) {
 			convey.So(isCount, convey.ShouldBeTrue)
 		})
 
+		convey.Convey("CountSamplesWithData is a non-paginated count endpoint keyed by study id", func() {
+			entry, ok := registryEntryByMethod("CountSamplesWithData")
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(entry.Path, convey.ShouldEqual, "/study/:id/samples-with-data/count")
+			convey.So(entry.PathParams, convey.ShouldResemble, []string{"id"})
+			convey.So(entry.Paginated, convey.ShouldBeFalse)
+			_, isCount := entry.NewResult().(*Count)
+			convey.So(isCount, convey.ShouldBeTrue)
+		})
+
 		convey.Convey("Freshness is a non-paginated freshness endpoint with no path params", func() {
 			entry, ok := registryEntryByMethod("Freshness")
 			convey.So(ok, convey.ShouldBeTrue)
@@ -523,6 +533,7 @@ func TestServedTypeFieldsCarryDocTags(t *testing.T) {
 		{"Sample", reflect.TypeOf(Sample{})},
 		{"Lane", reflect.TypeOf(Lane{})},
 		{"IRODSPath", reflect.TypeOf(IRODSPath{})},
+		{"SampleWithData", reflect.TypeOf(SampleWithData{})},
 		{"Library", reflect.TypeOf(Library{})},
 		{"Run", reflect.TypeOf(Run{})},
 		{"SampleDetail", reflect.TypeOf(SampleDetail{})},

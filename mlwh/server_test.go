@@ -65,6 +65,7 @@ type serverFakeQueryer struct {
 	countSampleSearchFunc    func(context.Context, string) (Count, error)
 	countStudiesFunc         func(context.Context) (Count, error)
 	countSamplesForStudyFunc func(context.Context, string) (Count, error)
+	countSamplesWithDataFunc func(context.Context, string) (Count, error)
 	freshnessFunc            func(context.Context) (Freshness, error)
 
 	samplesForStudyCall struct {
@@ -151,6 +152,18 @@ func (q *serverFakeQueryer) LibrariesForStudy(_ context.Context, _ string, _ int
 
 func (q *serverFakeQueryer) RunsForStudy(_ context.Context, _ string, _ int, _ int) ([]Run, error) {
 	panic("unexpected RunsForStudy call")
+}
+
+func (q *serverFakeQueryer) StudyOverview(_ context.Context, _ string) (StudyOverview, error) {
+	panic("unexpected StudyOverview call")
+}
+
+func (q *serverFakeQueryer) SamplesWithData(_ context.Context, _ string, _ int, _ int) ([]SampleWithData, error) {
+	panic("unexpected SamplesWithData call")
+}
+
+func (q *serverFakeQueryer) SamplesWithoutData(_ context.Context, _ string, _ int, _ int) ([]SampleWithData, error) {
+	panic("unexpected SamplesWithoutData call")
 }
 
 func (q *serverFakeQueryer) LanesForSample(_ context.Context, _ string, _ int, _ int) ([]Lane, error) {
@@ -257,6 +270,16 @@ func (q *serverFakeQueryer) CountSamplesForStudy(ctx context.Context, studyLimsI
 	q.countCall.studyLimsID = studyLimsID
 
 	return q.countSamplesForStudyFunc(ctx, studyLimsID)
+}
+
+func (q *serverFakeQueryer) CountSamplesWithData(ctx context.Context, studyLimsID string) (Count, error) {
+	if q.countSamplesWithDataFunc == nil {
+		panic("unexpected CountSamplesWithData call")
+	}
+
+	q.countCall.studyLimsID = studyLimsID
+
+	return q.countSamplesWithDataFunc(ctx, studyLimsID)
 }
 
 func (q *serverFakeQueryer) Freshness(ctx context.Context) (Freshness, error) {
@@ -654,6 +677,25 @@ func TestServerCountEndpointsF3(t *testing.T) {
 		var count Count
 		decodeMLWHJSONResponseForTest(t, response, &count)
 		convey.So(count, convey.ShouldResemble, Count{Count: 13})
+	})
+
+	convey.Convey("Given GET /study/6568/samples-with-data/count, then the queryer receives id=6568 and the body is {\"count\":N}", t, func() {
+		queryer := &serverFakeQueryer{
+			countSamplesWithDataFunc: func(_ context.Context, studyLimsID string) (Count, error) {
+				convey.So(studyLimsID, convey.ShouldEqual, "6568")
+
+				return Count{Count: 9}, nil
+			},
+		}
+
+		response := performMLWHRequestForTest(t, queryer, http.MethodGet, "/study/6568/samples-with-data/count")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+		convey.So(queryer.countCall.studyLimsID, convey.ShouldEqual, "6568")
+
+		var count Count
+		decodeMLWHJSONResponseForTest(t, response, &count)
+		convey.So(count, convey.ShouldResemble, Count{Count: 9})
 	})
 
 	convey.Convey("F3.3: Given GET /search/sample/acme/count, then the queryer receives term=acme", t, func() {

@@ -26,10 +26,12 @@
 package mlwh
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -370,6 +372,37 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.RunsForStudy(c.Request.Context(), id, pagination.limit, pagination.offset)
 			writeMLWHResult(c, result, err)
 		}
+	case "StudyOverview":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			result, err := queryer.StudyOverview(c.Request.Context(), id)
+			writeMLWHResult(c, result, err)
+		}
+	case "SamplesWithData":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			since, until, ok := mlwhAddedWindowFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := samplesWithDataResult(c, queryer, id, since, until, pagination)
+			writeMLWHResult(c, result, err)
+		}
+	case "SamplesWithoutData":
+		return func(c *gin.Context) {
+			id, pagination, ok := mlwhIDAndPagination(c)
+			if !ok {
+				return
+			}
+			result, err := queryer.SamplesWithoutData(c.Request.Context(), id, pagination.limit, pagination.offset)
+			writeMLWHResult(c, result, err)
+		}
 	case "LanesForSample":
 		return func(c *gin.Context) {
 			id, pagination, ok := mlwhIDAndPagination(c)
@@ -573,6 +606,19 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.CountSamplesForStudy(c.Request.Context(), id)
 			writeMLWHResult(c, result, err)
 		}
+	case "CountSamplesWithData":
+		return func(c *gin.Context) {
+			id, ok := mlwhPathParam(c, "id")
+			if !ok {
+				return
+			}
+			since, until, ok := mlwhAddedWindowFromQuery(c)
+			if !ok {
+				return
+			}
+			result, err := countSamplesWithDataResult(c, queryer, id, since, until)
+			writeMLWHResult(c, result, err)
+		}
 	case "Freshness":
 		return func(c *gin.Context) {
 			result, err := queryer.Freshness(c.Request.Context())
@@ -619,6 +665,45 @@ func writeMLWHError(c *gin.Context, err error) {
 	})
 }
 
+// mlwhAddedWindowFromQuery reads the optional since/until RFC3339 query params of
+// the windowed samples-with-data count. A malformed since or until aborts with
+// the bad_request 400 envelope BEFORE the queryer is reached, so junk never
+// reaches the query layer; an absent bound is returned as an empty string (the
+// all-time / open-ended case). The raw RFC3339 strings are passed through on
+// success so the query layer normalises them once.
+func mlwhAddedWindowFromQuery(c *gin.Context) (string, string, bool) {
+	since, ok := mlwhQueryRFC3339(c, "since")
+	if !ok {
+		return "", "", false
+	}
+
+	until, ok := mlwhQueryRFC3339(c, "until")
+	if !ok {
+		return "", "", false
+	}
+
+	return since, until, true
+}
+
+// mlwhQueryRFC3339 reads a query param that, when present, must be an RFC3339
+// timestamp. An empty value is returned unchanged (the param is optional); a
+// present-but-malformed value aborts with the bad_request 400 envelope and
+// reports false, so the handler returns before reaching the queryer.
+func mlwhQueryRFC3339(c *gin.Context, name string) (string, bool) {
+	raw := c.Query(name)
+	if raw == "" {
+		return "", true
+	}
+
+	if _, err := time.Parse(time.RFC3339, raw); err != nil {
+		writeMLWHBadRequest(c, "invalid "+name+": must be an RFC3339 timestamp")
+
+		return "", false
+	}
+
+	return raw, true
+}
+
 func mlwhKindAndID(c *gin.Context) (IdentifierKind, string, bool) {
 	kind, ok := mlwhPathParam(c, "kind")
 	if !ok {
@@ -645,6 +730,63 @@ func mlwhLibraryStudy(c *gin.Context) (string, string, bool) {
 	}
 
 	return pipeline, study, true
+}
+
+// countSamplesWithDataResult dispatches the shared /study/:id/samples-with-data/count
+// endpoint: with no since it returns the all-time CountSamplesWithData, and with
+// a since (validated as RFC3339 by the handler) it returns the windowed
+// CountSamplesWithDataSince when the queryer supports it, falling back to the
+// all-time count otherwise. The since/until bounds have already been validated,
+// so this never produces the 400 path.
+func countSamplesWithDataResult(c *gin.Context, queryer Queryer, id, since, until string) (Count, error) {
+	if since == "" {
+		return queryer.CountSamplesWithData(c.Request.Context(), id)
+	}
+
+	if windowed, ok := queryer.(samplesWithDataSinceQueryer); ok {
+		return windowed.CountSamplesWithDataSince(c.Request.Context(), id, since, until)
+	}
+
+	return queryer.CountSamplesWithData(c.Request.Context(), id)
+}
+
+// samplesWithDataResult dispatches the shared /study/:id/samples-with-data list
+// endpoint: with no since it returns the all-time SamplesWithData, and with a
+// since (validated as RFC3339 by the handler) it returns the windowed
+// SamplesWithDataSince when the queryer supports it, falling back to the all-time
+// list otherwise. The since/until bounds have already been validated, so this
+// never produces the 400 path. Pagination is applied identically on both paths.
+func samplesWithDataResult(c *gin.Context, queryer Queryer, id, since, until string, pagination mlwhPagination) ([]SampleWithData, error) {
+	if since == "" {
+		return queryer.SamplesWithData(c.Request.Context(), id, pagination.limit, pagination.offset)
+	}
+
+	if windowed, ok := queryer.(samplesWithDataSinceListQueryer); ok {
+		return windowed.SamplesWithDataSince(c.Request.Context(), id, since, until, pagination.limit, pagination.offset)
+	}
+
+	return queryer.SamplesWithData(c.Request.Context(), id, pagination.limit, pagination.offset)
+}
+
+// samplesWithDataSinceQueryer is the windowed-count capability the
+// /study/:id/samples-with-data/count handler needs when a since is supplied. It
+// is satisfied by *Client and *RemoteClient. It is a narrow capability interface
+// rather than a Queryer member because the windowed count shares the all-time
+// count's single Registry endpoint (parameterised by the since/until query
+// params), so it is not a distinct endpoint on the query surface.
+type samplesWithDataSinceQueryer interface {
+	CountSamplesWithDataSince(ctx context.Context, studyLimsID, since, until string) (Count, error)
+}
+
+// samplesWithDataSinceListQueryer is the windowed-list capability the
+// /study/:id/samples-with-data handler needs when a since is supplied. It is
+// satisfied by *Client and *RemoteClient. Like samplesWithDataSinceQueryer, it is
+// a narrow capability interface rather than a Queryer member because the windowed
+// list shares the all-time list's single Registry endpoint (parameterised by the
+// since/until query params), so it is not a distinct endpoint on the query
+// surface (preserving the 1:1 Method<->Registry invariant).
+type samplesWithDataSinceListQueryer interface {
+	SamplesWithDataSince(ctx context.Context, studyLimsID, since, until string, limit, offset int) ([]SampleWithData, error)
 }
 
 // mlwhHealthHandler answers GET /health with a static {"status":"ok"} body. It

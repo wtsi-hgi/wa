@@ -43,8 +43,8 @@ carry id_sample_tmp + name and group to the 3 with-data samples;
 count<->list cross-check). Depends on Phase 1 (mirror `platform`/
 `created`, per-platform linkage).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: B2 - bare count of samples-with-data
 
@@ -58,8 +58,8 @@ from B2 (distinct-sample count not data-object count; count == list
 length; never-synced ErrCacheNeverSynced+ErrNotFound). Depends on 2.1
 (reuses its membership SQL).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.3: B1 - cheap study overview (S + O1 collapsed)
 
@@ -80,8 +80,8 @@ study ErrNotFound; empty synced study all-zero with cache_synced_at).
 Depends on 2.1/2.2 (reuses membership SQL and the distinct-sample
 partition).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.4: C1 - windowed samples-with-data count
 
@@ -101,8 +101,8 @@ excluded; malformed since -> 400; never-synced
 ErrCacheNeverSynced+ErrNotFound). Depends on 2.2 (extends its query with
 the window filter).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.5: C2 - windowed samples-with-data list
 
@@ -116,8 +116,8 @@ acceptance tests from C2 (in-window list length equals
 `CountSamplesWithDataSince(...,"")`; on-boundary membership matches the
 half-open rule). Depends on 2.1 (the list) and 2.4 (the window filter).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ## Ordering and dependency notes
 

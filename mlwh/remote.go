@@ -177,6 +177,48 @@ func (rc *RemoteClient) RunsForStudy(ctx context.Context, studyLimsID string, li
 	return remoteCall[[]Run](rc, ctx, "RunsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
+// StudyOverview returns a study's overview aggregate through the remote server.
+func (rc *RemoteClient) StudyOverview(ctx context.Context, studyLimsID string) (StudyOverview, error) {
+	return remoteCall[StudyOverview](rc, ctx, "StudyOverview", []string{studyLimsID}, nil)
+}
+
+// SamplesWithData lists a study's samples-with-data through the remote server.
+func (rc *RemoteClient) SamplesWithData(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleWithData, error) {
+	return remoteCall[[]SampleWithData](rc, ctx, "SamplesWithData", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// SamplesWithoutData lists a study's samples-without-data through the remote server.
+func (rc *RemoteClient) SamplesWithoutData(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleWithData, error) {
+	return remoteCall[[]SampleWithData](rc, ctx, "SamplesWithoutData", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// SamplesWithDataSince lists the distinct samples whose study-scoped iRODS data
+// was added in the half-open window [since, until) through the remote server. It
+// is the windowed variant of SamplesWithData and issues the same
+// /study/:id/samples-with-data endpoint with the since/until RFC3339 query string
+// alongside limit/offset (so there is one endpoint, parameterised by the window);
+// an empty since requests the all-time list. The server validates the bounds and
+// returns 400 for a malformed value.
+func (rc *RemoteClient) SamplesWithDataSince(ctx context.Context, studyLimsID, since, until string, limit, offset int) ([]SampleWithData, error) {
+	return remoteCall[[]SampleWithData](rc, ctx, "SamplesWithData", []string{studyLimsID}, remotePaginationWithAddedWindow(limit, offset, since, until))
+}
+
+// remotePaginationWithAddedWindow builds the query values for the windowed
+// samples-with-data list: the limit/offset pagination controls plus the optional
+// since/until [since, until) bounds, an empty bound omitted (matching the
+// all-time SamplesWithData call).
+func remotePaginationWithAddedWindow(limit, offset int, since, until string) url.Values {
+	values := remotePagination(limit, offset)
+	if since != "" {
+		values.Set("since", since)
+	}
+	if until != "" {
+		values.Set("until", until)
+	}
+
+	return values
+}
+
 // LanesForSample lists lanes for a sample through the remote server.
 func (rc *RemoteClient) LanesForSample(ctx context.Context, sangerName string, limit, offset int) ([]Lane, error) {
 	return remoteCall[[]Lane](rc, ctx, "LanesForSample", []string{sangerName}, remotePagination(limit, offset))
@@ -265,6 +307,37 @@ func (rc *RemoteClient) CountStudies(ctx context.Context) (Count, error) {
 // CountSamplesForStudy counts the distinct samples for a study through the remote server.
 func (rc *RemoteClient) CountSamplesForStudy(ctx context.Context, studyLimsID string) (Count, error) {
 	return remoteCall[Count](rc, ctx, "CountSamplesForStudy", []string{studyLimsID}, nil)
+}
+
+// CountSamplesWithData counts the distinct samples-with-data for a study through the remote server.
+func (rc *RemoteClient) CountSamplesWithData(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSamplesWithData", []string{studyLimsID}, nil)
+}
+
+// CountSamplesWithDataSince counts the distinct samples whose study-scoped iRODS
+// data was added in the half-open window [since, until) through the remote
+// server. It is the windowed variant of CountSamplesWithData and issues the same
+// /study/:id/samples-with-data/count endpoint with the since/until RFC3339 query
+// string (so there is one endpoint, parameterised by the window); an empty since
+// requests the all-time count. The server validates the bounds and returns 400
+// for a malformed value.
+func (rc *RemoteClient) CountSamplesWithDataSince(ctx context.Context, studyLimsID, since, until string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSamplesWithData", []string{studyLimsID}, remoteAddedWindow(since, until))
+}
+
+// remoteAddedWindow builds the since/until query values for the windowed
+// samples-with-data count, omitting an empty bound so an all-time request sends
+// no query string (matching the bare CountSamplesWithData call).
+func remoteAddedWindow(since, until string) url.Values {
+	values := url.Values{}
+	if since != "" {
+		values.Set("since", since)
+	}
+	if until != "" {
+		values.Set("until", until)
+	}
+
+	return values
 }
 
 // Freshness reports per-table sync freshness through the remote server.

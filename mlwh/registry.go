@@ -231,6 +231,40 @@ var Registry = []Endpoint{
 		QueryParams: fetchAllPaginationParams(),
 	},
 	{
+		Method:      "StudyOverview",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/overview",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[StudyOverview],
+		Summary:     "Get a study's sequencing overview",
+		Description: "Returns one fixed-size aggregate answering \"what is in this study, how much sequencing data, and was anything added recently\", so callers avoid the large per-sample fan-outs. samples_total is the distinct samples linked via library_samples. A sample has sequencing data available for this study iff it has at least one row in the iRODS locations mirror scoped by id_study_lims = the study (real data objects in iRODS); scoping is by the study the data is under, NOT data the sample has anywhere. samples_with_data, samples_sequenced_no_data and the implied registered bucket form the distinct-sample partition by most-advanced phase (precedence with_data > sequenced_no_data > registered), so each sample counts once and samples_without_data = samples_total - samples_with_data. samples_sequenced_no_data is the distinct samples with product-metrics in this study (scoped by the product-metrics id_study_lims) but no study-scoped iRODS rows; registered (= samples_total - samples_with_data - samples_sequenced_no_data) is the linked samples with no product-metrics, including ONT. data_objects is the study-scoped iRODS data-object count; runs, libraries and the sorted library_types come from the study's product-metrics and library tables. sequencing_date_range and newest_data_added are the earliest/latest iRODS creation timestamp (the created column, NEVER last_updated or last_run); added_last_7_days counts the distinct samples whose study-scoped iRODS data was added in the half-open window [now-7d, now) on that created column (created >= now-7d AND created < now). cache_synced_at is the oldest last_run across the feeding tables (study, sample, the product-metrics mirrors and the iRODS locations mirror), distinct from any data timestamp; every figure is read from the cache mirrors, so the overview is complete only up to that sync (see /freshness).",
+	},
+	{
+		Method:      "SamplesWithData",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/samples-with-data",
+		PathParams:  []string{"id"},
+		Query:       []string{"since", "until"},
+		Paginated:   true,
+		NewResult:   newSliceResult[SampleWithData],
+		Summary:     "List a study's samples that have sequencing data",
+		Description: "Lists the distinct samples linked to the given study (via library_samples) that have sequencing data available for this study, each qualified by the platforms it has products on. A sample has data for this study iff it has at least one row in the iRODS locations mirror scoped by id_study_lims = the study (real data objects in iRODS), so scoping is by the study the data is under, NOT data the sample has anywhere. Together with /study/:id/samples-without-data this partitions the study's linked samples (with_data + without_data = samples_total). platforms lists the canonical platform names the sample has products on in this study (e.g. Illumina, PacBio, Elembio, Ultimagen); it is [\"ONT\"] for an ONT sample (Oxford Nanopore is not tracked for availability/QC, only identity and study) and empty for a registered-only sample with no products. The optional since and until RFC3339 query params restrict the list to samples whose study-scoped data was ADDED to iRODS in the half-open window [since, until): the filter is on the iRODS creation timestamp (the created column), NEVER on last_updated or last_run (last_updated conflates newly-added with later-modified rows, and last_run is only when wa synced), so it answers \"added since X\"; since is inclusive and until is exclusive (created >= since AND created < until), comparison is in normalised UTC, and until is optional (the window is open-ended when omitted). The in-window list and /study/:id/samples-with-data/count with the same since/until stay the exact count<->list cross-check. Without since the list is all-time. A malformed since or until is rejected with a 400 bad_request before the query runs. Membership is read from the cache mirrors, so results are complete only up to the feeding tables' last sync (see /freshness). Defaults to returning all samples; use limit/offset to page.",
+		QueryParams: fetchAllPaginationWithAddedWindowParams(),
+	},
+	{
+		Method:      "SamplesWithoutData",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/samples-without-data",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		Paginated:   true,
+		NewResult:   newSliceResult[SampleWithData],
+		Summary:     "List a study's samples that lack sequencing data",
+		Description: "Lists the distinct samples linked to the given study (via library_samples) that have NO sequencing data available for this study: the complement of /study/:id/samples-with-data, so with_data + without_data = samples_total. A sample has data for this study iff it has at least one row in the iRODS locations mirror scoped by id_study_lims = the study; scoping is by the study the data is under, NOT data the sample has anywhere, so a sample with data only under another study appears here. This list includes samples sequenced in this study but not yet in iRODS, registered-only samples, and ONT samples. platforms qualifies each negative: the canonical platform names the sample has products on in this study (e.g. Illumina, PacBio, Elembio, Ultimagen), [\"ONT\"] for an ONT sample (Oxford Nanopore is not tracked for availability/QC, only identity and study), and empty for a registered-only sample with no products. Membership is read from the cache mirrors, so results are complete only up to the feeding tables' last sync (see /freshness). Defaults to returning all samples; use limit/offset to page.",
+		QueryParams: fetchAllPaginationParams(),
+	},
+	{
 		Method:      "LanesForSample",
 		Verb:        registryVerbGet,
 		Path:        "/sample/:id/lanes",
@@ -470,6 +504,17 @@ var Registry = []Endpoint{
 		Description: "Returns the number of distinct samples linked to the given study, the count counterpart of /study/:id/samples.",
 	},
 	{
+		Method:      "CountSamplesWithData",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/samples-with-data/count",
+		PathParams:  []string{"id"},
+		Query:       []string{"since", "until"},
+		NewResult:   newResult[Count],
+		Summary:     "Count a study's samples that have sequencing data",
+		Description: "Returns the number of distinct samples linked to the given study (via library_samples) that have sequencing data available for this study, the count counterpart of /study/:id/samples-with-data (count == the length of that list when all rows are fetched). A sample has data for this study iff it has at least one row in the iRODS locations mirror scoped by id_study_lims = the study (real data objects in iRODS); scoping is by the study the data is under, NOT data the sample has anywhere. The figure counts distinct samples, never iRODS data objects, so a sample with many study-scoped iRODS rows is counted once. The optional since and until RFC3339 query params restrict the count to samples whose study-scoped data was ADDED to iRODS in the half-open window [since, until): the filter is on the iRODS creation timestamp (the created column), NEVER on last_updated or last_run (last_updated conflates newly-added with later-modified rows, and last_run is only when wa synced), so it answers \"added since X\"; since is inclusive and until is exclusive (created >= since AND created < until), comparison is in normalised UTC, and until is optional (the window is open-ended when omitted). Without since the count is all-time. A malformed since or until is rejected with a 400 bad_request before the query runs. Membership is read from the cache mirrors, so the count is complete only up to the feeding tables' last sync (see /freshness).",
+		QueryParams: addedWindowQueryParams(),
+	},
+	{
 		Method:      "Freshness",
 		Verb:        registryVerbGet,
 		Path:        "/freshness",
@@ -488,6 +533,15 @@ type QueryParam struct {
 	Type        string // OpenAPI type, e.g. "integer"
 	Required    bool
 	Description string
+}
+
+// fetchAllPaginationWithAddedWindowParams are the QueryParams for the
+// samples-with-data list endpoint: the fetch-all limit/offset pagination controls
+// plus the optional since/until [since, until) added-window filter. The list
+// shares its single endpoint with the windowed variant (parameterised by
+// since/until), so it documents both the pagination and the window controls.
+func fetchAllPaginationWithAddedWindowParams() []QueryParam {
+	return append(fetchAllPaginationParams(), addedWindowQueryParams()...)
 }
 
 // fetchAllPaginationParams are the limit/offset QueryParams for the fetch-all
@@ -526,6 +580,27 @@ func searchPaginationParams() []QueryParam {
 			Type:        "integer",
 			Required:    false,
 			Description: "number of leading rows to skip before returning results; defaults to 0",
+		},
+	}
+}
+
+// addedWindowQueryParams are the optional since/until RFC3339 QueryParams for the
+// windowed samples-with-data count: a half-open [since, until) filter on the iRODS
+// creation timestamp (the created column, never last_updated/last_run). They are
+// not pagination controls, so they are declared on a non-paginated entry.
+func addedWindowQueryParams() []QueryParam {
+	return []QueryParam{
+		{
+			Name:        "since",
+			Type:        "string",
+			Required:    false,
+			Description: "RFC3339 timestamp; when set, counts only samples whose study-scoped data was added to iRODS at or after this instant (created >= since, inclusive), filtering on the iRODS creation timestamp and never on last_updated/last_run; omit for an all-time count",
+		},
+		{
+			Name:        "until",
+			Type:        "string",
+			Required:    false,
+			Description: "RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted",
 		},
 	}
 }

@@ -97,12 +97,57 @@ type Lane struct {
 	TagIndex int `json:"tag_index" doc:"index of the multiplexing tag within the lane"`
 }
 
-// IRODSPath identifies a product path exported from MLWH joins.
+// IRODSPath identifies a product path exported from MLWH joins. IDSampleTmp and
+// Name identify the sample the data object belongs to, so a study iRODS listing
+// is aggregatable by sample without a second query.
 type IRODSPath struct {
-	IDProduct  string `json:"id_product" doc:"product identifier of the iRODS data object"`
-	Collection string `json:"collection" doc:"iRODS collection containing the data object"`
-	DataObject string `json:"data_object" doc:"iRODS data object name"`
-	IRODSPath  string `json:"irods_path" doc:"full iRODS path of the data object"`
+	IDProduct   string `json:"id_product" doc:"product identifier of the iRODS data object"`
+	Collection  string `json:"collection" doc:"iRODS collection containing the data object"`
+	DataObject  string `json:"data_object" doc:"iRODS data object name"`
+	IRODSPath   string `json:"irods_path" doc:"full iRODS path of the data object"`
+	IDSampleTmp int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
+	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to"`
+}
+
+// SampleWithData is the enriched list row for the samples-with-data and
+// samples-without-data partitions. It carries the platforms the sample has
+// products on so every entry is platform-qualified rather than a bare "no data":
+// empty for a registered-only sample (no products), ["ONT"] for an ONT sample
+// (present in oseq_flowcell, with no products/iRODS/QC), and the canonical
+// platform names (e.g. "Illumina", "PacBio", "Elembio", "Ultimagen") for a
+// sample with product metrics. It is a NEW type, not the shared Sample struct.
+type SampleWithData struct {
+	Sample    Sample   `json:"sample" doc:"the sample"`
+	Platforms []string `json:"platforms" doc:"platforms the sample has products on; empty for registered-only, [\"ONT\"] for ONT"`
+}
+
+// DateRange is an earliest/latest RFC3339 pair (empty strings when absent).
+type DateRange struct {
+	Earliest string `json:"earliest" doc:"earliest timestamp (UTC RFC3339)"`
+	Latest   string `json:"latest" doc:"latest timestamp (UTC RFC3339)"`
+}
+
+// StudyOverview is the fixed-size study aggregate answering "what is in study X,
+// how much sequencing data, and was anything added recently" in one response.
+// Every figure is a single indexed aggregate over the cache mirrors;
+// SamplesWithData / SamplesWithoutData / SamplesSequencedNoData form the
+// distinct-sample partition (a sample counts in exactly one bucket by its
+// most-advanced phase, precedence with_data > sequenced_no_data > registered, so
+// registered = SamplesTotal - SamplesWithData - SamplesSequencedNoData).
+type StudyOverview struct {
+	IDStudyLims            string     `json:"id_study_lims" doc:"LIMS study id"`
+	SamplesTotal           int        `json:"samples_total" doc:"distinct samples linked via library_samples"`
+	SamplesWithData        int        `json:"samples_with_data" doc:"distinct samples with >=1 study-scoped iRODS row"`
+	SamplesWithoutData     int        `json:"samples_without_data" doc:"samples_total minus samples_with_data"`
+	SamplesSequencedNoData int        `json:"samples_sequenced_no_data" doc:"distinct samples with product-metrics in this study but no iRODS rows (distinct-sample partition)"`
+	DataObjects            int        `json:"data_objects" doc:"study-scoped iRODS data objects"`
+	Runs                   int        `json:"runs" doc:"distinct runs for the study"`
+	Libraries              int        `json:"libraries" doc:"distinct libraries for the study"`
+	LibraryTypes           []string   `json:"library_types" doc:"distinct library types present"`
+	SequencingDateRange    *DateRange `json:"sequencing_date_range,omitempty" doc:"earliest/latest iRODS created for the study"`
+	NewestDataAdded        string     `json:"newest_data_added" doc:"latest study-scoped iRODS created (UTC RFC3339), empty if none"`
+	AddedLast7Days         int        `json:"added_last_7_days" doc:"distinct samples whose data was added in [now-7d, now)"`
+	CacheSyncedAt          string     `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }
 
 // SampleDetail groups a sample with its enrichment graph neighbours.

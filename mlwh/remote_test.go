@@ -272,6 +272,24 @@ func TestRemoteClientCountStudiesRoundTripsF3(t *testing.T) {
 	})
 }
 
+func TestRemoteClientCountSamplesWithDataRoundTrips(t *testing.T) {
+	convey.Convey("Given a RemoteClient over a server returning a Count", t, func() {
+		requestURIs := make(chan string, 1)
+		server := newRemoteClientJSONServerForTest(requestURIs, Count{Count: 9})
+		defer server.Close()
+		client := newRemoteClientForTest(t, server.URL, "")
+		defer closeRemoteClientForTest(t, client)
+
+		convey.Convey("when CountSamplesWithData runs, then the path is /study/S1/samples-with-data/count and it returns the server's Count", func() {
+			count, err := client.CountSamplesWithData(context.Background(), "S1")
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(count, convey.ShouldResemble, Count{Count: 9})
+			convey.So(receiveRemoteClientTestValue(t, requestURIs, "request URI"), convey.ShouldEqual, "/study/S1/samples-with-data/count")
+		})
+	})
+}
+
 func TestRemoteClientCallMatchesTypedResolveSample(t *testing.T) {
 	convey.Convey("Given a stub MLWH server returning a sample Match", t, func() {
 		requestURIs := make(chan string, 2)
