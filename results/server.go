@@ -1619,6 +1619,10 @@ func (s *Server) appendRegisteredStudySearchSuggestions(ctx context.Context, sea
 
 	registered, err := s.store.registeredMetadataValues(ctx, combinedStudyMetaKeys, candidates)
 	if err != nil {
+		if substringSearchDegrades(err) {
+			return suggestions, nil
+		}
+
 		return nil, err
 	}
 
@@ -1736,6 +1740,10 @@ func (s *Server) appendRegisteredSampleSearchSuggestions(ctx context.Context, se
 
 	registered, err := s.store.registeredMetadataValues(ctx, combinedSampleMetaKeys, candidates)
 	if err != nil {
+		if substringSearchDegrades(err) {
+			return suggestions, nil
+		}
+
 		return nil, err
 	}
 

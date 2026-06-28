@@ -3713,6 +3713,86 @@ func TestServerGetSearchSuggestions(t *testing.T) {
 		convey.So(suggestionByFieldValueForTest(suggestions, "sample", registeredSampleName), convey.ShouldBeNil)
 	})
 
+	convey.Convey("Bug 260627-9: Given the MLWH substring study search succeeds but the registered-values store query then exceeds the suggestion deadline, GET /results/search-suggestions degrades to no MLWH substring suggestion with a 200 (not a 502)", t, func() {
+		// The MLWH search consumes the whole suggestion budget, so by the time the
+		// follow-up registeredMetadataValues query runs, its context is already
+		// expired. That deadline must degrade like the search itself rather than
+		// surfacing as a hard failure. A 1ns timeout guarantees the deadline is past
+		// before the real sqlite query runs, while the searcher mock (which ignores
+		// the context) still returns a candidate, with NO sleeps. Restore via defer
+		// (not t.Cleanup) so this shared package var cannot leak into sibling Convey
+		// blocks, which run before the test function (and any t.Cleanup) ends.
+		restore := mlwhSuggestionSearchTimeout
+		mlwhSuggestionSearchTimeout = 1 * time.Nanosecond
+		defer func() { mlwhSuggestionSearchTimeout = restore }()
+
+		store := newSQLiteStoreForTest(t)
+		// The study IS registered, so registeredMetadataValues WOULD return a match
+		// if it completed: proving the degrade (not absence of data) is what
+		// suppresses the substring suggestion.
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-study-registered-deadline", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaIDStudyLimsKey: "6568"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchStudiesFunc: func(_ context.Context, term string, _, _ int) ([]mlwh.Study, error) {
+				if term == "diversity" {
+					return []mlwh.Study{{IDStudyLims: "6568", StudyTitle: "Microbial diversity of soil"}}, nil
+				}
+
+				return []mlwh.Study{}, nil
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=diversity", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		// The substring study suggestion is omitted because the store query hit the
+		// deadline, not surfaced as a 502.
+		convey.So(suggestionByFieldValueForTest(suggestions, "study", "6568"), convey.ShouldBeNil)
+	})
+
+	convey.Convey("Bug 260627-9: Given the MLWH substring sample search succeeds but the registered-values store query then exceeds the suggestion deadline, GET /results/search-suggestions degrades to no MLWH substring suggestion with a 200 (not a 502)", t, func() {
+		// Sample-branch analogue of the study case above: a 1ns timeout expires
+		// before the real sqlite registeredMetadataValues query runs, so its deadline
+		// must degrade rather than fail the whole suggestions request. Restore via
+		// defer (not t.Cleanup) so this shared package var cannot leak into sibling
+		// Convey blocks, which run before the test function (and any t.Cleanup) ends.
+		restore := mlwhSuggestionSearchTimeout
+		mlwhSuggestionSearchTimeout = 1 * time.Nanosecond
+		defer func() { mlwhSuggestionSearchTimeout = restore }()
+
+		store := newSQLiteStoreForTest(t)
+		// The sample IS registered, so registeredMetadataValues WOULD return a match
+		// if it completed.
+		seedResultSetForTest(t, store, searchRegistrationForTest("run-sample-registered-deadline", func(reg *Registration) {
+			reg.Metadata = map[string]string{SeqmetaSampleNameKey: "7607STDY14643771"}
+		}))
+
+		expander := &mockSearchExpander{
+			searchSamplesFunc: func(_ context.Context, term string, _, _ int) ([]mlwh.Sample, error) {
+				if term == "hek_r" {
+					return []mlwh.Sample{{Name: "7607STDY14643771", SupplierName: "Hek_R1"}}, nil
+				}
+
+				return []mlwh.Sample{}, nil
+			},
+		}
+
+		response := performResultsRequestForTest(t, NewServer(store, nil, NewMLWHSearchResolver(expander)).Handler(), http.MethodGet, "/results/search-suggestions?q=hek_r", nil)
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var suggestions []SearchSuggestion
+		decodeJSONResponseForTest(t, response, &suggestions)
+		// The substring sample suggestion is omitted because the store query hit the
+		// deadline, not surfaced as a 502.
+		convey.So(suggestionByFieldValueForTest(suggestions, "sample", "7607STDY14643771"), convey.ShouldBeNil)
+	})
+
 	convey.Convey("GET /results/search-suggestions skips store and MLWH suggestions for one-character generic queries", t, func() {
 		store := newSQLiteStoreForTest(t)
 		seedResultSetForTest(t, store, searchRegistrationForTest("run-short-suggestion", func(reg *Registration) {
