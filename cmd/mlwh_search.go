@@ -223,36 +223,20 @@ func runMLWHSearch(ctx context.Context, client mlwhSearchClient, out io.Writer, 
 
 	report := searchReport{Term: term}
 
-	if wantStudies {
-		section, emptyCache, sectionErr := buildStudySearchSection(ctx, client, term, limit, offset)
-		if sectionErr != nil {
-			if isSearchTimeoutError(sectionErr) {
-				_, _ = fmt.Fprintf(out, "%s\n", mlwhSearchTimedOutMessage)
-
-				return nil
-			}
-
-			return sectionErr
+	// A section timeout sets report.TimedOut and leaves that section nil; the
+	// shared ctx deadline has then expired, so a later section is skipped (it
+	// would only time out again) while any already-collected section is kept. A
+	// non-timeout error still surfaces. Rendering then stays valid in both modes.
+	if wantStudies && !report.TimedOut {
+		if err := addStudySearchSection(ctx, client, &report, term, limit, offset); err != nil {
+			return err
 		}
-
-		report.Studies = section
-		report.cacheUnavailable = report.cacheUnavailable || emptyCache
 	}
 
-	if wantSamples {
-		section, emptyCache, sectionErr := buildSampleSearchSection(ctx, client, term, limit, offset)
-		if sectionErr != nil {
-			if isSearchTimeoutError(sectionErr) {
-				_, _ = fmt.Fprintf(out, "%s\n", mlwhSearchTimedOutMessage)
-
-				return nil
-			}
-
-			return sectionErr
+	if wantSamples && !report.TimedOut {
+		if err := addSampleSearchSection(ctx, client, &report, term, limit, offset); err != nil {
+			return err
 		}
-
-		report.Samples = section
-		report.cacheUnavailable = report.cacheUnavailable || emptyCache
 	}
 
 	if jsonOut {
@@ -275,6 +259,27 @@ func searchTypeSelection(typeFlag string) (wantStudies, wantSamples bool, err er
 	default:
 		return false, false, fmt.Errorf("unknown --type %q (expected study or sample)", typeFlag)
 	}
+}
+
+// addStudySearchSection runs the study search and folds the result into report.
+// A deadline error is recorded as report.TimedOut (section left nil, partial
+// results preserved); any other error is returned unchanged.
+func addStudySearchSection(ctx context.Context, client mlwhSearchClient, report *searchReport, term string, limit, offset int) error {
+	section, emptyCache, err := buildStudySearchSection(ctx, client, term, limit, offset)
+	if err != nil {
+		if isSearchTimeoutError(err) {
+			report.TimedOut = true
+
+			return nil
+		}
+
+		return err
+	}
+
+	report.Studies = section
+	report.cacheUnavailable = report.cacheUnavailable || emptyCache
+
+	return nil
 }
 
 func buildStudySearchSection(ctx context.Context, client mlwhSearchClient, term string, limit, offset int) (*studySearchSection, bool, error) {
@@ -320,6 +325,26 @@ func isEmptyCacheSearchError(err error) bool {
 // matches without string-matching the message.
 func isSearchTimeoutError(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded)
+}
+
+// addSampleSearchSection runs the sample search and folds the result into report,
+// mirroring addStudySearchSection's timeout/partial-results handling.
+func addSampleSearchSection(ctx context.Context, client mlwhSearchClient, report *searchReport, term string, limit, offset int) error {
+	section, emptyCache, err := buildSampleSearchSection(ctx, client, term, limit, offset)
+	if err != nil {
+		if isSearchTimeoutError(err) {
+			report.TimedOut = true
+
+			return nil
+		}
+
+		return err
+	}
+
+	report.Samples = section
+	report.cacheUnavailable = report.cacheUnavailable || emptyCache
+
+	return nil
 }
 
 func buildSampleSearchSection(ctx context.Context, client mlwhSearchClient, term string, limit, offset int) (*sampleSearchSection, bool, error) {
@@ -374,6 +399,10 @@ func writeSearchReportText(out io.Writer, report searchReport) {
 
 	if report.cacheUnavailable {
 		_, _ = fmt.Fprintf(out, "\n%s\n", mlwhCacheUnavailableMessage)
+	}
+
+	if report.TimedOut {
+		_, _ = fmt.Fprintf(out, "\n%s\n", mlwhSearchTimedOutMessage)
 	}
 }
 
@@ -437,12 +466,17 @@ type sampleSearchSection struct {
 }
 
 // searchReport is the JSON-friendly shape of `wa mlwh search` results. A section
-// is nil (and omitted) when --type does not request it. cacheUnavailable is set
-// (text-only, never serialised) when a never-synced/empty cache was observed, so
-// the text renderer can show a neutral note without any sync hint.
+// is nil (and omitted) when --type does not request it. TimedOut is set (and
+// serialised as "timed_out": true) when a section search hit the deadline; the
+// affected section stays nil while any already-collected section is preserved, so
+// both --json and text renderings stay valid and keep partial results.
+// cacheUnavailable is set (text-only, never serialised) when a never-synced/empty
+// cache was observed, so the text renderer can show a neutral note without any
+// sync hint.
 type searchReport struct {
 	Term             string               `json:"term"`
 	Studies          *studySearchSection  `json:"studies,omitempty"`
 	Samples          *sampleSearchSection `json:"samples,omitempty"`
+	TimedOut         bool                 `json:"timed_out,omitempty"`
 	cacheUnavailable bool
 }

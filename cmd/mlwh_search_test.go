@@ -482,6 +482,120 @@ func TestMLWHSearchCommandTimeoutSuggestsNarrowingTheTerm(t *testing.T) {
 	})
 }
 
+func TestMLWHSearchCommandJSONTimeoutEmitsValidJSON(t *testing.T) {
+	convey.Convey("Bug 260627-9: Given --json and a search that hits the deadline, when wa mlwh search runs, then stdout stays a single valid JSON object flagged timed_out with no raw error or sync hint", t, func() {
+		// Mirror the RemoteClient path: a query cancelled at the deadline surfaces
+		// as ErrUpstreamImpaired wrapping context.DeadlineExceeded.
+		timeoutErr := fmt.Errorf("%w: SearchSamples request failed: %w", mlwh.ErrUpstreamImpaired, context.DeadlineExceeded)
+		stub := &stubMLWHSearchClient{
+			searchSamples: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
+				return nil, timeoutErr
+			},
+			countSampleSearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				return mlwh.Count{}, timeoutErr
+			},
+		}
+
+		withStubMLWHSearchClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "search", "homo sapiens", "--type", "sample", "--json"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		// stdout must remain a single valid JSON object, not a plain-text line.
+		decoded := map[string]any{}
+		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+		convey.So(decoded["term"], convey.ShouldEqual, "homo sapiens")
+		convey.So(decoded["timed_out"], convey.ShouldEqual, true)
+
+		// No raw error, no plain-text timeout line, no sync hint leaks into output.
+		convey.So(output, convey.ShouldNotContainSubstring, mlwhSearchTimedOutMessage)
+		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrUpstreamImpaired.Error())
+		convey.So(output, convey.ShouldNotContainSubstring, context.DeadlineExceeded.Error())
+	})
+}
+
+func TestMLWHSearchCommandTimeoutPreservesCollectedStudies(t *testing.T) {
+	convey.Convey("Bug 260627-9: Given both kinds and a sample search that times out after studies succeed, when wa mlwh search runs, then text output keeps the study results and notes the timeout", t, func() {
+		timeoutErr := fmt.Errorf("%w: SearchSamples request failed: %w", mlwh.ErrUpstreamImpaired, context.DeadlineExceeded)
+		stub := &stubMLWHSearchClient{
+			searchStudies: func(_ context.Context, _ string, _, _ int) ([]mlwh.Study, error) {
+				return []mlwh.Study{{IDStudyLims: "6568", Name: "Malaria genomics survey"}}, nil
+			},
+			countStudySearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				return mlwh.Count{Count: 1}, nil
+			},
+			searchSamples: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
+				return nil, timeoutErr
+			},
+			countSampleSearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				return mlwh.Count{}, timeoutErr
+			},
+		}
+
+		withStubMLWHSearchClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "search", "malaria"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		// The already-collected study section must not be discarded by the timeout.
+		convey.So(output, convey.ShouldContainSubstring, "Studies (1)")
+		convey.So(output, convey.ShouldContainSubstring, "6568")
+
+		// The timeout is still surfaced as a friendly note advising a narrower term.
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "timed out")
+		convey.So(strings.ToLower(output), convey.ShouldContainSubstring, "more specific")
+		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+		convey.So(output, convey.ShouldNotContainSubstring, mlwh.ErrUpstreamImpaired.Error())
+		convey.So(output, convey.ShouldNotContainSubstring, context.DeadlineExceeded.Error())
+	})
+}
+
+func TestMLWHSearchCommandJSONTimeoutPreservesCollectedStudies(t *testing.T) {
+	convey.Convey("Bug 260627-9: Given both kinds, --json, and a sample search that times out after studies succeed, when wa mlwh search runs, then the JSON object keeps the studies section and is flagged timed_out", t, func() {
+		timeoutErr := fmt.Errorf("%w: SearchSamples request failed: %w", mlwh.ErrUpstreamImpaired, context.DeadlineExceeded)
+		stub := &stubMLWHSearchClient{
+			searchStudies: func(_ context.Context, _ string, _, _ int) ([]mlwh.Study, error) {
+				return []mlwh.Study{{IDStudyLims: "6568", Name: "Malaria genomics survey"}}, nil
+			},
+			countStudySearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				return mlwh.Count{Count: 1}, nil
+			},
+			searchSamples: func(_ context.Context, _ string, _, _ int) ([]mlwh.Sample, error) {
+				return nil, timeoutErr
+			},
+			countSampleSearch: func(_ context.Context, _ string) (mlwh.Count, error) {
+				return mlwh.Count{}, timeoutErr
+			},
+		}
+
+		withStubMLWHSearchClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "search", "malaria", "--json"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		decoded := map[string]any{}
+		convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+		convey.So(decoded["timed_out"], convey.ShouldEqual, true)
+
+		// The collected studies section must survive the timeout.
+		studies, ok := decoded["studies"].(map[string]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(studies["count"], convey.ShouldEqual, 1)
+		studyResults, ok := studies["results"].([]any)
+		convey.So(ok, convey.ShouldBeTrue)
+		convey.So(studyResults, convey.ShouldHaveLength, 1)
+		firstStudy := studyResults[0].(map[string]any)
+		convey.So(firstStudy["id_study_lims"], convey.ShouldEqual, "6568")
+
+		convey.So(output, convey.ShouldNotContainSubstring, "wa mlwh sync")
+		convey.So(output, convey.ShouldNotContainSubstring, context.DeadlineExceeded.Error())
+	})
+}
+
 func TestMLWHSearchCommandSampleCountCapRendersAsFloor(t *testing.T) {
 	convey.Convey("Given the sample count equals the cap, when wa mlwh search runs, then the count renders as a floor", t, func() {
 		stub := &stubMLWHSearchClient{
