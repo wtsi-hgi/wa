@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // countStudiesCacheSQL counts the SQSCP studies mirrored in the cache, matching
@@ -40,6 +41,81 @@ const countStudiesCacheSQL = `SELECT COUNT(*) FROM study_mirror WHERE id_lims = 
 // (samplesForStudyCacheSQL) without a LIMIT, so the count equals the number of
 // rows SamplesForStudy returns when fetching all of them.
 const countSamplesForStudyCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_study_lims = ?`
+
+// The /count counterparts below each reuse the exact WHERE/JOIN of the list
+// they size (samplesForRunCacheSQL, librariesForStudySQL, ... in hierarchy.go)
+// with no LIMIT, so each count equals len(list-all) and the two cannot drift.
+// COUNT(DISTINCT ...) mirrors a single-column SELECT DISTINCT list; a list whose
+// DISTINCT spans several columns is sized by COUNT(*) over the same
+// SELECT DISTINCT subquery (SQLite/MySQL have no COUNT(DISTINCT a, b, ...)).
+const (
+	// countSamplesForRunCacheSQL sizes SamplesForRun (samplesForRunCacheSQL): the
+	// distinct samples on a run via iseq_product_metrics_mirror.
+	countSamplesForRunCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM iseq_product_metrics_mirror INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = iseq_product_metrics_mirror.id_sample_tmp WHERE iseq_product_metrics_mirror.id_run = ?`
+
+	// countSamplesForLibraryCacheSQL sizes SamplesForLibrary
+	// (samplesForLibraryCacheSQL): distinct samples in a library type within a
+	// study.
+	countSamplesForLibraryCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND library_samples.id_study_lims = ?`
+
+	// countSamplesForLibraryTypeCacheSQL sizes SamplesForLibraryType
+	// (samplesForLibraryTypeCacheSQL): distinct samples in a library type across
+	// all studies.
+	countSamplesForLibraryTypeCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ?`
+
+	// countSamplesForLibraryIDCacheSQL sizes SamplesForLibraryID
+	// (sampleStudyPairsForLibraryID, de-duplicated by id_sample_tmp): distinct
+	// samples linked through an exact library_id.
+	countSamplesForLibraryIDCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.library_id = ?`
+
+	// countSamplesForLibraryLimsIDCacheSQL sizes SamplesForLibraryLimsID
+	// (sampleStudyPairsForLibraryLimsID, de-duplicated by id_sample_tmp): distinct
+	// samples linked through an exact id_library_lims.
+	countSamplesForLibraryLimsIDCacheSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.id_library_lims = ?`
+
+	// countRunsForStudyCacheSQL sizes RunsForStudy (runsForStudyCacheSQL): the
+	// distinct runs for a study.
+	countRunsForStudyCacheSQL = `SELECT COUNT(DISTINCT id_run) FROM iseq_product_metrics_mirror WHERE id_study_lims = ?`
+
+	// countLibrariesForStudyCacheSQL sizes LibrariesForStudy (librariesForStudySQL,
+	// which groups by the (pipeline_id_lims, library_id, id_library_lims) triple):
+	// the distinct triples for a study, via COUNT(*) over the same SELECT DISTINCT.
+	countLibrariesForStudyCacheSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT pipeline_id_lims, library_id, id_library_lims FROM library_samples WHERE id_study_lims = ?) AS distinct_libraries`
+
+	// countLanesForSampleCacheSQL sizes LanesForSample (lanesForSampleCacheSQL,
+	// SELECT DISTINCT id_run, position, tag_index): the distinct run/lane/tag
+	// triples for a sample, via COUNT(*) over the same SELECT DISTINCT.
+	countLanesForSampleCacheSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_run, position, tag_index FROM iseq_product_metrics_mirror WHERE id_sample_tmp = ?) AS distinct_lanes`
+
+	// countIRODSPathsForSampleCacheSQL sizes IRODSPathsForSample
+	// (irodsPathsForSampleCacheSQL, SELECT DISTINCT id_iseq_product,
+	// irods_collection, irods_file_name): the distinct iRODS data objects for a
+	// sample, via COUNT(*) over the same SELECT DISTINCT.
+	countIRODSPathsForSampleCacheSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT id_iseq_product, irods_collection, irods_file_name FROM seq_product_irods_locations_mirror WHERE id_sample_tmp = ?) AS distinct_sample_irods`
+
+	// countIRODSPathsForStudyCacheSQL sizes IRODSPathsForStudy
+	// (irodsPathsForStudyCacheSQL): the distinct iRODS rows for a study under the
+	// same LEFT JOIN to sample_mirror and the same DISTINCT projection, via
+	// COUNT(*) over that SELECT DISTINCT.
+	countIRODSPathsForStudyCacheSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT spi.id_iseq_product, spi.irods_collection, spi.irods_file_name, spi.id_sample_tmp, COALESCE(sample_mirror.name, '') FROM seq_product_irods_locations_mirror spi LEFT JOIN sample_mirror ON sample_mirror.id_sample_tmp = spi.id_sample_tmp WHERE spi.id_study_lims = ?) AS distinct_study_irods`
+)
+
+// countFindSamplesBySangerIDSQL and its siblings size the find/sample/* lists:
+// each counts the SQSCP sample_mirror rows matching the exact field the
+// corresponding Find method matches (findSamplesBySangerIDSQL, ... in
+// hierarchy.go), with no LIMIT, so the count equals len(list) for an unambiguous
+// match (the case the cross-check seeds) and reports the true multiplicity when
+// the Find list would instead raise ErrAmbiguous.
+const (
+	countFindSamplesBySangerIDSQL     = `SELECT COUNT(*) FROM sample_mirror WHERE sanger_sample_id = ? AND id_lims = 'SQSCP'`
+	countFindSamplesByIDSampleLimsSQL = `SELECT COUNT(*) FROM sample_mirror WHERE id_sample_lims = ? AND id_lims = 'SQSCP'`
+	countFindSamplesByAccessionSQL    = `SELECT COUNT(*) FROM sample_mirror WHERE accession_number = ? AND id_lims = 'SQSCP'`
+	countFindSamplesBySupplierSQL     = `SELECT COUNT(*) FROM sample_mirror WHERE supplier_name = ? AND id_lims = 'SQSCP'`
+
+	// countFindSamplesByLibraryTypeSQL counts the distinct SQSCP samples linked to
+	// a library type, mirroring findSamplesByLibraryTypeSQL's join and filter.
+	countFindSamplesByLibraryTypeSQL = `SELECT COUNT(DISTINCT sample_mirror.id_sample_tmp) FROM library_samples INNER JOIN sample_mirror ON sample_mirror.id_sample_tmp = library_samples.id_sample_tmp WHERE library_samples.pipeline_id_lims = ? AND sample_mirror.id_lims = 'SQSCP'`
+)
 
 // Count is the bare count envelope returned by the /count endpoints. It
 // serialises as {"count": N}.
@@ -110,6 +186,337 @@ func (c *Client) countSamplesForEmptyStudy(ctx context.Context, studyLimsID stri
 			return Count{}, err
 		}
 
+		return Count{}, err
+	}
+
+	return Count{}, ErrNotFound
+}
+
+// CountSamplesForRun counts the distinct samples on a run, the count
+// counterpart of SamplesForRun (same iseq_product_metrics_mirror join and
+// id_run filter, no LIMIT), so CountSamplesForRun(run) equals
+// len(SamplesForRun(run, all)). A non-numeric run id is an unsupported
+// identifier; a run absent from a synced cache returns ErrNotFound; a
+// never-synced cache returns Count{} with both ErrCacheNeverSynced and
+// ErrNotFound, mirroring SamplesForRun.
+func (c *Client) CountSamplesForRun(ctx context.Context, idRun string) (Count, error) {
+	runID, err := strconv.Atoi(idRun)
+	if err != nil {
+		return Count{}, ErrUnsupportedIdentifier
+	}
+
+	count, err := c.queryCount(ctx, countSamplesForRunCacheSQL, "count run samples", runID)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireResolverSyncState(ctx, syncTableIseqProductMetrics); err != nil {
+		return Count{}, err
+	}
+
+	return Count{}, ErrNotFound
+}
+
+// CountSamplesForLibrary counts the distinct samples in a library type within a
+// study, the count counterpart of SamplesForLibrary (same library_samples join
+// and pipeline/study filter, no LIMIT), so it equals
+// len(SamplesForLibrary(pipeline, study, all)). It shares SamplesForLibrary's
+// study-exists / synced-empty / unknown cascade.
+func (c *Client) CountSamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string) (Count, error) {
+	count, err := c.queryCount(ctx, countSamplesForLibraryCacheSQL, "count library samples", pipelineIDLims, studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	return c.countSamplesForEmptyStudy(ctx, studyLimsID)
+}
+
+// CountSamplesForLibraryID counts the distinct samples linked through an exact
+// library_id, the count counterpart of SamplesForLibraryID (same
+// library_samples.library_id filter, distinct samples, no LIMIT), so it equals
+// len(SamplesForLibraryID(libraryID, all)). It shares the library-identifier
+// never-synced cascade: an empty result on a synced cache is ErrNotFound.
+func (c *Client) CountSamplesForLibraryID(ctx context.Context, libraryID string) (Count, error) {
+	return c.countSamplesForLibraryIdentifier(ctx, countSamplesForLibraryIDCacheSQL, "count library-id samples", libraryID)
+}
+
+// CountSamplesForLibraryLimsID counts the distinct samples linked through an
+// exact id_library_lims, the count counterpart of SamplesForLibraryLimsID, so it
+// equals len(SamplesForLibraryLimsID(idLibraryLims, all)). It shares the
+// library-identifier never-synced cascade.
+func (c *Client) CountSamplesForLibraryLimsID(ctx context.Context, idLibraryLims string) (Count, error) {
+	return c.countSamplesForLibraryIdentifier(ctx, countSamplesForLibraryLimsIDCacheSQL, "count library-lims-id samples", idLibraryLims)
+}
+
+// countSamplesForLibraryIdentifier is the shared body of the library-identifier
+// counts (by library_id and by id_library_lims). It mirrors
+// sampleStudyPairsForLibraryIdentifier's never-synced cascade: a zero count on a
+// synced cache is ErrNotFound, and a never-synced cache returns Count{} joined
+// with ErrCacheNeverSynced and ErrNotFound.
+func (c *Client) countSamplesForLibraryIdentifier(ctx context.Context, query, action, identifier string) (Count, error) {
+	count, err := c.queryCount(ctx, query, action, identifier)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireResolverSyncState(ctx, syncTableIseqFlowcell); err != nil {
+		return Count{}, err
+	}
+
+	return Count{}, ErrNotFound
+}
+
+// CountSamplesForLibraryType counts the distinct samples in a library type
+// across all studies, the count counterpart of SamplesForLibraryType (same
+// pipeline_id_lims filter, no LIMIT), so it equals
+// len(SamplesForLibraryType(pipeline, all)). It shares SamplesForLibraryType's
+// synced-empty cascade: a zero count on a synced cache is Count{0}, and a
+// never-synced cache returns Count{} joined with both sentinels.
+func (c *Client) CountSamplesForLibraryType(ctx context.Context, pipelineIDLims string) (Count, error) {
+	count, err := c.queryCount(ctx, countSamplesForLibraryTypeCacheSQL, "count library-type samples", pipelineIDLims)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	summary, err := c.requiredSyncStateSummary(ctx, syncTableSample, syncTableIseqFlowcell)
+	if err != nil {
+		return Count{}, err
+	}
+	if summary.allAbsent || !summary.allPresent {
+		return Count{}, neverSyncedReadErr()
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountRunsForStudy counts the distinct runs for a study, the count counterpart
+// of RunsForStudy (same iseq_product_metrics_mirror id_study_lims filter, no
+// LIMIT), so it equals len(RunsForStudy(study, all)). It shares RunsForStudy's
+// study-exists / synced-empty / unknown cascade.
+func (c *Client) CountRunsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if !studyExists {
+		if err = c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+			return Count{}, err
+		}
+
+		return Count{}, ErrNotFound
+	}
+
+	count, err := c.queryCount(ctx, countRunsForStudyCacheSQL, "count study runs", studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireAnySyncState(ctx, syncTableIseqProductMetrics); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountLibrariesForStudy counts the distinct libraries for a study, the count
+// counterpart of LibrariesForStudy (same library_samples grouping by the
+// (pipeline_id_lims, library_id, id_library_lims) triple, no LIMIT), so it
+// equals len(LibrariesForStudy(study, all)). It shares LibrariesForStudy's
+// study-resolve / synced-empty / unknown cascade.
+func (c *Client) CountLibrariesForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	if _, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				return Count{}, syncErr
+			}
+
+			return Count{}, ErrNotFound
+		}
+
+		return Count{}, err
+	}
+
+	count, err := c.queryCount(ctx, countLibrariesForStudyCacheSQL, "count study libraries", studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireAnySyncState(ctx, syncTableIseqFlowcell); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountLanesForSample counts the distinct run/lane/tag combinations for a sample
+// (by Sanger sample name), the count counterpart of LanesForSample (same
+// iseq_product_metrics_mirror SELECT DISTINCT id_run, position, tag_index, no
+// LIMIT), so it equals len(LanesForSample(name, all)). It shares LanesForSample's
+// sample-resolve / synced-empty / unknown cascade.
+func (c *Client) CountLanesForSample(ctx context.Context, sangerName string) (Count, error) {
+	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableSample); syncErr != nil {
+				return Count{}, syncErr
+			}
+
+			return Count{}, ErrNotFound
+		}
+
+		return Count{}, err
+	}
+
+	count, err := c.queryCount(ctx, countLanesForSampleCacheSQL, "count sample lanes", sample.IDSampleTmp)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireAnySyncState(ctx, syncTableIseqProductMetrics); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountIRODSPathsForSample counts the distinct iRODS data objects for a sample
+// (by Sanger sample name), the count counterpart of IRODSPathsForSample (same
+// seq_product_irods_locations_mirror SELECT DISTINCT id_iseq_product,
+// irods_collection, irods_file_name, no LIMIT), so it equals
+// len(IRODSPathsForSample(name, all)). It shares IRODSPathsForSample's
+// sample-resolve / synced-empty / unknown cascade.
+func (c *Client) CountIRODSPathsForSample(ctx context.Context, sangerName string) (Count, error) {
+	sample, err := c.resolveSampleFromCache(ctx, `SELECT `+sampleMirrorSelectColumns+` FROM sample_mirror WHERE name = ? AND id_lims = 'SQSCP' LIMIT 1`, sangerName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableSample); syncErr != nil {
+				return Count{}, syncErr
+			}
+
+			return Count{}, ErrNotFound
+		}
+
+		return Count{}, err
+	}
+
+	count, err := c.queryCount(ctx, countIRODSPathsForSampleCacheSQL, "count sample irods paths", sample.IDSampleTmp)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountIRODSPathsForStudy counts the distinct iRODS data objects for a study, the
+// count counterpart of IRODSPathsForStudy (same LEFT JOIN to sample_mirror and
+// SELECT DISTINCT projection scoped by id_study_lims, no LIMIT), so it equals
+// len(IRODSPathsForStudy(study, all)). It shares IRODSPathsForStudy's
+// study-resolve / synced-empty / unknown cascade.
+func (c *Client) CountIRODSPathsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			if syncErr := c.requireAnySyncState(ctx, syncTableStudy); syncErr != nil {
+				return Count{}, syncErr
+			}
+
+			return Count{}, ErrNotFound
+		}
+
+		return Count{}, err
+	}
+
+	count, err := c.queryCount(ctx, countIRODSPathsForStudyCacheSQL, "count study irods paths", study.IDStudyLims)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+		return Count{}, err
+	}
+
+	return Count{Count: 0}, nil
+}
+
+// CountFindSamplesBySangerID counts the SQSCP samples whose sanger_sample_id
+// matches, the count counterpart of FindSamplesBySangerID, so it equals
+// len(FindSamplesBySangerID(id)) for an unambiguous match. It shares the Find
+// never-synced cascade: a zero count on a synced cache is ErrNotFound.
+func (c *Client) CountFindSamplesBySangerID(ctx context.Context, sangerID string) (Count, error) {
+	return c.countFindSamples(ctx, countFindSamplesBySangerIDSQL, "count samples by sanger sample id", sangerID, syncTableSample)
+}
+
+// CountFindSamplesByIDSampleLims counts the SQSCP samples whose id_sample_lims
+// matches, the count counterpart of FindSamplesByIDSampleLims.
+func (c *Client) CountFindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) (Count, error) {
+	return c.countFindSamples(ctx, countFindSamplesByIDSampleLimsSQL, "count samples by id_sample_lims", idSampleLims, syncTableSample)
+}
+
+// CountFindSamplesByAccessionNumber counts the SQSCP samples whose
+// accession_number matches, the count counterpart of
+// FindSamplesByAccessionNumber.
+func (c *Client) CountFindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) (Count, error) {
+	return c.countFindSamples(ctx, countFindSamplesByAccessionSQL, "count samples by accession number", accessionNumber, syncTableSample)
+}
+
+// CountFindSamplesBySupplierName counts the SQSCP samples whose supplier_name
+// matches, the count counterpart of FindSamplesBySupplierName.
+func (c *Client) CountFindSamplesBySupplierName(ctx context.Context, supplierName string) (Count, error) {
+	return c.countFindSamples(ctx, countFindSamplesBySupplierSQL, "count samples by supplier name", supplierName, syncTableSample)
+}
+
+// CountFindSamplesByLibraryType counts the distinct SQSCP samples linked to a
+// library type, the count counterpart of FindSamplesByLibraryType (same
+// library_samples join and pipeline_id_lims filter, no LIMIT).
+func (c *Client) CountFindSamplesByLibraryType(ctx context.Context, libraryType string) (Count, error) {
+	return c.countFindSamples(ctx, countFindSamplesByLibraryTypeSQL, "count samples by library type", libraryType, syncTableSample, syncTableIseqFlowcell)
+}
+
+// countFindSamples is the shared body of the find/sample/* counts. It mirrors
+// findSamplesByQuery's never-synced cascade: a zero count on a synced cache is
+// ErrNotFound, and a never-synced cache returns Count{} joined with
+// ErrCacheNeverSynced and ErrNotFound.
+func (c *Client) countFindSamples(ctx context.Context, query, action, raw string, syncTables ...string) (Count, error) {
+	count, err := c.queryCount(ctx, query, action, raw)
+	if err != nil {
+		return Count{}, err
+	}
+	if count > 0 {
+		return Count{Count: count}, nil
+	}
+
+	if err = c.requireAnySyncState(ctx, syncTables...); err != nil {
 		return Count{}, err
 	}
 

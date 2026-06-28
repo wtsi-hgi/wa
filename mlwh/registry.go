@@ -241,6 +241,16 @@ var Registry = []Endpoint{
 		Description: "Returns one fixed-size aggregate answering \"what is in this study, how much sequencing data, and was anything added recently\", so callers avoid the large per-sample fan-outs. samples_total is the distinct samples linked via library_samples. A sample has sequencing data available for this study iff it has at least one row in the iRODS locations mirror scoped by id_study_lims = the study (real data objects in iRODS); scoping is by the study the data is under, NOT data the sample has anywhere. samples_with_data, samples_sequenced_no_data and the implied registered bucket form the distinct-sample partition by most-advanced phase (precedence with_data > sequenced_no_data > registered), so each sample counts once and samples_without_data = samples_total - samples_with_data. samples_sequenced_no_data is the distinct samples with product-metrics in this study (scoped by the product-metrics id_study_lims) but no study-scoped iRODS rows; registered (= samples_total - samples_with_data - samples_sequenced_no_data) is the linked samples with no product-metrics, including ONT. data_objects is the study-scoped iRODS data-object count; runs, libraries and the sorted library_types come from the study's product-metrics and library tables. sequencing_date_range and newest_data_added are the earliest/latest iRODS creation timestamp (the created column, NEVER last_updated or last_run); added_last_7_days counts the distinct samples whose study-scoped iRODS data was added in the half-open window [now-7d, now) on that created column (created >= now-7d AND created < now). cache_synced_at is the oldest last_run across the feeding tables (study, sample, the product-metrics mirrors and the iRODS locations mirror), distinct from any data timestamp; every figure is read from the cache mirrors, so the overview is complete only up to that sync (see /freshness).",
 	},
 	{
+		Method:      "RunOverview",
+		Verb:        registryVerbGet,
+		Path:        "/run/:id/overview",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[RunOverview],
+		Summary:     "Get a run's sequencing overview",
+		Description: "Returns one fixed-size aggregate answering \"what is on this run and how much sequencing data\", so callers need neither /run/:id/detail nor per-sample calls. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. samples is the distinct samples on the run and studies the distinct studies on the run, both taken from the run's iseq_product_metrics rows (the same source as /run/:id/samples). data_objects is the iRODS data objects for the run: the run's iseq_product_metrics rows joined to the iRODS locations mirror by the shared id_iseq_product (the run's real data files in iRODS). sequencing_date_range is the earliest/latest iRODS creation timestamp for those data objects (the created column, NEVER last_updated or last_run); it is omitted when the run has no iRODS rows. This is a separate small aggregate, NOT folded into /run/:id/detail. cache_synced_at is the oldest last_run across the feeding tables (the iseq product-metrics mirror and the iRODS locations mirror), distinct from any data timestamp; every figure is read from the cache mirrors, so the overview is complete only up to that sync (see /freshness).",
+	},
+	{
 		Method:      "SamplesWithData",
 		Verb:        registryVerbGet,
 		Path:        "/study/:id/samples-with-data",
@@ -418,7 +428,8 @@ var Registry = []Endpoint{
 		Query:       []string{},
 		NewResult:   newResult[StudyDetail],
 		Summary:     "Get study detail",
-		Description: "Returns the given study with the detail of each of its libraries and their samples.",
+		Description: "Returns the given study with the detail of each of its libraries and their samples. The response is de-duplicated to stay bounded: each distinct study and library is carried once in the study_lookup / library_lookup tables (keyed by id) and the nested sample rows under library_details reference them by id rather than re-embedding the same study and library objects under every sample. The optional limit/offset query params paginate the nested sample collection (defaulting to every sample), and X-Total-Count reports the full nested sample count while X-Next-Offset gives the offset of the next page (offset+returned, or -1 on the last page), exactly as the paginated list endpoints do. The optional lean query param (a boolean) drops the heavy library_details and lookup tables and returns only the top-level study plus the flat sample_ids and library_ids lists, so the response is strictly smaller.",
+		QueryParams: detailQueryParams(),
 	},
 	{
 		Method:      "RunDetail",
@@ -428,7 +439,8 @@ var Registry = []Endpoint{
 		Query:       []string{},
 		NewResult:   newResult[RunDetail],
 		Summary:     "Get run detail",
-		Description: "Returns the given run with its related samples, studies, and per-study detail.",
+		Description: "Returns the given run with its related samples, studies, and per-study detail. The response is de-duplicated to stay bounded: each distinct study and library is carried once in the study_lookup / library_lookup tables (keyed by id) and the nested sample rows (both samples and study_details) reference them by id rather than re-embedding the same study and library objects under every sample. The optional limit/offset query params paginate the nested sample collection (defaulting to every sample, with studies and study_details rebuilt from the page), and X-Total-Count reports the full nested sample count while X-Next-Offset gives the offset of the next page (offset+returned, or -1 on the last page), exactly as the paginated list endpoints do. The optional lean query param (a boolean) drops the heavy samples, studies, study_details and lookup tables and returns only the run plus the flat sample_ids and study_ids lists, so the response is strictly smaller.",
+		QueryParams: detailQueryParams(),
 	},
 	{
 		Method:      "LibraryDetail",
@@ -515,6 +527,156 @@ var Registry = []Endpoint{
 		QueryParams: addedWindowQueryParams(),
 	},
 	{
+		Method:      "CountSamplesForRun",
+		Verb:        registryVerbGet,
+		Path:        "/run/:id/samples/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples on a run",
+		Description: "Returns the number of distinct samples sequenced on the given run, the count counterpart of /run/:id/samples (count == the length of that list when all rows are fetched), via the same iseq_product_metrics_mirror join on id_run with no LIMIT. :id is the run id; a non-numeric id is rejected as an unsupported identifier, and a run absent from the synced cache yields not_found. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountSamplesForLibrary",
+		Verb:        registryVerbGet,
+		Path:        "/library/:pipeline/study/:study/samples/count",
+		PathParams:  []string{"pipeline", "study"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples in a library",
+		Description: "Returns the number of distinct samples in the library identified by its pipeline LIMS id within the given study, the count counterpart of /library/:pipeline/study/:study/samples (count == the length of that list when all rows are fetched), via the same library_samples join filtered by pipeline_id_lims and id_study_lims with no LIMIT. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountSamplesForLibraryID",
+		Verb:        registryVerbGet,
+		Path:        "/library-id/:id/samples/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples by library id",
+		Description: "Returns the number of distinct samples in the library with the given library id, the count counterpart of /library-id/:id/samples (count == the length of that list when all rows are fetched), via the same library_samples filter on library_id with no LIMIT. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountSamplesForLibraryLimsID",
+		Verb:        registryVerbGet,
+		Path:        "/library-lims-id/:id/samples/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples by LIMS library id",
+		Description: "Returns the number of distinct samples in the library with the given LIMS library id, the count counterpart of /library-lims-id/:id/samples (count == the length of that list when all rows are fetched), via the same library_samples filter on id_library_lims with no LIMIT. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountSamplesForLibraryType",
+		Verb:        registryVerbGet,
+		Path:        "/library-type/:id/samples/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples by library type",
+		Description: "Returns the number of distinct samples in libraries of the given library type, the count counterpart of /library-type/:id/samples (count == the length of that list when all rows are fetched), via the same library_samples filter on pipeline_id_lims with no LIMIT. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountRunsForStudy",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/runs/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count runs for a study",
+		Description: "Returns the number of distinct sequencing runs associated with the given study, the count counterpart of /study/:id/runs (count == the length of that list when all rows are fetched), via the same iseq_product_metrics_mirror filter on id_study_lims with no LIMIT. An unknown study yields not_found. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountLibrariesForStudy",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/libraries/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count libraries in a study",
+		Description: "Returns the number of distinct libraries belonging to the given study, the count counterpart of /study/:id/libraries (count == the length of that list when all rows are fetched), counting the distinct (pipeline_id_lims, library_id, id_library_lims) library_samples groupings the list returns with no LIMIT. An unknown study yields not_found. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountLanesForSample",
+		Verb:        registryVerbGet,
+		Path:        "/sample/:id/lanes/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count lanes for a sample",
+		Description: "Returns the number of distinct run/lane/tag combinations on which the given sample (by Sanger sample name) was sequenced, the count counterpart of /sample/:id/lanes (count == the length of that list when all rows are fetched), counting the distinct (id_run, position, tag_index) rows the list returns with no LIMIT. An unknown sample yields not_found. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountIRODSPathsForSample",
+		Verb:        registryVerbGet,
+		Path:        "/sample/:id/irods/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count iRODS paths for a sample",
+		Description: "Returns the number of distinct iRODS data objects exported for the given sample (by Sanger sample name), the count counterpart of /sample/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS data objects the list returns with no LIMIT. An unknown sample yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountIRODSPathsForStudy",
+		Verb:        registryVerbGet,
+		Path:        "/study/:id/irods/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count iRODS paths for a study",
+		Description: "Returns the number of distinct iRODS data objects exported for the given study, the count counterpart of /study/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS rows the list returns (scoped by id_study_lims) with no LIMIT. An unknown study yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountFindSamplesBySangerID",
+		Verb:        registryVerbGet,
+		Path:        "/find/sample/sanger-id/:id/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples by Sanger sample id",
+		Description: "Returns the number of samples whose Sanger sample id exactly matches the given value, the count counterpart of /find/sample/sanger-id/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountFindSamplesByIDSampleLims",
+		Verb:        registryVerbGet,
+		Path:        "/find/sample/lims-id/:id/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples by LIMS sample id",
+		Description: "Returns the number of samples whose LIMS sample id exactly matches the given value, the count counterpart of /find/sample/lims-id/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountFindSamplesByAccessionNumber",
+		Verb:        registryVerbGet,
+		Path:        "/find/sample/accession/:id/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples by accession number",
+		Description: "Returns the number of samples whose accession number exactly matches the given value, the count counterpart of /find/sample/accession/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountFindSamplesBySupplierName",
+		Verb:        registryVerbGet,
+		Path:        "/find/sample/supplier-name/:id/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples by supplier name",
+		Description: "Returns the number of samples whose supplier name exactly matches the given value, the count counterpart of /find/sample/supplier-name/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).",
+	},
+	{
+		Method:      "CountFindSamplesByLibraryType",
+		Verb:        registryVerbGet,
+		Path:        "/find/sample/library-type/:id/count",
+		PathParams:  []string{"id"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count samples by library type",
+		Description: "Returns the number of distinct samples whose library type exactly matches the given value, the count counterpart of /find/sample/library-type/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).",
+	},
+	{
 		Method:      "Freshness",
 		Verb:        registryVerbGet,
 		Path:        "/freshness",
@@ -542,6 +704,24 @@ type QueryParam struct {
 // since/until), so it documents both the pagination and the window controls.
 func fetchAllPaginationWithAddedWindowParams() []QueryParam {
 	return append(fetchAllPaginationParams(), addedWindowQueryParams()...)
+}
+
+// detailQueryParams are the QueryParams for the de-duplicated detail endpoints
+// (/study/:id/detail and /run/:id/detail): the limit/offset controls that
+// paginate the nested sample collection (the same fetch-all defaults as the
+// list endpoints, so the X-Total-Count / X-Next-Offset sizing headers behave the
+// same) plus the boolean lean switch that drops the heavy nested objects in
+// favour of the flat id lists. The detail methods are not themselves paginated
+// Queryer methods (they take no trailing limit/offset), so these are declared as
+// plain query params on a non-paginated entry, like the windowed-count window
+// params.
+func detailQueryParams() []QueryParam {
+	return append(fetchAllPaginationParams(), QueryParam{
+		Name:        "lean",
+		Type:        "boolean",
+		Required:    false,
+		Description: "when true, drops the heavy nested objects (library_details / samples / studies / study_details and the lookup tables) and returns only the top-level entity plus flat id lists, so the response is strictly smaller; defaults to false",
+	})
 }
 
 // fetchAllPaginationParams are the limit/offset QueryParams for the fetch-all

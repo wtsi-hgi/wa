@@ -92,6 +92,29 @@ var (
 // overview's cache_synced_at equals it.
 var b1OldestLastRun = time.Date(2026, time.June, 27, 6, 0, 0, 0, time.UTC)
 
+// d1RunOverviewRun is the Illumina NPG run the D1 run-overview scenario seeds: it
+// carries 4 distinct samples across 2 studies and 6 iRODS data objects.
+const d1RunOverviewRun = 52553
+
+// d1SampleIDs names the samples seeded for the D1 run-overview scenario. Four are
+// on the overview run (three under S1, one under S2, so the run spans 2 distinct
+// studies); a fifth is on a different run, proving run scoping excludes it.
+const (
+	d1SampleA      = int64(71) // on run 52553, study S1, 3 iRODS data objects
+	d1SampleB      = int64(72) // on run 52553, study S1, 2 iRODS data objects
+	d1SampleC      = int64(73) // on run 52553, study S1, 1 iRODS data object
+	d1SampleD      = int64(74) // on run 52553, study S2 (second distinct study)
+	d1OtherRunOnly = int64(75) // on run 52554 only, with its own iRODS row (excluded)
+)
+
+// d1 iRODS created timestamps for the run-overview scenario: the earliest and the
+// latest define the sequencing_date_range the overview reports.
+var (
+	d1CreatedEarliest = time.Date(2026, time.June, 20, 8, 0, 0, 0, time.UTC)
+	d1CreatedMiddle   = time.Date(2026, time.June, 24, 12, 0, 0, 0, time.UTC)
+	d1CreatedLatest   = time.Date(2026, time.June, 26, 18, 0, 0, 0, time.UTC)
+)
+
 // SamplesWithData and SamplesWithoutData must mirror SamplesForStudy's
 // never-synced cascade: a never-synced cache yields both sentinels.
 func TestSamplesWithDataNeverSyncedReturnsJoinedSentinel(t *testing.T) {
@@ -229,6 +252,25 @@ func TestStudyOverviewNeverSyncedReturnsJoinedSentinel(t *testing.T) {
 			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
 			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
 			convey.So(overview, convey.ShouldResemble, StudyOverview{})
+		})
+	})
+}
+
+// D1 acceptance test 2: a never-synced cache returns an error satisfying both
+// ErrCacheNeverSynced and ErrNotFound (the run space's never-synced cascade).
+func TestRunOverviewNeverSyncedReturnsJoinedSentinel(t *testing.T) {
+	convey.Convey("Given a never-synced SQLite cache", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		overview, err := client.RunOverview(context.Background(), "52553")
+
+		convey.Convey("when RunOverview runs, then it returns both sentinels and a zero-value overview", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(overview, convey.ShouldResemble, RunOverview{})
 		})
 	})
 }
@@ -791,6 +833,110 @@ func seedC1WithDataSample(t *testing.T, db *sql.DB, idSampleTmp int64, productSe
 	product := formatInt(int64(5100 + productSeq))
 	seedIseqProductMetricsMirrorRow(t, db, int64(5100+productSeq), idSampleTmp, 52560, productSeq, 1, "S1")
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, product, "/seq/52560", "52560_"+product+".cram", idSampleTmp, "S1", created, "illumina")
+}
+
+// D1 acceptance test 1: a run with 4 distinct samples across 2 studies and 6 iRODS
+// data objects reports those exact figures and a sequencing_date_range spanning
+// the min/max iRODS created.
+func TestRunOverviewReportsRunFigures(t *testing.T) {
+	convey.Convey("Given run 52553 with 4 distinct samples across 2 studies and 6 iRODS data objects", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedD1RunOverviewScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		overview, err := client.RunOverview(context.Background(), "52553")
+
+		convey.Convey("when RunOverview is called, then samples=4, studies=2, data_objects=6 and the date range spans the min/max created", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(overview.IDRun, convey.ShouldEqual, d1RunOverviewRun)
+			convey.So(overview.Samples, convey.ShouldEqual, 4)
+			convey.So(overview.Studies, convey.ShouldEqual, 2)
+			convey.So(overview.DataObjects, convey.ShouldEqual, 6)
+
+			convey.So(overview.SequencingDateRange, convey.ShouldNotBeNil)
+			convey.So(overview.SequencingDateRange.Earliest, convey.ShouldEqual, "2026-06-20T08:00:00Z")
+			convey.So(overview.SequencingDateRange.Latest, convey.ShouldEqual, "2026-06-26T18:00:00Z")
+			convey.So(overview.CacheSyncedAt, convey.ShouldNotBeEmpty)
+		})
+	})
+}
+
+// D1 acceptance test 3: an :id that is not a valid Illumina run (a numeric run id
+// absent from the synced cache) returns ErrNotFound, the existing Run/ResolveRun
+// not-found behaviour (and NOT the never-synced sentinel on a synced cache).
+func TestRunOverviewInvalidRunReturnsNotFound(t *testing.T) {
+	convey.Convey("Given a synced cache whose iseq product-metrics has no row for the requested run", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedD1RunOverviewScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		overview, err := client.RunOverview(context.Background(), "99999")
+
+		convey.Convey("when RunOverview runs for the unknown run, then it returns ErrNotFound and a zero-value overview", func() {
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
+			convey.So(overview, convey.ShouldResemble, RunOverview{})
+		})
+	})
+}
+
+// seedD1RunOverviewScenario builds the D1 run-overview fixture. Run 52553 carries
+// four distinct samples across two studies (three under S1, one under S2) and six
+// study/run-scoped iRODS data objects whose created timestamps span 2026-06-20 to
+// 2026-06-26. Each iRODS row joins to its run via the shared id_iseq_product, the
+// same run->iRODS link the overview uses (iseq_product_metrics_mirror.id_run ->
+// seq_product_irods_locations_mirror.id_iseq_product). A fifth sample on a
+// different run (52554), with its own iRODS row, proves run scoping excludes other
+// runs. It reuses the shared availability seeder helpers and sync-state stamp so
+// the run resolves rather than returning the never-synced sentinel.
+func seedD1RunOverviewScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, 171, "S1")
+	seedHierarchyStudy(t, db, 172, "S2")
+
+	for _, id := range []int64{d1SampleA, d1SampleB, d1SampleC} {
+		seedHierarchySample(t, db, id, "S1", "d1-sample-"+formatInt(id))
+		seedLibrarySample(t, db, "Standard", id, "S1")
+	}
+	seedHierarchySample(t, db, d1SampleD, "S2", "d1-sample-"+formatInt(d1SampleD))
+	seedLibrarySample(t, db, "Standard", d1SampleD, "S2")
+
+	// Sample A: 3 iRODS data objects on run 52553 (earliest, middle, latest), so
+	// the run's created range spans 2026-06-20 to 2026-06-26.
+	seedIseqProductMetricsMirrorRow(t, db, 7101, d1SampleA, d1RunOverviewRun, 1, 1, "S1")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "7101", "/seq/52553", "52553_1#1.cram", d1SampleA, "S1", d1CreatedEarliest, "illumina")
+	seedIseqProductMetricsMirrorRow(t, db, 7102, d1SampleA, d1RunOverviewRun, 1, 2, "S1")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "7102", "/seq/52553", "52553_1#2.cram", d1SampleA, "S1", d1CreatedMiddle, "illumina")
+	seedIseqProductMetricsMirrorRow(t, db, 7103, d1SampleA, d1RunOverviewRun, 1, 3, "S1")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "7103", "/seq/52553", "52553_1#3.cram", d1SampleA, "S1", d1CreatedLatest, "illumina")
+
+	// Sample B: 2 iRODS data objects on run 52553.
+	seedIseqProductMetricsMirrorRow(t, db, 7201, d1SampleB, d1RunOverviewRun, 2, 1, "S1")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "7201", "/seq/52553", "52553_2#1.cram", d1SampleB, "S1", d1CreatedMiddle, "illumina")
+	seedIseqProductMetricsMirrorRow(t, db, 7202, d1SampleB, d1RunOverviewRun, 2, 2, "S1")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "7202", "/seq/52553", "52553_2#2.cram", d1SampleB, "S1", d1CreatedMiddle, "illumina")
+
+	// Sample C: 1 iRODS data object on run 52553 (6 data objects total: 3+2+1).
+	seedIseqProductMetricsMirrorRow(t, db, 7301, d1SampleC, d1RunOverviewRun, 3, 1, "S1")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "7301", "/seq/52553", "52553_3#1.cram", d1SampleC, "S1", d1CreatedMiddle, "illumina")
+
+	// Sample D: on run 52553 under the second study S2, with no iRODS row, so it
+	// adds a distinct sample and a distinct study without adding a data object.
+	seedIseqProductMetricsMirrorRow(t, db, 7401, d1SampleD, d1RunOverviewRun, 4, 1, "S2")
+
+	// A fifth sample on a different run (52554) with its own iRODS row: run scoping
+	// must exclude it from run 52553's samples/studies/data objects.
+	seedHierarchySample(t, db, d1OtherRunOnly, "S1", "d1-sample-"+formatInt(d1OtherRunOnly))
+	seedLibrarySample(t, db, "Standard", d1OtherRunOnly, "S1")
+	seedIseqProductMetricsMirrorRow(t, db, 7501, d1OtherRunOnly, 52554, 1, 1, "S1")
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "7501", "/seq/52554", "52554_1#1.cram", d1OtherRunOnly, "S1", d1CreatedLatest, "illumina")
+
+	seedB3AvailabilitySyncState(t, db)
 }
 
 // seedB3AvailabilitySyncState marks every feeding table synced, so the B3

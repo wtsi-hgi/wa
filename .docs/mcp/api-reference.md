@@ -187,6 +187,16 @@ Returns one fixed-size aggregate answering "what is in this study, how much sequ
 - Query parameters: none
 - Response: `StudyOverview`
 
+### `GET /run/:id/overview`
+
+Get a run's sequencing overview
+
+Returns one fixed-size aggregate answering "what is on this run and how much sequencing data", so callers need neither /run/:id/detail nor per-sample calls. :id is the Illumina NPG run id (the existing run/ResolveRun identifier space; no new resolver): a non-Illumina or otherwise invalid run yields the existing not-found / unsupported-identifier error, and a numeric run absent from the synced cache yields not_found. samples is the distinct samples on the run and studies the distinct studies on the run, both taken from the run's iseq_product_metrics rows (the same source as /run/:id/samples). data_objects is the iRODS data objects for the run: the run's iseq_product_metrics rows joined to the iRODS locations mirror by the shared id_iseq_product (the run's real data files in iRODS). sequencing_date_range is the earliest/latest iRODS creation timestamp for those data objects (the created column, NEVER last_updated or last_run); it is omitted when the run has no iRODS rows. This is a separate small aggregate, NOT folded into /run/:id/detail. cache_synced_at is the oldest last_run across the feeding tables (the iseq product-metrics mirror and the iRODS locations mirror), distinct from any data timestamp; every figure is read from the cache mirrors, so the overview is complete only up to that sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `RunOverview`
+
 ### `GET /study/:id/samples-with-data`
 
 List a study's samples that have sequencing data
@@ -351,20 +361,20 @@ Returns the given sample (by Sanger sample name) with its study, lanes, librarie
 
 Get study detail
 
-Returns the given study with the detail of each of its libraries and their samples.
+Returns the given study with the detail of each of its libraries and their samples. The response is de-duplicated to stay bounded: each distinct study and library is carried once in the study_lookup / library_lookup tables (keyed by id) and the nested sample rows under library_details reference them by id rather than re-embedding the same study and library objects under every sample. The optional limit/offset query params paginate the nested sample collection (defaulting to every sample), and X-Total-Count reports the full nested sample count while X-Next-Offset gives the offset of the next page (offset+returned, or -1 on the last page), exactly as the paginated list endpoints do. The optional lean query param (a boolean) drops the heavy library_details and lookup tables and returns only the top-level study plus the flat sample_ids and library_ids lists, so the response is strictly smaller.
 
 - Path parameters: `id`
-- Query parameters: none
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `lean` (boolean): when true, drops the heavy nested objects (library_details / samples / studies / study_details and the lookup tables) and returns only the top-level entity plus flat id lists, so the response is strictly smaller; defaults to false
 - Response: `StudyDetail`
 
 ### `GET /run/:id/detail`
 
 Get run detail
 
-Returns the given run with its related samples, studies, and per-study detail.
+Returns the given run with its related samples, studies, and per-study detail. The response is de-duplicated to stay bounded: each distinct study and library is carried once in the study_lookup / library_lookup tables (keyed by id) and the nested sample rows (both samples and study_details) reference them by id rather than re-embedding the same study and library objects under every sample. The optional limit/offset query params paginate the nested sample collection (defaulting to every sample, with studies and study_details rebuilt from the page), and X-Total-Count reports the full nested sample count while X-Next-Offset gives the offset of the next page (offset+returned, or -1 on the last page), exactly as the paginated list endpoints do. The optional lean query param (a boolean) drops the heavy samples, studies, study_details and lookup tables and returns only the run plus the flat sample_ids and study_ids lists, so the response is strictly smaller.
 
 - Path parameters: `id`
-- Query parameters: none
+- Query parameters: `limit` (integer): maximum number of rows to return; defaults to a fetch-all page that returns every matching row; `offset` (integer): number of leading rows to skip before returning results; defaults to 0; `lean` (boolean): when true, drops the heavy nested objects (library_details / samples / studies / study_details and the lookup tables) and returns only the top-level entity plus flat id lists, so the response is strictly smaller; defaults to false
 - Response: `RunDetail`
 
 ### `GET /library/:pipeline/study/:study/detail`
@@ -445,6 +455,156 @@ Returns the number of distinct samples linked to the given study (via library_sa
 
 - Path parameters: `id`
 - Query parameters: `since` (string): RFC3339 timestamp; when set, counts only samples whose study-scoped data was added to iRODS at or after this instant (created >= since, inclusive), filtering on the iRODS creation timestamp and never on last_updated/last_run; omit for an all-time count; `until` (string): RFC3339 timestamp; when set with since, the upper bound of the half-open window (created < until, exclusive); optional and open-ended when omitted
+- Response: `Count`
+
+### `GET /run/:id/samples/count`
+
+Count samples on a run
+
+Returns the number of distinct samples sequenced on the given run, the count counterpart of /run/:id/samples (count == the length of that list when all rows are fetched), via the same iseq_product_metrics_mirror join on id_run with no LIMIT. :id is the run id; a non-numeric id is rejected as an unsupported identifier, and a run absent from the synced cache yields not_found. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /library/:pipeline/study/:study/samples/count`
+
+Count samples in a library
+
+Returns the number of distinct samples in the library identified by its pipeline LIMS id within the given study, the count counterpart of /library/:pipeline/study/:study/samples (count == the length of that list when all rows are fetched), via the same library_samples join filtered by pipeline_id_lims and id_study_lims with no LIMIT. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `pipeline`, `study`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /library-id/:id/samples/count`
+
+Count samples by library id
+
+Returns the number of distinct samples in the library with the given library id, the count counterpart of /library-id/:id/samples (count == the length of that list when all rows are fetched), via the same library_samples filter on library_id with no LIMIT. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /library-lims-id/:id/samples/count`
+
+Count samples by LIMS library id
+
+Returns the number of distinct samples in the library with the given LIMS library id, the count counterpart of /library-lims-id/:id/samples (count == the length of that list when all rows are fetched), via the same library_samples filter on id_library_lims with no LIMIT. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /library-type/:id/samples/count`
+
+Count samples by library type
+
+Returns the number of distinct samples in libraries of the given library type, the count counterpart of /library-type/:id/samples (count == the length of that list when all rows are fetched), via the same library_samples filter on pipeline_id_lims with no LIMIT. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /study/:id/runs/count`
+
+Count runs for a study
+
+Returns the number of distinct sequencing runs associated with the given study, the count counterpart of /study/:id/runs (count == the length of that list when all rows are fetched), via the same iseq_product_metrics_mirror filter on id_study_lims with no LIMIT. An unknown study yields not_found. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /study/:id/libraries/count`
+
+Count libraries in a study
+
+Returns the number of distinct libraries belonging to the given study, the count counterpart of /study/:id/libraries (count == the length of that list when all rows are fetched), counting the distinct (pipeline_id_lims, library_id, id_library_lims) library_samples groupings the list returns with no LIMIT. An unknown study yields not_found. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /sample/:id/lanes/count`
+
+Count lanes for a sample
+
+Returns the number of distinct run/lane/tag combinations on which the given sample (by Sanger sample name) was sequenced, the count counterpart of /sample/:id/lanes (count == the length of that list when all rows are fetched), counting the distinct (id_run, position, tag_index) rows the list returns with no LIMIT. An unknown sample yields not_found. The count is read from the cache mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /sample/:id/irods/count`
+
+Count iRODS paths for a sample
+
+Returns the number of distinct iRODS data objects exported for the given sample (by Sanger sample name), the count counterpart of /sample/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS data objects the list returns with no LIMIT. An unknown sample yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /study/:id/irods/count`
+
+Count iRODS paths for a study
+
+Returns the number of distinct iRODS data objects exported for the given study, the count counterpart of /study/:id/irods (count == the length of that list when all rows are fetched), counting the distinct iRODS rows the list returns (scoped by id_study_lims) with no LIMIT. An unknown study yields not_found. The count is read from the iRODS locations mirror, so it is complete only up to that table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /find/sample/sanger-id/:id/count`
+
+Count samples by Sanger sample id
+
+Returns the number of samples whose Sanger sample id exactly matches the given value, the count counterpart of /find/sample/sanger-id/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /find/sample/lims-id/:id/count`
+
+Count samples by LIMS sample id
+
+Returns the number of samples whose LIMS sample id exactly matches the given value, the count counterpart of /find/sample/lims-id/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /find/sample/accession/:id/count`
+
+Count samples by accession number
+
+Returns the number of samples whose accession number exactly matches the given value, the count counterpart of /find/sample/accession/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /find/sample/supplier-name/:id/count`
+
+Count samples by supplier name
+
+Returns the number of samples whose supplier name exactly matches the given value, the count counterpart of /find/sample/supplier-name/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
+- Response: `Count`
+
+### `GET /find/sample/library-type/:id/count`
+
+Count samples by library type
+
+Returns the number of distinct samples whose library type exactly matches the given value, the count counterpart of /find/sample/library-type/:id: it equals that list's length for a unique match and reports the true multiplicity when the list would instead report an ambiguous match. The count is read from the cache mirror, so it is complete only up to the sample table's last sync (see /freshness).
+
+- Path parameters: `id`
+- Query parameters: none
 - Response: `Count`
 
 ### `GET /freshness`

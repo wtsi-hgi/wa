@@ -142,6 +142,13 @@ func (rc *RemoteClient) SamplesForStudy(ctx context.Context, studyLimsID string,
 	return remoteCall[[]Sample](rc, ctx, "SamplesForStudy", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
+// SamplesForStudyPage is the Page[Sample] variant of SamplesForStudy: it returns
+// the same page of rows (Page.Items) plus the list-sizing metadata from the
+// X-Total-Count / X-Next-Offset response headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) SamplesForStudyPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[Sample], error) {
+	return remoteCallPage[Sample](rc, ctx, "SamplesForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
 // SamplesForRun lists samples for a run through the remote server.
 func (rc *RemoteClient) SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]Sample, error) {
 	return remoteCall[[]Sample](rc, ctx, "SamplesForRun", []string{idRun}, remotePagination(limit, offset))
@@ -182,14 +189,35 @@ func (rc *RemoteClient) StudyOverview(ctx context.Context, studyLimsID string) (
 	return remoteCall[StudyOverview](rc, ctx, "StudyOverview", []string{studyLimsID}, nil)
 }
 
+// RunOverview returns a run's overview aggregate through the remote server.
+func (rc *RemoteClient) RunOverview(ctx context.Context, idRun string) (RunOverview, error) {
+	return remoteCall[RunOverview](rc, ctx, "RunOverview", []string{idRun}, nil)
+}
+
 // SamplesWithData lists a study's samples-with-data through the remote server.
 func (rc *RemoteClient) SamplesWithData(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleWithData, error) {
 	return remoteCall[[]SampleWithData](rc, ctx, "SamplesWithData", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
+// SamplesWithDataPage is the Page[SampleWithData] variant of SamplesWithData: it
+// returns the same page of rows (Page.Items) plus the list-sizing metadata from
+// the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) SamplesWithDataPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[SampleWithData], error) {
+	return remoteCallPage[SampleWithData](rc, ctx, "SamplesWithData", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
 // SamplesWithoutData lists a study's samples-without-data through the remote server.
 func (rc *RemoteClient) SamplesWithoutData(ctx context.Context, studyLimsID string, limit, offset int) ([]SampleWithData, error) {
 	return remoteCall[[]SampleWithData](rc, ctx, "SamplesWithoutData", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// SamplesWithoutDataPage is the Page[SampleWithData] variant of
+// SamplesWithoutData: it returns the same page of rows (Page.Items) plus the
+// list-sizing metadata from the X-Total-Count / X-Next-Offset response headers
+// (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) SamplesWithoutDataPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[SampleWithData], error) {
+	return remoteCallPage[SampleWithData](rc, ctx, "SamplesWithoutData", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
 // SamplesWithDataSince lists the distinct samples whose study-scoped iRODS data
@@ -232,6 +260,14 @@ func (rc *RemoteClient) IRODSPathsForSample(ctx context.Context, sangerName stri
 // IRODSPathsForStudy lists iRODS paths for a study through the remote server.
 func (rc *RemoteClient) IRODSPathsForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]IRODSPath, error) {
 	return remoteCall[[]IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
+}
+
+// IRODSPathsForStudyPage is the Page[IRODSPath] variant of IRODSPathsForStudy: it
+// returns the same page of rows (Page.Items) plus the list-sizing metadata from
+// the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) IRODSPathsForStudyPage(ctx context.Context, studyLimsID string, limit, offset int) (Page[IRODSPath], error) {
+	return remoteCallPage[IRODSPath](rc, ctx, "IRODSPathsForStudy", []string{studyLimsID}, remotePagination(limit, offset))
 }
 
 // StudiesForSample lists studies for a sample through the remote server.
@@ -340,6 +376,81 @@ func remoteAddedWindow(since, until string) url.Values {
 	return values
 }
 
+// CountSamplesForRun counts the distinct samples on a run through the remote server.
+func (rc *RemoteClient) CountSamplesForRun(ctx context.Context, idRun string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSamplesForRun", []string{idRun}, nil)
+}
+
+// CountSamplesForLibrary counts the distinct samples in a library type and study through the remote server.
+func (rc *RemoteClient) CountSamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSamplesForLibrary", []string{pipelineIDLims, studyLimsID}, nil)
+}
+
+// CountSamplesForLibraryID counts the distinct samples for a library id through the remote server.
+func (rc *RemoteClient) CountSamplesForLibraryID(ctx context.Context, libraryID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSamplesForLibraryID", []string{libraryID}, nil)
+}
+
+// CountSamplesForLibraryLimsID counts the distinct samples for a LIMS library id through the remote server.
+func (rc *RemoteClient) CountSamplesForLibraryLimsID(ctx context.Context, idLibraryLims string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSamplesForLibraryLimsID", []string{idLibraryLims}, nil)
+}
+
+// CountSamplesForLibraryType counts the distinct samples for a library type through the remote server.
+func (rc *RemoteClient) CountSamplesForLibraryType(ctx context.Context, pipelineIDLims string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountSamplesForLibraryType", []string{pipelineIDLims}, nil)
+}
+
+// CountRunsForStudy counts the distinct runs for a study through the remote server.
+func (rc *RemoteClient) CountRunsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountRunsForStudy", []string{studyLimsID}, nil)
+}
+
+// CountLibrariesForStudy counts the distinct libraries for a study through the remote server.
+func (rc *RemoteClient) CountLibrariesForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountLibrariesForStudy", []string{studyLimsID}, nil)
+}
+
+// CountLanesForSample counts the distinct lanes for a sample through the remote server.
+func (rc *RemoteClient) CountLanesForSample(ctx context.Context, sangerName string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountLanesForSample", []string{sangerName}, nil)
+}
+
+// CountIRODSPathsForSample counts the distinct iRODS data objects for a sample through the remote server.
+func (rc *RemoteClient) CountIRODSPathsForSample(ctx context.Context, sangerName string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForSample", []string{sangerName}, nil)
+}
+
+// CountIRODSPathsForStudy counts the distinct iRODS data objects for a study through the remote server.
+func (rc *RemoteClient) CountIRODSPathsForStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountIRODSPathsForStudy", []string{studyLimsID}, nil)
+}
+
+// CountFindSamplesBySangerID counts the samples matching a Sanger sample id through the remote server.
+func (rc *RemoteClient) CountFindSamplesBySangerID(ctx context.Context, sangerID string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountFindSamplesBySangerID", []string{sangerID}, nil)
+}
+
+// CountFindSamplesByIDSampleLims counts the samples matching a LIMS sample id through the remote server.
+func (rc *RemoteClient) CountFindSamplesByIDSampleLims(ctx context.Context, idSampleLims string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountFindSamplesByIDSampleLims", []string{idSampleLims}, nil)
+}
+
+// CountFindSamplesByAccessionNumber counts the samples matching an accession number through the remote server.
+func (rc *RemoteClient) CountFindSamplesByAccessionNumber(ctx context.Context, accessionNumber string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountFindSamplesByAccessionNumber", []string{accessionNumber}, nil)
+}
+
+// CountFindSamplesBySupplierName counts the samples matching a supplier name through the remote server.
+func (rc *RemoteClient) CountFindSamplesBySupplierName(ctx context.Context, supplierName string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountFindSamplesBySupplierName", []string{supplierName}, nil)
+}
+
+// CountFindSamplesByLibraryType counts the samples matching a library type through the remote server.
+func (rc *RemoteClient) CountFindSamplesByLibraryType(ctx context.Context, libraryType string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountFindSamplesByLibraryType", []string{libraryType}, nil)
+}
+
 // Freshness reports per-table sync freshness through the remote server.
 func (rc *RemoteClient) Freshness(ctx context.Context) (Freshness, error) {
 	return remoteCall[Freshness](rc, ctx, "Freshness", nil, nil)
@@ -385,27 +496,35 @@ func (rc *RemoteClient) LibraryDetail(ctx context.Context, pipelineIDLims, study
 // Call surfaces the same errors as the typed methods, including an unknown or
 // missing Registry method and a path-param arity mismatch.
 func (rc *RemoteClient) Call(ctx context.Context, method string, pathParams []string, query url.Values) (any, error) {
-	return rc.do(ctx, method, pathParams, query)
+	result, _, err := rc.do(ctx, method, pathParams, query)
+
+	return result, err
 }
 
-func (rc *RemoteClient) do(ctx context.Context, method string, pathParams []string, query url.Values) (any, error) {
+// do issues the request for method and returns the decoded typed result, the
+// response headers, and any error. It is the single shared request path: the
+// bare-slice/value methods (via remoteCall, which ignores the headers) and the
+// typed Page[T] paged variants (via remoteCallPage, which reads X-Total-Count /
+// X-Next-Offset from the returned header) both go through it, so the sizing
+// headers are captured in one place.
+func (rc *RemoteClient) do(ctx context.Context, method string, pathParams []string, query url.Values) (any, http.Header, error) {
 	if rc == nil || rc.httpClient == nil {
-		return nil, fmt.Errorf("%w: nil remote client", ErrUpstreamImpaired)
+		return nil, nil, fmt.Errorf("%w: nil remote client", ErrUpstreamImpaired)
 	}
 
 	entry, ok := rc.endpoints[method]
 	if !ok {
-		return nil, fmt.Errorf("%w: registry entry missing for %s", ErrUpstreamImpaired, method)
+		return nil, nil, fmt.Errorf("%w: registry entry missing for %s", ErrUpstreamImpaired, method)
 	}
 
 	requestURL, err := rc.requestURL(entry, pathParams, query)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	request, err := http.NewRequestWithContext(ctx, entry.Verb, requestURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: build %s request: %w", ErrUpstreamImpaired, method, err)
+		return nil, nil, fmt.Errorf("%w: build %s request: %w", ErrUpstreamImpaired, method, err)
 	}
 
 	if rc.token != "" {
@@ -414,17 +533,19 @@ func (rc *RemoteClient) do(ctx context.Context, method string, pathParams []stri
 
 	response, err := rc.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s request failed: %w", ErrUpstreamImpaired, method, err)
+		return nil, nil, fmt.Errorf("%w: %s request failed: %w", ErrUpstreamImpaired, method, err)
 	}
 	defer func() {
 		_ = response.Body.Close()
 	}()
 
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
-		return decodeRemoteResult(response, entry)
+		result, err := decodeRemoteResult(response, entry)
+
+		return result, response.Header, err
 	}
 
-	return nil, decodeRemoteError(response, entry)
+	return nil, response.Header, decodeRemoteError(response, entry)
 }
 
 func decodeRemoteResult(response *http.Response, entry Endpoint) (any, error) {
@@ -496,7 +617,7 @@ func remoteEndpointPath(entry Endpoint, pathParams []string) (string, error) {
 func remoteCall[T any](rc *RemoteClient, ctx context.Context, method string, pathParams []string, query url.Values) (T, error) {
 	var zero T
 
-	result, err := rc.do(ctx, method, pathParams, query)
+	result, _, err := rc.do(ctx, method, pathParams, query)
 	if err != nil {
 		return zero, err
 	}
@@ -507,6 +628,49 @@ func remoteCall[T any](rc *RemoteClient, ctx context.Context, method string, pat
 	}
 
 	return *typed, nil
+}
+
+// remoteCallPage is the Page[T] counterpart to remoteCall: it issues the same
+// paginated list request through the shared do path but additionally reads the
+// X-Total-Count / X-Next-Offset response headers into Page.Total / Page.NextOffset,
+// so a Go consumer learns how many rows match and where the next page starts from
+// one request. Page.Items is the decoded body, identical to the bare-slice
+// method's result for the same args (the body stays a bare JSON array). Adding a
+// Page[T] variant for any paginated list is therefore a one-line wrapper over
+// this single shared header-reading path.
+func remoteCallPage[T any](rc *RemoteClient, ctx context.Context, method string, pathParams []string, query url.Values) (Page[T], error) {
+	result, header, err := rc.do(ctx, method, pathParams, query)
+	if err != nil {
+		return Page[T]{}, err
+	}
+
+	typed, ok := result.(*[]T)
+	if !ok {
+		return Page[T]{}, fmt.Errorf("%w: registry result for %s has type %T", ErrUpstreamImpaired, method, result)
+	}
+
+	return Page[T]{
+		Items:      *typed,
+		Total:      remoteHeaderInt(header, "X-Total-Count", 0),
+		NextOffset: remoteHeaderInt(header, "X-Next-Offset", -1),
+	}, nil
+}
+
+// remoteHeaderInt reads name from header as a base-10 int, returning fallback
+// when the header is absent or not an integer, so a server that omits the
+// list-sizing headers yields a well-defined Page rather than an error.
+func remoteHeaderInt(header http.Header, name string, fallback int) int {
+	raw := header.Get(name)
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+
+	return value
 }
 
 // RemoteConfig configures a RemoteClient.

@@ -388,6 +388,103 @@ func newRemoteClientJSONServerForTest[T any](requestURIs chan<- string, result T
 	}))
 }
 
+func TestRemoteClientSamplesForStudyPageReadsSizingHeadersE2(t *testing.T) {
+	convey.Convey("E2.3: Given a RemoteClient Page variant against a server returning the sizing headers", t, func() {
+		local := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when SamplesForStudyPage runs with limit=10&offset=0, then Total==25, NextOffset==10, and Items equals the bare-slice SamplesForStudy result for the same args", func() {
+			page, err := remote.SamplesForStudyPage(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 25)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.SamplesForStudy(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+
+		convey.Convey("when SamplesForStudyPage runs on the last page (limit=10&offset=20), then Total==25 and NextOffset==-1", func() {
+			page, err := remote.SamplesForStudyPage(context.Background(), "SZ", 10, 20)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 25)
+			convey.So(page.NextOffset, convey.ShouldEqual, -1)
+			convey.So(page.Items, convey.ShouldHaveLength, 5)
+		})
+	})
+}
+
+func TestRemoteClientIRODSPathsForStudyPageReadsSizingHeadersE2(t *testing.T) {
+	convey.Convey("E2.3 (irods): Given a RemoteClient Page variant against a server returning the sizing headers", t, func() {
+		local := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when IRODSPathsForStudyPage runs with limit=10&offset=0, then Total==25, NextOffset==10, and Items equals the bare-slice IRODSPathsForStudy result", func() {
+			page, err := remote.IRODSPathsForStudyPage(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 25)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.IRODSPathsForStudy(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+	})
+}
+
+func TestRemoteClientSamplesWithDataPageReadsSizingHeadersE2(t *testing.T) {
+	convey.Convey("E2.3 (samples-with-data): Given a RemoteClient Page variant over the feature's new paginated list", t, func() {
+		local := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("when SamplesWithDataPage runs with limit=10&offset=0, then Total==25, NextOffset==10, and Items equals the bare-slice SamplesWithData result", func() {
+			page, err := remote.SamplesWithDataPage(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 25)
+			convey.So(page.NextOffset, convey.ShouldEqual, 10)
+			convey.So(page.Items, convey.ShouldHaveLength, 10)
+
+			bare, err := remote.SamplesWithData(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+	})
+}
+
+func TestRemoteClientSamplesWithoutDataPageReadsSizingHeadersE2(t *testing.T) {
+	convey.Convey("E2.3 (samples-without-data): Given a study where every sample has data, when SamplesWithoutDataPage runs", t, func() {
+		local := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, local)
+		remote := newParityRemoteClientForTest(t, local)
+		defer closeRemoteClientForTest(t, remote)
+
+		convey.Convey("then Total is the without-data total (0 here: all 25 have data) and Items matches the bare-slice result", func() {
+			page, err := remote.SamplesWithoutDataPage(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(page.Total, convey.ShouldEqual, 0)
+			convey.So(page.NextOffset, convey.ShouldEqual, -1)
+			convey.So(page.Items, convey.ShouldHaveLength, 0)
+
+			bare, err := remote.SamplesWithoutData(context.Background(), "SZ", 10, 0)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(page.Items, convey.ShouldResemble, bare)
+		})
+	})
+}
+
 func TestRemoteClientAddsBearerToken(t *testing.T) {
 	convey.Convey("Given RemoteConfig.Token is set", t, func() {
 		authHeaders := make(chan string, 1)

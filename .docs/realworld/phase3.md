@@ -34,8 +34,8 @@ acceptance tests from D1 (samples=4/studies=2/data_objects=6 with
 date-range; never-synced ErrCacheNeverSynced+ErrNotFound; invalid run
 ErrNotFound). Depends on Phase 1 (iRODS `created`/`platform`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.2: E1 - /count counterpart for every paginated list [parallel with 3.1, 3.3, 3.4]
 
@@ -52,8 +52,8 @@ acceptance tests from E1, applied to each new count (count == len(list);
 never-synced ErrCacheNeverSynced+ErrNotFound as its list; synced-empty
 parent -> Count{0}). Depends on Phase 1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.3: E2 - list-sizing response headers + typed Page[T] remote variant [parallel with 3.1, 3.2, 3.4]
 
@@ -72,8 +72,8 @@ page headers 25/10; last page headers 25/-1; `Page[T]` parses
 Total=25/NextOffset=10 with Items equal to the bare-slice result).
 Depends on Phase 1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 3.4: E3 - lean / de-duplicated detail aggregates [parallel with 3.1, 3.2, 3.3]
 
@@ -92,8 +92,8 @@ serialized size; `/run/:id/detail?limit=2` returns at most 2 nested
 samples and `X-Total-Count` reports the full count). Depends on Phase 1;
 the `X-Total-Count` assertion in E3.3 relies on the header work in 3.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items

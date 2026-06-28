@@ -126,6 +126,34 @@ const studyOverviewIRODSAggregateSQL = `SELECT COUNT(*), MIN(created), MAX(creat
 // /study/:id/runs.
 const studyOverviewRunsCacheSQL = `SELECT COUNT(DISTINCT id_run) FROM iseq_product_metrics_mirror WHERE id_study_lims = ?`
 
+// runOverviewSamplesStudiesCacheSQL yields, for one Illumina NPG run, the distinct
+// samples and the distinct studies on the run in a single indexed pass over
+// iseq_product_metrics_mirror keyed on id_run: the same run->samples source as
+// SamplesForRun (iseq_product_metrics_mirror INNER JOIN sample_mirror on
+// id_sample_tmp), and the run's study set by its id_study_lims, so the figures
+// agree with /run/:id/samples and /run/:id/detail.
+const runOverviewSamplesStudiesCacheSQL = `SELECT COUNT(DISTINCT id_sample_tmp), COUNT(DISTINCT id_study_lims) FROM iseq_product_metrics_mirror WHERE id_run = ?`
+
+// runOverviewIRODSAggregateSQL is the single run-scoped iRODS aggregate that
+// yields data_objects (row count) and the sequencing date range (MIN/MAX of the
+// mirrored created column) for one run. The run links to its iRODS data objects
+// through the shared id_iseq_product: each iseq_product_metrics_mirror row for the
+// run joins to the seq_product_irods_locations_mirror rows that carry the same
+// id_iseq_product (the run's real data files in iRODS). MIN/MAX created are NULL
+// when the run has no iRODS rows, which the caller maps to an absent date range.
+const runOverviewIRODSAggregateSQL = `SELECT COUNT(*), MIN(spi.created), MAX(spi.created) FROM seq_product_irods_locations_mirror spi INNER JOIN iseq_product_metrics_mirror ipm ON ipm.id_iseq_product = spi.id_iseq_product WHERE ipm.id_run = ?`
+
+// runOverviewFeedingTables are the sync tables whose oldest last_run defines a
+// RunOverview's cache_synced_at: the iseq product-metrics mirror (which supplies
+// the run, its samples and its studies) and the iRODS locations mirror (which
+// supplies the data objects and the sequencing date range). cache_synced_at is the
+// OLDEST last_run among those that have ever synced, distinct from any data
+// timestamp (the freshness caveat).
+var runOverviewFeedingTables = []string{
+	syncTableIseqProductMetrics,
+	syncTableSeqProductIRODSLocations,
+}
+
 // studyOverviewLibrariesCacheSQL counts the distinct libraries for the study using
 // the same (pipeline_id_lims, library_id, id_library_lims) grouping as
 // LibrariesForStudy, so the figure agrees with /study/:id/libraries.
@@ -626,6 +654,98 @@ func (c *Client) studyOverviewForEmptyStudy(ctx context.Context, studyLimsID str
 	}
 
 	return StudyOverview{}, ErrNotFound
+}
+
+// RunOverview returns the fixed-size run aggregate (spec D1): the distinct samples
+// and distinct studies on the run, the run-scoped iRODS data-object count and
+// sequencing date range, and cache_synced_at (the oldest last_run across the
+// feeding tables). idRun is the Illumina NPG id_run (the existing Run/ResolveRun
+// space; no new resolver) -- a non-Illumina or invalid run yields the existing
+// not-found / unsupported-identifier error, and a numeric run absent from the
+// synced cache yields ErrNotFound. It is a separate small aggregate, NOT folded
+// into RunDetail. The run links to its samples and studies through
+// iseq_product_metrics_mirror (the SamplesForRun / RunsForStudy source) and to its
+// iRODS data objects through the shared id_iseq_product, so every figure is a
+// single indexed aggregate. The never-synced cascade matches the run space: a
+// never-synced cache returns the zero value with an error satisfying both
+// ErrCacheNeverSynced and ErrNotFound (via ResolveRun).
+func (c *Client) RunOverview(ctx context.Context, idRun string) (RunOverview, error) {
+	match, err := c.ResolveRun(ctx, idRun)
+	if err != nil {
+		return RunOverview{}, err
+	}
+
+	runID := match.Run.IDRun
+	overview := RunOverview{IDRun: runID}
+	if err = c.fillRunOverviewSamplesStudies(ctx, runID, &overview); err != nil {
+		return RunOverview{}, err
+	}
+	if err = c.fillRunOverviewIRODS(ctx, runID, &overview); err != nil {
+		return RunOverview{}, err
+	}
+
+	syncedAt, err := c.oldestFeedingLastRun(ctx, runOverviewFeedingTables)
+	if err != nil {
+		return RunOverview{}, err
+	}
+	overview.CacheSyncedAt = syncedAt
+
+	return overview, nil
+}
+
+// fillRunOverviewSamplesStudies fills the distinct samples and distinct studies on
+// the run from one indexed aggregate over iseq_product_metrics_mirror.
+func (c *Client) fillRunOverviewSamplesStudies(ctx context.Context, runID int, overview *RunOverview) error {
+	db := c.readCacheDB()
+	if db == nil {
+		return fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	var samples, studies int
+	if err := db.QueryRowContext(ctx, runOverviewSamplesStudiesCacheSQL, runID).Scan(&samples, &studies); err != nil {
+		return fmt.Errorf("%w: aggregate run samples and studies for overview: %w", ErrUpstreamImpaired, err)
+	}
+
+	overview.Samples = samples
+	overview.Studies = studies
+
+	return nil
+}
+
+// fillRunOverviewIRODS fills data_objects and sequencing_date_range from one
+// run-scoped iRODS aggregate (COUNT, MIN, MAX created) joined to the run via the
+// shared id_iseq_product. The date range is omitted when the run has no iRODS rows.
+func (c *Client) fillRunOverviewIRODS(ctx context.Context, runID int, overview *RunOverview) error {
+	db := c.readCacheDB()
+	if db == nil {
+		return fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	var (
+		dataObjects int
+		minCreated  any
+		maxCreated  any
+	)
+	if err := db.QueryRowContext(ctx, runOverviewIRODSAggregateSQL, runID).Scan(&dataObjects, &minCreated, &maxCreated); err != nil {
+		return fmt.Errorf("%w: aggregate run irods for overview: %w", ErrUpstreamImpaired, err)
+	}
+
+	earliest, err := formatFreshnessTime(minCreated)
+	if err != nil {
+		return fmt.Errorf("mlwh: parse run irods created range for overview: %w", err)
+	}
+
+	latest, err := formatFreshnessTime(maxCreated)
+	if err != nil {
+		return fmt.Errorf("mlwh: parse run irods created range for overview: %w", err)
+	}
+
+	overview.DataObjects = dataObjects
+	if earliest != "" || latest != "" {
+		overview.SequencingDateRange = &DateRange{Earliest: earliest, Latest: latest}
+	}
+
+	return nil
 }
 
 // clockNow returns the client's injectable clock, defaulting to time.Now. It is

@@ -28,6 +28,7 @@ package mlwh
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -158,6 +159,10 @@ func (q *serverFakeQueryer) StudyOverview(_ context.Context, _ string) (StudyOve
 	panic("unexpected StudyOverview call")
 }
 
+func (q *serverFakeQueryer) RunOverview(_ context.Context, _ string) (RunOverview, error) {
+	panic("unexpected RunOverview call")
+}
+
 func (q *serverFakeQueryer) SamplesWithData(_ context.Context, _ string, _ int, _ int) ([]SampleWithData, error) {
 	panic("unexpected SamplesWithData call")
 }
@@ -234,50 +239,57 @@ func (q *serverFakeQueryer) SearchSamples(ctx context.Context, term string, limi
 	return q.searchSamplesFunc(ctx, term, limit, offset)
 }
 
+// The Count stubs below back the X-Total-Count header path of their companion
+// paginated list (SearchStudies/SearchSamples/AllStudies/SamplesForStudy and the
+// samples-with/without-data lists), so a list-only test now reaches them through
+// the sizing-header resolution. They therefore return a zero Count when no Func
+// is set (the list assertions cover the body and pagination, not the count)
+// rather than panicking, and run the supplied Func when a test exercises the
+// count explicitly.
 func (q *serverFakeQueryer) CountStudySearch(ctx context.Context, term string) (Count, error) {
-	if q.countStudySearchFunc == nil {
-		panic("unexpected CountStudySearch call")
-	}
-
 	q.countCall.term = term
+
+	if q.countStudySearchFunc == nil {
+		return Count{}, nil
+	}
 
 	return q.countStudySearchFunc(ctx, term)
 }
 
 func (q *serverFakeQueryer) CountSampleSearch(ctx context.Context, term string) (Count, error) {
-	if q.countSampleSearchFunc == nil {
-		panic("unexpected CountSampleSearch call")
-	}
-
 	q.countCall.term = term
+
+	if q.countSampleSearchFunc == nil {
+		return Count{}, nil
+	}
 
 	return q.countSampleSearchFunc(ctx, term)
 }
 
 func (q *serverFakeQueryer) CountStudies(ctx context.Context) (Count, error) {
 	if q.countStudiesFunc == nil {
-		panic("unexpected CountStudies call")
+		return Count{}, nil
 	}
 
 	return q.countStudiesFunc(ctx)
 }
 
 func (q *serverFakeQueryer) CountSamplesForStudy(ctx context.Context, studyLimsID string) (Count, error) {
-	if q.countSamplesForStudyFunc == nil {
-		panic("unexpected CountSamplesForStudy call")
-	}
-
 	q.countCall.studyLimsID = studyLimsID
+
+	if q.countSamplesForStudyFunc == nil {
+		return Count{}, nil
+	}
 
 	return q.countSamplesForStudyFunc(ctx, studyLimsID)
 }
 
 func (q *serverFakeQueryer) CountSamplesWithData(ctx context.Context, studyLimsID string) (Count, error) {
-	if q.countSamplesWithDataFunc == nil {
-		panic("unexpected CountSamplesWithData call")
-	}
-
 	q.countCall.studyLimsID = studyLimsID
+
+	if q.countSamplesWithDataFunc == nil {
+		return Count{}, nil
+	}
 
 	return q.countSamplesWithDataFunc(ctx, studyLimsID)
 }
@@ -316,6 +328,66 @@ func (q *serverFakeQueryer) RunDetail(_ context.Context, _ string) (RunDetail, e
 
 func (q *serverFakeQueryer) LibraryDetail(_ context.Context, _ string, _ string) (LibraryDetail, error) {
 	panic("unexpected LibraryDetail call")
+}
+
+func (q *serverFakeQueryer) CountSamplesForRun(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountSamplesForRun call")
+}
+
+func (q *serverFakeQueryer) CountSamplesForLibrary(_ context.Context, _ string, _ string) (Count, error) {
+	panic("unexpected CountSamplesForLibrary call")
+}
+
+func (q *serverFakeQueryer) CountSamplesForLibraryID(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountSamplesForLibraryID call")
+}
+
+func (q *serverFakeQueryer) CountSamplesForLibraryLimsID(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountSamplesForLibraryLimsID call")
+}
+
+func (q *serverFakeQueryer) CountSamplesForLibraryType(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountSamplesForLibraryType call")
+}
+
+func (q *serverFakeQueryer) CountRunsForStudy(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountRunsForStudy call")
+}
+
+func (q *serverFakeQueryer) CountLibrariesForStudy(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountLibrariesForStudy call")
+}
+
+func (q *serverFakeQueryer) CountLanesForSample(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountLanesForSample call")
+}
+
+func (q *serverFakeQueryer) CountIRODSPathsForSample(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountIRODSPathsForSample call")
+}
+
+func (q *serverFakeQueryer) CountIRODSPathsForStudy(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountIRODSPathsForStudy call")
+}
+
+func (q *serverFakeQueryer) CountFindSamplesBySangerID(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountFindSamplesBySangerID call")
+}
+
+func (q *serverFakeQueryer) CountFindSamplesByIDSampleLims(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountFindSamplesByIDSampleLims call")
+}
+
+func (q *serverFakeQueryer) CountFindSamplesByAccessionNumber(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountFindSamplesByAccessionNumber call")
+}
+
+func (q *serverFakeQueryer) CountFindSamplesBySupplierName(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountFindSamplesBySupplierName call")
+}
+
+func (q *serverFakeQueryer) CountFindSamplesByLibraryType(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountFindSamplesByLibraryType call")
 }
 
 func TestServerSamplesForStudyB2(t *testing.T) {
@@ -844,6 +916,101 @@ func TestServerFreshnessNeverSyncedReturns200G3(t *testing.T) {
 		for _, table := range freshness.Tables {
 			convey.So(table.EverSynced, convey.ShouldBeFalse)
 		}
+	})
+}
+
+func TestServerListSizingHeadersFirstPageE2(t *testing.T) {
+	convey.Convey("E2.1: Given 25 matching rows and limit=10&offset=0, when GET /study/SZ/samples is served, then a 10-element array with X-Total-Count 25 and X-Next-Offset 10", t, func() {
+		client := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/SZ/samples?limit=10&offset=0")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var samples []Sample
+		decodeMLWHJSONResponseForTest(t, response, &samples)
+		convey.So(samples, convey.ShouldHaveLength, 10)
+		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "25")
+		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "10")
+	})
+}
+
+func TestServerListSizingHeadersLastPageE2(t *testing.T) {
+	convey.Convey("E2.2: Given 25 matching rows and limit=10&offset=20, when GET /study/SZ/samples is served, then a 5-element array with X-Total-Count 25 and X-Next-Offset -1", t, func() {
+		client := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/SZ/samples?limit=10&offset=20")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var samples []Sample
+		decodeMLWHJSONResponseForTest(t, response, &samples)
+		convey.So(samples, convey.ShouldHaveLength, 5)
+		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "25")
+		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "-1")
+	})
+}
+
+func TestServerListSizingHeadersExactPageBoundaryE2(t *testing.T) {
+	convey.Convey("E2 (boundary): Given 25 rows and limit=25&offset=0 (exactly one full page), when served, then X-Next-Offset is -1 because no rows remain", t, func() {
+		client := newListSizingClientForTest(t, "SZ", 25)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/SZ/samples?limit=25&offset=0")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusOK)
+
+		var samples []Sample
+		decodeMLWHJSONResponseForTest(t, response, &samples)
+		convey.So(samples, convey.ShouldHaveLength, 25)
+		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "25")
+		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "-1")
+	})
+}
+
+func newListSizingClientForTest(t *testing.T, idStudyLims string, samples int) *Client {
+	t.Helper()
+
+	cache := openSQLiteSyncTestCache(t)
+	seedListSizingStudy(t, cache.DB(), idStudyLims, 900, 900000, samples)
+
+	return &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+}
+
+// seedListSizingStudy seeds a study with the given number of distinct samples
+// (each linked via library_samples) plus the sync state the availability reads
+// need, so SamplesForStudy / IRODSPathsForStudy return a deterministic,
+// pageable population for the list-sizing header tests (spec E2). It returns the
+// LIMS study id. id_sample_tmp values start at base to keep fixtures disjoint.
+func seedListSizingStudy(t *testing.T, db *sql.DB, idStudyLims string, idStudyTmp, base int64, samples int) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, idStudyTmp, idStudyLims)
+
+	created := time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC)
+	for i := range int64(samples) {
+		idSampleTmp := base + i
+		seedHierarchySample(t, db, idSampleTmp, idStudyLims, "sizing-"+formatInt(idSampleTmp))
+		seedLibrarySample(t, db, "Standard", idSampleTmp, idStudyLims)
+		seedIseqProductMetricsMirrorRow(t, db, 700000+idSampleTmp, idSampleTmp, 99000, 1, int(i), idStudyLims)
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, formatInt(700000+idSampleTmp), "/seq/99000", "99000_1#"+formatInt(idSampleTmp)+".cram", idSampleTmp, idStudyLims, created, "illumina")
+	}
+
+	seedB3AvailabilitySyncState(t, db)
+}
+
+func TestServerListSizingHeadersNotSetOnErrorE2(t *testing.T) {
+	convey.Convey("E2 (error): Given a list error (never-synced cache), when GET /study/SZ/samples is served, then no sizing headers are written", t, func() {
+		client := newParityClient(t)
+		defer closeParityClientForTest(t, client)
+
+		response := performMLWHRequestForTest(t, client, http.MethodGet, "/study/SZ/samples?limit=10&offset=0")
+
+		convey.So(response.Code, convey.ShouldEqual, http.StatusServiceUnavailable)
+		convey.So(response.Header().Get("X-Total-Count"), convey.ShouldEqual, "")
+		convey.So(response.Header().Get("X-Next-Offset"), convey.ShouldEqual, "")
 	})
 }
 

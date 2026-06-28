@@ -150,6 +150,21 @@ type StudyOverview struct {
 	CacheSyncedAt          string     `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }
 
+// RunOverview is the fixed-size run aggregate answering "what is on this run and
+// how much sequencing data" in one response, so callers need neither
+// /run/:id/detail nor per-sample calls. id_run is the Illumina NPG run id (the
+// existing Run/ResolveRun space); every figure is a single indexed aggregate over
+// the cache mirrors. It is a separate small aggregate, NOT folded into RunDetail
+// and NOT added to the bare Run struct.
+type RunOverview struct {
+	IDRun               int        `json:"id_run" doc:"Illumina NPG run id"`
+	Samples             int        `json:"samples" doc:"distinct samples on the run"`
+	Studies             int        `json:"studies" doc:"distinct studies on the run"`
+	DataObjects         int        `json:"data_objects" doc:"iRODS data objects for the run"`
+	SequencingDateRange *DateRange `json:"sequencing_date_range,omitempty" doc:"earliest/latest iRODS created for the run"`
+	CacheSyncedAt       string     `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
+}
+
 // SampleDetail groups a sample with its enrichment graph neighbours.
 type SampleDetail struct {
 	Sample     Sample      `json:"sample" doc:"the sample these details describe"`
@@ -165,18 +180,41 @@ type LibraryDetail struct {
 	Samples []Sample `json:"samples" doc:"samples covered by the library"`
 }
 
-// StudyDetail groups a study with its library details.
+// StudyDetail groups a study with its library details. To keep the response
+// bounded it is de-duplicated: each distinct study and library is carried once
+// in StudyLookup / LibraryLookup (keyed by id), and the nested sample rows under
+// library_details reference those by id rather than re-embedding the same study
+// and library objects under every sample. When the lean query param is set the
+// heavy library_details / lookup tables are dropped and only the flat SampleIDs
+// and LibraryIDs lists are returned, so the serialized response is strictly
+// smaller.
 type StudyDetail struct {
-	Study     Study           `json:"study" doc:"the study these details describe"`
-	Libraries []LibraryDetail `json:"library_details" doc:"per-library detail for the study"`
+	Study         Study              `json:"study" doc:"the study these details describe"`
+	Libraries     []LibraryDetail    `json:"library_details,omitempty" doc:"per-library detail for the study (omitted when lean); nested sample rows reference the study/library lookups by id rather than re-embedding them"`
+	StudyLookup   map[string]Study   `json:"study_lookup,omitempty" doc:"distinct studies referenced by the nested rows, keyed by LIMS study id (omitted when lean)"`
+	LibraryLookup map[string]Library `json:"library_lookup,omitempty" doc:"distinct libraries referenced by the nested rows, keyed by library id (omitted when lean)"`
+	SampleIDs     []string           `json:"sample_ids,omitempty" doc:"flat list of the study's distinct sample ids (lean responses only)"`
+	LibraryIDs    []string           `json:"library_ids,omitempty" doc:"flat list of the study's distinct library ids (lean responses only)"`
+	Lean          bool               `json:"lean,omitempty" doc:"true when the heavy nested objects were dropped in favour of the flat id lists"`
 }
 
-// RunDetail groups a run with its related studies and samples.
+// RunDetail groups a run with its related studies and samples. Like StudyDetail
+// it is de-duplicated: each distinct study and library referenced by the run's
+// per-study detail is carried once in StudyLookup / LibraryLookup (keyed by id)
+// and the nested sample rows reference them by id rather than re-embedding them.
+// When the lean query param is set the heavy samples / studies / study_details
+// and the lookup tables are dropped and only the flat SampleIDs / StudyIDs lists
+// are returned, so the serialized response is strictly smaller.
 type RunDetail struct {
-	Run          Run           `json:"run" doc:"the run these details describe"`
-	Samples      []Sample      `json:"samples" doc:"samples sequenced on the run"`
-	Studies      []Study       `json:"studies" doc:"studies the run's samples belong to"`
-	StudyDetails []StudyDetail `json:"study_details,omitempty" doc:"per-study detail for the run"`
+	Run           Run                `json:"run" doc:"the run these details describe"`
+	Samples       []Sample           `json:"samples,omitempty" doc:"samples sequenced on the run (omitted when lean); each carries no studies/libraries sub-object, those being in the lookups"`
+	Studies       []Study            `json:"studies,omitempty" doc:"studies the run's samples belong to (omitted when lean)"`
+	StudyDetails  []StudyDetail      `json:"study_details,omitempty" doc:"per-study detail for the run (omitted when lean)"`
+	StudyLookup   map[string]Study   `json:"study_lookup,omitempty" doc:"distinct studies referenced by the nested rows, keyed by LIMS study id (omitted when lean)"`
+	LibraryLookup map[string]Library `json:"library_lookup,omitempty" doc:"distinct libraries referenced by the nested rows, keyed by library id (omitted when lean)"`
+	SampleIDs     []string           `json:"sample_ids,omitempty" doc:"flat list of the run's distinct sample ids (lean responses only)"`
+	StudyIDs      []string           `json:"study_ids,omitempty" doc:"flat list of the run's distinct study ids (lean responses only)"`
+	Lean          bool               `json:"lean,omitempty" doc:"true when the heavy nested objects were dropped in favour of the flat id lists"`
 }
 
 // LibraryLink is a compact library tuple used by the enrichment graph contract.
@@ -215,6 +253,20 @@ type EnrichmentResult struct {
 	Graph      EnrichmentGraph `json:"graph" doc:"graph of related studies, samples, and libraries"`
 	Partial    bool            `json:"partial" doc:"true when one or more hops were missing or truncated"`
 	Missing    []MissingHop    `json:"missing,omitempty" doc:"hops that failed or were truncated, when partial"`
+}
+
+// Page is the typed paged variant exposing the list-sizing metadata that the
+// paginated list endpoints additionally report via the X-Total-Count and
+// X-Next-Offset response headers (the bodies stay bare JSON arrays). Items is
+// the page of rows (identical to the bare-slice method's result for the same
+// args), Total is the total number of matching rows (the X-Total-Count value,
+// equal to the corresponding /count endpoint), and NextOffset is the offset of
+// the next page (the X-Next-Offset value: offset+len(Items) when more rows
+// remain, else -1 for the last page).
+type Page[T any] struct {
+	Items      []T
+	Total      int
+	NextOffset int
 }
 
 // TaggedID identifies one canonical identifier dimension for results expansion.
