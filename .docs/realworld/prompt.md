@@ -729,3 +729,81 @@ conflicts. They are authoritative.
 - Pin the **per-product → per-sample roll-up** in the `Description`: a sample is
   **fail if any of its products fails, else pending if any is pending, else
   pass**.
+
+### Tracking-table sync strategy (P1)
+
+- Mirror `seq_ops_tracking_per_sample` by **full-table refresh**, committed (not
+  provisional): **build-and-atomic-swap** each run. `high_water` = the refresh
+  time; `last_run` = the sync time.
+- This table is allowed to sync on its **own, slower cadence**; the resulting lag
+  is shown honestly via the freshness caveat (oldest `last_run` across feeding
+  tables). Do **not** use a `GREATEST(milestones)` pseudo-watermark (it misses
+  in-place / backfilled fills and the ~55% all-NULL-milestone rows), and do **not**
+  defer the decision to "watermark later".
+
+### Canonical phase-name vocabulary (P2, P3, P5)
+
+- Use **verbatim native vocabularies**, not a translated superset:
+  - **Closed enums, asserted exactly** in tests and pinned in each `Description`:
+    the **9 milestone names** (`manifest_created` … `sequencing_qc_complete`) and
+    the **3 baseline phases** (`registered` / `sequenced` / `delivered`).
+  - An **open, source-driven status vocabulary** that is **platform-native** —
+    Illumina `iseq_run_status_dict` descriptions; PacBio/Elembio/Ultimagen their
+    own `run_status` / `well_status`; ONT none — carried in the uniform
+    `{phase, entered_at, duration}` shape.
+- Pin each closed enum in its `Description`; test the **open status layer as a
+  dict/source pass-through, NOT a frozen list** (so new dict rows don't break it).
+
+### since/until window semantics (T, overview)
+
+- **Half-open `[since, until)`**: `created >= since AND created < until`; `until`
+  is optional (open-ended when omitted).
+- Pin it by seeding **on-boundary** rows (`created == since` **included**,
+  `created == until` **excluded**); compare in **normalized UTC / precision**.
+- Use the **same half-open rule** for the overview's `added_last_7_days` figure.
+
+### Run-id space for /run/:id/status and RunOverview (O2, P5)
+
+- `:id` is the **Illumina NPG `id_run`** — the existing `Run` / `resolve_run`
+  space — with **no new resolver**. Non-Illumina sequencing status is reached via
+  `GET /sample/:id/progress` (where the platform is known), not a cross-platform
+  `/run/:id`.
+- An `:id` that isn't a valid Illumina run returns the **existing
+  not-found / unsupported-identifier error**. The "not tracked for &lt;platform&gt;"
+  guarantee lives at the **sample** level, where the platform is known. State
+  exactly this run-id space in the `Description`.
+
+### platform value source on the unioned iRODS mirror (R, Platform coverage)
+
+- `platform` is taken from the authoritative
+  **`seq_product_irods_locations.seq_platform_name`**, carried into the iRODS
+  mirror as a `platform` column **alongside the new `created` column** (one mirror
+  change adds both).
+- The per-platform `*_product_metrics` **union is used only to recover
+  `id_sample_tmp` / `id_study_lims`** — **not** to derive `platform`. **Illumina
+  keeps its existing composition-expansion (and legacy direct) join unchanged** to
+  preserve current `/study/:id/irods` results; PacBio / Elembio / Ultimagen add
+  **direct `id_*_product = spi.id_product`** branches. Do **not** derive `platform`
+  from which metrics table matched (ambiguous, can contradict the source, harder to
+  seed).
+
+### Multi-platform sample partitioning (P3, overview, lists)
+
+A single distinct sample can now appear under more than one platform within one
+study. The two phase partitions deliberately use **two denominators, by surface**:
+
+- **`GET /study/:id/status-breakdown`** uses a **per-platform partition**: within
+  each platform the `with_data` / `sequenced_no_data` / `registered` buckets are
+  mutually exclusive and sum to **that platform's** sample count. A sample
+  delivered on Illumina but only sequenced on PacBio shows its true state under
+  **each** of its platforms, so the **grand total across platforms may exceed
+  `samples_total`**.
+- **The overview's ladder figures** and the **`samples-with-data` /
+  `samples-without-data` lists and their `/count` counterparts** use the
+  **distinct-sample partition** that sums to `samples_total`: a multi-platform
+  sample is collapsed to **one** bucket by its **most-advanced phase** — precedence
+  **`with_data` > `sequenced_no_data` > `registered`** (paralleling the QC
+  roll-up).
+- Tests must **seed a multi-platform sample** and assert **both** partitions: the
+  per-platform breakdown summing per platform, and the distinct-sample overview /
+  lists summing to `samples_total`.
