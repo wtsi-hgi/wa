@@ -562,6 +562,115 @@ func (s *Server) requireServerOwner(c *gin.Context, resultID string) bool {
 	return true
 }
 
+// substringExpandSamplePartials runs the mlwh word-prefix sample search for each
+// unresolved partial and returns every matched canonical sample name, so the
+// downstream contains-match finds results registered under canonical names. The
+// search is bounded by the suggestion timeout; a degrade error (never-synced /
+// not-found / unsupported / deadline / cancelled) yields no extra expansion
+// rather than a 502, while a genuine upstream error surfaces as ErrMLWHFailed.
+func (s *Server) substringExpandSamplePartials(ctx context.Context, partials []string) ([]string, error) {
+	if len(partials) == 0 {
+		return nil, nil
+	}
+
+	searcher, ok := s.resolver.(mlwhSubstringSearcher)
+	if !ok {
+		return nil, nil
+	}
+
+	sctx, cancel := context.WithTimeout(ctx, mlwhSuggestionSearchTimeout)
+	defer cancel()
+
+	names := []string{}
+	for _, term := range partials {
+		samples, err := searcher.SearchSamples(sctx, term, mlwhSubstringSearchCap, 0)
+		if err != nil {
+			if substringSearchDegrades(err) {
+				continue
+			}
+
+			return nil, fmt.Errorf("%w: search samples filter: %w", ErrMLWHFailed, err)
+		}
+
+		for _, sample := range samples {
+			if sample.Name == "" {
+				continue
+			}
+
+			names = mergeSearchValues(names, []string{sample.Name})
+		}
+	}
+
+	return names, nil
+}
+
+// substringExpandStudyPartials runs the mlwh substring study search for each
+// unresolved partial, then expands every matched study LIMS id to its sample/run/
+// lane values (so results registered by study id are found). It returns the found
+// study ids alongside their expansions. Degrade/timeout handling mirrors
+// substringExpandSamplePartials; a genuine upstream error surfaces as a 502.
+func (s *Server) substringExpandStudyPartials(ctx context.Context, partials []string) ([]string, []string, []string, []string, error) {
+	if len(partials) == 0 {
+		return nil, nil, nil, nil, nil
+	}
+
+	searcher, ok := s.resolver.(mlwhSubstringSearcher)
+	if !ok {
+		return nil, nil, nil, nil, nil
+	}
+
+	foundStudyIDs, err := s.searchStudyPartialIDs(ctx, searcher, partials)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if len(foundStudyIDs) == 0 {
+		return nil, nil, nil, nil, nil
+	}
+
+	samples := []string{}
+	runs := []string{}
+	lanes := []string{}
+	for _, studyID := range foundStudyIDs {
+		expandedSamples, expandedRuns, expandedLanes, err := s.resolver.Expand(ctx, mlwh.KindStudyLimsID, studyID)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+
+		samples = mergeSearchValues(samples, expandedSamples)
+		runs = mergeSearchValues(runs, expandedRuns)
+		lanes = mergeSearchValues(lanes, expandedLanes)
+	}
+
+	return foundStudyIDs, samples, runs, lanes, nil
+}
+
+func (s *Server) searchStudyPartialIDs(ctx context.Context, searcher mlwhSubstringSearcher, partials []string) ([]string, error) {
+	sctx, cancel := context.WithTimeout(ctx, mlwhSuggestionSearchTimeout)
+	defer cancel()
+
+	foundStudyIDs := []string{}
+	for _, term := range partials {
+		studies, err := searcher.SearchStudies(sctx, term, mlwhSubstringSearchCap, 0)
+		if err != nil {
+			if substringSearchDegrades(err) {
+				continue
+			}
+
+			return nil, fmt.Errorf("%w: search studies filter: %w", ErrMLWHFailed, err)
+		}
+
+		for _, study := range studies {
+			if study.IDStudyLims == "" {
+				continue
+			}
+
+			foundStudyIDs = mergeSearchValues(foundStudyIDs, []string{study.IDStudyLims})
+		}
+	}
+
+	return foundStudyIDs, nil
+}
+
 func writeServerError(c *gin.Context, status int, message string) {
 	writeJSON(c, status, map[string]string{"error": message})
 }
@@ -646,20 +755,26 @@ func appendSampleSearchExpansion(existing []sampleSearchExpansion, kind mlwh.Ide
 	return append(existing, sampleSearchExpansion{kind: kind, values: values})
 }
 
-func canonicalStudySearchValues(ctx context.Context, resolver SearchResolver, values []string) ([]string, []string, error) {
+func canonicalStudySearchValues(ctx context.Context, resolver SearchResolver, values []string) ([]string, []string, []studySearchValueCanonical, error) {
 	searchValues := append([]string{}, nonEmptySearchValues(values)...)
 	expansionValues := append([]string{}, searchValues...)
 
 	canonicalizer, ok := resolver.(studySearchCanonicalizer)
 	if !ok {
-		return searchValues, expansionValues, nil
+		pairs := make([]studySearchValueCanonical, 0, len(searchValues))
+		for _, value := range searchValues {
+			pairs = append(pairs, studySearchValueCanonical{original: value, canonical: value})
+		}
+
+		return searchValues, expansionValues, pairs, nil
 	}
 
 	expansionValues = []string{}
+	pairs := make([]studySearchValueCanonical, 0, len(searchValues))
 	for _, value := range searchValues {
 		canonical, err := canonicalizer.CanonicalStudySearchValue(ctx, value)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if canonical == "" {
 			canonical = value
@@ -667,9 +782,10 @@ func canonicalStudySearchValues(ctx context.Context, resolver SearchResolver, va
 
 		searchValues = mergeSearchValues(searchValues, []string{canonical})
 		expansionValues = mergeSearchValues(expansionValues, []string{canonical})
+		pairs = append(pairs, studySearchValueCanonical{original: value, canonical: canonical})
 	}
 
-	return searchValues, expansionValues, nil
+	return searchValues, expansionValues, pairs, nil
 }
 
 func writeDomainError(c *gin.Context, err error) {
@@ -693,7 +809,30 @@ func writeDomainError(c *gin.Context, err error) {
 	}
 }
 
-func expandSampleSearchValues(ctx context.Context, resolver SearchResolver, requests []sampleSearchExpansion) ([]string, []string, []string, error) {
+// unresolvedStudySearchPartials returns the original user-typed study values that
+// did not canonicalise to a different study id and whose own exact expansion was
+// empty (so they are unresolved partials), and that are long enough for the mlwh
+// substring search.
+func unresolvedStudySearchPartials(pairs []studySearchValueCanonical, expanded map[string]struct{}) []string {
+	partials := []string{}
+	for _, pair := range pairs {
+		if pair.canonical != pair.original {
+			continue
+		}
+		if _, ok := expanded[pair.canonical]; ok {
+			continue
+		}
+		if len(pair.original) < searchSuggestionSubstringMinLength {
+			continue
+		}
+
+		partials = mergeSearchValues(partials, []string{pair.original})
+	}
+
+	return partials
+}
+
+func expandSampleSearchValues(ctx context.Context, resolver SearchResolver, requests []sampleSearchExpansion, resolved map[string]struct{}) ([]string, []string, []string, error) {
 	resolvedSamples := []string{}
 	resolvedRuns := []string{}
 	resolvedLanes := []string{}
@@ -705,6 +844,7 @@ func expandSampleSearchValues(ctx context.Context, resolver SearchResolver, requ
 				return nil, nil, nil, err
 			}
 
+			markSampleSearchValueResolved(resolved, value, samples)
 			resolvedSamples = mergeSearchValues(resolvedSamples, samples)
 			resolvedRuns = mergeSearchValues(resolvedRuns, runs)
 			resolvedLanes = mergeSearchValues(resolvedLanes, lanes)
@@ -714,7 +854,7 @@ func expandSampleSearchValues(ctx context.Context, resolver SearchResolver, requ
 	return resolvedSamples, resolvedRuns, resolvedLanes, nil
 }
 
-func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResolver, candidates []string, requests []sampleSearchExpansion) ([]string, []string, []string, bool, error) {
+func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResolver, candidates []string, requests []sampleSearchExpansion, resolved map[string]struct{}) ([]string, []string, []string, bool, error) {
 	candidateResolver, ok := resolver.(candidateSampleSearchResolver)
 	if !ok || len(candidates) == 0 {
 		return nil, nil, nil, false, nil
@@ -742,6 +882,7 @@ func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResol
 				return nil, nil, nil, false, err
 			}
 
+			markSampleSearchValueResolved(resolved, value, samples)
 			resolvedSamples = mergeSearchValues(resolvedSamples, samples)
 		}
 	}
@@ -754,12 +895,31 @@ func expandCandidateSampleSearchValues(ctx context.Context, resolver SearchResol
 		return resolvedSamples, []string{}, []string{}, true, nil
 	}
 
-	samples, runs, lanes, err := expandSampleSearchValues(ctx, resolver, remaining)
+	samples, runs, lanes, err := expandSampleSearchValues(ctx, resolver, remaining, resolved)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
 
 	return mergeSearchValues(resolvedSamples, samples), runs, lanes, true, nil
+}
+
+// unresolvedSampleSearchPartials returns the original user-typed sample values
+// that the exact path did not resolve and that are long enough for the mlwh
+// substring/word-prefix search (byte length, matching the suggestions gate).
+func unresolvedSampleSearchPartials(originals []string, resolved map[string]struct{}) []string {
+	partials := []string{}
+	for _, value := range nonEmptySearchValues(originals) {
+		if _, ok := resolved[value]; ok {
+			continue
+		}
+		if len(value) < searchSuggestionSubstringMinLength {
+			continue
+		}
+
+		partials = mergeSearchValues(partials, []string{value})
+	}
+
+	return partials
 }
 
 // AnnotateAccess returns results with per-row access calculated for user.
@@ -876,6 +1036,13 @@ func (s *Server) handleGetResults(c *gin.Context) {
 	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaStudyAccessionKey])
 	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaStudyUUIDKey])
 	studyValues = mergeSearchValues(studyValues, params.Meta[SeqmetaStudyNameKey])
+
+	// Capture the original user-typed sample filter values before the exact
+	// expansion mutates the value sets. Part B (260628-1) substring-searches only
+	// those of these that the exact path fails to resolve, so an exact id triggers
+	// no extra MLWH call and is not broadened. The study analogue is derived from
+	// canonicalStudySearchValues' per-value pairs below.
+	originalSamplePartials := append([]string{}, sampleValues...)
 	delete(params.Meta, SeqmetaIDStudyLimsKey)
 	delete(params.Meta, LegacySeqmetaStudyIDKey)
 	delete(params.Meta, SeqmetaStudyAccessionKey)
@@ -904,6 +1071,8 @@ func (s *Server) handleGetResults(c *gin.Context) {
 	resolvedSamples := []string{}
 	resolvedRuns := []string{}
 	resolvedLanes := []string{}
+	resolvedSampleValues := map[string]struct{}{}
+	expandedStudyCanonicals := map[string]struct{}{}
 	if len(studyValues) > 0 {
 		if s.resolver == nil {
 			if legacyStudyIDUsed {
@@ -912,7 +1081,7 @@ func (s *Server) handleGetResults(c *gin.Context) {
 				return
 			}
 		} else {
-			studySearchValues, studyExpansionValues, err := canonicalStudySearchValues(c.Request.Context(), s.resolver, studyValues)
+			studySearchValues, studyExpansionValues, studyCanonicalPairs, err := canonicalStudySearchValues(c.Request.Context(), s.resolver, studyValues)
 			if err != nil {
 				writeDomainError(c, err)
 
@@ -927,11 +1096,29 @@ func (s *Server) handleGetResults(c *gin.Context) {
 
 					return
 				}
+				if len(samples) > 0 || len(runs) > 0 || len(lanes) > 0 {
+					expandedStudyCanonicals[studyValue] = struct{}{}
+				}
 
 				resolvedSamples = mergeSearchValues(resolvedSamples, samples)
 				resolvedRuns = mergeSearchValues(resolvedRuns, runs)
 				resolvedLanes = mergeSearchValues(resolvedLanes, lanes)
 			}
+
+			foundStudyIDs, studySamples, studyRuns, studyLanes, err := s.substringExpandStudyPartials(
+				c.Request.Context(),
+				unresolvedStudySearchPartials(studyCanonicalPairs, expandedStudyCanonicals),
+			)
+			if err != nil {
+				writeDomainError(c, err)
+
+				return
+			}
+
+			studyValues = mergeSearchValues(studyValues, foundStudyIDs)
+			resolvedSamples = mergeSearchValues(resolvedSamples, studySamples)
+			resolvedRuns = mergeSearchValues(resolvedRuns, studyRuns)
+			resolvedLanes = mergeSearchValues(resolvedLanes, studyLanes)
 
 			sampleValues = mergeSearchValues(sampleValues, resolvedSamples)
 			runValues = mergeSearchValues(runValues, resolvedRuns)
@@ -1016,6 +1203,7 @@ func (s *Server) handleGetResults(c *gin.Context) {
 			s.resolver,
 			candidateSampleNames,
 			sampleExpansionRequests,
+			resolvedSampleValues,
 		)
 		if err != nil {
 			writeDomainError(c, err)
@@ -1023,7 +1211,7 @@ func (s *Server) handleGetResults(c *gin.Context) {
 			return
 		}
 		if !expanded {
-			samples, runs, lanes, err = expandSampleSearchValues(c.Request.Context(), s.resolver, sampleExpansionRequests)
+			samples, runs, lanes, err = expandSampleSearchValues(c.Request.Context(), s.resolver, sampleExpansionRequests, resolvedSampleValues)
 		}
 		if err != nil {
 			writeDomainError(c, err)
@@ -1034,6 +1222,18 @@ func (s *Server) handleGetResults(c *gin.Context) {
 		sampleValues = mergeSearchValues(sampleValues, samples)
 		runValues = mergeSearchValues(runValues, runs)
 		laneValues = mergeSearchValues(laneValues, lanes)
+
+		substringSamples, err := s.substringExpandSamplePartials(
+			c.Request.Context(),
+			unresolvedSampleSearchPartials(originalSamplePartials, resolvedSampleValues),
+		)
+		if err != nil {
+			writeDomainError(c, err)
+
+			return
+		}
+
+		sampleValues = mergeSearchValues(sampleValues, substringSamples)
 	}
 
 	for _, key := range combinedStudyMetaKeys {
@@ -1422,6 +1622,7 @@ func (s *Server) appendRegisteredStudySearchSuggestions(ctx context.Context, sea
 		return nil, err
 	}
 
+	registeredStudies := make([]mlwh.Study, 0, len(studies))
 	for _, study := range studies {
 		if study.IDStudyLims == "" {
 			continue
@@ -1430,6 +1631,22 @@ func (s *Server) appendRegisteredStudySearchSuggestions(ctx context.Context, sea
 			continue
 		}
 
+		registeredStudies = append(registeredStudies, study)
+	}
+	if len(registeredStudies) == 0 {
+		return suggestions, nil
+	}
+
+	// At least one registered study matches the term in this dimension, so offer
+	// the typed term itself as a pickable Study filter. Part B resolves that
+	// partial value via the same MLWH substring search at search time, so picking
+	// it returns results for every matching study. The typed term is an unlabelled
+	// (exact-style) suggestion, so it is ordered before the labelled canonical
+	// matches; appendUniqueSearchSuggestions/seen dedups it against any exact-path
+	// {study, term} already emitted for a complete identifier.
+	suggestions = appendTypedTermSearchSuggestion(suggestions, "study", term, limit, seen)
+
+	for _, study := range registeredStudies {
 		key := searchSuggestionKey{fieldKey: "study", value: study.IDStudyLims}
 		if _, ok := seen[key]; ok {
 			continue
@@ -1462,6 +1679,26 @@ func substringSearchDegrades(err error) bool {
 		errors.Is(err, mlwh.ErrUnsupportedIdentifier) ||
 		errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, context.Canceled)
+}
+
+// appendTypedTermSearchSuggestion appends an unlabelled {fieldKey, term}
+// suggestion (the typed term as a pickable filter) when there is room and it has
+// not already been emitted. The unlabelled form is what the frontend turns into
+// the typed-term filter option; a labelled canonical match for the same field
+// stays separate.
+func appendTypedTermSearchSuggestion(suggestions []SearchSuggestion, fieldKey, term string, limit int, seen map[searchSuggestionKey]struct{}) []SearchSuggestion {
+	if len(suggestions) >= limit {
+		return suggestions
+	}
+
+	key := searchSuggestionKey{fieldKey: fieldKey, value: term}
+	if _, ok := seen[key]; ok {
+		return suggestions
+	}
+
+	seen[key] = struct{}{}
+
+	return append(suggestions, SearchSuggestion{FieldKey: fieldKey, Value: term})
 }
 
 // studySuggestionLabel returns human-readable text for a study suggestion,
@@ -1502,6 +1739,7 @@ func (s *Server) appendRegisteredSampleSearchSuggestions(ctx context.Context, se
 		return nil, err
 	}
 
+	registeredSamples := make([]mlwh.Sample, 0, len(samples))
 	for _, sample := range samples {
 		if sample.Name == "" {
 			continue
@@ -1510,6 +1748,20 @@ func (s *Server) appendRegisteredSampleSearchSuggestions(ctx context.Context, se
 			continue
 		}
 
+		registeredSamples = append(registeredSamples, sample)
+	}
+	if len(registeredSamples) == 0 {
+		return suggestions, nil
+	}
+
+	// At least one registered sample matches the term in this dimension, so offer
+	// the typed term itself as a pickable Sample filter (see the study analogue
+	// above): Part B resolves the partial value via MLWH substring search at search
+	// time, so picking it returns results for every word-prefix-matching sample
+	// even though results are registered under canonical names.
+	suggestions = appendTypedTermSearchSuggestion(suggestions, "sample", term, limit, seen)
+
+	for _, sample := range registeredSamples {
 		key := searchSuggestionKey{fieldKey: "sample", value: sample.Name}
 		if _, ok := seen[key]; ok {
 			continue
@@ -1642,6 +1894,27 @@ func (s *Server) handleDeleteResultByID(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// studySearchValueCanonical pairs an original user-typed study value with the
+// canonical study LIMS id it resolved to (or the original itself when it did not
+// resolve). It lets the caller tell which typed values were exact study
+// identifiers and which are unresolved partials eligible for substring search.
+type studySearchValueCanonical struct {
+	original  string
+	canonical string
+}
+
+// markSampleSearchValueResolved records, in the optional resolved set, that an
+// original user-typed sample value found an exact MLWH match. handleGetResults
+// uses this to skip the substring sample search for values that already resolved
+// exactly, so an exact id triggers no extra MLWH call and is not broadened.
+func markSampleSearchValueResolved(resolved map[string]struct{}, value string, samples []string) {
+	if resolved == nil || len(samples) == 0 {
+		return
+	}
+
+	resolved[value] = struct{}{}
 }
 
 func outputDirectoryQueryValues(query map[string][]string) []string {

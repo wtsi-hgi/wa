@@ -875,4 +875,52 @@ describe("K1 filter builder component", () => {
 
         expect(pushMock).toHaveBeenCalledWith("/?study=6568");
     });
+
+    it("offers both the typed term and a labelled canonical match for the same field, applying the typed term as its own filter", async () => {
+        fetchMock.mockResolvedValue({
+            json: async () => [
+                {
+                    field_key: "sample",
+                    value: "hek_r",
+                },
+                {
+                    field_key: "sample",
+                    value: "7607STDY14643771",
+                    label: "7607STDY14643771 (Hek_R1)",
+                },
+            ],
+            ok: true,
+        });
+
+        const { FilterBuilder } = await import("@/components/filter-builder");
+
+        render(
+            createElement(FilterBuilder, {
+                currentFilters: {},
+                metaKeys: [],
+                seqmetaAvailable: true,
+                studies: [],
+            }),
+        );
+
+        fireEvent.change(screen.getByLabelText(/generic all-field search/i), {
+            target: { value: "hek_r" },
+        });
+
+        const typedTermOption = await screen.findByRole("option", {
+            name: /add sample filter hek_r$/i,
+        });
+        const canonicalOption = screen.getByRole("option", {
+            name: /add sample filter 7607STDY14643771 \(Hek_R1\)/i,
+        });
+
+        expect(typedTermOption.textContent).toContain("hek_r");
+        expect(canonicalOption.textContent).toContain(
+            "7607STDY14643771 (Hek_R1)",
+        );
+
+        fireEvent.click(typedTermOption);
+
+        expect(pushMock).toHaveBeenCalledWith("/?sample=hek_r");
+    });
 });
