@@ -41,8 +41,8 @@ Add `created` and `platform` columns plus the
 acceptance tests from A1 (sqlite shape, mysql shape + cross-dialect
 equality, ephemeral insert/read-back).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.2: A4 - new platform-coverage mirror tables [parallel with 1.1]
 
@@ -62,8 +62,8 @@ tests from A4 (cross-dialect existence + equality, ephemeral
 insert/read-back per table, tracking mirror has all 9 milestone columns
 and its three indexes).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
@@ -86,8 +86,8 @@ tests from A3 (nullable in both dialects, NULL stored not 0 and mapped
 to `pending`, qc 1/0/NULL read back as pass/fail/pending). Depends on
 1.1/1.2 schema.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.4: A2 - iRODS sync mirrors created and platform across all platforms
 
@@ -109,8 +109,8 @@ seq_platform_name; platform not derived from matched table). Depends on
 1.1 (mirror columns) and 1.2 (per-platform metrics mirrors for the
 UNION joins).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.5: A5 - sync strategies for the new tables
 
@@ -129,8 +129,8 @@ tracking with old rows gone and no partial-table read; tracking
 sync_state high_water=refresh, last_run=sync). Depends on 1.2 (target
 mirror tables).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.6: A6 - freshness surface includes every new mirror
 
@@ -148,8 +148,8 @@ high_water=refresh and last_run=sync; iseq_run_status high_water empty
 and last_run set). Depends on 1.2/1.5 (the new tables and their sync
 modes).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ## Ordering and dependency notes
 

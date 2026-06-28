@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS seq_product_irods_locations_mirror (
 	id_sample_tmp            INTEGER NOT NULL,
 	id_study_lims            TEXT    NOT NULL COLLATE NOCASE,
 	last_updated             TEXT    NOT NULL,
+	created                  TEXT    NOT NULL,
+	platform                 TEXT    NOT NULL,
 	CHECK(id_study_lims <> '')
 );
 
@@ -15,3 +17,6 @@ CREATE INDEX IF NOT EXISTS seq_product_irods_locations_mirror_id_sample_tmp_idx
 
 CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_sample_tmp_idx
 	ON seq_product_irods_locations_mirror(id_study_lims, id_sample_tmp);
+
+CREATE INDEX IF NOT EXISTS spi_mirror_study_lims_created_idx
+	ON seq_product_irods_locations_mirror(id_study_lims, created);

@@ -51,7 +51,7 @@ const (
 	mysqlSyncLockNamePrefix        = "wa_mlwh_sync_"
 
 	// CacheSchemaVersion is the embedded cache schema version supported by OpenCache.
-	CacheSchemaVersion = 7
+	CacheSchemaVersion = 8
 )
 
 var (

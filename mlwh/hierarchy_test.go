@@ -1563,8 +1563,18 @@ func seedIseqProductMetricsMirrorRow(t *testing.T, db *sql.DB, idIseqProduct, id
 func seedIRODSLocationMirrorRow(t *testing.T, db *sql.DB, idIseqProduct string, collection, fileName string, idSampleTmp int64, idStudyLims string) {
 	t.Helper()
 
+	created := time.Date(2026, time.May, 6, 12, 11, 0, 0, time.UTC)
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, idIseqProduct, collection, fileName, idSampleTmp, idStudyLims, created, "illumina")
+}
+
+// seedIRODSLocationMirrorRowWithCreatedPlatform inserts an iRODS location mirror
+// row with explicit created and platform values. seedIRODSLocationMirrorRow
+// wraps it with sensible Illumina defaults so existing callers stay unchanged.
+func seedIRODSLocationMirrorRowWithCreatedPlatform(t *testing.T, db *sql.DB, idIseqProduct string, collection, fileName string, idSampleTmp int64, idStudyLims string, created time.Time, platform string) {
+	t.Helper()
+
 	_, err := db.Exec(
-		`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		idIseqProduct,
 		"/seq",
 		fileName,
@@ -1573,6 +1583,8 @@ func seedIRODSLocationMirrorRow(t *testing.T, db *sql.DB, idIseqProduct string, 
 		idSampleTmp,
 		idStudyLims,
 		formatSyncTime(time.Date(2026, time.May, 6, 12, 11, 0, 0, time.UTC)),
+		formatSyncTime(created),
+		platform,
 	)
 	if err != nil {
 		t.Fatalf("seedIRODSLocationMirrorRow(): %v", err)

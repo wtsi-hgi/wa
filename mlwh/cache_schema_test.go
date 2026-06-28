@@ -45,6 +45,25 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// a4MirrorTables enumerates the platform-coverage / tracking / run-status mirror
+// tables added by A4, with the secondary-index column tuples each must declare
+// (in the comma-joined, sorted form parseSchemaShape stores). It is the single
+// source of truth shared by the A4 existence, cross-dialect-equality and
+// per-table assertions below.
+var a4MirrorTables = map[string][]string{
+	"pac_bio_product_metrics_mirror":     {"id_sample_tmp", "id_study_lims"},
+	"pac_bio_run_well_metrics_mirror":    {"pac_bio_run_name,well_label"},
+	"eseq_product_metrics_mirror":        {"id_sample_tmp", "id_study_lims"},
+	"eseq_run_mirror":                    {"run_name"},
+	"eseq_run_lane_metrics_mirror":       {"run_name,lane"},
+	"useq_product_metrics_mirror":        {"id_sample_tmp", "id_study_lims", "id_useq_wafer_tmp"},
+	"useq_run_metrics_mirror":            {"run_name"},
+	"oseq_flowcell_mirror":               {"id_sample_tmp", "id_study_lims"},
+	"iseq_run_status_mirror":             {"id_run", "id_run,date"},
+	"iseq_run_status_dict_mirror":        nil,
+	"seq_ops_tracking_per_sample_mirror": {"id_sample_lims", "sanger_sample_name", "study_id"},
+}
+
 func TestLoadSchema(t *testing.T) {
 	convey.Convey("Given the SQLite schema files", t, func() {
 		stmts, err := loadSchema("sqlite")
@@ -94,7 +113,7 @@ func TestSampleSearchTokenSchemaMySQLDeclaresTokenTableAndIndex(t *testing.T) {
 			statements := splitSQLStatements(string(ddl))
 			convey.So(statements, convey.ShouldHaveLength, 2)
 
-			table, columns, _, err := parseCreateTable(statements[0])
+			table, columns, _, _, err := parseCreateTable(statements[0])
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(table, convey.ShouldEqual, "sample_search_token")
 			convey.So(columns, convey.ShouldContainKey, "token")
@@ -129,6 +148,154 @@ func TestParseSchemaShapeRecordsTokenIndexAsNormalTable(t *testing.T) {
 			convey.So(sqliteShape.Tables["sample_search_token"], convey.ShouldResemble, mysqlShape.Tables["sample_search_token"])
 			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, []string{"token,id_sample_tmp"})
 			convey.So(sqliteShape.Index["sample_search_token"], convey.ShouldResemble, mysqlShape.Index["sample_search_token"])
+		})
+	})
+}
+
+func TestSeqProductIRODSLocationsMirrorSQLiteShapeHasCreatedPlatformAndCreatedIndex(t *testing.T) {
+	convey.Convey("A1.1: Given the SQLite schema parsed into a schemaShape", t, func() {
+		stmts, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+
+		shape, err := parseSchemaShape(stmts)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when seq_product_irods_locations_mirror is inspected, then it has created and platform text columns and an index on (id_study_lims, created)", func() {
+			columns := shape.Tables["seq_product_irods_locations_mirror"]
+			convey.So(columns, convey.ShouldContainKey, "created")
+			convey.So(columns, convey.ShouldContainKey, "platform")
+			convey.So(columns["created"], convey.ShouldEqual, "text")
+			convey.So(columns["platform"], convey.ShouldEqual, "text")
+			convey.So(shape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, "id_study_lims,created")
+		})
+	})
+}
+
+func TestSeqProductIRODSLocationsMirrorMySQLShapeMatchesSQLite(t *testing.T) {
+	convey.Convey("A1.2: Given the MySQL schema parsed into a schemaShape", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when seq_product_irods_locations_mirror is inspected, then it has the same created/platform columns and (id_study_lims, created) index, so the two dialects compare equal", func() {
+			columns := mysqlShape.Tables["seq_product_irods_locations_mirror"]
+			convey.So(columns, convey.ShouldContainKey, "created")
+			convey.So(columns, convey.ShouldContainKey, "platform")
+			convey.So(columns["created"], convey.ShouldEqual, "text")
+			convey.So(columns["platform"], convey.ShouldEqual, "text")
+			convey.So(mysqlShape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, "id_study_lims,created")
+
+			convey.So(mysqlShape.Tables["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Tables["seq_product_irods_locations_mirror"])
+			convey.So(mysqlShape.Index["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Index["seq_product_irods_locations_mirror"])
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestA4MirrorTablesExistWithIndexesAndDialectsCompareEqual(t *testing.T) {
+	convey.Convey("A4.1: Given the sqlite and mysql schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when each new mirror table is inspected, then it exists with its declared indexes in both dialects", func() {
+			for table, indexes := range a4MirrorTables {
+				convey.So(sqliteShape.Tables, convey.ShouldContainKey, table)
+				convey.So(mysqlShape.Tables, convey.ShouldContainKey, table)
+
+				want := append([]string(nil), indexes...)
+				sort.Strings(want)
+				convey.So(sqliteShape.Index[table], convey.ShouldResemble, want)
+				convey.So(mysqlShape.Index[table], convey.ShouldResemble, want)
+			}
+		})
+
+		convey.Convey("when the two dialects are compared, then they are structurally equal", func() {
+			convey.So(compareCacheSchemaShapes(sqliteShape, mysqlShape), convey.ShouldBeNil)
+			convey.So(compareCacheSchemaShapes(mysqlShape, sqliteShape), convey.ShouldBeNil)
+
+			for table := range a4MirrorTables {
+				convey.So(mysqlShape.Tables[table], convey.ShouldResemble, sqliteShape.Tables[table])
+				convey.So(mysqlShape.Index[table], convey.ShouldResemble, sqliteShape.Index[table])
+			}
+		})
+	})
+}
+
+func TestA4SeqOpsTrackingMirrorHasAllMilestonesAndLookupIndexes(t *testing.T) {
+	convey.Convey("A4.3: Given seq_ops_tracking_per_sample_mirror parsed from the sqlite schema", t, func() {
+		stmts, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+
+		shape, err := parseSchemaShape(stmts)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when inspected, then it carries all 9 milestone columns and is indexed by id_sample_lims, sanger_sample_name, study_id", func() {
+			columns := shape.Tables["seq_ops_tracking_per_sample_mirror"]
+			milestones := []string{
+				"manifest_created", "manifest_uploaded", "labware_received",
+				"order_made", "working_dilution", "library_start",
+				"library_complete", "sequencing_run_start", "sequencing_qc_complete",
+			}
+			for _, milestone := range milestones {
+				convey.So(columns, convey.ShouldContainKey, milestone)
+				convey.So(columns[milestone], convey.ShouldEqual, "text")
+			}
+
+			convey.So(shape.Index["seq_ops_tracking_per_sample_mirror"], convey.ShouldResemble, []string{"id_sample_lims", "sanger_sample_name", "study_id"})
+		})
+	})
+}
+
+func TestA3IseqProductMetricsMirrorQCColumnsNullableInBothDialects(t *testing.T) {
+	convey.Convey("A3.1: Given the sqlite and mysql schemas parsed into schemaShapes", t, func() {
+		sqliteSchema, err := loadSchema("sqlite")
+		convey.So(err, convey.ShouldBeNil)
+		mysqlSchema, err := loadSchema("mysql")
+		convey.So(err, convey.ShouldBeNil)
+
+		sqliteShape, err := parseSchemaShape(sqliteSchema)
+		convey.So(err, convey.ShouldBeNil)
+		mysqlShape, err := parseSchemaShape(mysqlSchema)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when iseq_product_metrics_mirror is inspected, then qc, qc_seq and qc_lib are nullable in both dialects", func() {
+			for _, column := range []string{"qc", "qc_seq", "qc_lib"} {
+				convey.So(sqliteShape.Nullable["iseq_product_metrics_mirror"][column], convey.ShouldBeTrue)
+				convey.So(mysqlShape.Nullable["iseq_product_metrics_mirror"][column], convey.ShouldBeTrue)
+			}
+		})
+
+		convey.Convey("when every product-metrics mirror that carries QC is inspected, then its QC columns are nullable in both dialects", func() {
+			qcColumnsByTable := map[string][]string{
+				"iseq_product_metrics_mirror":    {"qc", "qc_seq", "qc_lib"},
+				"pac_bio_product_metrics_mirror": {"qc"},
+				"eseq_product_metrics_mirror":    {"qc", "qc_seq", "qc_lib"},
+				"useq_product_metrics_mirror":    {"qc", "qc_seq", "qc_lib"},
+			}
+			for table, columns := range qcColumnsByTable {
+				for _, column := range columns {
+					convey.So(sqliteShape.Nullable[table][column], convey.ShouldBeTrue)
+					convey.So(mysqlShape.Nullable[table][column], convey.ShouldBeTrue)
+				}
+			}
+		})
+
+		convey.Convey("when the parsed nullability is compared across dialects for every table, then it matches (no pre-existing dialect mismatch)", func() {
+			convey.So(sqliteShape.Nullable, convey.ShouldResemble, mysqlShape.Nullable)
 		})
 	})
 }
@@ -396,6 +563,55 @@ func TestSchemaDeclaresCaseInsensitiveLookupCollations(t *testing.T) {
 			for _, snippet := range mysqlExpected {
 				convey.So(mysqlDDL, convey.ShouldContainSubstring, snippet)
 			}
+		})
+	})
+}
+
+func TestSeqProductIRODSLocationsMirrorEphemeralInsertReadsBackCreatedAndPlatform(t *testing.T) {
+	convey.Convey("A1.3: Given an opened ephemeral SQLite cache", t, func() {
+		db := openSQLiteSchemaTestDB(t)
+
+		created := "2026-06-25T09:30:00Z"
+		platform := "illumina"
+		_, err := db.Exec(
+			`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"product-a1", "/seq", "run/1.cram", "/seq/run", "1.cram", int64(101), "6568",
+			"2026-06-26T10:00:00Z", created, platform,
+		)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("when a row is inserted with the new column list, then it reads back with the stored created and platform", func() {
+			var (
+				gotCreated  string
+				gotPlatform string
+			)
+			err = db.QueryRow(
+				`SELECT created, platform FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`,
+				"product-a1",
+			).Scan(&gotCreated, &gotPlatform)
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(gotCreated, convey.ShouldEqual, created)
+			convey.So(gotPlatform, convey.ShouldEqual, platform)
+		})
+	})
+}
+
+func TestA4MirrorTablesEphemeralInsertReadsBack(t *testing.T) {
+	convey.Convey("A4.2: Given an opened ephemeral SQLite cache", t, func() {
+		db := openSQLiteSchemaTestDB(t)
+
+		convey.Convey("when a row is inserted into each new mirror with its column list, then it reads back unchanged", func() {
+			convey.So(insertReadBackPacBioProductMetricsMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackPacBioRunWellMetricsMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackEseqProductMetricsMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackEseqRunMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackEseqRunLaneMetricsMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackUseqProductMetricsMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackUseqRunMetricsMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackOseqFlowcellMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackIseqRunStatusMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackIseqRunStatusDictMirror(t, db), convey.ShouldBeNil)
+			convey.So(insertReadBackSeqOpsTrackingPerSampleMirror(t, db), convey.ShouldBeNil)
 		})
 	})
 }
@@ -731,4 +947,358 @@ func isMySQLCacheIntegrationPermissionError(err error) bool {
 	}
 
 	return mysqlErr.Number == 1044 || mysqlErr.Number == 1049 || mysqlErr.Number == 1142
+}
+
+func insertReadBackPacBioProductMetricsMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO pac_bio_product_metrics_mirror(id_pac_bio_product, id_pac_bio_rw_metrics_tmp, id_sample_tmp, id_study_lims, qc, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		"pacbio-prod-1", int64(11), int64(101), "6568", nil, "2026-06-26T10:00:00Z",
+	); err != nil {
+		return err
+	}
+
+	var (
+		idSampleTmp int64
+		idStudyLims string
+		qc          sql.NullInt64
+	)
+
+	if err := db.QueryRow(
+		`SELECT id_sample_tmp, id_study_lims, qc FROM pac_bio_product_metrics_mirror WHERE id_pac_bio_product = ?`,
+		"pacbio-prod-1",
+	).Scan(&idSampleTmp, &idStudyLims, &qc); err != nil {
+		return err
+	}
+
+	convey.So(idSampleTmp, convey.ShouldEqual, 101)
+	convey.So(idStudyLims, convey.ShouldEqual, "6568")
+	convey.So(qc.Valid, convey.ShouldBeFalse)
+
+	return nil
+}
+
+func insertReadBackPacBioRunWellMetricsMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO pac_bio_run_well_metrics_mirror(id_pac_bio_rw_metrics_tmp, pac_bio_run_name, well_label, plate_number, run_start, run_complete, well_complete, qc_seq_date, run_status, well_status, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(11), "run-A", "A01", int64(1),
+		"2026-06-20T00:00:00Z", "2026-06-21T00:00:00Z", "2026-06-22T00:00:00Z", "2026-06-23T00:00:00Z",
+		"Complete", "Complete", "2026-06-24T00:00:00Z",
+	); err != nil {
+		return err
+	}
+
+	var (
+		runName    string
+		wellLabel  string
+		runStatus  sql.NullString
+		wellStatus sql.NullString
+		qcSeqDate  sql.NullString
+	)
+
+	if err := db.QueryRow(
+		`SELECT pac_bio_run_name, well_label, run_status, well_status, qc_seq_date FROM pac_bio_run_well_metrics_mirror WHERE id_pac_bio_rw_metrics_tmp = ?`,
+		int64(11),
+	).Scan(&runName, &wellLabel, &runStatus, &wellStatus, &qcSeqDate); err != nil {
+		return err
+	}
+
+	convey.So(runName, convey.ShouldEqual, "run-A")
+	convey.So(wellLabel, convey.ShouldEqual, "A01")
+	convey.So(runStatus.String, convey.ShouldEqual, "Complete")
+	convey.So(wellStatus.String, convey.ShouldEqual, "Complete")
+	convey.So(qcSeqDate.String, convey.ShouldEqual, "2026-06-23T00:00:00Z")
+
+	return nil
+}
+
+func insertReadBackEseqProductMetricsMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO eseq_product_metrics_mirror(id_eseq_product, id_eseq_flowcell_tmp, id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"eseq-prod-1", int64(21), int64(102), "6568", nil, nil, nil, "2026-06-26T10:00:00Z",
+	); err != nil {
+		return err
+	}
+
+	var (
+		idSampleTmp int64
+		idStudyLims string
+		qc          sql.NullInt64
+		qcSeq       sql.NullInt64
+		qcLib       sql.NullInt64
+	)
+
+	if err := db.QueryRow(
+		`SELECT id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib FROM eseq_product_metrics_mirror WHERE id_eseq_product = ?`,
+		"eseq-prod-1",
+	).Scan(&idSampleTmp, &idStudyLims, &qc, &qcSeq, &qcLib); err != nil {
+		return err
+	}
+
+	convey.So(idSampleTmp, convey.ShouldEqual, 102)
+	convey.So(idStudyLims, convey.ShouldEqual, "6568")
+	convey.So(qc.Valid, convey.ShouldBeFalse)
+	convey.So(qcSeq.Valid, convey.ShouldBeFalse)
+	convey.So(qcLib.Valid, convey.ShouldBeFalse)
+
+	return nil
+}
+
+func insertReadBackEseqRunMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO eseq_run_mirror(id_eseq_run_tmp, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		int64(31), "eseq-run-A", "Sequencing", "2026-06-20T00:00:00Z", nil, "2026-06-26T10:00:00Z",
+	); err != nil {
+		return err
+	}
+
+	var (
+		runName     string
+		runStatus   sql.NullString
+		runComplete sql.NullString
+	)
+
+	if err := db.QueryRow(
+		`SELECT run_name, run_status, run_complete FROM eseq_run_mirror WHERE id_eseq_run_tmp = ?`,
+		int64(31),
+	).Scan(&runName, &runStatus, &runComplete); err != nil {
+		return err
+	}
+
+	convey.So(runName, convey.ShouldEqual, "eseq-run-A")
+	convey.So(runStatus.String, convey.ShouldEqual, "Sequencing")
+	convey.So(runComplete.Valid, convey.ShouldBeFalse)
+
+	return nil
+}
+
+func insertReadBackEseqRunLaneMetricsMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO eseq_run_lane_metrics_mirror(id_eseq_rlm_tmp, run_name, lane, run_complete, last_updated) VALUES (?, ?, ?, ?, ?)`,
+		int64(41), "eseq-run-A", int64(1), "2026-06-21T00:00:00Z", "2026-06-26T10:00:00Z",
+	); err != nil {
+		return err
+	}
+
+	var (
+		runName     string
+		lane        int64
+		runComplete sql.NullString
+	)
+
+	if err := db.QueryRow(
+		`SELECT run_name, lane, run_complete FROM eseq_run_lane_metrics_mirror WHERE id_eseq_rlm_tmp = ?`,
+		int64(41),
+	).Scan(&runName, &lane, &runComplete); err != nil {
+		return err
+	}
+
+	convey.So(runName, convey.ShouldEqual, "eseq-run-A")
+	convey.So(lane, convey.ShouldEqual, 1)
+	convey.So(runComplete.String, convey.ShouldEqual, "2026-06-21T00:00:00Z")
+
+	return nil
+}
+
+func insertReadBackUseqProductMetricsMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO useq_product_metrics_mirror(id_useq_product, id_useq_wafer_tmp, id_sample_tmp, id_study_lims, qc, qc_seq, qc_lib, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"useq-prod-1", int64(51), int64(103), "6568", nil, nil, nil, "2026-06-26T10:00:00Z",
+	); err != nil {
+		return err
+	}
+
+	var (
+		idUseqWaferTmp int64
+		idSampleTmp    int64
+		idStudyLims    string
+		qc             sql.NullInt64
+	)
+
+	if err := db.QueryRow(
+		`SELECT id_useq_wafer_tmp, id_sample_tmp, id_study_lims, qc FROM useq_product_metrics_mirror WHERE id_useq_product = ?`,
+		"useq-prod-1",
+	).Scan(&idUseqWaferTmp, &idSampleTmp, &idStudyLims, &qc); err != nil {
+		return err
+	}
+
+	convey.So(idUseqWaferTmp, convey.ShouldEqual, 51)
+	convey.So(idSampleTmp, convey.ShouldEqual, 103)
+	convey.So(idStudyLims, convey.ShouldEqual, "6568")
+	convey.So(qc.Valid, convey.ShouldBeFalse)
+
+	return nil
+}
+
+func insertReadBackUseqRunMetricsMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO useq_run_metrics_mirror(id_useq_run_metrics_tmp, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		int64(61), "useq-run-A", "Running", "2026-06-20T00:00:00Z", nil, "2026-06-26T10:00:00Z",
+	); err != nil {
+		return err
+	}
+
+	var (
+		runName   string
+		runStatus sql.NullString
+	)
+
+	if err := db.QueryRow(
+		`SELECT run_name, run_status FROM useq_run_metrics_mirror WHERE id_useq_run_metrics_tmp = ?`,
+		int64(61),
+	).Scan(&runName, &runStatus); err != nil {
+		return err
+	}
+
+	convey.So(runName, convey.ShouldEqual, "useq-run-A")
+	convey.So(runStatus.String, convey.ShouldEqual, "Running")
+
+	return nil
+}
+
+func insertReadBackOseqFlowcellMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO oseq_flowcell_mirror(id_oseq_flowcell_tmp, id_sample_tmp, id_study_lims) VALUES (?, ?, ?)`,
+		int64(71), int64(104), "6568",
+	); err != nil {
+		return err
+	}
+
+	var (
+		idSampleTmp int64
+		idStudyLims string
+	)
+
+	if err := db.QueryRow(
+		`SELECT id_sample_tmp, id_study_lims FROM oseq_flowcell_mirror WHERE id_oseq_flowcell_tmp = ?`,
+		int64(71),
+	).Scan(&idSampleTmp, &idStudyLims); err != nil {
+		return err
+	}
+
+	convey.So(idSampleTmp, convey.ShouldEqual, 104)
+	convey.So(idStudyLims, convey.ShouldEqual, "6568")
+
+	return nil
+}
+
+func insertReadBackIseqRunStatusMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO iseq_run_status_mirror(id_run_status, id_run, date, id_run_status_dict, iscurrent) VALUES (?, ?, ?, ?, ?)`,
+		int64(900), int64(52553), "2026-06-25T09:00:00Z", int64(4), int64(1),
+	); err != nil {
+		return err
+	}
+
+	var (
+		idRun           int64
+		date            string
+		idRunStatusDict int64
+		iscurrent       int64
+	)
+
+	if err := db.QueryRow(
+		`SELECT id_run, date, id_run_status_dict, iscurrent FROM iseq_run_status_mirror WHERE id_run_status = ?`,
+		int64(900),
+	).Scan(&idRun, &date, &idRunStatusDict, &iscurrent); err != nil {
+		return err
+	}
+
+	convey.So(idRun, convey.ShouldEqual, 52553)
+	convey.So(date, convey.ShouldEqual, "2026-06-25T09:00:00Z")
+	convey.So(idRunStatusDict, convey.ShouldEqual, 4)
+	convey.So(iscurrent, convey.ShouldEqual, 1)
+
+	return nil
+}
+
+func insertReadBackIseqRunStatusDictMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO iseq_run_status_dict_mirror(id_run_status_dict, description, temporal_index) VALUES (?, ?, ?)`,
+		int64(4), "qc review pending", int64(11),
+	); err != nil {
+		return err
+	}
+
+	var (
+		description   string
+		temporalIndex sql.NullInt64
+	)
+
+	if err := db.QueryRow(
+		`SELECT description, temporal_index FROM iseq_run_status_dict_mirror WHERE id_run_status_dict = ?`,
+		int64(4),
+	).Scan(&description, &temporalIndex); err != nil {
+		return err
+	}
+
+	convey.So(description, convey.ShouldEqual, "qc review pending")
+	convey.So(temporalIndex.Int64, convey.ShouldEqual, 11)
+
+	return nil
+}
+
+func insertReadBackSeqOpsTrackingPerSampleMirror(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO seq_ops_tracking_per_sample_mirror(
+			id_sample_lims, sanger_sample_id, sanger_sample_name, study_id,
+			programme, faculty_sponsor, library_type, platform,
+			manifest_created, manifest_uploaded, labware_received, order_made,
+			working_dilution, library_start, library_complete,
+			sequencing_run_start, sequencing_qc_complete
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"sample-lims-1", "sanger-1", "7607STDY16897354", "7607",
+		"DNA Pipelines", "Sponsor", "Standard", "Illumina",
+		"2026-05-29T00:00:00Z", nil, "2026-06-02T00:00:00Z", "2026-06-19T00:00:00Z",
+		nil, "2026-06-19T00:00:00Z", "2026-06-19T00:00:00Z",
+		"2026-06-25T00:00:00Z", nil,
+	); err != nil {
+		return err
+	}
+
+	var (
+		sangerSampleName   string
+		studyID            string
+		manifestCreated    sql.NullString
+		manifestUploaded   sql.NullString
+		sequencingRunStart sql.NullString
+		sequencingQCDone   sql.NullString
+	)
+
+	if err := db.QueryRow(
+		`SELECT sanger_sample_name, study_id, manifest_created, manifest_uploaded, sequencing_run_start, sequencing_qc_complete FROM seq_ops_tracking_per_sample_mirror WHERE id_sample_lims = ?`,
+		"sample-lims-1",
+	).Scan(&sangerSampleName, &studyID, &manifestCreated, &manifestUploaded, &sequencingRunStart, &sequencingQCDone); err != nil {
+		return err
+	}
+
+	convey.So(sangerSampleName, convey.ShouldEqual, "7607STDY16897354")
+	convey.So(studyID, convey.ShouldEqual, "7607")
+	convey.So(manifestCreated.String, convey.ShouldEqual, "2026-05-29T00:00:00Z")
+	convey.So(manifestUploaded.Valid, convey.ShouldBeFalse)
+	convey.So(sequencingRunStart.String, convey.ShouldEqual, "2026-06-25T00:00:00Z")
+	convey.So(sequencingQCDone.Valid, convey.ShouldBeFalse)
+
+	return nil
 }

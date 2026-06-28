@@ -117,6 +117,26 @@ var seqProductIRODSLocationsSyncSourceColumns = []string{
 	"id_sample_tmp",
 	"id_study_lims",
 	"last_updated",
+	"created",
+	"seq_platform_name",
+}
+
+// newSyncTestSourceTables is the set of sync tables added by A4/A5 (everything in
+// supportedSyncTables beyond the original five). A full-Sync test that seeds only
+// the original five gets an empty source for these, so they sync zero rows rather
+// than erroring on a missing plan.
+var newSyncTestSourceTables = map[string]bool{
+	syncTableIseqRunStatus:           true,
+	syncTableIseqRunStatusDict:       true,
+	syncTableOseqFlowcell:            true,
+	syncTablePacBioRunWellMetrics:    true,
+	syncTableEseqRun:                 true,
+	syncTableEseqRunLaneMetrics:      true,
+	syncTableUseqRunMetrics:          true,
+	syncTableSeqOpsTrackingPerSample: true,
+	syncTablePacBioProductMetrics:    true,
+	syncTableEseqProductMetrics:      true,
+	syncTableUseqProductMetrics:      true,
 }
 
 var (
@@ -197,6 +217,80 @@ type syncTestDriverState struct {
 	queryCount map[string]int
 }
 
+func TestClientSyncIseqProductMetricsPreservesNullQCAsPending(t *testing.T) {
+	convey.Convey("A3.2: Given a source iseq_product_metrics row with NULL qc", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 14, 9, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableIseqProductMetrics: {
+				columns: iseqProductMetricsSyncSourceColumns,
+				rows: [][]driver.Value{
+					{"product-null-qc", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", nil, nil, nil, formatSyncTime(base)},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+
+		convey.Convey("when synced, then the mirror stores SQL NULL (not 0) and a downstream read maps it to pending", func() {
+			qc := readIseqProductMetricsMirrorQCForTest(t, cache.DB(), "product-null-qc")
+			convey.So(qc.Valid, convey.ShouldBeFalse)
+			convey.So(qcString(qc), convey.ShouldEqual, "pending")
+		})
+	})
+}
+
+func readIseqProductMetricsMirrorQCForTest(t *testing.T, db *sql.DB, idIseqProduct string) sql.NullInt64 {
+	t.Helper()
+
+	var qc sql.NullInt64
+	err := db.QueryRow(`SELECT qc FROM iseq_product_metrics_mirror WHERE id_iseq_product = ?`, idIseqProduct).Scan(&qc)
+	if err != nil {
+		t.Fatalf("readIseqProductMetricsMirrorQCForTest(%q): %v", idIseqProduct, err)
+	}
+
+	return qc
+}
+
+func TestClientSyncIseqProductMetricsMapsQCOneZeroNullToPassFailPending(t *testing.T) {
+	convey.Convey("A3.3: Given source iseq_product_metrics rows with qc of 1, 0 and NULL", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.May, 14, 10, 0, 0, 0, time.UTC)
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableIseqProductMetrics: {
+				columns: iseqProductMetricsSyncSourceColumns,
+				rows: [][]driver.Value{
+					{"product-qc-pass", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(base)},
+					{"product-qc-fail", int64(3002), int64(2001), int64(9001), int64(1), int64(2), int64(1), "5001", int64(0), int64(0), int64(0), formatSyncTime(base.Add(time.Minute))},
+					{"product-qc-pending", int64(3003), int64(2001), int64(9001), int64(1), int64(3), int64(1), "5001", nil, nil, nil, formatSyncTime(base.Add(2 * time.Minute))},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableIseqProductMetrics)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(reports, convey.ShouldHaveLength, 1)
+
+		convey.Convey("when synced, then they read back as pass, fail and pending respectively", func() {
+			convey.So(qcString(readIseqProductMetricsMirrorQCForTest(t, cache.DB(), "product-qc-pass")), convey.ShouldEqual, "pass")
+			convey.So(qcString(readIseqProductMetricsMirrorQCForTest(t, cache.DB(), "product-qc-fail")), convey.ShouldEqual, "fail")
+			convey.So(qcString(readIseqProductMetricsMirrorQCForTest(t, cache.DB(), "product-qc-pending")), convey.ShouldEqual, "pending")
+		})
+	})
+}
+
 func TestFinalizeSampleSyncStateRebuildsLargeSQLiteSecondaryIndexes(t *testing.T) {
 	convey.Convey("Given a completed large SQLite sample cold load with indexes still dropped", t, func() {
 		db, mock, err := sqlmock.New()
@@ -252,7 +346,7 @@ type syncTestRows struct {
 }
 
 func TestClientSyncFiveTableParallelReports(t *testing.T) {
-	convey.Convey("B1.1: Given deterministic rows for each supported table, when Client.Sync runs, then it returns five reports with the inserted counts for each table", t, func() {
+	convey.Convey("B1.1: Given deterministic rows for the original five tables, when Client.Sync runs, then it returns one report per supported table with the inserted counts for those five", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -282,8 +376,8 @@ func TestClientSyncFiveTableParallelReports(t *testing.T) {
 				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns: []string{"id_seq_product_irods_locations_tmp", "id_product", "irods_root_collection", "irods_data_relative_path", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t2)}},
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t2), formatSyncTime(t2), "illumina"}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -293,7 +387,7 @@ func TestClientSyncFiveTableParallelReports(t *testing.T) {
 		reports, err := client.Sync(context.Background())
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(reports, convey.ShouldHaveLength, 5)
+		convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables))
 
 		byTable := make(map[string]SyncReport, len(reports))
 		for _, report := range reports {
@@ -338,8 +432,8 @@ func TestClientSyncSQLiteAdvisoryLockAllowsParallelTableWrites(t *testing.T) {
 				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns: []string{"id_seq_product_irods_locations_tmp", "id_product", "irods_root_collection", "irods_data_relative_path", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t1)}},
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t1), formatSyncTime(t1), "illumina"}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -349,7 +443,7 @@ func TestClientSyncSQLiteAdvisoryLockAllowsParallelTableWrites(t *testing.T) {
 		reports, err := client.Sync(context.Background())
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(reports, convey.ShouldHaveLength, 5)
+		convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables))
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM iseq_product_metrics_mirror`), convey.ShouldEqual, 1)
@@ -385,7 +479,7 @@ func TestClientSyncReportsPerTableDuration(t *testing.T) {
 }
 
 func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
-	convey.Convey("B1.2: Given one failing table source, when Client.Sync runs, then it returns a joined error and the other four tables still commit", t, func() {
+	convey.Convey("B1.2: Given one failing table source, when Client.Sync runs, then it returns a joined error and every other supported table still commits", t, func() {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
@@ -407,8 +501,8 @@ func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
 				rows:    [][]driver.Value{{"product-1001", int64(3001), int64(2001), int64(9001), int64(1), int64(1), int64(1), "5001", int64(1), int64(1), int64(1), formatSyncTime(t1)}},
 			},
 			syncTableSeqProductIRODSLocations: {
-				columns: []string{"id_seq_product_irods_locations_tmp", "id_product", "irods_root_collection", "irods_data_relative_path", "id_sample_tmp", "id_study_lims", "last_updated"},
-				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t1)}},
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(t1), formatSyncTime(t1), "illumina"}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -420,7 +514,7 @@ func TestClientSyncFiveTableParallelJoinsErrors(t *testing.T) {
 		convey.So(err, convey.ShouldNotBeNil)
 		convey.So(err.Error(), convey.ShouldContainSubstring, syncTableStudy)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "forced study failure")
-		convey.So(reports, convey.ShouldHaveLength, 4)
+		convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables)-1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM sample_mirror`), convey.ShouldEqual, 1)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM study_mirror`), convey.ShouldEqual, 0)
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 1)
@@ -460,7 +554,7 @@ func TestClientSyncStartsEachTableWithinOverlapWindow(t *testing.T) {
 				starts.records[syncTableIseqProductMetrics] = record
 				starts.mu.Unlock()
 			}),
-			syncTableSeqProductIRODSLocations: syncSingleRowSourcePlan([]string{"id_seq_product_irods_locations_tmp", "id_product", "irods_root_collection", "irods_data_relative_path", "id_sample_tmp", "id_study_lims", "last_updated"}, []driver.Value{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(time.Now().UTC())}, func(record syncStartRecord) {
+			syncTableSeqProductIRODSLocations: syncSingleRowSourcePlan(seqProductIRODSLocationsSyncSourceColumns, []driver.Value{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(time.Now().UTC()), formatSyncTime(time.Now().UTC()), "illumina"}, func(record syncStartRecord) {
 				starts.mu.Lock()
 				starts.records[syncTableSeqProductIRODSLocations] = record
 				starts.mu.Unlock()
@@ -720,8 +814,18 @@ func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
 		cache := openSQLiteSyncTestCache(t)
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
+		// Only the original five tables are seeded with blocking two-row sources
+		// for this streaming probe; the new fan-out tables have empty sources and
+		// emit no first row, so the wait targets just these streaming tables.
+		streamingTables := []string{
+			syncTableSample,
+			syncTableStudy,
+			syncTableIseqFlowcell,
+			syncTableIseqProductMetrics,
+			syncTableSeqProductIRODSLocations,
+		}
 		releaseRow2 := make(chan struct{})
-		firstRowSeen := make(chan string, len(supportedSyncTables))
+		firstRowSeen := make(chan string, len(streamingTables))
 		now := formatSyncTime(time.Now().UTC())
 
 		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
@@ -751,7 +855,7 @@ func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
 			},
 			syncTableSeqProductIRODSLocations: {
 				columns:         seqProductIRODSLocationsSyncSourceColumns,
-				rows:            [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file-1.cram", int64(1), "5001", now}, {int64(7002), "product-1002", "/seq", "run/file-2.cram", int64(2), "5002", now}},
+				rows:            [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file-1.cram", int64(1), "5001", now, now, "illumina"}, {int64(7002), "product-1002", "/seq", "run/file-2.cram", int64(2), "5002", now, now, "illumina"}},
 				blockBeforeRow2: releaseRow2,
 				afterFirstRow:   func() { firstRowSeen <- syncTableSeqProductIRODSLocations },
 			},
@@ -766,9 +870,9 @@ func TestClientSyncConsumesRowsInStreamingMode(t *testing.T) {
 			errCh <- err
 		}()
 
-		seen := make(map[string]struct{}, len(supportedSyncTables))
+		seen := make(map[string]struct{}, len(streamingTables))
 		deadline := time.After(2 * time.Second)
-		for len(seen) < len(supportedSyncTables) {
+		for len(seen) < len(streamingTables) {
 			select {
 			case table := <-firstRowSeen:
 				seen[table] = struct{}{}
@@ -1120,7 +1224,7 @@ func TestClientSyncConstraintViolationNamesOffendingLibrarySampleRow(t *testing.
 		convey.So(err.Error(), convey.ShouldContainSubstring, syncTableIseqFlowcell)
 		convey.So(err.Error(), convey.ShouldContainSubstring, "(Standard, 31)")
 		convey.So(err.Error(), convey.ShouldContainSubstring, "id_study_lims")
-		convey.So(reports, convey.ShouldHaveLength, 5)
+		convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables))
 		convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM library_samples`), convey.ShouldEqual, 0)
 	})
 }
@@ -1587,7 +1691,7 @@ func TestClientSyncSeqProductIRODSLocationsIncrementalResumeReplacesExistingRows
 			syncTableSeqProductIRODSLocations: {
 				columns: seqProductIRODSLocationsSyncSourceColumns,
 				rows: [][]driver.Value{
-					{int64(9001), "product-loc-1", "/seq", "new/new.cram", int64(8001), "study-new", formatSyncTime(base.Add(time.Minute))},
+					{int64(9001), "product-loc-1", "/seq", "new/new.cram", int64(8001), "study-new", formatSyncTime(base.Add(time.Minute)), formatSyncTime(base.Add(time.Minute)), "illumina"},
 				},
 			},
 		})
@@ -1614,9 +1718,9 @@ func TestClientSyncSeqProductIRODSLocationsResumeKeepsExpandedSourceRowsAtomic(t
 		base := time.Date(2026, time.May, 13, 10, 0, 0, 0, time.UTC)
 		firstRows := seqProductIRODSLocationsSyncRowsForRange(1, 999, base, 9000)
 		firstRows = append(firstRows,
-			[]driver.Value{int64(1000), "composite-product", "/seq/illumina/runs/48/48522", "plex1/48522#1.cram", int64(9419243), "7607", formatSyncTime(base.Add(999 * time.Second))},
-			[]driver.Value{int64(1000), "composite-product", "/seq/illumina/runs/48/48522", "plex1/48522#1.cram", int64(9419244), "7607", formatSyncTime(base.Add(1000 * time.Second))},
-			[]driver.Value{int64(1001), "product-after-composite", "/seq", "run/after.cram", int64(9419245), "7607", formatSyncTime(base.Add(1001 * time.Second))},
+			[]driver.Value{int64(1000), "composite-product", "/seq/illumina/runs/48/48522", "plex1/48522#1.cram", int64(9419243), "7607", formatSyncTime(base.Add(999 * time.Second)), formatSyncTime(base.Add(999 * time.Second)), "illumina"},
+			[]driver.Value{int64(1000), "composite-product", "/seq/illumina/runs/48/48522", "plex1/48522#1.cram", int64(9419244), "7607", formatSyncTime(base.Add(1000 * time.Second)), formatSyncTime(base.Add(1000 * time.Second)), "illumina"},
+			[]driver.Value{int64(1001), "product-after-composite", "/seq", "run/after.cram", int64(9419245), "7607", formatSyncTime(base.Add(1001 * time.Second)), formatSyncTime(base.Add(1001 * time.Second)), "illumina"},
 		)
 
 		firstSource := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
@@ -1644,7 +1748,7 @@ func TestClientSyncSeqProductIRODSLocationsResumeKeepsExpandedSourceRowsAtomic(t
 			syncTableSeqProductIRODSLocations: {
 				columns: seqProductIRODSLocationsSyncSourceColumns,
 				rows: [][]driver.Value{
-					{int64(1001), "product-after-composite", "/seq", "run/after.cram", int64(9419245), "7607", formatSyncTime(base.Add(1001 * time.Second))},
+					{int64(1001), "product-after-composite", "/seq", "run/after.cram", int64(9419245), "7607", formatSyncTime(base.Add(1001 * time.Second)), formatSyncTime(base.Add(1001 * time.Second)), "illumina"},
 				},
 				querySink: func(query string, args []driver.NamedValue) {
 					capturedQuery = query
@@ -1940,7 +2044,7 @@ func TestClientSyncSparseMySQLProductMirrorsReplaceExistingKeys(t *testing.T) {
 			syncTableSeqProductIRODSLocations: {
 				columns: seqProductIRODSLocationsSyncSourceColumns,
 				rows: [][]driver.Value{
-					{int64(9001), "product-loc-1", "/seq", "new/new-1.cram", int64(8001), "study-new", formatSyncTime(next)},
+					{int64(9001), "product-loc-1", "/seq", "new/new-1.cram", int64(8001), "study-new", formatSyncTime(next), formatSyncTime(next), "illumina"},
 				},
 			},
 		})
@@ -1967,7 +2071,7 @@ func TestSparseMySQLIseqProductMetricsIncrementalBatchUsesDeleteThenInsert(t *te
 
 		cache := &mysqlCache{rwDB: db}
 		highWater := time.Date(2026, time.May, 12, 16, 30, 0, 0, time.UTC)
-		row := iseqProductMetricsSyncRow{IDIseqProduct: "product-1", SourceRowID: 5001, IDIseqFlowcellTmp: 6001, IDRun: 7001, Position: 3, TagIndex: 4, IDSampleTmp: 8001, IDStudyLims: "study-new", QC: 1, QCLib: 0, QCSeq: 1, LastUpdated: highWater}
+		row := iseqProductMetricsSyncRow{IDIseqProduct: "product-1", SourceRowID: 5001, IDIseqFlowcellTmp: 6001, IDRun: 7001, Position: 3, TagIndex: 4, IDSampleTmp: 8001, IDStudyLims: "study-new", QC: sql.NullInt64{Int64: 1, Valid: true}, QCLib: sql.NullInt64{Int64: 0, Valid: true}, QCSeq: sql.NullInt64{Int64: 1, Valid: true}, LastUpdated: highWater}
 
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM (SELECT 1 FROM iseq_product_metrics_mirror WHERE id_iseq_product IN (?) GROUP BY id_iseq_product) AS existing_keys`)).
@@ -2035,7 +2139,7 @@ func TestReplaceIseqProductMetricsMirrorBatchDeletesDuplicateSparseRows(t *testi
 		next := base.Add(time.Minute)
 		seedSparseIseqProductMetricsMirrorRow(t, db, "product-1", 1001, 1, base)
 		seedSparseIseqProductMetricsMirrorRow(t, db, "product-1", 1002, 2, base)
-		row := iseqProductMetricsSyncRow{IDIseqProduct: "product-1", SourceRowID: 5001, IDIseqFlowcellTmp: 6001, IDRun: 7001, Position: 3, TagIndex: 4, IDSampleTmp: 8001, IDStudyLims: "study-new", QC: 1, QCLib: 0, QCSeq: 1, LastUpdated: next}
+		row := iseqProductMetricsSyncRow{IDIseqProduct: "product-1", SourceRowID: 5001, IDIseqFlowcellTmp: 6001, IDRun: 7001, Position: 3, TagIndex: 4, IDSampleTmp: 8001, IDStudyLims: "study-new", QC: sql.NullInt64{Int64: 1, Valid: true}, QCLib: sql.NullInt64{Int64: 0, Valid: true}, QCSeq: sql.NullInt64{Int64: 1, Valid: true}, LastUpdated: next}
 
 		tx, err := db.BeginTx(context.Background(), nil)
 		convey.So(err, convey.ShouldBeNil)
@@ -2075,8 +2179,8 @@ func TestIseqProductMetricsColdBatchUsesInsertOnly(t *testing.T) {
 
 		base := time.Date(2026, time.May, 12, 13, 0, 0, 0, time.UTC)
 		rows := []iseqProductMetricsSyncRow{
-			{IDIseqProduct: "product-1", SourceRowID: 1, IDIseqFlowcellTmp: 11, IDRun: 1001, Position: 1, TagIndex: 1, IDSampleTmp: 101, IDStudyLims: "5001", QC: 1, QCLib: 1, QCSeq: 1, LastUpdated: base},
-			{IDIseqProduct: "product-2", SourceRowID: 2, IDIseqFlowcellTmp: 12, IDRun: 1001, Position: 1, TagIndex: 2, IDSampleTmp: 102, IDStudyLims: "5001", QC: 1, QCLib: 1, QCSeq: 1, LastUpdated: base.Add(time.Second)},
+			{IDIseqProduct: "product-1", SourceRowID: 1, IDIseqFlowcellTmp: 11, IDRun: 1001, Position: 1, TagIndex: 1, IDSampleTmp: 101, IDStudyLims: "5001", QC: sql.NullInt64{Int64: 1, Valid: true}, QCLib: sql.NullInt64{Int64: 1, Valid: true}, QCSeq: sql.NullInt64{Int64: 1, Valid: true}, LastUpdated: base},
+			{IDIseqProduct: "product-2", SourceRowID: 2, IDIseqFlowcellTmp: 12, IDRun: 1001, Position: 1, TagIndex: 2, IDSampleTmp: 102, IDStudyLims: "5001", QC: sql.NullInt64{Int64: 1, Valid: true}, QCLib: sql.NullInt64{Int64: 1, Valid: true}, QCSeq: sql.NullInt64{Int64: 1, Valid: true}, LastUpdated: base.Add(time.Second)},
 		}
 		insert := buildBulkInsertStatement("iseq_product_metrics_mirror", iseqProductMetricsMirrorColumns, 1)
 
@@ -2308,7 +2412,7 @@ func TestClientSyncNonSampleTablesNeverSetIndexesDropped(t *testing.T) {
 			},
 			syncTableSeqProductIRODSLocations: {
 				columns: seqProductIRODSLocationsSyncSourceColumns,
-				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(base.Add(3 * time.Minute))}},
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(base.Add(3 * time.Minute)), formatSyncTime(base.Add(3 * time.Minute)), "illumina"}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -2592,7 +2696,7 @@ func TestClientSyncTwoTablesReconnectIndependently(t *testing.T) {
 			},
 			syncTableSeqProductIRODSLocations: {
 				columns: seqProductIRODSLocationsSyncSourceColumns,
-				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(base.Add(4 * time.Second))}},
+				rows:    [][]driver.Value{{int64(7001), "product-1001", "/seq", "run/file.cram", int64(1), "5001", formatSyncTime(base.Add(4 * time.Second)), formatSyncTime(base.Add(4 * time.Second)), "illumina"}},
 			},
 		})
 		defer func() { _ = source.Close() }()
@@ -2606,7 +2710,7 @@ func TestClientSyncTwoTablesReconnectIndependently(t *testing.T) {
 
 		lines := nonEmptyLines(stderr.String())
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(reports, convey.ShouldHaveLength, 5)
+		convey.So(reports, convey.ShouldHaveLength, len(supportedSyncTables))
 		convey.So(lines, convey.ShouldHaveLength, 2)
 		convey.So(strings.Join(lines, "\n"), convey.ShouldContainSubstring, "mlwh sync: sample reconnecting attempt 1/5")
 		convey.So(strings.Join(lines, "\n"), convey.ShouldContainSubstring, "mlwh sync: study reconnecting attempt 1/5")
@@ -2852,7 +2956,7 @@ func openSparseProductMirrorReplacementDBForTest(t *testing.T) *sql.DB {
 
 	statements := []string{
 		`CREATE TABLE iseq_product_metrics_mirror(id_iseq_product TEXT NOT NULL, id_iseq_flowcell_tmp INTEGER NOT NULL, id_run INTEGER NOT NULL, position INTEGER NOT NULL, tag_index INTEGER NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, qc INTEGER NOT NULL, qc_lib INTEGER NOT NULL, qc_seq INTEGER NOT NULL, last_updated TEXT NOT NULL)`,
-		`CREATE TABLE seq_product_irods_locations_mirror(id_iseq_product TEXT NOT NULL, irods_root_collection TEXT NOT NULL, irods_data_relative_path TEXT NOT NULL, irods_collection TEXT NOT NULL, irods_file_name TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, last_updated TEXT NOT NULL)`,
+		`CREATE TABLE seq_product_irods_locations_mirror(id_iseq_product TEXT NOT NULL, irods_root_collection TEXT NOT NULL, irods_data_relative_path TEXT NOT NULL, irods_collection TEXT NOT NULL, irods_file_name TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, last_updated TEXT NOT NULL, created TEXT NOT NULL, platform TEXT NOT NULL)`,
 	}
 	for _, statement := range statements {
 		if _, err = db.Exec(statement); err != nil {
@@ -2898,7 +3002,7 @@ func seedSeqProductIRODSLocationsMirrorRow(t *testing.T, db *sql.DB, productID, 
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		productID,
 		"/seq",
 		fileName,
@@ -2907,6 +3011,8 @@ func seedSeqProductIRODSLocationsMirrorRow(t *testing.T, db *sql.DB, productID, 
 		int64(3001),
 		"study-old",
 		formatSyncTime(lastUpdated),
+		formatSyncTime(lastUpdated),
+		"illumina",
 	)
 	if err != nil {
 		t.Fatalf("seedSeqProductIRODSLocationsMirrorRow(): %v", err)
@@ -2968,8 +3074,12 @@ func iseqProductMetricsMirrorSecondaryIndexNames() []string {
 }
 
 func seqProductIRODSLocationsMirrorSecondaryIndexNames() []string {
+	// The cold load drops and recreates the mirror's rebuild index set, but the
+	// table also carries the A1 (id_study_lims, created) recency index, which is
+	// never dropped; mirrorIndexNames reads every physical index, sorted.
 	return []string{
 		"seq_product_irods_locations_mirror_id_sample_tmp_idx",
+		"spi_mirror_study_lims_created_idx",
 		"spi_mirror_study_lims_sample_tmp_idx",
 	}
 }
@@ -3718,6 +3828,7 @@ func iseqProductMetricsSyncRowsForRange(startID, endID int64, base time.Time, pr
 func seqProductIRODSLocationsSyncRowsForRange(startID, endID int64, base time.Time, productOffset int64) [][]driver.Value {
 	rows := make([][]driver.Value, 0, endID-startID+1)
 	for id := startID; id <= endID; id++ {
+		created := base.Add(time.Duration(id-startID) * time.Second)
 		rows = append(rows, []driver.Value{
 			id,
 			fmt.Sprintf("product-%d", id+productOffset),
@@ -3725,7 +3836,9 @@ func seqProductIRODSLocationsSyncRowsForRange(startID, endID int64, base time.Ti
 			fmt.Sprintf("run/%d.cram", id),
 			id + 100,
 			fmt.Sprintf("study-%d", id),
-			formatSyncTime(base.Add(time.Duration(id-startID) * time.Second)),
+			formatSyncTime(created),
+			formatSyncTime(created),
+			"illumina",
 		})
 	}
 
@@ -3845,6 +3958,15 @@ func (c *syncTestConn) QueryContext(_ context.Context, query string, args []driv
 	c.state.queryCount[table] = queryNumber + 1
 	c.state.mu.Unlock()
 	if !ok {
+		// Sync() now fans out over the new platform-coverage / run-status /
+		// tracking tables too. A full-Sync test that only cares about the
+		// original five need not seed those, so a recognised new table with no
+		// plan serves an empty result set (it syncs zero rows). An unrecognised
+		// or unseeded original table still errors, preserving the seed guard.
+		if newSyncTestSourceTables[table] {
+			return &syncTestRows{}, nil
+		}
+
 		return nil, fmt.Errorf("unexpected sync test query for %s: %s", table, query)
 	}
 
@@ -3938,8 +4060,33 @@ func syncTableForQuery(query string) string {
 		return syncTableIseqFlowcell
 	case strings.Contains(query, " FROM iseq_product_metrics ipm "):
 		return syncTableIseqProductMetrics
+	// The iRODS source query embeds the per-platform *_product_metrics tables in
+	// its recovery UNION, so it must be matched (on its spi alias) before the
+	// standalone product-metrics queries below, which share those table aliases.
 	case strings.Contains(query, " FROM seq_product_irods_locations spi "):
 		return syncTableSeqProductIRODSLocations
+	case strings.Contains(query, " FROM pac_bio_product_metrics pbm "):
+		return syncTablePacBioProductMetrics
+	case strings.Contains(query, " FROM eseq_product_metrics epm "):
+		return syncTableEseqProductMetrics
+	case strings.Contains(query, " FROM useq_product_metrics upm "):
+		return syncTableUseqProductMetrics
+	case strings.Contains(query, " FROM iseq_run_status "):
+		return syncTableIseqRunStatus
+	case strings.Contains(query, " FROM iseq_run_status_dict "):
+		return syncTableIseqRunStatusDict
+	case strings.Contains(query, " FROM oseq_flowcell ofc "):
+		return syncTableOseqFlowcell
+	case strings.Contains(query, " FROM pac_bio_run_well_metrics "):
+		return syncTablePacBioRunWellMetrics
+	case strings.Contains(query, " FROM eseq_run_lane_metrics "):
+		return syncTableEseqRunLaneMetrics
+	case strings.Contains(query, " FROM eseq_run "):
+		return syncTableEseqRun
+	case strings.Contains(query, " FROM useq_run_metrics "):
+		return syncTableUseqRunMetrics
+	case strings.Contains(query, " FROM seq_ops_tracking_per_sample"):
+		return syncTableSeqOpsTrackingPerSample
 	default:
 		return "unknown"
 	}

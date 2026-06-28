@@ -25,18 +25,32 @@
 
 package mlwh
 
-import (
-	"testing"
+import "database/sql"
 
-	"github.com/smartystreets/goconvey/convey"
+// Canonical QC verdict strings for a single product's mirrored overall qc
+// value, per the QC string rule (1 -> pass, 0 -> fail, NULL -> pending).
+const (
+	// qcPass is the QC verdict for a product whose overall qc is 1.
+	qcPass = "pass"
+	// qcFail is the QC verdict for a product whose overall qc is 0.
+	qcFail = "fail"
+	// qcPending is the QC verdict for a product whose overall qc is SQL NULL
+	// (not yet decided), distinct from a fail.
+	qcPending = "pending"
 )
 
-func TestLIMSProviderConstantsAreRejected(t *testing.T) {
-	convey.Convey("Given the hard-coded LIMS provider constants", t, func() {
-		convey.Convey("when the resolver rejection set is queried, then SQSCP and GCLP are both rejected", func() {
-			convey.So(isRejectedLIMSProviderConstant("SQSCP"), convey.ShouldBeTrue)
-			convey.So(isRejectedLIMSProviderConstant("GCLP"), convey.ShouldBeTrue)
-			convey.So(isRejectedLIMSProviderConstant("7607STDY14643771"), convey.ShouldBeFalse)
-		})
-	})
+// qcString maps a single product's mirrored overall qc value to its canonical
+// verdict string per the QC string rule: 1 -> pass, 0 -> fail, NULL -> pending.
+// NULL must reach here as an invalid sql.NullInt64 (never coerced to 0), so a
+// pending product stays distinct from a fail.
+func qcString(qc sql.NullInt64) string {
+	if !qc.Valid {
+		return qcPending
+	}
+
+	if qc.Int64 == 1 {
+		return qcPass
+	}
+
+	return qcFail
 }
