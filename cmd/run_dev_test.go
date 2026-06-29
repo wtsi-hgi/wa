@@ -1590,6 +1590,15 @@ func TestRunDevScriptUsesEphemeralMLWHCacheInTestMode(t *testing.T) {
 		convey.So(snapshot.MLWHCachePath, convey.ShouldNotBeBlank)
 		convey.So(snapshot.MLWHCachePath, convey.ShouldContainSubstring, filepath.Join(repoRoot, ".tmp")+string(os.PathSeparator))
 
+		// Test mode serves a fresh ephemeral cache (always cold) and forbids
+		// WA_MLWH_DSN, so the backend must reach readiness without ever running
+		// "mlwh sync" and without aborting on the cold-cache "never been synced"
+		// guard meant for dev/prod. Driving the real wa binary here (no serve
+		// stub) is what exercises that behaviour against a genuinely cold cache.
+		combinedOutput := process.stdout.String() + process.Stderr()
+		convey.So(combinedOutput, convey.ShouldNotContainSubstring, "mlwh sync")
+		convey.So(combinedOutput, convey.ShouldNotContainSubstring, "never been synced")
+
 		convey.So(process.Command.Process.Signal(syscall.SIGINT), convey.ShouldBeNil)
 		convey.So(process.Wait(), convey.ShouldBeNil)
 	})
@@ -2394,6 +2403,15 @@ func runDevEnvForTest(unsetKeys []string) []string {
 		"WA_MLWH_PASSWORD",
 		"WA_MLWH_CACHE_PATH",
 		"WA_MLWH_CACHE_PASSWORD",
+		// Strip every WA_MLWH_* server selector inherited from the developer's
+		// shell so these tests exercise the same MLWH branch CI does. A
+		// developer who exports WA_MLWH_SERVER_URL (or WA_MLWH_BACKEND_URL) to a
+		// running server would otherwise push run-dev.sh down the remote-server
+		// branch (REMOTE_MLWH_SERVER_CONFIGURED=1), masking failures in the
+		// auto-managed ephemeral-cache branch that CI takes. Tests that need a
+		// remote server set WA_MLWH_SERVER_URL explicitly in their env map.
+		"WA_MLWH_SERVER_URL",
+		"WA_MLWH_BACKEND_URL",
 		"WA_DEV_SEQMETA_HOST",
 		"WA_PROD_SEQMETA_HOST",
 	}...)
