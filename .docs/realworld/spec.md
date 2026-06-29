@@ -21,7 +21,7 @@ Three pipeline-progress layers ensure every sample resolves: an always-derivable
 P0 baseline (registered -> sequenced[+QC] -> delivered[+date]) from already
 mirrored data; the milestone timeline from `seq_ops_tracking_per_sample`; and
 the within-sequencing run-status detail per platform. Layer absence is reported
-as *less detail*, never as an error.
+as _less detail_, never as an error.
 
 All new aggregates reuse `queryCount`, the four-step add-a-query recipe, the
 one-`case`-per-`Method` handler, the `id_lims = 'SQSCP'` invariant, and the
@@ -37,18 +37,18 @@ never-synced / empty-study cascade established by `CountSamplesForStudy`.
 
 ### New / changed source files
 
-| File | Purpose |
-|---|---|
-| `mlwh/availability.go` | overview, samples-with/without-data counts+lists, windowed counts/lists, run overview |
-| `mlwh/progress.go` | P0 baseline, `/sample/:id/progress`, `/study/:id/status-breakdown`, run-status timeline |
-| `mlwh/types.go` | new result structs (additive) |
-| `mlwh/registry.go` | new `Endpoint` entries |
-| `mlwh/queryer.go` | new `Queryer` members |
-| `mlwh/server.go` | one handler `case` per new Method; `since`/`until` query parsing; response-header writes (M) |
-| `mlwh/remote.go` | new `RemoteClient` methods incl. the typed `Page[T]` paged variants (M) |
-| `mlwh/sync.go` | iRODS source SELECTs gain `spi.created`, `spi.seq_platform_name`; per-platform UNION linkage; new mirror syncs |
-| `mlwh/cache_schema.go` | register new mirror tables in the order/migration lists |
-| `mlwh/freshness.go` | extend `freshnessSyncTables`; `HighWater` semantics per sync mode |
+| File                   | Purpose                                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `mlwh/availability.go` | overview, samples-with/without-data counts+lists, windowed counts/lists, run overview                          |
+| `mlwh/progress.go`     | P0 baseline, `/sample/:id/progress`, `/study/:id/status-breakdown`, run-status timeline                        |
+| `mlwh/types.go`        | new result structs (additive)                                                                                  |
+| `mlwh/registry.go`     | new `Endpoint` entries                                                                                         |
+| `mlwh/queryer.go`      | new `Queryer` members                                                                                          |
+| `mlwh/server.go`       | one handler `case` per new Method; `since`/`until` query parsing; response-header writes (M)                   |
+| `mlwh/remote.go`       | new `RemoteClient` methods incl. the typed `Page[T]` paged variants (M)                                        |
+| `mlwh/sync.go`         | iRODS source SELECTs gain `spi.created`, `spi.seq_platform_name`; per-platform UNION linkage; new mirror syncs |
+| `mlwh/cache_schema.go` | register new mirror tables in the order/migration lists                                                        |
+| `mlwh/freshness.go`    | extend `freshnessSyncTables`; `HighWater` semantics per sync mode                                              |
 
 ### Existing infrastructure (authoritative; reuse, do not duplicate)
 
@@ -272,6 +272,7 @@ platform, so recency and platform-aware availability are answerable.
 
 Add to `seq_product_irods_locations_mirror` in **both**
 `cache_schema/sqlite/...` and `cache_schema/mysql/...`:
+
 - column `created TEXT NOT NULL` (sqlite) / `created VARCHAR(255) NOT NULL`
   (mysql), stored RFC3339 like `last_updated`.
 - column `platform TEXT NOT NULL` (sqlite) / `platform VARCHAR(255) NOT NULL`
@@ -310,17 +311,17 @@ non-Illumina data stops being dropped.
   (no high-water change); `created` rides along.
 - Replace the single Illumina-only sample/study recovery with a **UNION** over
   every platform's `*_product_metrics` keyed on `spi.id_product`:
-  - Illumina: keep the existing composition-expansion join (and the legacy
-    direct join) UNCHANGED, to preserve current `/study/:id/irods` results.
-  - PacBio: `pac_bio_product_metrics.id_pac_bio_product = spi.id_product` ->
-    `pac_bio_run` for sample/study.
-  - Elembio: `eseq_product_metrics.id_eseq_product = spi.id_product` ->
-    `eseq_flowcell`.
-  - Ultimagen: `useq_product_metrics.id_useq_product = spi.id_product` ->
-    `useq_wafer` (join `useq_product_metrics.id_useq_wafer_tmp`; `useq_wafer`
-    carries `id_sample_tmp`/`id_study_tmp`).
-  - The UNION recovers only `id_sample_tmp`/`id_study_lims`. `platform` comes
-    from `spi.seq_platform_name`, NEVER from which metrics table matched.
+    - Illumina: keep the existing composition-expansion join (and the legacy
+      direct join) UNCHANGED, to preserve current `/study/:id/irods` results.
+    - PacBio: `pac_bio_product_metrics.id_pac_bio_product = spi.id_product` ->
+      `pac_bio_run` for sample/study.
+    - Elembio: `eseq_product_metrics.id_eseq_product = spi.id_product` ->
+      `eseq_flowcell`.
+    - Ultimagen: `useq_product_metrics.id_useq_product = spi.id_product` ->
+      `useq_wafer` (join `useq_product_metrics.id_useq_wafer_tmp`; `useq_wafer`
+      carries `id_sample_tmp`/`id_study_tmp`).
+    - The UNION recovers only `id_sample_tmp`/`id_study_lims`. `platform` comes
+      from `spi.seq_platform_name`, NEVER from which metrics table matched.
 - Extend `seqProductIRODSLocationsSyncRow` with `Created time.Time` and
   `Platform string`; `scanSeqProductIRODSLocationsSyncRow` scans both;
   `seqProductIRODSLocationsMirrorColumns`/`...RowArgs` include both;
@@ -376,6 +377,7 @@ tracking + run-status tables mirrored, so the feature has its sources.
 
 Add CREATE TABLE + indexes in **both** dialects, register each in
 `schemaStatementOrder` and the migration lists, for:
+
 - `pac_bio_product_metrics_mirror` (`id_pac_bio_product`, sample/study link from
   `pac_bio_run`, nullable `qc`), `pac_bio_run_well_metrics_mirror`
   (`run_start`/`run_complete`/`well_complete`/`qc_seq_date`,
@@ -675,6 +677,7 @@ before transfer.
 
 Add `Count` endpoints (each `queryCount` + four-step recipe, same filter/join as
 its list, no LIMIT, so count == len(list-all)):
+
 - `/study/:id/irods/count`, `/sample/:id/irods/count`,
   `/study/:id/runs/count`, `/study/:id/libraries/count`,
   `/sample/:id/lanes/count`, `/run/:id/samples/count`,
@@ -792,6 +795,7 @@ the NPG lifecycle.
 
 `GET /run/:id/status` -> a single `RunStatusTimeline` (normalized
 `{phase, entered_at, duration}` events). `:id` = Illumina NPG `id_run`.
+
 - Illumina: from `iseq_run_status_mirror` joined to
   `iseq_run_status_dict_mirror` for `phase` (= `description`); ordered by
   `date`; `entered_at` = `date`;
@@ -1020,7 +1024,7 @@ Each phase builds on tested foundations from prior phases.
   distinct-sample partition collapses multi-platform samples to their
   most-advanced phase (sums to `samples_total`). Tests assert both.
 - **`reached_at` vs `entered_at`.** Deliberately distinct: a milestone is
-  *reached*; a run lifecycle phase is *entered*. Value semantics identical
+  _reached_; a run lifecycle phase is _entered_. Value semantics identical
   (RFC3339 + duration-to-next + open-phase handling); only the name differs.
 - **Closed enums vs open vocabulary.** The 9 milestones and 3 baseline phases
   are closed (asserted verbatim, pinned in Descriptions); the within-sequencing
@@ -1041,13 +1045,13 @@ Each phase builds on tested foundations from prior phases.
 - Reuse the count<->list cross-check pattern (count == len(list-all)) for every
   new count.
 - The HARD REQ 7 scenario seed (one study): samples with and without iRODS rows;
-  >=2 runs/tags; iRODS rows with differing `created` (inside and outside the
-  window, plus on-boundary); >=1 sample shared with a second study (scoping);
-  tracking-mirror samples filled to different milestones (library prep,
-  sequencing, qc-complete) and samples absent from it but with product-metrics/
-  iRODS; `iseq_run_status` rows across several phases incl. a recurrence and a
-  derived-current; >=1 PacBio sample (iRODS via `pac_bio_product_metrics`) and
-  >=1 ONT sample (`oseq_flowcell`, no iRODS); and a multi-platform sample.
+    > =2 runs/tags; iRODS rows with differing `created` (inside and outside the
+    > window, plus on-boundary); >=1 sample shared with a second study (scoping);
+    > tracking-mirror samples filled to different milestones (library prep,
+    > sequencing, qc-complete) and samples absent from it but with product-metrics/
+    > iRODS; `iseq_run_status` rows across several phases incl. a recurrence and a
+    > derived-current; >=1 PacBio sample (iRODS via `pac_bio_product_metrics`) and
+    > =1 ONT sample (`oseq_flowcell`, no iRODS); and a multi-platform sample.
 - Schema tests assert both dialects' new columns/indexes and that the dialects
   compare equal (existing cross-dialect shape test).
 - Never put `So()` in loops > 20 iterations; count and assert the final count.

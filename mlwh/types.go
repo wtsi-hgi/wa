@@ -106,7 +106,7 @@ type IRODSPath struct {
 	DataObject  string `json:"data_object" doc:"iRODS data object name"`
 	IRODSPath   string `json:"irods_path" doc:"full iRODS path of the data object"`
 	IDSampleTmp int64  `json:"id_sample_tmp" doc:"internal MLWH surrogate key of the sample the data object belongs to"`
-	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to"`
+	Name        string `json:"name" doc:"Sanger sample name of the sample the data object belongs to; empty when the sample is not present in the sample mirror"`
 }
 
 // SampleWithData is the enriched list row for the samples-with-data and
@@ -129,11 +129,14 @@ type DateRange struct {
 
 // StudyOverview is the fixed-size study aggregate answering "what is in study X,
 // how much sequencing data, and was anything added recently" in one response.
-// Every figure is a single indexed aggregate over the cache mirrors;
-// SamplesWithData / SamplesWithoutData / SamplesSequencedNoData form the
-// distinct-sample partition (a sample counts in exactly one bucket by its
-// most-advanced phase, precedence with_data > sequenced_no_data > registered, so
-// registered = SamplesTotal - SamplesWithData - SamplesSequencedNoData).
+// Every figure is a single indexed aggregate over the cache mirrors. The
+// mutually-exclusive distinct-sample partition is with_data / sequenced_no_data /
+// registered: a sample counts in exactly one bucket by its most-advanced phase,
+// precedence with_data > sequenced_no_data > registered, so registered =
+// SamplesTotal - SamplesWithData - SamplesSequencedNoData. SamplesWithoutData is
+// the derived superset of the two non-with-data buckets (= sequenced_no_data +
+// registered = SamplesTotal - SamplesWithData); it overlaps
+// SamplesSequencedNoData and so is not part of that partition.
 type StudyOverview struct {
 	IDStudyLims            string     `json:"id_study_lims" doc:"LIMS study id"`
 	SamplesTotal           int        `json:"samples_total" doc:"distinct samples linked via library_samples"`

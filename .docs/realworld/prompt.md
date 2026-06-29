@@ -9,8 +9,8 @@
 > endpoints this API offers.
 >
 > **Scope rule for this spec: everything described here is in scope to build.**
-> The "Design decisions" section settles *how* each item is implemented, never
-> *whether*. There are no optional items.
+> The "Design decisions" section settles _how_ each item is implemented, never
+> _whether_. There are no optional items.
 
 ## Summary
 
@@ -19,7 +19,7 @@ one request, small response**:
 
 - **"How many samples in study X have sequencing data available, and how many do
   not?"**
-- **"Is there any *new* sequencing data available for study X this week?"** —
+- **"Is there any _new_ sequencing data available for study X this week?"** —
   i.e. data **added to iRODS** within a recent window.
 - "Which samples have data / which are still missing it?"
 - "What's in study X?" / "How much data is there?"
@@ -41,7 +41,7 @@ An agent asked "how many of study 7607's 428 samples have sequencing data?" had
 only bad options:
 
 1. `GET /study/:id/samples/count` → `428`: counts samples, not samples with
-   *data*.
+   _data_.
 2. `GET /study/:id/irods` → the per-study iRODS list. **Huge** (735 rows /
    ~170 KB here; far larger in production) — it blew the downstream MCP client's
    token budget and was spilled to a file — **and** each `IRODSPath` row carries
@@ -60,7 +60,7 @@ the aggregates.
 
 These questions must work for **non-Illumina users**, or their first complaint is
 "nothing works". The obstacle (verified): `seq_product_irods_locations` has **no
-sample column** — its only sample link is `id_product` → a *per-platform*
+sample column** — its only sample link is `id_product` → a _per-platform_
 `*_product_metrics` table — so the single Illumina join the cache uses today silently
 drops every other platform (PacBio sample `DTOL10298321`: **2 iRODS objects, 0
 Illumina products → a false "no data"**).
@@ -76,18 +76,18 @@ milestone timeline (`seq_ops_tracking_per_sample`) is already platform-agnostic.
 Per-platform table map (confirmed in the source; the implementer confirms the exact
 sample-link column per platform):
 
-| Platform | product-metrics (→ iRODS `id_product`) | sample/study link | QC | status + dates |
-|---|---|---|---|---|
-| Illumina | `iseq_product_metrics` (`id_iseq_product`) | `iseq_flowcell` | `qc`/`qc_seq`/`qc_lib` | `iseq_run_status`, `iseq_run_lane_metrics` |
-| PacBio | `pac_bio_product_metrics` (`id_pac_bio_product`) | `pac_bio_run` | `qc` | `pac_bio_run_well_metrics` (`run_start`/`run_complete`/`well_complete`/`qc_seq_date`, `run_status`/`well_status`) |
-| Elembio | `eseq_product_metrics` (`id_eseq_product`) | `eseq_flowcell` | `qc`/`qc_seq`/`qc_lib` | `eseq_run`, `eseq_run_lane_metrics` |
-| Ultimagen | `useq_product_metrics` (`id_useq_product`) | `useq_wafer` (carries `id_sample_tmp`/`id_study_tmp`; join `useq_product_metrics.id_useq_wafer_tmp`) | `qc`/`qc_seq`/`qc_lib` | `useq_run_metrics` |
-| **ONT** | **— none —** | `oseq_flowcell` | **—** | **—** |
+| Platform  | product-metrics (→ iRODS `id_product`)           | sample/study link                                                                                    | QC                     | status + dates                                                                                                    |
+| --------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Illumina  | `iseq_product_metrics` (`id_iseq_product`)       | `iseq_flowcell`                                                                                      | `qc`/`qc_seq`/`qc_lib` | `iseq_run_status`, `iseq_run_lane_metrics`                                                                        |
+| PacBio    | `pac_bio_product_metrics` (`id_pac_bio_product`) | `pac_bio_run`                                                                                        | `qc`                   | `pac_bio_run_well_metrics` (`run_start`/`run_complete`/`well_complete`/`qc_seq_date`, `run_status`/`well_status`) |
+| Elembio   | `eseq_product_metrics` (`id_eseq_product`)       | `eseq_flowcell`                                                                                      | `qc`/`qc_seq`/`qc_lib` | `eseq_run`, `eseq_run_lane_metrics`                                                                               |
+| Ultimagen | `useq_product_metrics` (`id_useq_product`)       | `useq_wafer` (carries `id_sample_tmp`/`id_study_tmp`; join `useq_product_metrics.id_useq_wafer_tmp`) | `qc`/`qc_seq`/`qc_lib` | `useq_run_metrics`                                                                                                |
+| **ONT**   | **— none —**                                     | `oseq_flowcell`                                                                                      | **—**                  | **—**                                                                                                             |
 
 So Illumina/PacBio/Elembio/Ultimagen link **identically** (each product-metrics table
 carries the iRODS `id_product` + QC). **ONT is the only platform with no
 product-metrics / iRODS / QC / run-status** — just `oseq_flowcell` identity+metadata
-(8,719 flowcells / 7,322 samples / 78 studies). Through the *same* code paths ONT
+(8,719 flowcells / 7,322 samples / 78 studies). Through the _same_ code paths ONT
 resolves identity, study, and the milestone timeline, and returns an explicit "not
 tracked for ONT" on availability/recency/QC/status. Verified iRODS presence today:
 Illumina ✓, PacBio ✓, Ultimagen ✓, Elembio ✗ (0 rows, wired the same), ONT ✗.
@@ -105,10 +105,10 @@ one is the answer:
 1. **When the data was added to iRODS** — the iRODS-location **creation** time,
    the source column **`seq_product_irods_locations.created`** (`datetime`,
    `DEFAULT CURRENT_TIMESTAMP`, set once at insert — verified against the live
-   warehouse). This is the *only* thing "any new data this week?" is about.
-2. **`last_updated`** — the MLWH row's last-*changed* time (the source column
+   warehouse). This is the _only_ thing "any new data this week?" is about.
+2. **`last_updated`** — the MLWH row's last-_changed_ time (the source column
    **`seq_product_irods_locations.last_changed`**, `datetime ... on update
-   CURRENT_TIMESTAMP`, which the mirror stores as `last_updated`). This is what the
+CURRENT_TIMESTAMP`, which the mirror stores as `last_updated`). This is what the
    cache syncs on (it is the `sync_state.high_water`; `mlwh/freshness.go:54`
    documents `HighWater` as "latest synced last_updated"). It is a **proxy that
    conflates newly-added data with later-modified data** (QC edits, re-loads,
@@ -165,13 +165,13 @@ recency question correctly therefore **requires a cache schema change**: carry
 - **Incremental sync + freshness.** `sync_state` (`table_name`, `high_water`,
   `last_run`, `resume_cursor`, `indexes_dropped`) drives incremental sync keyed on
   `last_changed`; `mlwh/freshness.go` (`Freshness`, `TableFreshness{HighWater,
-  LastRun, EverSynced}`, ~50–93) reports per-table `high_water` and `last_run`.
+LastRun, EverSynced}`, ~50–93) reports per-table `high_water` and `last_run`.
 - **The iRODS sync source queries.** `mlwh/sync.go` ~560–592 holds the
   `seq_product_irods_locations` source SELECTs (initial / resume / incremental, in
   two join variants). They select
   `spi.id_seq_product_irods_locations_tmp, spi.id_product,
-  spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp,
-  study.id_study_lims, spi.last_changed` — keying the incremental window on
+spi.irods_root_collection, spi.irods_data_relative_path, ifc.id_sample_tmp,
+study.id_study_lims, spi.last_changed` — keying the incremental window on
   `spi.last_changed` and storing it as the mirror's `last_updated` (the row struct
   ~2542, batch insert ~2586, column list ~137). **`spi.created` is not selected**;
   the verified source columns are `created` (set at insert) and `last_changed`
@@ -192,8 +192,8 @@ recency question correctly therefore **requires a cache schema change**: carry
   `project_name`, `platform`, …). This is the source the requester's own tracking
   tool [`wtsi-hgi/gst`](https://github.com/wtsi-hgi/gst) (`db/query.sql`) reads;
   it computes phase durations directly, e.g. `LibraryTime =
-  DATEDIFF(library_complete, library_start)`, `SequencingTime =
-  DATEDIFF(sequencing_qc_complete, sequencing_run_start)`. Verified for study 7607,
+DATEDIFF(library_complete, library_start)`, `SequencingTime =
+DATEDIFF(sequencing_qc_complete, sequencing_run_start)`. Verified for study 7607,
   e.g. sample 7607STDY16897354: manifest 2026-05-29 → labware 2026-06-02 → order
   2026-06-19 → library_start/complete 2026-06-19 → sequencing_run_start 2026-06-25 →
   `sequencing_qc_complete` NULL (**currently in the sequencing phase**).
@@ -210,14 +210,14 @@ recency question correctly therefore **requires a cache schema change**: carry
   (≈1.46M rows, modest) or a `GREATEST(milestone columns)` pseudo-watermark; settle
   in Design decisions. It is **not mirrored today**.
 - **Product-metrics + iRODS give every sample a baseline.** Independent of the
-  tracking window, a sample's *sequenced? / QC / delivered-when* is derivable from
+  tracking window, a sample's _sequenced? / QC / delivered-when_ is derivable from
   its platform's product-metrics + the iRODS mirror. For **Illumina** this is already
   mirrored at no extra cost (verified: study 7607 has **469** sequenced in
   `iseq_product_metrics` and **all 428** delivered in iRODS — covering exactly the
   samples the tracking window drops); for the **other platforms** it comes from the
   per-platform tables mirrored for Platform coverage (§). So a coarse but
   **always-available** status (registered → sequenced[+QC] → delivered[+date]) is
-  derivable for *any* sample on *any* platform, with the wet-lab→sequencing milestone
+  derivable for _any_ sample on _any_ platform, with the wet-lab→sequencing milestone
   timeline layered on when the sample is in the tracking window.
 - **The within-sequencing run-status history (now first pass — verified).**
   `iseq_run_status` (`id_run_status` PK, `id_run`, `date` datetime,
@@ -268,8 +268,8 @@ a sample whose platform has no iRODS representation (ONT) is reported "not track
 
 - **(S) A study sequencing-availability summary** — one GET, small fixed-size
   response, e.g. `GET /study/:id/sequencing-summary →
-  { samples_total, samples_with_data, samples_without_data, data_objects, runs,
-    newest_data_added, added_last_7_days, cache_synced_at }`. It directly answers
+{ samples_total, samples_with_data, samples_without_data, data_objects, runs,
+  newest_data_added, added_last_7_days, cache_synced_at }`. It directly answers
   "how many have data / how many don't / how much / anything new", and carries the
   freshness caveat (see F). The exact field set is settled in Design decisions, but
   it includes at least the sample-with/without-data counts, a "how much" figure,
@@ -279,13 +279,13 @@ a sample whose platform has no iRODS representation (ONT) is reported "not track
   `library_samples → sample_mirror → seq_product_irods_locations_mirror` scoped by
   `id_study_lims`.
 - **(E) Enumerate which samples have / lack data.** Provide **both**:
-  - list endpoints `GET /study/:id/samples-with-data` and
-    `.../samples-without-data` returning `Sample`s, paginated like the other study
-    fan-outs; and
-  - **sample identity on the per-study iRODS rows** — add the sample's
-    `id_sample_tmp` and Sanger `name` to the `IRODSPath` rows returned by
-    `/study/:id/irods` (additive fields), so that list is aggregatable by sample
-    standalone.
+    - list endpoints `GET /study/:id/samples-with-data` and
+      `.../samples-without-data` returning `Sample`s, paginated like the other study
+      fan-outs; and
+    - **sample identity on the per-study iRODS rows** — add the sample's
+      `id_sample_tmp` and Sanger `name` to the `IRODSPath` rows returned by
+      `/study/:id/irods` (additive fields), so that list is aggregatable by sample
+      standalone.
 
 ### Recency ("new data this week")
 
@@ -301,13 +301,13 @@ a sample whose platform has no iRODS representation (ONT) is reported "not track
   `created` and `platform`. It is what makes "added to iRODS since X" answerable
   precisely rather than via the `last_updated` proxy. Note re-syncing to backfill.
 - **(T) Date-windowed availability**, filtering on the creation timestamp from (R):
-  - a count, e.g. `GET /study/:id/samples-with-data/count?since=<RFC3339>` (and/or
-    a dedicated "new since" count), returning distinct samples whose data was added
-    to iRODS in the window; and
-  - a list of the new data / newly-covered samples in the window.
-  The window is expressed as explicit `since` (and optional `until`) RFC3339
-  parameters — the API stays date-explicit; callers translate "this week" into a
-  date. Both are single indexed range queries over the new column/index.
+    - a count, e.g. `GET /study/:id/samples-with-data/count?since=<RFC3339>` (and/or
+      a dedicated "new since" count), returning distinct samples whose data was added
+      to iRODS in the window; and
+    - a list of the new data / newly-covered samples in the window.
+      The window is expressed as explicit `since` (and optional `until`) RFC3339
+      parameters — the API stays date-explicit; callers translate "this week" into a
+      date. Both are single indexed range queries over the new column/index.
 
 ### Overviews that displace the giant aggregates
 
@@ -359,8 +359,8 @@ tracked for &lt;platform&gt;" where a platform lacks it (e.g. ONT status/QC), ne
 false "no progress".
 
 - **(P0) Always-available baseline status — every sample, every platform.** Derive a
-  coarse phase that **always resolves**: *registered* (linked, no products) →
-  *sequenced* (has products; report QC as pass/fail/pending) → *delivered* (has iRODS
+  coarse phase that **always resolves**: _registered_ (linked, no products) →
+  _sequenced_ (has products; report QC as pass/fail/pending) → _delivered_ (has iRODS
   data; report the earliest `created` from R). Source it per platform via the
   Platform-coverage union — the product-metrics + iRODS mirrors for Illumina/PacBio/
   Elembio/Ultimagen, and `oseq_flowcell` (registered/flowcell-assigned only; iRODS/QC
@@ -386,34 +386,34 @@ false "no progress".
   runs** layers on the within-sequencing run-status event timeline from P5. A sample
   outside the tracking window is **not** an error: it returns the baseline (plus any
   run-status detail) and a flag like `detailed_timeline: false` (and why) — phrased
-  as *less detail*, never *unavailable*.
+  as _less detail_, never _unavailable_.
 - **(P3) Study rollup** — `GET /study/:id/status-breakdown`: counts of **all** the
   study's samples by their P0 baseline phase (registered / sequenced / delivered),
   with the count that additionally have a detailed timeline shown alongside (e.g.
   "428 samples: 428 delivered; 11 with detailed timeline"). One small aggregate; no
   per-sample fan-out; nothing silently dropped.
-- **(P4) One continuous journey.** The P0 *delivered* phase is the same "added to
+- **(P4) One continuous journey.** The P0 _delivered_ phase is the same "added to
   iRODS" milestone as deliverable R, so baseline and detailed timeline (submission →
   … → qc complete → delivered) compose into one model rather than two vocabularies.
 - **(P5) Within-sequencing status detail layer — per platform.** The detailed
   sequencing breakdown comes from each platform's own status tables (Platform-coverage
   §):
-  - **Illumina:** mirror `iseq_run_status` + `iseq_run_status_dict` (sync
-    `iseq_run_status` by the `id_run_status` PK ascending-id mode — no `last_changed`;
-    mirror the tiny dict wholesale), indexed by `id_run` and `(id_run, date)`. Add
-    `GET /run/:id/status` returning the ordered event timeline (each: `description`,
-    `temporal_index`, `entered_at` = `date`, duration to next; current = latest
-    `date`, **derived**, not the source `iscurrent`; recurrences / on-hold /
-    cancelled / stopped-early faithful, not forced monotonic).
-  - **PacBio / Elembio / Ultimagen:** the equivalent status + dates from their
-    own metrics tables (PacBio `pac_bio_run_well_metrics`: `run_start`/`run_complete`/
-    `well_complete`/`qc_seq_date` + `run_status`/`well_status`; Elembio
-    `eseq_run`/`eseq_run_lane_metrics`; Ultimagen `useq_run_metrics`).
-  - **ONT:** no status/run tables → "not tracked for ONT" (still resolves identity +
-    milestones).
-  P2 composes whichever applies for the sample's platform, as the detailed breakdown
-  *within* the sequencing phase, covering sequenced samples even outside the tracking
-  window.
+    - **Illumina:** mirror `iseq_run_status` + `iseq_run_status_dict` (sync
+      `iseq_run_status` by the `id_run_status` PK ascending-id mode — no `last_changed`;
+      mirror the tiny dict wholesale), indexed by `id_run` and `(id_run, date)`. Add
+      `GET /run/:id/status` returning the ordered event timeline (each: `description`,
+      `temporal_index`, `entered_at` = `date`, duration to next; current = latest
+      `date`, **derived**, not the source `iscurrent`; recurrences / on-hold /
+      cancelled / stopped-early faithful, not forced monotonic).
+    - **PacBio / Elembio / Ultimagen:** the equivalent status + dates from their
+      own metrics tables (PacBio `pac_bio_run_well_metrics`: `run_start`/`run_complete`/
+      `well_complete`/`qc_seq_date` + `run_status`/`well_status`; Elembio
+      `eseq_run`/`eseq_run_lane_metrics`; Ultimagen `useq_run_metrics`).
+    - **ONT:** no status/run tables → "not tracked for ONT" (still resolves identity +
+      milestones).
+      P2 composes whichever applies for the sample's platform, as the detailed breakdown
+      _within_ the sequencing phase, covering sequenced samples even outside the tracking
+      window.
 - **(P6) Freshness on every progress response** — surface the relevant tables'
   `last_run` (tracking table for the milestone timeline; `iseq_run_status` for the
   run detail; product-metrics / iRODS for the baseline) so "current phase / time so
@@ -466,7 +466,7 @@ false "no progress".
    false zero.
 8. **Every sample resolves; tiers are detail-level, not pass/fail.** P2 always
    returns the P0 baseline; the detailed milestone timeline and the run-status detail
-   are layered on **when available** and their absence is reported as *less detail*
+   are layered on **when available** and their absence is reported as _less detail_
    (`detailed_timeline: false` + reason), never as an error or "no progress". Current
    milestone phase = the latest reached milestone whose successor is NULL; durations
    = consecutive deltas. The study rollup counts all samples, never silently dropping
@@ -477,19 +477,19 @@ false "no progress".
    on-hold, cancelled, and stopped-early faithfully, not forced into monotonic
    progress.
 10. **Progress responses stay small and are aggregates where they must be.** A
-   per-sample timeline is a fixed handful of milestones plus a bounded run-status
-   sequence; the study rollup (P3) must be a single grouped query, never N
-   per-sample lookups.
+    per-sample timeline is a fixed handful of milestones plus a bounded run-status
+    sequence; the study rollup (P3) must be a single grouped query, never N
+    per-sample lookups.
 11. **Uniform per-platform; never a false "no data".** All platforms go through one
-   generic mechanism (Platform-coverage §): the iRODS sample/study linkage is a
-   **union across every platform's `*_product_metrics`** table, carrying `platform`;
-   QC and status/dates come from each platform's own tables; capability is present
-   wherever the schema provides it. No platform is special-cased or deferred — ONT
-   simply has no product-metrics, so the same code paths yield "not tracked for ONT"
-   on iRODS/QC/status while still resolving identity/study/milestones. Every response
-   carries `platform`; every negative is platform-qualified; any missing capability
-   yields a clear "not supported/tracked for &lt;platform&gt;", derived from the
-   sample's detected platform(s) — never a bare "no data" or silence.
+    generic mechanism (Platform-coverage §): the iRODS sample/study linkage is a
+    **union across every platform's `*_product_metrics`** table, carrying `platform`;
+    QC and status/dates come from each platform's own tables; capability is present
+    wherever the schema provides it. No platform is special-cased or deferred — ONT
+    simply has no product-metrics, so the same code paths yield "not tracked for ONT"
+    on iRODS/QC/status while still resolving identity/study/milestones. Every response
+    carries `platform`; every negative is platform-qualified; any missing capability
+    yields a clear "not supported/tracked for &lt;platform&gt;", derived from the
+    sample's detected platform(s) — never a bare "no data" or silence.
 
 ## Design decisions for the spec to settle (HOW, not WHETHER)
 
@@ -497,10 +497,10 @@ Each item below **will be built**; settle only the implementation:
 
 - **Definition of "sequencing data available".** Use: ≥1 row in
   `seq_product_irods_locations_mirror` for the study (real data files in iRODS).
-  Decide whether the summary *also* reports "sequenced but not yet in iRODS"
+  Decide whether the summary _also_ reports "sequenced but not yet in iRODS"
   (samples with `iseq_product_metrics_mirror` rows but no iRODS rows) as a separate
   figure. State the choice in every `Description`.
-- **Study scoping of shared samples.** Scope "data for *this* study" by
+- **Study scoping of shared samples.** Scope "data for _this_ study" by
   `seq_product_irods_locations_mirror.id_study_lims = :id` (as `/study/:id/irods`
   already does), not "data the sample has anywhere". This is the source of a real
   discrepancy seen in the incident (735 study-scoped objects vs 647 summed across
@@ -529,14 +529,14 @@ Each item below **will be built**; settle only the implementation:
   `last_run`); the unified shape carrying the P0 baseline, the optional milestone
   timeline, and the per-run run-status detail (and how `detailed_timeline: false` +
   reason is expressed); the canonical phase names exposed (mapping milestone columns
-  + run-status phases, and how the P0 registered/sequenced/delivered ladder aligns).
+    - run-status phases, and how the P0 registered/sequenced/delivered ladder aligns).
 - **Run-status layer (P5) shaping** — how the per-run `iseq_run_status` timeline is
   nested under P2 vs only on `GET /run/:id/status`; the `iseq_run_status` index
   shape; and how recurrences / on-hold / cancelled are represented.
 - **Canonical phase-entry field name** — the milestone timeline currently uses
   `reached_at` and the run-status timeline `entered_at` for the same notion (when a
   phase/milestone began). Settle one canonical name across both layers, or keep the
-  two deliberately distinct (milestone *reached* vs status *entered*) and say so;
+  two deliberately distinct (milestone _reached_ vs status _entered_) and say so;
   don't leave it accidental.
 
 ## Out of scope
@@ -558,7 +558,7 @@ Each item below **will be built**; settle only the implementation:
   uniform mechanism (Platform-coverage §); capability simply follows each platform's
   schema, with an explicit "not supported/tracked for &lt;platform&gt;" where a table
   is absent (e.g. ONT iRODS/QC/status). The only things truly out of scope are
-  *cosmetic* per-platform enrichment beyond what the questions need — e.g.
+  _cosmetic_ per-platform enrichment beyond what the questions need — e.g.
   instrument-model / pipeline labels that gst's `COALESCE` adds — and gst's
   HGI-sponsor / 2-year filters, which are gst-specific and not wanted here. (These
   are excluded, not "optional deliverables" — consistent with the scope rule.)
@@ -569,28 +569,28 @@ Each item below **will be built**; settle only the implementation:
    `mlwh/hierarchy.go` (`IRODSPathsForStudy`, `LanesForSample`, `queryIRODSPaths`,
    the detail builders); `mlwh/freshness.go` (the `last_run`/`high_water` caveat
    source); `mlwh/cache_schema/{sqlite,mysql}/seq_product_irods_locations_mirror.sql`
-   + `iseq_product_metrics_mirror.sql` + `sync_state.sql` (the linkage, the
-   `last_updated` signal, and where the new creation column/index go);
-   `mlwh/sync.go` (~560–592, the `seq_product_irods_locations` source SELECTs to
-   extend with `spi.created`; row struct ~2542, batch insert ~2586); the source
-   table `mlwh_reporting.seq_ops_tracking_per_sample` (the milestone columns for the
-   detailed timeline; full-refresh sync, no `last_changed`); the already-mirrored
-   `iseq_product_metrics_mirror` (sequenced + `qc` flags) and
-   `seq_product_irods_locations_mirror` (delivered + `created`) that power the P0
-   always-available baseline; the source tables `iseq_run_status` /
-   `iseq_run_status_dict` (the P5 run-status layer; sync via the
-   `seqProductIRODSLocationsIDMode` ascending-id precedent at `mlwh/sync.go:55`);
-   the per-platform linkage tables for uniform coverage (PacBio `pac_bio_product_metrics`
-   / `pac_bio_run` / `pac_bio_run_well_metrics`; Elembio `eseq_product_metrics` /
-   `eseq_flowcell` / `eseq_run` / `eseq_run_lane_metrics`; Ultimagen
-   `useq_product_metrics` / `useq_wafer` (sample link) / `useq_run_metrics`; ONT
-   `oseq_flowcell`), each
-   `*_product_metrics` carrying an `id_*_product` matching
-   `seq_product_irods_locations.id_product`; `mlwh/cache_schema.go` (the mirrored-table
-   list to extend with the tracking-table, run-status, and per-platform mirrors);
-   `mlwh/registry.go` (entry pattern + recipe); `mlwh/queryer.go`; `mlwh/server.go`;
-   `mlwh/types.go` (`Count`, `IRODSPath`, `Sample`, `Lane`, `StudyDetail`,
-   `RunDetail`).
+    - `iseq_product_metrics_mirror.sql` + `sync_state.sql` (the linkage, the
+      `last_updated` signal, and where the new creation column/index go);
+      `mlwh/sync.go` (~560–592, the `seq_product_irods_locations` source SELECTs to
+      extend with `spi.created`; row struct ~2542, batch insert ~2586); the source
+      table `mlwh_reporting.seq_ops_tracking_per_sample` (the milestone columns for the
+      detailed timeline; full-refresh sync, no `last_changed`); the already-mirrored
+      `iseq_product_metrics_mirror` (sequenced + `qc` flags) and
+      `seq_product_irods_locations_mirror` (delivered + `created`) that power the P0
+      always-available baseline; the source tables `iseq_run_status` /
+      `iseq_run_status_dict` (the P5 run-status layer; sync via the
+      `seqProductIRODSLocationsIDMode` ascending-id precedent at `mlwh/sync.go:55`);
+      the per-platform linkage tables for uniform coverage (PacBio `pac_bio_product_metrics`
+      / `pac_bio_run` / `pac_bio_run_well_metrics`; Elembio `eseq_product_metrics` /
+      `eseq_flowcell` / `eseq_run` / `eseq_run_lane_metrics`; Ultimagen
+      `useq_product_metrics` / `useq_wafer` (sample link) / `useq_run_metrics`; ONT
+      `oseq_flowcell`), each
+      `*_product_metrics` carrying an `id_*_product` matching
+      `seq_product_irods_locations.id_product`; `mlwh/cache_schema.go` (the mirrored-table
+      list to extend with the tracking-table, run-status, and per-platform mirrors);
+      `mlwh/registry.go` (entry pattern + recipe); `mlwh/queryer.go`; `mlwh/server.go`;
+      `mlwh/types.go` (`Count`, `IRODSPath`, `Sample`, `Lane`, `StudyDetail`,
+      `RunDetail`).
 2. **Generated docs + tests**: `.docs/mcp/api-reference.md`, `.docs/mcp/glossary.md`,
    the `WA_REFRESH_DOCS=1 go test ./mlwh -run TestWriteEndpointReference` flow, and
    the GoConvey hermetic-cache helpers in `mlwh/count_test.go` /
@@ -602,7 +602,7 @@ Each item below **will be built**; settle only the implementation:
    `LibraryTime`/`SequencingTime` from milestone deltas, and shows the per-platform
    join pattern (its `COALESCE` over `iseq_*` / `pac_bio_*` / `oseq_*`) that this
    feature generalises into the uniform linkage. Take the milestone model and the
-   per-platform joins from it; ignore only its *cosmetic* enrichment labels (RunID /
+   per-platform joins from it; ignore only its _cosmetic_ enrichment labels (RunID /
    instrument / pipeline) and its HGI faculty-sponsor / 2-year filters (gst-specific,
    not wanted here).
 
@@ -627,8 +627,8 @@ conflicts. They are authoritative.
 ### QC representation — pass / fail / pending (P0)
 
 - Make the mirrored QC columns (`qc`, `qc_seq`, `qc_lib`) **nullable** in **both**
-  dialects and **stop coercing NULL→0**, so *pending* (NULL) is distinct from
-  *fail* (0) and *pass* (1). Expose QC in responses as a **string** taking the
+  dialects and **stop coercing NULL→0**, so _pending_ (NULL) is distinct from
+  _fail_ (0) and _pass_ (1). Expose QC in responses as a **string** taking the
   values `pass` / `fail` / `pending`.
 - Apply this to **every platform's product-metrics mirror** that carries QC
   (Illumina, PacBio, Elembio, Ultimagen), not just Illumina.
@@ -666,7 +666,7 @@ conflicts. They are authoritative.
 
 - Report **`samples_sequenced_no_data`** both as a field on
   `GET /study/:id/overview` and as a distinct P0 bucket in
-  `GET /study/:id/status-breakdown`. Scope it to *this study* via the
+  `GET /study/:id/status-breakdown`. Scope it to _this study_ via the
   product-metrics `id_study_lims`, the same way iRODS data is scoped by
   `seq_product_irods_locations_mirror.id_study_lims`.
 - Commit a **shared, mutually-exclusive phase ladder** —
@@ -679,8 +679,8 @@ conflicts. They are authoritative.
 ### Phase-entry field names (P2, P5)
 
 - The milestone timeline uses **`reached_at`**; the run-status timeline uses
-  **`entered_at`** — deliberately **distinct** names (a milestone is *reached*; a
-  run lifecycle phase is *entered*), with the rationale stated in both
+  **`entered_at`** — deliberately **distinct** names (a milestone is _reached_; a
+  run lifecycle phase is _entered_), with the rationale stated in both
   `Description`s.
 - Keep the **value semantics identical** across both layers — an RFC3339
   timestamp, a "duration to next" value, and the same open/current-phase handling
@@ -703,7 +703,7 @@ conflicts. They are authoritative.
   `samples-without-data` = the study's linked samples **minus** those (so it
   includes `sequenced_no_data`, `registered`, **and** ONT). Membership is
   **anchored on `library_samples`**, and `with_data + without_data =
-  samples_total`. The `/count` counterparts use the **same** membership.
+samples_total`. The `/count` counterparts use the **same** membership.
 - Add `platform` at the **row level via an enriched list-row type** (NOT the
   shared `Sample` struct), as **`platforms []string`** — **empty** for
   `registered` (no products), **`["ONT"]`** for ONT — so HARD REQ 11 holds (no
@@ -744,13 +744,13 @@ conflicts. They are authoritative.
 ### Canonical phase-name vocabulary (P2, P3, P5)
 
 - Use **verbatim native vocabularies**, not a translated superset:
-  - **Closed enums, asserted exactly** in tests and pinned in each `Description`:
-    the **9 milestone names** (`manifest_created` … `sequencing_qc_complete`) and
-    the **3 baseline phases** (`registered` / `sequenced` / `delivered`).
-  - An **open, source-driven status vocabulary** that is **platform-native** —
-    Illumina `iseq_run_status_dict` descriptions; PacBio/Elembio/Ultimagen their
-    own `run_status` / `well_status`; ONT none — carried in the uniform
-    `{phase, entered_at, duration}` shape.
+    - **Closed enums, asserted exactly** in tests and pinned in each `Description`:
+      the **9 milestone names** (`manifest_created` … `sequencing_qc_complete`) and
+      the **3 baseline phases** (`registered` / `sequenced` / `delivered`).
+    - An **open, source-driven status vocabulary** that is **platform-native** —
+      Illumina `iseq_run_status_dict` descriptions; PacBio/Elembio/Ultimagen their
+      own `run_status` / `well_status`; ONT none — carried in the uniform
+      `{phase, entered_at, duration}` shape.
 - Pin each closed enum in its `Description`; test the **open status layer as a
   dict/source pass-through, NOT a frozen list** (so new dict rows don't break it).
 

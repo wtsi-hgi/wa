@@ -715,7 +715,9 @@ func populateStudyInfo(ctx context.Context, client mlwhInfoClient, report *infoR
 // expects. An empty value defaults to now-7d (matching the overview's
 // added_last_7_days window). A value is accepted either as an RFC3339 timestamp
 // (passed through verbatim) or as a Go duration (e.g. 168h), interpreted as
-// now-duration.
+// now-duration. The duration must be positive: --since denotes a window start
+// like now-7d, so a negative or zero duration (which would yield the present or
+// a future timestamp) is rejected.
 func resolveInfoSince(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -727,6 +729,11 @@ func resolveInfoSince(raw string) (string, error) {
 	}
 
 	if duration, err := time.ParseDuration(trimmed); err == nil {
+		if duration <= 0 {
+			return "", fmt.Errorf("invalid --since %q: duration must be positive "+
+				"(it is the window start, e.g. 168h means now-168h)", raw)
+		}
+
 		return time.Now().Add(-duration).UTC().Format(time.RFC3339), nil
 	}
 

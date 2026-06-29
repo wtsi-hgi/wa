@@ -663,6 +663,52 @@ func TestMLWHInfoCommandSurfacesEmptyCacheHint(t *testing.T) {
 	})
 }
 
+func TestMLWHInfoStudySinceRejectsNonPositiveDuration(t *testing.T) {
+	convey.Convey("Given a --since duration that is not positive, when wa mlwh info runs for a study, "+
+		"then it errors and never queries the recency window", t, func() {
+		for _, value := range []string{"-1h", "-168h", "0s"} {
+			stub := newStudyInfoStub()
+			called := false
+			stub.countSamplesWithDataAt = func(_ context.Context, _, _, _ string) (mlwh.Count, error) {
+				called = true
+
+				return mlwh.Count{}, nil
+			}
+
+			withStubMLWHInfoClient(t, stub)
+
+			_, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--since", value})
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "duration must be positive")
+			convey.So(called, convey.ShouldBeFalse)
+		}
+	})
+
+	convey.Convey("Given a positive --since duration, when wa mlwh info runs for a study, "+
+		"then it is accepted and resolved to ~now-duration", t, func() {
+		var capturedSince string
+		stub := newStudyInfoStub()
+		stub.countSamplesWithDataAt = func(_ context.Context, _, since, _ string) (mlwh.Count, error) {
+			capturedSince = since
+
+			return mlwh.Count{Count: 1}, nil
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--since", "1h"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		parsed, parseErr := time.Parse(time.RFC3339, capturedSince)
+		convey.So(parseErr, convey.ShouldBeNil)
+
+		want := time.Now().Add(-time.Hour)
+		convey.So(parsed.Sub(want) < time.Minute && want.Sub(parsed) < time.Minute, convey.ShouldBeTrue)
+	})
+}
+
 func withStubMLWHInfoClient(t *testing.T, stub *stubMLWHInfoClient) {
 	t.Helper()
 	t.Setenv("WA_MLWH_DSN", "mlwh_user@tcp(localhost:3306)/mlwarehouse")
