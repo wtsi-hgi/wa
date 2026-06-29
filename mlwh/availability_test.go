@@ -1094,6 +1094,41 @@ func TestStudyOverviewReportsFullFigures(t *testing.T) {
 	})
 }
 
+// F1 acceptance test 1: a study with name / accession_number / faculty_sponsor /
+// data_access_group set and 5 linked samples populates those four metadata fields
+// (read from study_mirror) ALONGSIDE the existing counts. seedB1OverviewScenario
+// seeds S1 via seedHierarchyStudy(111, "S1"), so the four fields carry that row's
+// deterministic values.
+func TestStudyOverviewPopulatesStudyMetadataAlongsideCounts(t *testing.T) {
+	convey.Convey("Given study S1 with study metadata set and 5 linked samples", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedB1OverviewScenario(t, cache.DB())
+		client := newB1OverviewClient(cache)
+
+		overview, err := client.StudyOverview(context.Background(), "S1")
+
+		convey.Convey("when StudyOverview is called, then the four metadata fields are populated alongside the counts", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			// The four metadata fields come from study_mirror (seedHierarchyStudy 111).
+			convey.So(overview.Name, convey.ShouldEqual, "Study S1")
+			convey.So(overview.AccessionNumber, convey.ShouldEqual, "EGAS0000S1")
+			convey.So(overview.FacultySponsor, convey.ShouldEqual, "Faculty sponsor 111")
+			convey.So(overview.DataAccessGroup, convey.ShouldEqual, "group")
+
+			// The existing counts are still correct (the four fields are additive).
+			convey.So(overview.IDStudyLims, convey.ShouldEqual, "S1")
+			convey.So(overview.SamplesTotal, convey.ShouldEqual, 5)
+			convey.So(overview.SamplesWithData, convey.ShouldEqual, 3)
+			convey.So(overview.SamplesWithoutData, convey.ShouldEqual, 2)
+			convey.So(overview.SamplesSequencedNoData, convey.ShouldEqual, 1)
+			convey.So(overview.DataObjects, convey.ShouldEqual, 7)
+		})
+	})
+}
+
 // B1 acceptance test 2: newest_data_added is the latest iRODS created, and
 // added_last_7_days counts only the distinct samples added in [now-7d, now).
 func TestStudyOverviewRecencyUsesHalfOpenWindow(t *testing.T) {
@@ -1348,6 +1383,40 @@ func TestStudyOverviewSyncedEmptyStudyIsAllZeroWithCacheSyncedAt(t *testing.T) {
 			convey.So(overview.SequencingDateRange, convey.ShouldBeNil)
 			convey.So(overview.NewestDataAdded, convey.ShouldBeEmpty)
 			convey.So(overview.AddedLast7Days, convey.ShouldEqual, 0)
+			convey.So(overview.CacheSyncedAt, convey.ShouldEqual, b1OldestLastRun.Format(utcRFC3339Layout))
+		})
+	})
+}
+
+// F1 acceptance test 2: a synced study that exists but has ZERO linked samples
+// still populates the four metadata fields (read from study_mirror), with the
+// counts at 0 and cache_synced_at populated. seedHierarchyStudy(220, "S1") gives
+// the four fields their deterministic values.
+func TestStudyOverviewEmptyStudyStillPopulatesStudyMetadata(t *testing.T) {
+	convey.Convey("Given a synced cache with a known but empty study S1", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), 220, "S1")
+		seedB1OverviewSyncState(t, cache.DB())
+		client := newB1OverviewClient(cache)
+
+		overview, err := client.StudyOverview(context.Background(), "S1")
+
+		convey.Convey("when StudyOverview runs, then the four metadata fields are populated, counts are 0 and cache_synced_at is set", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			convey.So(overview.Name, convey.ShouldEqual, "Study S1")
+			convey.So(overview.AccessionNumber, convey.ShouldEqual, "EGAS0000S1")
+			convey.So(overview.FacultySponsor, convey.ShouldEqual, "Faculty sponsor 220")
+			convey.So(overview.DataAccessGroup, convey.ShouldEqual, "group")
+
+			convey.So(overview.IDStudyLims, convey.ShouldEqual, "S1")
+			convey.So(overview.SamplesTotal, convey.ShouldEqual, 0)
+			convey.So(overview.SamplesWithData, convey.ShouldEqual, 0)
+			convey.So(overview.SamplesWithoutData, convey.ShouldEqual, 0)
+			convey.So(overview.SamplesSequencedNoData, convey.ShouldEqual, 0)
+			convey.So(overview.DataObjects, convey.ShouldEqual, 0)
 			convey.So(overview.CacheSyncedAt, convey.ShouldEqual, b1OldestLastRun.Format(utcRFC3339Layout))
 		})
 	})

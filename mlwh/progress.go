@@ -245,6 +245,28 @@ var statusBreakdownFeedingTables = []string{
 	syncTableSeqOpsTrackingPerSample,
 }
 
+// statusBreakdownQCCacheSQL is the ONE grouped query for the QC split of a study's
+// distinct SEQUENCED samples (spec D3/D1q). The inner SELECT rolls each sample's
+// products IN THIS STUDY up to one verdict per sample (GROUP BY id_sample_tmp over
+// studyScopedSampleQCUnion), reproducing rollUpSampleQC's precedence exactly:
+// MIN(qc) = 0 -> fail (SQL MIN ignores NULLs, so a 0 wins), else any qc IS NULL ->
+// pending, else pass. The outer aggregate counts the samples in each bucket. Only
+// samples with >=1 study-scoped product-metrics row appear in the union, so
+// registered-only and ONT samples (no products) contribute to no bucket -- the
+// three counts therefore sum to the sequenced count (samples_total -
+// distinct.registered), never a false pending. Study-scoped (unlike the
+// sample-wide sampleQCRollupSQL), but the per-sample rule is identical, so a
+// single-study sample's study verdict cannot disagree with SampleProgress.qc.
+var statusBreakdownQCCacheSQL = `SELECT ` +
+	`SUM(CASE WHEN verdict = '` + qcPass + `' THEN 1 ELSE 0 END), ` +
+	`SUM(CASE WHEN verdict = '` + qcFail + `' THEN 1 ELSE 0 END), ` +
+	`SUM(CASE WHEN verdict = '` + qcPending + `' THEN 1 ELSE 0 END) ` +
+	`FROM (SELECT id_sample_tmp, CASE ` +
+	`WHEN MIN(qc) = 0 THEN '` + qcFail + `' ` +
+	`WHEN SUM(CASE WHEN qc IS NULL THEN 1 ELSE 0 END) > 0 THEN '` + qcPending + `' ` +
+	`ELSE '` + qcPass + `' END AS verdict ` +
+	`FROM (` + studyScopedSampleQCUnion() + `) AS study_sample_products GROUP BY id_sample_tmp) AS sample_qc`
+
 // statusBreakdownPlatformArm pairs one platform's product-metrics mirror with its
 // product-id column, so the per-platform partition can both establish the
 // platform's membership and test per-platform delivery (the shared product id links
@@ -277,6 +299,25 @@ var statusBreakdownProductPlatformArms = []statusBreakdownPlatformArm{
 func sampleProductMetricsQCUnion() string {
 	arm := func(table string) string {
 		return `SELECT qc FROM ` + table + ` WHERE id_sample_tmp = ?`
+	}
+
+	return strings.Join([]string{
+		arm("iseq_product_metrics_mirror"),
+		arm("pac_bio_product_metrics_mirror"),
+		arm("eseq_product_metrics_mirror"),
+		arm("useq_product_metrics_mirror"),
+	}, " UNION ALL ")
+}
+
+// studyScopedSampleQCUnion is the UNION ALL of (id_sample_tmp, qc) across every
+// platform's product-metrics mirror scoped by id_study_lims, so the study QC
+// roll-up sees only the products a sample has IN THIS STUDY. Each arm binds the
+// study id once; it is the study-scoped counterpart of sampleProductMetricsQCUnion
+// (which is sample-wide). ONT (oseq_flowcell) carries no products and is absent,
+// so an ONT-only sample contributes no rows and is excluded from the QC split.
+func studyScopedSampleQCUnion() string {
+	arm := func(table string) string {
+		return `SELECT id_sample_tmp, qc FROM ` + table + ` WHERE id_study_lims = ?`
 	}
 
 	return strings.Join([]string{
@@ -1273,6 +1314,12 @@ func (c *Client) StatusBreakdown(ctx context.Context, studyLimsID string) (Statu
 	}
 	breakdown.PerPlatform = perPlatform
 
+	qc, err := c.statusBreakdownQC(ctx, studyLimsID)
+	if err != nil {
+		return StatusBreakdown{}, err
+	}
+	breakdown.QC = qc
+
 	withTimeline, err := c.queryCount(ctx, countSamplesWithDetailedTimelineCacheSQL, "count study samples with detailed timeline", studyLimsID)
 	if err != nil {
 		return StatusBreakdown{}, err
@@ -1351,6 +1398,37 @@ func (c *Client) statusBreakdownPerPlatform(ctx context.Context, studyLimsID str
 	}
 
 	return ordered, nil
+}
+
+// statusBreakdownQC runs the single grouped QC-split query and returns the
+// qc_pass / qc_fail / qc_pending counts over the study's distinct SEQUENCED
+// samples. The per-sample roll-up is identical to rollUpSampleQC (fail > pending >
+// pass over the study's products), so the three counts sum to the sequenced count
+// (samples_total - distinct.registered); registered-only and ONT samples have no
+// products and are excluded. SUM over an empty inner set (a study whose samples
+// are all registered) yields SQL NULL, scanned as 0, so the QC split is {0,0,0}
+// rather than an error.
+func (c *Client) statusBreakdownQC(ctx context.Context, studyLimsID string) (StudyQCBreakdown, error) {
+	db := c.readCacheDB()
+	if db == nil {
+		return StudyQCBreakdown{}, fmt.Errorf("mlwh: cache reader not configured")
+	}
+
+	args := make([]any, len(statusBreakdownProductPlatformArms))
+	for i := range args {
+		args[i] = studyLimsID
+	}
+
+	var pass, fail, pending sql.NullInt64
+	if err := db.QueryRowContext(ctx, statusBreakdownQCCacheSQL, args...).Scan(&pass, &fail, &pending); err != nil {
+		return StudyQCBreakdown{}, fmt.Errorf("%w: aggregate study status breakdown qc split: %w", ErrUpstreamImpaired, err)
+	}
+
+	return StudyQCBreakdown{
+		QCPass:    int(pass.Int64),
+		QCFail:    int(fail.Int64),
+		QCPending: int(pending.Int64),
+	}, nil
 }
 
 // statusBreakdownForEmptyStudy resolves a StatusBreakdown when no samples are linked

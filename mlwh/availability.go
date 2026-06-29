@@ -468,6 +468,9 @@ func (c *Client) StudyOverview(ctx context.Context, studyLimsID string) (StudyOv
 	}
 
 	overview := StudyOverview{IDStudyLims: studyLimsID, SamplesTotal: total}
+	if err = c.fillStudyOverviewMetadata(ctx, studyLimsID, &overview); err != nil {
+		return StudyOverview{}, err
+	}
 	if err = c.fillStudyOverviewCounts(ctx, studyLimsID, &overview); err != nil {
 		return StudyOverview{}, err
 	}
@@ -485,6 +488,26 @@ func (c *Client) StudyOverview(ctx context.Context, studyLimsID string) (StudyOv
 	overview.CacheSyncedAt = syncedAt
 
 	return overview, nil
+}
+
+// fillStudyOverviewMetadata fills the study-level metadata (name,
+// accession_number, faculty_sponsor, data_access_group) from study_mirror, read
+// in one row via resolveStudyFromCache (the cheapest existing study-resolution
+// path). It is shared by the populated and the synced-empty paths so the four
+// fields are present whenever the study exists (D5), with the counts at 0 on the
+// empty path.
+func (c *Client) fillStudyOverviewMetadata(ctx context.Context, studyLimsID string, overview *StudyOverview) error {
+	study, err := c.resolveStudyFromCache(ctx, `SELECT `+studyMirrorSelectColumns+` FROM study_mirror WHERE id_study_lims = ? AND id_lims = 'SQSCP' LIMIT 1`, studyLimsID)
+	if err != nil {
+		return err
+	}
+
+	overview.Name = study.Name
+	overview.AccessionNumber = study.AccessionNumber
+	overview.FacultySponsor = study.FacultySponsor
+	overview.DataAccessGroup = study.DataAccessGroup
+
+	return nil
 }
 
 // fillStudyOverviewCounts fills the distinct-sample partition and the recency
@@ -681,7 +704,12 @@ func (c *Client) studyOverviewForEmptyStudy(ctx context.Context, studyLimsID str
 			return StudyOverview{}, err
 		}
 
-		return StudyOverview{IDStudyLims: studyLimsID, LibraryTypes: []string{}, CacheSyncedAt: syncedAt}, nil
+		overview := StudyOverview{IDStudyLims: studyLimsID, LibraryTypes: []string{}, CacheSyncedAt: syncedAt}
+		if err := c.fillStudyOverviewMetadata(ctx, studyLimsID, &overview); err != nil {
+			return StudyOverview{}, err
+		}
+
+		return overview, nil
 	}
 
 	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {

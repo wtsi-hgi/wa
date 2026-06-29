@@ -195,6 +195,27 @@ const f4StudyTmp = int64(400)
 // study-scoped iRODS row matters), so one constant suffices.
 var f4DeliveredCreated = time.Date(2026, time.June, 25, 9, 0, 0, 0, time.UTC)
 
+// d1qStudyLims is the LIMS study id of the D1q QC-split scenario study. It is the
+// spec's "study S1" QC scenario realised as a self-contained study, distinct from
+// the F4 study so the F4 distinct/per_platform/with_detailed_timeline regression
+// counts are untouched.
+const d1qStudyLims = "S1q"
+
+// d1qStudyTmp is the surrogate key of the D1q QC-split scenario study.
+const d1qStudyTmp = int64(410)
+
+// d1q names the samples seeded for the D1q QC-split scenario (spec D1q A-E):
+// three sequenced samples (pass / fail / pending) and two not-sequenced
+// (registered-only and ONT) so the QC split is {1,1,1} over the 3 sequenced
+// samples and the two not-sequenced samples land in distinct.registered.
+const (
+	d1qPass       = int64(411) // sequenced+delivered: Illumina product qc=1 + iRODS -> qc_pass
+	d1qFail       = int64(412) // sequenced: two Illumina products, qc=1 and qc=0 -> qc_fail (fail > pass)
+	d1qPending    = int64(413) // sequenced: one Illumina product qc NULL -> qc_pending
+	d1qRegistered = int64(414) // registered-only: library link, NO products, NO iRODS -> distinct.registered, excluded from QC
+	d1qONT        = int64(415) // ONT: oseq_flowcell only, NO products, NO iRODS -> distinct.registered, excluded from QC
+)
+
 // F1 acceptance test 1: a sample with a library link but NO products is
 // registered, its QC is NOT pending (no products => not tracked, not pending),
 // and it has no delivered_at.
@@ -1279,6 +1300,211 @@ func seedF4PacBioDeliveredSample(t *testing.T, db *sql.DB) {
 
 	seedPacBioProductMetricsMirrorRow(t, db, "40601", f4PacBioDelivered, f4StudyLims)
 	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "40601", "/seq/54601", "54601_1#1.cram", f4PacBioDelivered, f4StudyLims, f4DeliveredCreated, "pacbio")
+}
+
+// TestStatusBreakdownQCSplitsSequencedSamples covers D1q acceptance tests 1 and 2:
+// the A-E scenario yields distinct.registered=2 (the registered-only and ONT
+// samples), sequenced = samples_total-2 = 3, and qc == {qc_pass:1, qc_fail:1,
+// qc_pending:1} summing to 3 == samples_total - distinct.registered.
+func TestStatusBreakdownQCSplitsSequencedSamples(t *testing.T) {
+	convey.Convey("Given the D1q QC scenario: A delivered qc=1, B mixed qc=1/qc=0, C qc NULL, D registered-only, E ONT", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedD1qQCScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		breakdown, err := client.StatusBreakdown(context.Background(), d1qStudyLims)
+
+		convey.Convey("when StatusBreakdown is called, then distinct.registered=2, sequenced=3, and qc=={1,1,1} summing to sequenced", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(breakdown.IDStudyLims, convey.ShouldEqual, d1qStudyLims)
+
+			// distinct partition: A delivered (with_data), B and C sequenced_no_data,
+			// D and E registered (not-sequenced), summing to samples_total = 5.
+			convey.So(breakdown.Distinct, convey.ShouldResemble, PhaseLadder{WithData: 1, SequencedNoData: 2, Registered: 2})
+
+			samplesTotal := breakdown.Distinct.WithData + breakdown.Distinct.SequencedNoData + breakdown.Distinct.Registered
+			sequenced := samplesTotal - breakdown.Distinct.Registered
+			convey.So(samplesTotal, convey.ShouldEqual, 5)
+			convey.So(sequenced, convey.ShouldEqual, 3)
+
+			// D1q acceptance test 1: qc == {qc_pass:1, qc_fail:1, qc_pending:1}.
+			convey.So(breakdown.QC, convey.ShouldResemble, StudyQCBreakdown{QCPass: 1, QCFail: 1, QCPending: 1})
+
+			// D1q acceptance test 2: qc_pass+qc_fail+qc_pending == sequenced ==
+			// samples_total - distinct.registered.
+			qcSum := breakdown.QC.QCPass + breakdown.QC.QCFail + breakdown.QC.QCPending
+			convey.So(qcSum, convey.ShouldEqual, sequenced)
+			convey.So(qcSum, convey.ShouldEqual, samplesTotal-breakdown.Distinct.Registered)
+		})
+	})
+}
+
+// TestStatusBreakdownQCMixedSampleFailsMatchingSampleProgress covers D1q acceptance
+// test 3: a sample with two products (one qc=0 and one qc=1) lands in qc_fail (fail
+// > pass), and the study-scoped verdict agrees with SampleProgress.qc for that
+// single-study sample (the study roll-up cannot disagree with the sample-wide one).
+func TestStatusBreakdownQCMixedSampleFailsMatchingSampleProgress(t *testing.T) {
+	convey.Convey("Given the D1q QC scenario with sample B having products qc=1 and qc=0", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedD1qQCScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		breakdown, err := client.StatusBreakdown(context.Background(), d1qStudyLims)
+		convey.So(err, convey.ShouldBeNil)
+
+		progress, progressErr := client.SampleProgress(context.Background(), "sample-"+formatInt(d1qFail))
+
+		convey.Convey("when counted, then it is in qc_fail and SampleProgress.qc agrees (fail)", func() {
+			convey.So(progressErr, convey.ShouldBeNil)
+			convey.So(breakdown.QC.QCFail, convey.ShouldEqual, 1)
+			convey.So(progress.QC, convey.ShouldEqual, qcFail)
+		})
+	})
+}
+
+// TestStatusBreakdownQCONTSampleNotInAnyBucket covers D1q acceptance test 4: an
+// ONT-only sample linked to the study is in distinct.registered and in NO QC
+// bucket (never a false qc_pending), because it has no product-metrics rows. It
+// asserts removing the ONT sample leaves the QC split unchanged, proving the ONT
+// sample contributes to no bucket.
+func TestStatusBreakdownQCONTSampleNotInAnyBucket(t *testing.T) {
+	convey.Convey("Given the D1q QC scenario including an ONT-only sample linked to the study", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedD1qQCScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		breakdown, err := client.StatusBreakdown(context.Background(), d1qStudyLims)
+
+		convey.Convey("when counted, then the ONT sample is in distinct.registered and in no QC bucket (no false pending)", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			// The ONT sample (and the registered-only sample) are the two registered;
+			// the QC split is exactly the 3 sequenced samples, with the ONT sample
+			// contributing to NONE of pass/fail/pending.
+			convey.So(breakdown.Distinct.Registered, convey.ShouldEqual, 2)
+			convey.So(breakdown.QC, convey.ShouldResemble, StudyQCBreakdown{QCPass: 1, QCFail: 1, QCPending: 1})
+
+			// The ONT sample's own progress is not_tracked (never pending), confirming
+			// it would never be counted as a false qc_pending in the study split.
+			ontProgress, ontErr := client.SampleProgress(context.Background(), "sample-"+formatInt(d1qONT))
+			convey.So(ontErr, convey.ShouldBeNil)
+			convey.So(ontProgress.QC, convey.ShouldEqual, qcNotTracked)
+		})
+	})
+}
+
+// TestStatusBreakdownQCNeverSyncedUnknownAndEmptyCascade covers D1q acceptance test
+// 5: a never-synced cache yields both sentinels; an unknown study yields
+// ErrNotFound; a synced study with no samples yields all-zero ladders AND qc ==
+// {0,0,0} with cache_synced_at populated.
+func TestStatusBreakdownQCNeverSyncedUnknownAndEmptyCascade(t *testing.T) {
+	convey.Convey("Given a never-synced cache", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		_, err := client.StatusBreakdown(context.Background(), d1qStudyLims)
+
+		convey.Convey("when StatusBreakdown is called, then the error satisfies both ErrCacheNeverSynced and ErrNotFound", func() {
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+		})
+	})
+
+	convey.Convey("Given a synced D1q scenario and an unknown study id", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedD1qQCScenario(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		_, err := client.StatusBreakdown(context.Background(), "no-such-study")
+
+		convey.Convey("when StatusBreakdown is called, then ErrNotFound (not never-synced)", func() {
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeFalse)
+		})
+	})
+
+	convey.Convey("Given a synced cache with a study that has no linked samples", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), d1qStudyTmp, d1qStudyLims)
+		seedSyncState(t, cache.DB(), syncTableStudy, time.Date(2026, time.June, 27, 8, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableSample, time.Date(2026, time.June, 27, 9, 0, 0, 0, time.UTC))
+		seedSyncState(t, cache.DB(), syncTableIseqFlowcell, time.Date(2026, time.June, 27, 10, 0, 0, 0, time.UTC))
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		breakdown, err := client.StatusBreakdown(context.Background(), d1qStudyLims)
+
+		convey.Convey("when StatusBreakdown is called, then all-zero ladders AND qc=={0,0,0} with cache_synced_at populated", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(breakdown.Distinct, convey.ShouldResemble, PhaseLadder{})
+			convey.So(breakdown.QC, convey.ShouldResemble, StudyQCBreakdown{})
+			convey.So(breakdown.CacheSyncedAt, convey.ShouldNotEqual, "")
+		})
+	})
+}
+
+// seedD1qQCScenario builds the D1q QC-split study (LIMS id d1qStudyLims): five
+// library-linked samples per spec D1q A-E. Sample A is delivered with a qc=1
+// product (qc_pass), sample B is sequenced with two products qc=1 and qc=0
+// (qc_fail, fail > pass), sample C is sequenced with one qc NULL product
+// (qc_pending), sample D is registered-only and sample E is ONT -- both with NO
+// product-metrics rows AND NO iRODS rows, so they land in distinct.registered (the
+// not-sequenced bucket) and are excluded from the QC split. This HEEDS the SEED
+// FOOTGUN: no sample carries an iRODS row without a matching product-metrics row,
+// so qc_pass + qc_fail + qc_pending == samples_total - distinct.registered holds.
+// It marks every feeding sync table synced so cache_synced_at and the cascade
+// resolve.
+func seedD1qQCScenario(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, d1qStudyTmp, d1qStudyLims)
+
+	for _, id := range []int64{d1qPass, d1qFail, d1qPending, d1qRegistered, d1qONT} {
+		seedHierarchySample(t, db, id, d1qStudyLims, "sample-"+formatInt(id))
+		seedLibrarySample(t, db, "Standard", id, d1qStudyLims)
+	}
+
+	// Sample A: delivered Illumina product qc=1 + a study-scoped iRODS row linked
+	// to it -> roll-up pass (with_data).
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 41101, d1qPass, 54410, 1, 1, d1qStudyLims, sql.NullInt64{Int64: 1, Valid: true})
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "41101", "/seq/54410", "54410_1#1.cram", d1qPass, d1qStudyLims, f4DeliveredCreated, "illumina")
+
+	// Sample B: two Illumina products, qc=1 and qc=0, no iRODS -> roll-up fail
+	// (MIN(qc)=0 wins over the passing product), sequenced_no_data.
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 41201, d1qFail, 54410, 2, 1, d1qStudyLims, sql.NullInt64{Int64: 1, Valid: true})
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 41202, d1qFail, 54410, 2, 2, d1qStudyLims, sql.NullInt64{Int64: 0, Valid: true})
+
+	// Sample C: one Illumina product, qc NULL, no iRODS -> roll-up pending,
+	// sequenced_no_data.
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 41301, d1qPending, 54410, 3, 1, d1qStudyLims, sql.NullInt64{})
+
+	// Sample E: ONT identity only -- NO products, NO iRODS -> registered, excluded
+	// from the QC split. Sample D is registered-only with only its library link
+	// (seeded above), also NO products and NO iRODS.
+	seedOseqFlowcellMirrorRow(t, db, 41501, d1qONT, d1qStudyLims)
+
+	seedSyncState(t, db, syncTableStudy, time.Date(2026, time.June, 27, 8, 0, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTableSample, time.Date(2026, time.June, 27, 9, 0, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTableIseqFlowcell, time.Date(2026, time.June, 27, 9, 30, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTableIseqProductMetrics, time.Date(2026, time.June, 27, 10, 0, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTablePacBioProductMetrics, time.Date(2026, time.June, 27, 10, 15, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTableEseqProductMetrics, time.Date(2026, time.June, 27, 10, 30, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTableUseqProductMetrics, time.Date(2026, time.June, 27, 10, 45, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTableSeqProductIRODSLocations, time.Date(2026, time.June, 27, 11, 0, 0, 0, time.UTC))
+	seedSyncState(t, db, syncTableSeqOpsTrackingPerSample, time.Date(2026, time.June, 27, 7, 0, 0, 0, time.UTC))
 }
 
 // seedIseqProductMetricsMirrorRowWithQC inserts an Illumina product-metrics

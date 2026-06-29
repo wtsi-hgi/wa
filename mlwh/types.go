@@ -176,6 +176,10 @@ type DateRange struct {
 // SamplesSequencedNoData and so is not part of that partition.
 type StudyOverview struct {
 	IDStudyLims            string     `json:"id_study_lims" doc:"LIMS study id"`
+	Name                   string     `json:"name" doc:"study name"`
+	AccessionNumber        string     `json:"accession_number" doc:"study accession number"`
+	FacultySponsor         string     `json:"faculty_sponsor" doc:"study faculty sponsor"`
+	DataAccessGroup        string     `json:"data_access_group" doc:"study data access group governing data access"`
 	SamplesTotal           int        `json:"samples_total" doc:"distinct samples linked via library_samples"`
 	SamplesWithData        int        `json:"samples_with_data" doc:"distinct samples with >=1 study-scoped iRODS row"`
 	SamplesWithoutData     int        `json:"samples_without_data" doc:"samples_total minus samples_with_data"`
@@ -224,6 +228,17 @@ type PlatformPhaseLadder struct {
 	Ladder   PhaseLadder `json:"ladder" doc:"buckets summing to this platform's sample count"`
 }
 
+// StudyQCBreakdown is the QC split of a study's SEQUENCED (distinct) samples
+// (D3): qc_pass/qc_fail/qc_pending partition the sequenced samples using the same
+// per-sample roll-up progress.go applies (fail > pending > pass), so the three
+// sum to "sequenced" (= samples_total - the registered bucket). not_tracked
+// samples (no products, incl. ONT) are NOT sequenced and are excluded here.
+type StudyQCBreakdown struct {
+	QCPass    int `json:"qc_pass" doc:"distinct sequenced samples whose roll-up QC is pass"`
+	QCFail    int `json:"qc_fail" doc:"distinct sequenced samples whose roll-up QC is fail"`
+	QCPending int `json:"qc_pending" doc:"distinct sequenced samples whose roll-up QC is pending"`
+}
+
 // StatusBreakdown is the per-baseline-phase study rollup (spec F4, layer P3),
 // answering "how many of my samples are at each phase" without a per-sample
 // fan-out. It carries TWO denominators. Distinct is the distinct-sample
@@ -235,14 +250,16 @@ type PlatformPhaseLadder struct {
 // sample count but the grand total across platforms may EXCEED samples_total (a
 // multi-platform sample is counted under every platform it spans). Samples with
 // no product-metrics, including ONT, are registered (never folded into a separate
-// without-data negative). WithDetailedTimeline is the count of the study's
-// samples also present in the seq_ops_tracking_per_sample mirror. CacheSyncedAt
-// is the oldest last_run across the feeding tables, distinct from any data
-// timestamp (the freshness caveat).
+// without-data negative). QC is the QC split of the SEQUENCED distinct samples
+// (qc_pass/qc_fail/qc_pending), summing to samples_total - distinct.registered.
+// WithDetailedTimeline is the count of the study's samples also present in the
+// seq_ops_tracking_per_sample mirror. CacheSyncedAt is the oldest last_run across
+// the feeding tables, distinct from any data timestamp (the freshness caveat).
 type StatusBreakdown struct {
 	IDStudyLims          string                `json:"id_study_lims" doc:"LIMS study id"`
 	Distinct             PhaseLadder           `json:"distinct" doc:"distinct-sample partition, sums to samples_total"`
 	PerPlatform          []PlatformPhaseLadder `json:"per_platform" doc:"per-platform partition; grand total may exceed samples_total"`
+	QC                   StudyQCBreakdown      `json:"qc" doc:"QC split of the sequenced (distinct) samples; sums to samples_total - registered"`
 	WithDetailedTimeline int                   `json:"with_detailed_timeline" doc:"samples also present in the tracking mirror"`
 	CacheSyncedAt        string                `json:"cache_synced_at" doc:"oldest last_run across feeding tables (UTC RFC3339)"`
 }

@@ -77,8 +77,8 @@ existing distinct/per_platform/with_detailed_timeline regression tests
 still pass unchanged). Heed the SEED FOOTGUN caution above when building
 the A-E fixture. Depends on Phase 1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.2: F1 - study metadata on the overview + disambiguation on search [parallel with 4.1]
 
@@ -105,8 +105,8 @@ populates the four fields with zero counts and populated cache_synced_at;
 two "Malaria" studies each carry distinct `id_study_lims`/`name`/
 `faculty_sponsor` from `SearchStudies`). Depends on Phase 1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
