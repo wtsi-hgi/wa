@@ -59,8 +59,8 @@ the 3 Carl studies case-insensitively, each with full `Study` and empty
 + both sentinels / synced-no-match empty list no error). Depends on Phase
 1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.2: E2 - studies by user (role-filtered)
 
@@ -97,8 +97,8 @@ empty list + both sentinels / synced-no-match empty list no error).
 Depends on Phase 1; independent of 5.1 (sequence after it only to avoid
 same-file edit conflicts).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 5.3: E3 - resolve-person directory
 
@@ -143,8 +143,8 @@ login, email, role)` and compute each candidate's `StudyCount` as the
 distinct studies for its `(login, role)`. Do not silently collapse the
 two keys.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For sequential items, a single review pass after each item (or one pass
 over the phase) is acceptable; reviewers must confirm the count<->list

@@ -366,6 +366,106 @@ func (rc *RemoteClient) StudiesForSample(ctx context.Context, sangerName string)
 	return remoteCall[[]Study](rc, ctx, "StudiesForSample", []string{sangerName}, nil)
 }
 
+// StudiesForFacultySponsor lists the studies of a named PI/sponsor through the
+// remote server (the named study.faculty_sponsor, case-insensitive substring),
+// each as a PersonStudy with an empty Role.
+func (rc *RemoteClient) StudiesForFacultySponsor(ctx context.Context, name string, limit, offset int) ([]PersonStudy, error) {
+	return remoteCall[[]PersonStudy](rc, ctx, "StudiesForFacultySponsor", []string{name}, remotePagination(limit, offset))
+}
+
+// StudiesForFacultySponsorPage is the Page[PersonStudy] variant of
+// StudiesForFacultySponsor: it returns the same page of rows (Page.Items) plus
+// the list-sizing metadata from the X-Total-Count / X-Next-Offset response
+// headers (Page.Total / Page.NextOffset).
+func (rc *RemoteClient) StudiesForFacultySponsorPage(ctx context.Context, name string, limit, offset int) (Page[PersonStudy], error) {
+	return remoteCallPage[PersonStudy](rc, ctx, "StudiesForFacultySponsor", []string{name}, remotePagination(limit, offset))
+}
+
+// CountStudiesForFacultySponsor counts the studies of a named PI/sponsor through
+// the remote server, the count counterpart of StudiesForFacultySponsor (the same
+// faculty_sponsor case-insensitive substring match with no LIMIT), so it equals
+// that list's length when all rows are fetched.
+func (rc *RemoteClient) CountStudiesForFacultySponsor(ctx context.Context, name string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudiesForFacultySponsor", []string{name}, nil)
+}
+
+// StudiesForUser lists the studies a person is a study_users role member of
+// through the remote server (matched case-insensitively as a substring of
+// name/login/email), each as a PersonStudy carrying the matched role. role is the
+// raw, comma-separated override of the default role set, forwarded as the role
+// query param (omitted when empty so the server applies the default set); the same
+// study may appear under multiple roles, de-duplicated to one row per
+// (id_study_lims, role).
+func (rc *RemoteClient) StudiesForUser(ctx context.Context, person, role string, limit, offset int) ([]PersonStudy, error) {
+	return remoteCall[[]PersonStudy](rc, ctx, "StudiesForUser", []string{person}, remotePaginationWithRole(limit, offset, role))
+}
+
+// remotePaginationWithRole builds the query values for the studies-by-user list:
+// the limit/offset pagination controls plus the optional role override, an empty
+// role omitted (matching the default-role-set call).
+func remotePaginationWithRole(limit, offset int, role string) url.Values {
+	values := remotePagination(limit, offset)
+	if role != "" {
+		values.Set("role", role)
+	}
+
+	return values
+}
+
+// StudiesForUserPage is the Page[PersonStudy] variant of StudiesForUser: it
+// returns the same page of rows (Page.Items) plus the list-sizing metadata from
+// the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) StudiesForUserPage(ctx context.Context, person, role string, limit, offset int) (Page[PersonStudy], error) {
+	return remoteCallPage[PersonStudy](rc, ctx, "StudiesForUser", []string{person}, remotePaginationWithRole(limit, offset, role))
+}
+
+// CountStudiesForUser counts the studies a person is a study_users role member of
+// through the remote server, the count counterpart of StudiesForUser (the same
+// name/login/email substring match and role filter, counting the distinct
+// (id_study_lims, role) matches with no LIMIT), so it equals that list's length
+// when all rows are fetched. role is forwarded as the role query param (omitted
+// when empty so the server applies the default set).
+func (rc *RemoteClient) CountStudiesForUser(ctx context.Context, person, role string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountStudiesForUser", []string{person}, remoteRole(role))
+}
+
+// remoteRole builds the role query values for a studies-by-user count, omitting an
+// empty role so a default-role-set request sends no query string (matching the
+// bare default call).
+func remoteRole(role string) url.Values {
+	values := url.Values{}
+	if role != "" {
+		values.Set("role", role)
+	}
+
+	return values
+}
+
+// ResolvePerson lists the distinct candidate people (faculty_sponsor and
+// study_users) matching the term as a case-insensitive substring through the remote
+// server, each as a PersonCandidate carrying its source, stored form and distinct
+// study count.
+func (rc *RemoteClient) ResolvePerson(ctx context.Context, term string, limit, offset int) ([]PersonCandidate, error) {
+	return remoteCall[[]PersonCandidate](rc, ctx, "ResolvePerson", []string{term}, remotePagination(limit, offset))
+}
+
+// ResolvePersonPage is the Page[PersonCandidate] variant of ResolvePerson: it
+// returns the same page of candidates (Page.Items) plus the list-sizing metadata
+// from the X-Total-Count / X-Next-Offset response headers (Page.Total /
+// Page.NextOffset).
+func (rc *RemoteClient) ResolvePersonPage(ctx context.Context, term string, limit, offset int) (Page[PersonCandidate], error) {
+	return remoteCallPage[PersonCandidate](rc, ctx, "ResolvePerson", []string{term}, remotePagination(limit, offset))
+}
+
+// CountResolvePerson counts the distinct candidate people matching the term across
+// both sources through the remote server, the count counterpart of ResolvePerson
+// (the same case-insensitive substring match with no LIMIT), so it equals that
+// list's length when all rows are fetched.
+func (rc *RemoteClient) CountResolvePerson(ctx context.Context, term string) (Count, error) {
+	return remoteCall[Count](rc, ctx, "CountResolvePerson", []string{term}, nil)
+}
+
 // FindSamplesBySangerID finds samples by Sanger sample ID through the remote server.
 func (rc *RemoteClient) FindSamplesBySangerID(ctx context.Context, sangerID string) ([]Sample, error) {
 	return remoteCall[[]Sample](rc, ctx, "FindSamplesBySangerID", []string{sangerID}, nil)

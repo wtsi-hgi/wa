@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS study_mirror (
 	name                        VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
 	accession_number            VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
 	study_title                 TEXT         NOT NULL,
-	faculty_sponsor             VARCHAR(255) NOT NULL,
+	faculty_sponsor             VARCHAR(255) NOT NULL COLLATE {{MYSQL_TEXT_COLLATION}},
 	state                       VARCHAR(255) NOT NULL,
 	data_release_strategy       VARCHAR(255) NOT NULL,
 	data_access_group           VARCHAR(255) NOT NULL,

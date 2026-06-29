@@ -395,6 +395,73 @@ var Registry = []Endpoint{
 		Description: "Lists the studies the given sample (by Sanger sample name) belongs to.",
 	},
 	{
+		Method:      "StudiesForFacultySponsor",
+		Verb:        registryVerbGet,
+		Path:        "/studies/faculty-sponsor/:name",
+		PathParams:  []string{"name"},
+		Query:       []string{},
+		Paginated:   true,
+		NewResult:   newSliceResult[PersonStudy],
+		Summary:     "List studies by faculty sponsor",
+		Description: "Lists the studies of a named PI/SPONSOR, matching study.faculty_sponsor (the named principal investigator / faculty sponsor, a free-text field) for the term as a case-insensitive substring, so \"carl\" matches \"Carl Anderson\". Each row carries the full study plus an empty role (the faculty sponsor is NOT a study_users role). This is DISTINCT from /studies/user/:person, which matches study_users ROLE MEMBERSHIP (owner/manager/...) across name, login and email and returns a different set; use this endpoint for the named sponsor and that one for role membership. Ordered by id_study_lims. Defaults to a page of 100, maximum 1000, and it sets the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /studies/faculty-sponsor/:name/count and the two cannot drift). A whitespace-only name is rejected with a 400 bad_request. The match is read from the cache mirror, so it is complete only up to the study table's last sync (see /freshness); a never-synced cache returns an empty list together with a cache-never-synced signal and a synced cache with no match returns an empty list (not an error).",
+		QueryParams: searchPaginationParams(),
+	},
+	{
+		Method:      "CountStudiesForFacultySponsor",
+		Verb:        registryVerbGet,
+		Path:        "/studies/faculty-sponsor/:name/count",
+		PathParams:  []string{"name"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count studies by faculty sponsor",
+		Description: "Returns the number of studies of a named PI/SPONSOR, the count counterpart of /studies/faculty-sponsor/:name (count == the length of that list when all rows are fetched, so X-Total-Count on the list equals this count and the two cannot drift). It matches study.faculty_sponsor (the named principal investigator / faculty sponsor, a free-text field) for the term as a case-insensitive substring with no LIMIT, DISTINCT from /studies/user/:person/count (which counts study_users role membership). A whitespace-only name is rejected with a 400 bad_request. The count is read from the cache mirror, so it is complete only up to the study table's last sync (see /freshness); a never-synced cache returns a cache-never-synced signal and a synced cache with no match returns 0 (not an error).",
+	},
+	{
+		Method:      "StudiesForUser",
+		Verb:        registryVerbGet,
+		Path:        "/studies/user/:person",
+		PathParams:  []string{"person"},
+		Query:       []string{"role"},
+		Paginated:   true,
+		NewResult:   newSliceResult[PersonStudy],
+		Summary:     "List studies by user role membership",
+		Description: "Lists the studies a person is a study_users ROLE MEMBER of, matching study_users (the per-study membership rows) where the term is a case-insensitive SUBSTRING of name, login OR email, so an email/login or a name both resolve and a caller given only an email is not falsely empty. This is DISTINCT from /studies/faculty-sponsor/:name, which matches the named PI/sponsor (study.faculty_sponsor, free-text) and returns a different set; use this endpoint for role membership and that one for the named sponsor. The DEFAULT role set is owner, manager and data_access_contact; set role to a comma-separated list to OVERRIDE (replace) that default set, matched exactly and case-insensitively (e.g. role=follower returns only follower rows, widening the result to followers; role=owner,manager returns owners and managers). Each row carries the full study plus the matched role; the same study may match under several roles, so rows are de-duplicated to one per (id_study_lims, role) and ordered by (id_study_lims, role). Defaults to a page of 100, maximum 1000, and it sets the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /studies/user/:person/count and the two cannot drift). A whitespace-only person is rejected with a 400 bad_request. The match is read from the cache mirrors, so it is complete only up to the study table's last sync (see /freshness); a never-synced cache returns an empty list together with a cache-never-synced signal and a synced cache with no match returns an empty list (not an error).",
+		QueryParams: searchPaginationWithRoleParams(),
+	},
+	{
+		Method:      "CountStudiesForUser",
+		Verb:        registryVerbGet,
+		Path:        "/studies/user/:person/count",
+		PathParams:  []string{"person"},
+		Query:       []string{"role"},
+		NewResult:   newResult[Count],
+		Summary:     "Count studies by user role membership",
+		Description: "Returns the number of studies a person is a study_users ROLE MEMBER of, the count counterpart of /studies/user/:person (count == the length of that list when all rows are fetched, so X-Total-Count on the list equals this count and the two cannot drift). It matches study_users where the term is a case-insensitive substring of name, login OR email and counts the distinct (id_study_lims, role) matches with no LIMIT, DISTINCT from /studies/faculty-sponsor/:name/count (which counts the named faculty_sponsor). The DEFAULT role set is owner, manager and data_access_contact; set role to a comma-separated list to OVERRIDE (replace) that default set, matched exactly and case-insensitively, so the count honours the same role filter as the list (e.g. role=follower counts only follower rows). A whitespace-only person is rejected with a 400 bad_request. The count is read from the cache mirrors, so it is complete only up to the study table's last sync (see /freshness); a never-synced cache returns a cache-never-synced signal and a synced cache with no match returns 0 (not an error).",
+		QueryParams: []QueryParam{roleQueryParam()},
+	},
+	{
+		Method:      "ResolvePerson",
+		Verb:        registryVerbGet,
+		Path:        "/resolve-person/:term",
+		PathParams:  []string{"term"},
+		Query:       []string{},
+		Paginated:   true,
+		NewResult:   newSliceResult[PersonCandidate],
+		Summary:     "Resolve a partial person to candidate stored forms",
+		Description: "Translates a partial/spoken person name (or a login/email fragment) into the DISTINCT candidate stored forms, so a caller can disambiguate among several people BEFORE running a studies query. It returns candidates from BOTH person sources, matching the term as a case-insensitive substring: from study_mirror, the distinct faculty_sponsor values containing the term (source=faculty_sponsor, name=the sponsor text, login/email/role empty) -- faculty_sponsor is a FREE-TEXT full name (the named PI/sponsor) -- each with study_count = the distinct SQSCP studies for that sponsor; and from study_users_mirror, the distinct (name, login, email, role) tuples where the term is a substring of name, login OR email (source=study_users) -- study_users identifies a person by name AND login (the Sanger username) AND email -- each with study_count = the distinct studies for that candidate's (login, role). The two study_count bases differ by design: candidates are grouped by (name, login, email, role) but the study_users study_count is per (login, role). The match is across name, login AND email, so a login or email fragment resolves to the stored name and vice versa. Ordered by (source, name, login, role) for determinism. Defaults to a page of 100, maximum 1000, and it sets the X-Total-Count and X-Next-Offset list-sizing headers from the matching /count (so X-Total-Count equals /resolve-person/:term/count and the two cannot drift). ROUTING GUIDANCE: if a narrow term yields nothing or is ambiguous, enumerate candidates here rather than dead-ending, then use /studies/faculty-sponsor or /studies/user with the chosen stored form. A whitespace-only term is rejected with a 400 bad_request. The candidates are read from the cache mirrors, so the result is complete only up to the study table's last sync (see /freshness); a never-synced cache returns an empty list together with a cache-never-synced signal and a synced cache with no match returns an empty list (not an error).",
+		QueryParams: searchPaginationParams(),
+	},
+	{
+		Method:      "CountResolvePerson",
+		Verb:        registryVerbGet,
+		Path:        "/resolve-person/:term/count",
+		PathParams:  []string{"term"},
+		Query:       []string{},
+		NewResult:   newResult[Count],
+		Summary:     "Count resolve-person candidates",
+		Description: "Returns the number of DISTINCT candidate people matching the term across BOTH person sources, the count counterpart of /resolve-person/:term (count == the length of that list when all rows are fetched, so X-Total-Count on the list equals this count and the two cannot drift). It counts, with no LIMIT, the distinct study_mirror faculty_sponsor values containing the term (faculty_sponsor is a free-text full name) plus the distinct study_users_mirror (name, login, email, role) tuples where the term is a case-insensitive substring of name, login OR email (study_users identifies a person by name AND login AND email). A whitespace-only term is rejected with a 400 bad_request. The count is read from the cache mirrors, so it is complete only up to the study table's last sync (see /freshness); a never-synced cache returns a cache-never-synced signal and a synced cache with no match returns 0 (not an error).",
+	},
+	{
 		Method:      "FindSamplesBySangerID",
 		Verb:        registryVerbGet,
 		Path:        "/find/sample/sanger-id/:id",
@@ -788,6 +855,31 @@ func fileTypeQueryParam() QueryParam {
 		Required:    false,
 		Description: "when set, restricts the result to data objects whose iRODS file name ends in `.<file_type>`, matched case-insensitively with a single leading dot stripped (e.g. `cram`, `.CRAM` and `CRAM` are equivalent); it is a filename-suffix filter, not a real file-type column, so a valid but unmatched suffix yields an empty result (not an error) and the matching /count honours the same filter; an empty/whitespace value or one containing '%', '_' or '/' is rejected with a 400 bad_request; omit to return all file types",
 	}
+}
+
+// roleQueryParam is the optional role filter QueryParam shared by the
+// /studies/user list and count endpoints: a comma-separated OVERRIDE of the
+// default study_users role set, matched exactly and case-insensitively. The
+// wording is surface-neutral so it reads correctly on both the list endpoint and
+// its /count counterpart. It is not a pagination control, so it is declared on the
+// count entry directly and appended to the list entry's pagination params by
+// searchPaginationWithRoleParams.
+func roleQueryParam() QueryParam {
+	return QueryParam{
+		Name:        "role",
+		Type:        "string",
+		Required:    false,
+		Description: "when set, a comma-separated list of study_users roles that OVERRIDES (replaces) the default set (owner, manager, data_access_contact), each matched exactly and case-insensitively (e.g. role=follower returns only follower rows, widening the result to followers; role=owner,manager returns owners and managers); omit to use the default role set",
+	}
+}
+
+// searchPaginationWithRoleParams are the QueryParams for the /studies/user list
+// endpoint: the search-style limit/offset pagination controls (default 100,
+// maximum 1000) plus the optional role override filter. The list shares its single
+// endpoint with the role-filtered variant (parameterised by role), so it documents
+// both the pagination and the filter controls.
+func searchPaginationWithRoleParams() []QueryParam {
+	return append(searchPaginationParams(), roleQueryParam())
 }
 
 // fetchAllPaginationWithAddedWindowParams are the QueryParams for the

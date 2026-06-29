@@ -65,6 +65,25 @@ const (
 	// return a non-trivial, deterministic set (two samples, ordered by
 	// id_sample_tmp) once the FTS5 sample_search index is rebuilt below.
 	paritySampleSearchTerm = "supplier"
+	// parityFacultySponsorTerm matches both seeded studies via their
+	// faculty_sponsor ("Faculty sponsor 7607"/"Faculty sponsor 7608", set by
+	// seedStudyMirrorRow), so StudiesForFacultySponsor/CountStudiesForFacultySponsor
+	// return a non-trivial, deterministic set (two PersonStudy rows, ordered by
+	// id_study_lims) across local and remote clients.
+	parityFacultySponsorTerm = "Faculty sponsor"
+	// parityUserPerson is a non-whitespace person for the StudiesForUser /
+	// CountStudiesForUser parity cases. The parity cache seeds no
+	// study_users_mirror rows, so both clients return the same empty list / zero
+	// count (synced cache, no match), giving a deterministic equal-result parity
+	// case bound to a valid (non-400) person.
+	parityUserPerson = "nobody"
+	// parityResolvePersonTerm is a non-whitespace term for the ResolvePerson /
+	// CountResolvePerson parity cases. It matches neither the seeded faculty_sponsor
+	// values ("Faculty sponsor 7607"/"7608") nor any study_users_mirror row (none are
+	// seeded), so both clients return the same empty candidate list / zero count
+	// (synced cache, no match), giving a deterministic equal-result parity case bound
+	// to a valid (non-400) term.
+	parityResolvePersonTerm = "nobody"
 )
 
 type parityQueryCase struct {
@@ -133,6 +152,24 @@ func parityQueryCases() []parityQueryCase {
 			return q.StudyManifest(ctx, parityStudyID, "", false, 100, 0)
 		}},
 		{name: "StudiesForSample", call: func(ctx context.Context, q Queryer) (any, error) { return q.StudiesForSample(ctx, paritySampleName) }},
+		{name: "StudiesForFacultySponsor", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.StudiesForFacultySponsor(ctx, parityFacultySponsorTerm, 100, 0)
+		}},
+		{name: "CountStudiesForFacultySponsor", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountStudiesForFacultySponsor(ctx, parityFacultySponsorTerm)
+		}},
+		{name: "StudiesForUser", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.StudiesForUser(ctx, parityUserPerson, "", 100, 0)
+		}},
+		{name: "CountStudiesForUser", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountStudiesForUser(ctx, parityUserPerson, "")
+		}},
+		{name: "ResolvePerson", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.ResolvePerson(ctx, parityResolvePersonTerm, 100, 0)
+		}},
+		{name: "CountResolvePerson", call: func(ctx context.Context, q Queryer) (any, error) {
+			return q.CountResolvePerson(ctx, parityResolvePersonTerm)
+		}},
 		{name: "FindSamplesBySangerID", call: func(ctx context.Context, q Queryer) (any, error) {
 			return q.FindSamplesBySangerID(ctx, paritySampleSangerID)
 		}},

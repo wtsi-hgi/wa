@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS study_mirror (
 	name                       TEXT    NOT NULL COLLATE NOCASE,
 	accession_number           TEXT    NOT NULL COLLATE NOCASE,
 	study_title                TEXT    NOT NULL,
-	faculty_sponsor            TEXT    NOT NULL,
+	faculty_sponsor            TEXT    NOT NULL COLLATE NOCASE,
 	state                      TEXT    NOT NULL,
 	data_release_strategy      TEXT    NOT NULL,
 	data_access_group          TEXT    NOT NULL,

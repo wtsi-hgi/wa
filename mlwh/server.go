@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -647,6 +648,82 @@ func mlwhEndpointHandler(queryer Queryer, method string) gin.HandlerFunc {
 			result, err := queryer.StudiesForSample(c.Request.Context(), id)
 			writeMLWHResult(c, result, err)
 		}
+	case "StudiesForFacultySponsor":
+		return func(c *gin.Context) {
+			name, ok := mlwhPeopleName(c, "name")
+			if !ok {
+				return
+			}
+			pagination, ok := mlwhSearchPaginationFromQuery(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.StudiesForFacultySponsor(ctx, name, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountStudiesForFacultySponsor(ctx, name))
+			})
+		}
+	case "CountStudiesForFacultySponsor":
+		return func(c *gin.Context) {
+			name, ok := mlwhPeopleName(c, "name")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudiesForFacultySponsor(c.Request.Context(), name)
+			writeMLWHResult(c, result, err)
+		}
+	case "StudiesForUser":
+		return func(c *gin.Context) {
+			person, ok := mlwhPeopleName(c, "person")
+			if !ok {
+				return
+			}
+			pagination, ok := mlwhSearchPaginationFromQuery(c)
+			if !ok {
+				return
+			}
+			role := c.Query("role")
+			ctx := c.Request.Context()
+			result, err := queryer.StudiesForUser(ctx, person, role, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountStudiesForUser(ctx, person, role))
+			})
+		}
+	case "CountStudiesForUser":
+		return func(c *gin.Context) {
+			person, ok := mlwhPeopleName(c, "person")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountStudiesForUser(c.Request.Context(), person, c.Query("role"))
+			writeMLWHResult(c, result, err)
+		}
+	case "ResolvePerson":
+		return func(c *gin.Context) {
+			term, ok := mlwhPeopleName(c, "term")
+			if !ok {
+				return
+			}
+			pagination, ok := mlwhSearchPaginationFromQuery(c)
+			if !ok {
+				return
+			}
+			ctx := c.Request.Context()
+			result, err := queryer.ResolvePerson(ctx, term, pagination.limit, pagination.offset)
+			writeMLWHPaginatedResult(c, result, err, pagination.offset, func() (int, error) {
+				return countValue(queryer.CountResolvePerson(ctx, term))
+			})
+		}
+	case "CountResolvePerson":
+		return func(c *gin.Context) {
+			term, ok := mlwhPeopleName(c, "term")
+			if !ok {
+				return
+			}
+			result, err := queryer.CountResolvePerson(c.Request.Context(), term)
+			writeMLWHResult(c, result, err)
+		}
 	case "FindSamplesBySangerID":
 		return func(c *gin.Context) {
 			id, ok := mlwhPathParam(c, "id")
@@ -1223,6 +1300,30 @@ func studyManifestTotal(ctx context.Context, queryer Queryer, studyLimsID string
 	}
 
 	return counter.countStudyManifestProducts(ctx, studyLimsID)
+}
+
+// mlwhPeopleName reads a people-endpoint path param (e.g. the faculty-sponsor
+// :name) and rejects a whitespace-only value with the bad_request 400 envelope
+// BEFORE the queryer is reached, reporting false, so an empty/whitespace term
+// never reaches the query layer. The raw (untrimmed) value is returned on
+// success: the people queries match the term as a case-insensitive substring, so
+// surrounding whitespace is matched literally rather than stripped, and only the
+// whitespace-only case is a 400. The Client method re-validates the same way
+// defensively (returning ErrUnsupportedIdentifier) so a direct caller is not
+// silently wrong.
+func mlwhPeopleName(c *gin.Context, name string) (string, bool) {
+	value, ok := mlwhPathParam(c, name)
+	if !ok {
+		return "", false
+	}
+
+	if strings.TrimSpace(value) == "" {
+		writeMLWHBadRequest(c, "invalid "+name+": must not be empty or whitespace")
+
+		return "", false
+	}
+
+	return value, true
 }
 
 func mlwhKindAndID(c *gin.Context) (IdentifierKind, string, bool) {

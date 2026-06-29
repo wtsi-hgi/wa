@@ -207,6 +207,30 @@ func (q *serverFakeQueryer) StudiesForSample(_ context.Context, _ string) ([]Stu
 	panic("unexpected StudiesForSample call")
 }
 
+func (q *serverFakeQueryer) StudiesForFacultySponsor(_ context.Context, _ string, _ int, _ int) ([]PersonStudy, error) {
+	panic("unexpected StudiesForFacultySponsor call")
+}
+
+func (q *serverFakeQueryer) CountStudiesForFacultySponsor(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountStudiesForFacultySponsor call")
+}
+
+func (q *serverFakeQueryer) StudiesForUser(_ context.Context, _, _ string, _ int, _ int) ([]PersonStudy, error) {
+	panic("unexpected StudiesForUser call")
+}
+
+func (q *serverFakeQueryer) CountStudiesForUser(_ context.Context, _, _ string) (Count, error) {
+	panic("unexpected CountStudiesForUser call")
+}
+
+func (q *serverFakeQueryer) ResolvePerson(_ context.Context, _ string, _ int, _ int) ([]PersonCandidate, error) {
+	panic("unexpected ResolvePerson call")
+}
+
+func (q *serverFakeQueryer) CountResolvePerson(_ context.Context, _ string) (Count, error) {
+	panic("unexpected CountResolvePerson call")
+}
+
 func (q *serverFakeQueryer) FindSamplesBySangerID(_ context.Context, _ string) ([]Sample, error) {
 	panic("unexpected FindSamplesBySangerID call")
 }

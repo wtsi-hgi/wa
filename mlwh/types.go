@@ -90,6 +90,29 @@ type Study struct {
 	DataReleaseTiming        string `json:"data_release_timing" doc:"timing of data release for the study"`
 }
 
+// PersonStudy is one studies-by-person result row: the study plus the matched
+// role (D4). Role is empty for the faculty-sponsor endpoint (sponsor is not a
+// study_users role) and is the study_users role for the user endpoint.
+type PersonStudy struct {
+	Study Study  `json:"study" doc:"the study the person is associated with"`
+	Role  string `json:"role,omitempty" doc:"study_users role matched (empty for the faculty-sponsor endpoint)"`
+}
+
+// PersonCandidate is one distinct candidate person from the resolve-person
+// directory (D4): a canonical stored form plus how many studies it covers, so a
+// caller can disambiguate a partial/spoken name before running a studies query.
+// Source is "faculty_sponsor" (Name carries the free-text sponsor; Login/Email
+// empty) or "study_users" (Name/Login/Email/Role carry the stored study_users
+// identity).
+type PersonCandidate struct {
+	Source     string `json:"source" doc:"faculty_sponsor or study_users"`
+	Name       string `json:"name" doc:"canonical stored full name"`
+	Login      string `json:"login,omitempty" doc:"Sanger username (study_users only)"`
+	Email      string `json:"email,omitempty" doc:"email (study_users only)"`
+	Role       string `json:"role,omitempty" doc:"study_users role (study_users only)"`
+	StudyCount int    `json:"study_count" doc:"distinct studies for this candidate"`
+}
+
 // Lane identifies a run/lane/tag combination linked to a sample.
 type Lane struct {
 	IDRun    int `json:"id_run" doc:"sequencing run identifier"`
