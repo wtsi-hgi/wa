@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/wa/mlwh"
@@ -73,6 +74,15 @@ type mlwhInfoClient interface {
 	SamplesForStudy(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 	SamplesForRun(ctx context.Context, idRun string, limit, offset int) ([]mlwh.Sample, error)
 	SamplesForLibrary(ctx context.Context, pipelineIDLims, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
+
+	StudyOverview(ctx context.Context, studyLimsID string) (mlwh.StudyOverview, error)
+	StatusBreakdown(ctx context.Context, studyLimsID string) (mlwh.StatusBreakdown, error)
+	CountSamplesWithData(ctx context.Context, studyLimsID string) (mlwh.Count, error)
+	CountSamplesWithDataSince(ctx context.Context, studyLimsID, since, until string) (mlwh.Count, error)
+	SamplesWithoutData(ctx context.Context, studyLimsID string, limit, offset int) ([]mlwh.SampleWithData, error)
+	SampleProgress(ctx context.Context, sangerName string) (mlwh.SampleProgress, error)
+	RunOverview(ctx context.Context, idRun string) (mlwh.RunOverview, error)
+	RunStatus(ctx context.Context, idRun string) (mlwh.RunStatusTimeline, error)
 
 	Close() error
 }
@@ -166,13 +176,13 @@ type mlwhInfoSampleNameResolver interface {
 // the caller is in local operator upstream-DSN mode (the only mode where
 // 'wa mlwh sync' works); when false the failed-query messages omit any sync hint,
 // because an end-user going via the server or a cache-only path cannot sync.
-func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag string, jsonOut, canSync bool) error {
+func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, identifier, typeFlag, since string, jsonOut, canSync bool) error {
 	match, err := classifyForInfo(ctx, client, identifier, typeFlag)
 	if err != nil {
 		return infoQueryError(identifier, err, canSync)
 	}
 
-	report := buildInfoReport(ctx, client, identifier, match)
+	report := buildInfoReport(ctx, client, identifier, since, match)
 
 	if jsonOut {
 		return writeInfoReportJSON(out, report)
@@ -183,7 +193,7 @@ func runMLWHInfo(ctx context.Context, client mlwhInfoClient, out io.Writer, iden
 	return nil
 }
 
-func buildInfoReport(ctx context.Context, client mlwhInfoClient, identifier string, match mlwh.Match) infoReport {
+func buildInfoReport(ctx context.Context, client mlwhInfoClient, identifier, since string, match mlwh.Match) infoReport {
 	report := infoReport{
 		Identifier: identifier,
 		Kind:       string(match.Kind),
@@ -197,14 +207,18 @@ func buildInfoReport(ctx context.Context, client mlwhInfoClient, identifier stri
 	switch {
 	case match.Sample != nil:
 		populateSampleInfo(ctx, client, &report, match.Sample)
+		populateSampleProgress(ctx, client, &report, match.Sample.Name)
 	case match.Study != nil:
 		populateStudyInfo(ctx, client, &report, match.Study.IDStudyLims)
+		populateStudyFeatures(ctx, client, &report, match.Study.IDStudyLims, since)
 	case match.Run != nil:
-		if samples, err := client.SamplesForRun(ctx, fmt.Sprintf("%d", match.Run.IDRun), infoMaxRelated, 0); err == nil {
+		runID := fmt.Sprintf("%d", match.Run.IDRun)
+		if samples, err := client.SamplesForRun(ctx, runID, infoMaxRelated, 0); err == nil {
 			report.Samples = samples
 		} else {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("samples for run: %v", err))
 		}
+		populateRunFeatures(ctx, client, &report, runID)
 	case match.Library != nil:
 		// Library Match has no parent study; samples can be listed once a
 		// study LIMS id is known. Skip eager expansion to avoid surprising
@@ -237,15 +251,22 @@ func writeInfoReportText(out io.Writer, report infoReport) {
 	if report.Sample != nil {
 		writeSampleSection(out, report.Sample)
 	}
+	writeSampleProgressSection(out, report.SampleProgress)
 
 	if report.Study != nil {
 		writeStudySection(out, report.Study)
 	}
 	writeStudiesSection(out, report.Studies)
+	writeStudyOverviewSection(out, report.StudyOverview)
+	writeStatusBreakdownSection(out, report.StatusBreakdown)
+	writeSamplesWithDataCountSection(out, report.SamplesWithDataCount)
+	writeSamplesWithoutDataCountSection(out, report.SamplesWithoutDataCount)
 
 	if report.Run != nil {
 		_, _ = fmt.Fprintf(out, "\nRun:\n  id_run: %d\n", report.Run.IDRun)
 	}
+	writeRunOverviewSection(out, report.RunOverview)
+	writeRunStatusSection(out, report.RunStatus)
 
 	if report.Library != nil {
 		_, _ = fmt.Fprintf(out, "\nLibrary:\n  pipeline_id_lims: %s\n",
@@ -308,6 +329,141 @@ func writeStudySection(out io.Writer, study *mlwh.Study) {
 	writeKV(out, "  study_title", study.StudyTitle)
 	writeKV(out, "  faculty_sponsor", study.FacultySponsor)
 	writeKV(out, "  programme", study.Programme)
+}
+
+func writeStudyOverviewSection(out io.Writer, overview *mlwh.StudyOverview) {
+	if overview == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nStudy overview:\n")
+	_, _ = fmt.Fprintf(out, "  samples_total: %d\n", overview.SamplesTotal)
+	_, _ = fmt.Fprintf(out, "  samples_with_data: %d\n", overview.SamplesWithData)
+	_, _ = fmt.Fprintf(out, "  samples_without_data: %d\n", overview.SamplesWithoutData)
+	_, _ = fmt.Fprintf(out, "  samples_sequenced_no_data: %d\n", overview.SamplesSequencedNoData)
+	_, _ = fmt.Fprintf(out, "  data_objects: %d\n", overview.DataObjects)
+	_, _ = fmt.Fprintf(out, "  runs: %d\n", overview.Runs)
+	_, _ = fmt.Fprintf(out, "  libraries: %d\n", overview.Libraries)
+	if len(overview.LibraryTypes) > 0 {
+		_, _ = fmt.Fprintf(out, "  library_types: %s\n", strings.Join(overview.LibraryTypes, ", "))
+	}
+	writeKV(out, "  newest_data_added", overview.NewestDataAdded)
+	_, _ = fmt.Fprintf(out, "  added_last_7_days: %d\n", overview.AddedLast7Days)
+	writeKV(out, "  cache_synced_at", overview.CacheSyncedAt)
+}
+
+func writeStatusBreakdownSection(out io.Writer, breakdown *mlwh.StatusBreakdown) {
+	if breakdown == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nStatus breakdown:\n")
+	_, _ = fmt.Fprintf(out, "  distinct: with_data: %d sequenced_no_data: %d registered: %d\n",
+		breakdown.Distinct.WithData, breakdown.Distinct.SequencedNoData, breakdown.Distinct.Registered)
+	for _, platform := range breakdown.PerPlatform {
+		_, _ = fmt.Fprintf(out, "  %s: with_data: %d sequenced_no_data: %d registered: %d\n",
+			platform.Platform, platform.Ladder.WithData, platform.Ladder.SequencedNoData, platform.Ladder.Registered)
+	}
+	_, _ = fmt.Fprintf(out, "  with_detailed_timeline: %d\n", breakdown.WithDetailedTimeline)
+	writeKV(out, "  cache_synced_at", breakdown.CacheSyncedAt)
+}
+
+func writeSamplesWithDataCountSection(out io.Writer, count *infoSamplesWithDataCount) {
+	if count == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nSamples with data:\n")
+	_, _ = fmt.Fprintf(out, "  all_time: %d\n", count.AllTime)
+	_, _ = fmt.Fprintf(out, "  added_since %s: %d\n", count.Since, count.AddedSince)
+}
+
+func writeSamplesWithoutDataCountSection(out io.Writer, count *infoCount) {
+	if count == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nSamples without data:\n")
+	_, _ = fmt.Fprintf(out, "  count: %d\n", count.Count)
+}
+
+func writeSampleProgressSection(out io.Writer, progress *mlwh.SampleProgress) {
+	if progress == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nSample progress:\n")
+	if len(progress.Platforms) > 0 {
+		_, _ = fmt.Fprintf(out, "  platforms: %s\n", strings.Join(progress.Platforms, ", "))
+	}
+	writeKV(out, "  baseline_phase", progress.BaselinePhase)
+	writeKV(out, "  qc", progress.QC)
+	writeKV(out, "  delivered_at", progress.DeliveredAt)
+	_, _ = fmt.Fprintf(out, "  detailed_timeline: %t\n", progress.DetailedTimeline)
+	writeKV(out, "  timeline_reason", progress.TimelineReason)
+	writeKV(out, "  current_milestone", progress.CurrentMilestone)
+	writeProgressMilestones(out, progress.Milestones)
+	writeProgressRuns(out, progress.Runs)
+	writeKV(out, "  cache_synced_at", progress.CacheSyncedAt)
+}
+
+func writeProgressMilestones(out io.Writer, milestones []mlwh.Milestone) {
+	if len(milestones) == 0 {
+		_, _ = fmt.Fprintf(out, "  milestones: none\n")
+
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "  milestones (%d):\n", len(milestones))
+	for _, milestone := range milestones {
+		_, _ = fmt.Fprintf(out, "    %s reached_at=%s\n", milestone.Name, milestone.ReachedAt)
+	}
+}
+
+func writeProgressRuns(out io.Writer, runs []mlwh.RunStatusTimeline) {
+	if len(runs) == 0 {
+		_, _ = fmt.Fprintf(out, "  runs: none\n")
+
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "  runs (%d):\n", len(runs))
+	for _, run := range runs {
+		_, _ = fmt.Fprintf(out, "    id_run=%d platform=%s current=%s\n", run.IDRun, run.Platform, run.Current)
+	}
+}
+
+func writeRunOverviewSection(out io.Writer, overview *mlwh.RunOverview) {
+	if overview == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nRun overview:\n")
+	_, _ = fmt.Fprintf(out, "  samples: %d\n", overview.Samples)
+	_, _ = fmt.Fprintf(out, "  studies: %d\n", overview.Studies)
+	_, _ = fmt.Fprintf(out, "  data_objects: %d\n", overview.DataObjects)
+	writeKV(out, "  cache_synced_at", overview.CacheSyncedAt)
+}
+
+func writeRunStatusSection(out io.Writer, status *mlwh.RunStatusTimeline) {
+	if status == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "\nRun status:\n")
+	writeKV(out, "  platform", status.Platform)
+	writeKV(out, "  current", status.Current)
+	writeKV(out, "  not_tracked", status.NotTracked)
+	if len(status.Events) == 0 {
+		_, _ = fmt.Fprintf(out, "  events: none\n")
+
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "  events (%d):\n", len(status.Events))
+	for _, event := range status.Events {
+		_, _ = fmt.Fprintf(out, "    %s entered_at=%s\n", event.Phase, event.EnteredAt)
+	}
 }
 
 func writeStudiesSection(out io.Writer, studies []mlwh.Study) {
@@ -555,6 +711,106 @@ func populateStudyInfo(ctx context.Context, client mlwhInfoClient, report *infoR
 	}
 }
 
+// resolveInfoSince turns the raw --since flag into the RFC3339 timestamp the API
+// expects. An empty value defaults to now-7d (matching the overview's
+// added_last_7_days window). A value is accepted either as an RFC3339 timestamp
+// (passed through verbatim) or as a Go duration (e.g. 168h), interpreted as
+// now-duration.
+func resolveInfoSince(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Now().Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339), nil
+	}
+
+	if parsed, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		return parsed.Format(time.RFC3339), nil
+	}
+
+	if duration, err := time.ParseDuration(trimmed); err == nil {
+		return time.Now().Add(-duration).UTC().Format(time.RFC3339), nil
+	}
+
+	return "", fmt.Errorf("invalid --since %q: expected an RFC3339 timestamp or a Go duration (e.g. 168h)", raw)
+}
+
+// populateStudyFeatures fetches and records the new study feature endpoints
+// (overview, status breakdown, samples-with-data all-time + since counts, and
+// samples-without-data count). Each sub-endpoint degrades gracefully: a failure
+// is captured as a per-section warning and does not abort the others.
+func populateStudyFeatures(ctx context.Context, client mlwhInfoClient, report *infoReport, studyLimsID, since string) {
+	if overview, err := client.StudyOverview(ctx, studyLimsID); err == nil {
+		report.StudyOverview = &overview
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("study overview: %v", err))
+	}
+
+	if breakdown, err := client.StatusBreakdown(ctx, studyLimsID); err == nil {
+		report.StatusBreakdown = &breakdown
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("status breakdown: %v", err))
+	}
+
+	report.SamplesWithDataCount = studySamplesWithDataCount(ctx, client, report, studyLimsID, since)
+
+	if rows, err := client.SamplesWithoutData(ctx, studyLimsID, infoMaxRelated, 0); err == nil {
+		report.SamplesWithoutDataCount = &infoCount{Count: len(rows)}
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("samples without data: %v", err))
+	}
+}
+
+func studySamplesWithDataCount(ctx context.Context, client mlwhInfoClient, report *infoReport, studyLimsID, since string) *infoSamplesWithDataCount {
+	count := &infoSamplesWithDataCount{Since: since}
+
+	if allTime, err := client.CountSamplesWithData(ctx, studyLimsID); err == nil {
+		count.AllTime = allTime.Count
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("samples with data count: %v", err))
+	}
+
+	if recent, err := client.CountSamplesWithDataSince(ctx, studyLimsID, since, ""); err == nil {
+		count.AddedSince = recent.Count
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("samples with data since: %v", err))
+	}
+
+	return count
+}
+
+// populateSampleProgress fetches GET /sample/:id/progress for the resolved
+// sample, degrading gracefully when the endpoint is absent.
+func populateSampleProgress(ctx context.Context, client mlwhInfoClient, report *infoReport, sangerName string) {
+	if progress, err := client.SampleProgress(ctx, sangerName); err == nil {
+		report.SampleProgress = &progress
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("sample progress: %v", err))
+	}
+}
+
+// populateRunFeatures fetches GET /run/:id/overview and GET /run/:id/status for
+// the resolved run, degrading gracefully when a sub-endpoint is absent (e.g. a
+// non-Illumina run has no NPG run-status).
+func populateRunFeatures(ctx context.Context, client mlwhInfoClient, report *infoReport, idRun string) {
+	if overview, err := client.RunOverview(ctx, idRun); err == nil {
+		report.RunOverview = &overview
+	} else if !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("run overview: %v", err))
+	}
+
+	// A run with no within-sequencing status (e.g. a non-Illumina run with no
+	// NPG run-status) reports not-found; render the section cleanly with an
+	// empty timeline ("none") rather than omitting it, mirroring the API's own
+	// not-tracked semantics.
+	status, err := client.RunStatus(ctx, idRun)
+	if err != nil && !errors.Is(err, mlwh.ErrNotFound) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("run status: %v", err))
+
+		return
+	}
+
+	report.RunStatus = &status
+}
+
 // infoReport is the JSON-friendly shape of `wa mlwh info` results.
 type infoReport struct {
 	Identifier string           `json:"identifier"`
@@ -570,13 +826,37 @@ type infoReport struct {
 	Runs       []mlwh.Run       `json:"runs,omitempty"`
 	Samples    []mlwh.Sample    `json:"samples,omitempty"`
 	IRODSPaths []mlwh.IRODSPath `json:"irods_paths,omitempty"`
-	Warnings   []string         `json:"warnings,omitempty"`
+
+	StudyOverview           *mlwh.StudyOverview       `json:"study_overview,omitempty"`
+	StatusBreakdown         *mlwh.StatusBreakdown     `json:"status_breakdown,omitempty"`
+	SamplesWithDataCount    *infoSamplesWithDataCount `json:"samples_with_data_count,omitempty"`
+	SamplesWithoutDataCount *infoCount                `json:"samples_without_data_count,omitempty"`
+	SampleProgress          *mlwh.SampleProgress      `json:"sample_progress,omitempty"`
+	RunOverview             *mlwh.RunOverview         `json:"run_overview,omitempty"`
+	RunStatus               *mlwh.RunStatusTimeline   `json:"run_status,omitempty"`
+
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// infoSamplesWithDataCount carries a study's all-time samples-with-data count
+// alongside the recency count (samples whose data was added since the resolved
+// --since timestamp).
+type infoSamplesWithDataCount struct {
+	AllTime    int    `json:"all_time"`
+	AddedSince int    `json:"added_since"`
+	Since      string `json:"since"`
+}
+
+// infoCount is a simple count envelope used where only a single figure is shown.
+type infoCount struct {
+	Count int `json:"count"`
 }
 
 func newMLWHInfoCommand() *cobra.Command {
 	var (
 		serverURL string
 		typeFlag  string
+		sinceFlag string
 		jsonOut   bool
 	)
 
@@ -595,6 +875,14 @@ func newMLWHInfoCommand() *cobra.Command {
 			"the command auto-detects the identifier type; pass --type to force",
 			"a specific resolver. Pass --json for a single JSON object suitable",
 			"for piping into jq.",
+			"",
+			"For a study, the report also includes the overview, status",
+			"breakdown, samples-with-data counts and samples-without-data count.",
+			"Use --since to set the start of the samples-with-data recency window",
+			"(an RFC3339 timestamp or a Go duration such as 168h); it defaults to",
+			"now-7d, matching the overview's added_last_7_days. A sample report",
+			"adds its progress timeline and a run report adds the run overview",
+			"and within-sequencing status.",
 			"",
 			"Normal CLI users should point this command at the MLWH query",
 			"server with --server or WA_MLWH_SERVER_URL; database and cache",
@@ -641,6 +929,11 @@ func newMLWHInfoCommand() *cobra.Command {
 				return errors.New("usage: wa mlwh info <identifier>")
 			}
 
+			since, err := resolveInfoSince(sinceFlag)
+			if err != nil {
+				return err
+			}
+
 			client, err := openMLWHInfoConfiguredClient(cmd.Context(), serverURL)
 			if err != nil {
 				return fmt.Errorf("open mlwh client: %w", err)
@@ -653,12 +946,13 @@ func newMLWHInfoCommand() *cobra.Command {
 			// mention sync.
 			canSync := strings.TrimSpace(serverURL) == "" && strings.TrimSpace(firstEnv("WA_MLWH_DSN")) != ""
 
-			return runMLWHInfo(cmd.Context(), client, cmd.OutOrStdout(), identifier, typeFlag, jsonOut, canSync)
+			return runMLWHInfo(cmd.Context(), client, cmd.OutOrStdout(), identifier, typeFlag, since, jsonOut, canSync)
 		},
 	}
 
 	command.Flags().StringVar(&serverURL, "server", defaultMLWHInfoServerURL(), "MLWH server base URL (defaults to WA_MLWH_SERVER_URL, WA_MLWH_BACKEND_URL, or active WA_*_SEQMETA_PORT)")
 	command.Flags().StringVar(&typeFlag, "type", "", "force identifier type (sample|study|run|library); default is auto-detect")
+	command.Flags().StringVar(&sinceFlag, "since", "", "for a study, the start of the samples-with-data recency window: an RFC3339 timestamp or a Go duration (e.g. 168h); defaults to now-7d")
 	command.Flags().BoolVar(&jsonOut, "json", false, "emit a single JSON object instead of human-readable text")
 
 	return command

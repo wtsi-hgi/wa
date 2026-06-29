@@ -33,6 +33,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/mlwh"
@@ -91,7 +92,80 @@ type stubMLWHInfoClient struct {
 	samplesForRun       func(ctx context.Context, id string, limit, offset int) ([]mlwh.Sample, error)
 	samplesForLibrary   func(ctx context.Context, pipelineID, studyLimsID string, limit, offset int) ([]mlwh.Sample, error)
 
+	studyOverview          func(ctx context.Context, id string) (mlwh.StudyOverview, error)
+	statusBreakdown        func(ctx context.Context, id string) (mlwh.StatusBreakdown, error)
+	countSamplesWithData   func(ctx context.Context, id string) (mlwh.Count, error)
+	countSamplesWithDataAt func(ctx context.Context, id, since, until string) (mlwh.Count, error)
+	samplesWithoutData     func(ctx context.Context, id string, limit, offset int) ([]mlwh.SampleWithData, error)
+	sampleProgress         func(ctx context.Context, name string) (mlwh.SampleProgress, error)
+	runOverview            func(ctx context.Context, idRun string) (mlwh.RunOverview, error)
+	runStatus              func(ctx context.Context, idRun string) (mlwh.RunStatusTimeline, error)
+
 	closed bool
+}
+
+func (s *stubMLWHInfoClient) StudyOverview(ctx context.Context, id string) (mlwh.StudyOverview, error) {
+	if s.studyOverview != nil {
+		return s.studyOverview(ctx, id)
+	}
+
+	return mlwh.StudyOverview{IDStudyLims: id}, nil
+}
+
+func (s *stubMLWHInfoClient) StatusBreakdown(ctx context.Context, id string) (mlwh.StatusBreakdown, error) {
+	if s.statusBreakdown != nil {
+		return s.statusBreakdown(ctx, id)
+	}
+
+	return mlwh.StatusBreakdown{IDStudyLims: id}, nil
+}
+
+func (s *stubMLWHInfoClient) CountSamplesWithData(ctx context.Context, id string) (mlwh.Count, error) {
+	if s.countSamplesWithData != nil {
+		return s.countSamplesWithData(ctx, id)
+	}
+
+	return mlwh.Count{}, nil
+}
+
+func (s *stubMLWHInfoClient) CountSamplesWithDataSince(ctx context.Context, id, since, until string) (mlwh.Count, error) {
+	if s.countSamplesWithDataAt != nil {
+		return s.countSamplesWithDataAt(ctx, id, since, until)
+	}
+
+	return mlwh.Count{}, nil
+}
+
+func (s *stubMLWHInfoClient) SamplesWithoutData(ctx context.Context, id string, limit, offset int) ([]mlwh.SampleWithData, error) {
+	if s.samplesWithoutData != nil {
+		return s.samplesWithoutData(ctx, id, limit, offset)
+	}
+
+	return nil, nil
+}
+
+func (s *stubMLWHInfoClient) SampleProgress(ctx context.Context, name string) (mlwh.SampleProgress, error) {
+	if s.sampleProgress != nil {
+		return s.sampleProgress(ctx, name)
+	}
+
+	return mlwh.SampleProgress{}, nil
+}
+
+func (s *stubMLWHInfoClient) RunOverview(ctx context.Context, idRun string) (mlwh.RunOverview, error) {
+	if s.runOverview != nil {
+		return s.runOverview(ctx, idRun)
+	}
+
+	return mlwh.RunOverview{}, nil
+}
+
+func (s *stubMLWHInfoClient) RunStatus(ctx context.Context, idRun string) (mlwh.RunStatusTimeline, error) {
+	if s.runStatus != nil {
+		return s.runStatus(ctx, idRun)
+	}
+
+	return mlwh.RunStatusTimeline{}, nil
 }
 
 func (s *stubMLWHInfoClient) ResolveSampleName(ctx context.Context, raw string) (mlwh.Match, error) {
@@ -667,6 +741,384 @@ func withServerModeMLWHInfoClient(t *testing.T, stub *stubMLWHInfoClient) {
 	openMLWHInfoRemoteClient = func(context.Context, mlwh.RemoteConfig) (mlwhInfoClient, error) {
 		return stub, nil
 	}
+}
+
+func newStudyInfoStub() *stubMLWHInfoClient {
+	return &stubMLWHInfoClient{
+		resolveStudy: func(_ context.Context, raw string) (mlwh.Match, error) {
+			return mlwh.Match{
+				Kind:      mlwh.KindStudyLimsID,
+				Canonical: raw,
+				Study:     &mlwh.Study{IDStudyLims: raw, Name: "Lung cancer GWAS"},
+			}, nil
+		},
+		studyOverview: func(_ context.Context, id string) (mlwh.StudyOverview, error) {
+			return mlwh.StudyOverview{
+				IDStudyLims:     id,
+				SamplesTotal:    100,
+				SamplesWithData: 80,
+				DataObjects:     1234,
+				Runs:            5,
+				Libraries:       12,
+				AddedLast7Days:  3,
+				NewestDataAdded: "2026-06-20T00:00:00Z",
+				CacheSyncedAt:   "2026-06-27T00:00:00Z",
+			}, nil
+		},
+		statusBreakdown: func(_ context.Context, id string) (mlwh.StatusBreakdown, error) {
+			return mlwh.StatusBreakdown{
+				IDStudyLims: id,
+				Distinct:    mlwh.PhaseLadder{WithData: 80, SequencedNoData: 5, Registered: 15},
+				PerPlatform: []mlwh.PlatformPhaseLadder{
+					{Platform: "Illumina", Ladder: mlwh.PhaseLadder{WithData: 80}},
+				},
+				WithDetailedTimeline: 40,
+			}, nil
+		},
+		countSamplesWithData: func(_ context.Context, _ string) (mlwh.Count, error) {
+			return mlwh.Count{Count: 80}, nil
+		},
+		countSamplesWithDataAt: func(_ context.Context, _, _, _ string) (mlwh.Count, error) {
+			return mlwh.Count{Count: 3}, nil
+		},
+		samplesWithoutData: func(_ context.Context, _ string, _, _ int) ([]mlwh.SampleWithData, error) {
+			return []mlwh.SampleWithData{
+				{Sample: mlwh.Sample{Name: "S1"}},
+				{Sample: mlwh.Sample{Name: "S2"}},
+			}, nil
+		},
+	}
+}
+
+func TestMLWHInfoStudyFeatureSections(t *testing.T) {
+	convey.Convey("Given a study identifier, when wa mlwh info runs, then the new feature sections render in text and JSON", t, func() {
+		convey.Convey("text output carries overview, status breakdown, data counts and without-data count", func() {
+			withStubMLWHInfoClient(t, newStudyInfoStub())
+
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(output, convey.ShouldContainSubstring, "Study overview:")
+			convey.So(output, convey.ShouldContainSubstring, "samples_total: 100")
+			convey.So(output, convey.ShouldContainSubstring, "added_last_7_days: 3")
+			convey.So(output, convey.ShouldContainSubstring, "Status breakdown:")
+			convey.So(output, convey.ShouldContainSubstring, "with_data: 80")
+			convey.So(output, convey.ShouldContainSubstring, "Illumina")
+			convey.So(output, convey.ShouldContainSubstring, "Samples with data:")
+			convey.So(output, convey.ShouldContainSubstring, "all_time: 80")
+			convey.So(output, convey.ShouldContainSubstring, "added_since")
+			convey.So(output, convey.ShouldContainSubstring, "Samples without data:")
+			convey.So(output, convey.ShouldContainSubstring, "count: 2")
+		})
+
+		convey.Convey("json output carries the structured feature data", func() {
+			withStubMLWHInfoClient(t, newStudyInfoStub())
+
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--json"})
+
+			convey.So(err, convey.ShouldBeNil)
+
+			decoded := map[string]any{}
+			convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+
+			overview := decoded["study_overview"].(map[string]any)
+			convey.So(overview["samples_total"], convey.ShouldEqual, 100)
+
+			breakdown := decoded["status_breakdown"].(map[string]any)
+			distinct := breakdown["distinct"].(map[string]any)
+			convey.So(distinct["with_data"], convey.ShouldEqual, 80)
+
+			withData := decoded["samples_with_data_count"].(map[string]any)
+			convey.So(withData["all_time"], convey.ShouldEqual, 80)
+			convey.So(withData["added_since"], convey.ShouldEqual, 3)
+			convey.So(withData["since"], convey.ShouldNotEqual, "")
+
+			withoutData := decoded["samples_without_data_count"].(map[string]any)
+			convey.So(withoutData["count"], convey.ShouldEqual, 2)
+		})
+	})
+}
+
+func TestMLWHInfoStudySinceDefaultsToSevenDaysAgo(t *testing.T) {
+	convey.Convey("Given no --since, when wa mlwh info runs for a study, then the recency count uses ~now-7d", t, func() {
+		var capturedSince string
+		stub := newStudyInfoStub()
+		stub.countSamplesWithDataAt = func(_ context.Context, _, since, _ string) (mlwh.Count, error) {
+			capturedSince = since
+
+			return mlwh.Count{Count: 3}, nil
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		_, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
+
+		convey.So(err, convey.ShouldBeNil)
+
+		parsed, parseErr := time.Parse(time.RFC3339, capturedSince)
+		convey.So(parseErr, convey.ShouldBeNil)
+
+		want := time.Now().Add(-7 * 24 * time.Hour)
+		convey.So(parsed.Sub(want) < time.Minute && want.Sub(parsed) < time.Minute, convey.ShouldBeTrue)
+	})
+}
+
+func TestMLWHInfoStudySinceOverride(t *testing.T) {
+	convey.Convey("Given an explicit --since, when wa mlwh info runs for a study, then it overrides the default", t, func() {
+		convey.Convey("an RFC3339 value is passed through verbatim", func() {
+			var capturedSince string
+			stub := newStudyInfoStub()
+			stub.countSamplesWithDataAt = func(_ context.Context, _, since, _ string) (mlwh.Count, error) {
+				capturedSince = since
+
+				return mlwh.Count{Count: 7}, nil
+			}
+
+			withStubMLWHInfoClient(t, stub)
+
+			_, err := executeRootCommandForTest(t,
+				[]string{"mlwh", "info", "5901", "--since", "2026-01-02T03:04:05Z"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(capturedSince, convey.ShouldEqual, "2026-01-02T03:04:05Z")
+		})
+
+		convey.Convey("a Go duration is converted to an RFC3339 timestamp ~now-duration", func() {
+			var capturedSince string
+			stub := newStudyInfoStub()
+			stub.countSamplesWithDataAt = func(_ context.Context, _, since, _ string) (mlwh.Count, error) {
+				capturedSince = since
+
+				return mlwh.Count{Count: 7}, nil
+			}
+
+			withStubMLWHInfoClient(t, stub)
+
+			_, err := executeRootCommandForTest(t,
+				[]string{"mlwh", "info", "5901", "--since", "168h"})
+
+			convey.So(err, convey.ShouldBeNil)
+
+			parsed, parseErr := time.Parse(time.RFC3339, capturedSince)
+			convey.So(parseErr, convey.ShouldBeNil)
+
+			want := time.Now().Add(-168 * time.Hour)
+			convey.So(parsed.Sub(want) < time.Minute && want.Sub(parsed) < time.Minute, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestMLWHInfoStudyFeatureGracefulDegradation(t *testing.T) {
+	convey.Convey("Given a study sub-endpoint errors, when wa mlwh info runs, then the command still succeeds and other sections render", t, func() {
+		stub := newStudyInfoStub()
+		stub.studyOverview = func(_ context.Context, _ string) (mlwh.StudyOverview, error) {
+			return mlwh.StudyOverview{}, errors.New("overview boom")
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Status breakdown:")
+		convey.So(output, convey.ShouldContainSubstring, "overview boom")
+	})
+}
+
+func TestMLWHInfoSampleProgressSection(t *testing.T) {
+	convey.Convey("Given a sample identifier, when wa mlwh info runs, then the sample progress section renders in text and JSON", t, func() {
+		newStub := func() *stubMLWHInfoClient {
+			return &stubMLWHInfoClient{
+				classify: func(_ context.Context, raw string) (mlwh.Match, error) {
+					return mlwh.Match{
+						Kind:      mlwh.KindSangerSampleName,
+						Canonical: raw,
+						Sample:    &mlwh.Sample{Name: raw, IDSampleLims: "8675309"},
+					}, nil
+				},
+				sampleProgress: func(_ context.Context, name string) (mlwh.SampleProgress, error) {
+					return mlwh.SampleProgress{
+						Sample:           mlwh.Sample{Name: name},
+						Platforms:        []string{"Illumina"},
+						BaselinePhase:    "delivered",
+						QC:               "pass",
+						DeliveredAt:      "2026-05-01T00:00:00Z",
+						DetailedTimeline: true,
+						Milestones: []mlwh.Milestone{
+							{Name: "sequencing_done", ReachedAt: "2026-04-01T00:00:00Z"},
+						},
+						CurrentMilestone: "sequencing_done",
+						Runs: []mlwh.RunStatusTimeline{
+							{IDRun: 49001, Platform: "Illumina", Current: "qc complete"},
+						},
+						CacheSyncedAt: "2026-06-27T00:00:00Z",
+					}, nil
+				},
+			}
+		}
+
+		convey.Convey("text output carries the progress section", func() {
+			withStubMLWHInfoClient(t, newStub())
+
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "DN1234"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(output, convey.ShouldContainSubstring, "Sample progress:")
+			convey.So(output, convey.ShouldContainSubstring, "baseline_phase: delivered")
+			convey.So(output, convey.ShouldContainSubstring, "qc: pass")
+			convey.So(output, convey.ShouldContainSubstring, "sequencing_done")
+			convey.So(output, convey.ShouldContainSubstring, "qc complete")
+		})
+
+		convey.Convey("json output carries the structured progress data", func() {
+			withStubMLWHInfoClient(t, newStub())
+
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "DN1234", "--json"})
+
+			convey.So(err, convey.ShouldBeNil)
+
+			decoded := map[string]any{}
+			convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+			progress := decoded["sample_progress"].(map[string]any)
+			convey.So(progress["baseline_phase"], convey.ShouldEqual, "delivered")
+			convey.So(progress["qc"], convey.ShouldEqual, "pass")
+		})
+	})
+}
+
+func TestMLWHInfoSampleProgressNotTracked(t *testing.T) {
+	convey.Convey("Given an ONT sample with not_tracked qc and empty runs, when wa mlwh info runs, then the progress section renders cleanly", t, func() {
+		stub := &stubMLWHInfoClient{
+			classify: func(_ context.Context, raw string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindSangerSampleName,
+					Canonical: raw,
+					Sample:    &mlwh.Sample{Name: raw},
+				}, nil
+			},
+			sampleProgress: func(_ context.Context, name string) (mlwh.SampleProgress, error) {
+				return mlwh.SampleProgress{
+					Sample:           mlwh.Sample{Name: name},
+					Platforms:        []string{"ONT"},
+					BaselinePhase:    "registered",
+					QC:               "not_tracked",
+					DetailedTimeline: false,
+					TimelineReason:   "not in tracking window",
+				}, nil
+			},
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "ONT1"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Sample progress:")
+		convey.So(output, convey.ShouldContainSubstring, "qc: not_tracked")
+		convey.So(output, convey.ShouldContainSubstring, "runs: none")
+	})
+}
+
+func TestMLWHInfoRunFeatureSections(t *testing.T) {
+	convey.Convey("Given a run identifier, when wa mlwh info runs, then the run overview and status sections render in text and JSON", t, func() {
+		newStub := func() *stubMLWHInfoClient {
+			return &stubMLWHInfoClient{
+				resolveRun: func(_ context.Context, _ string) (mlwh.Match, error) {
+					return mlwh.Match{
+						Kind:      mlwh.KindRunID,
+						Canonical: "49001",
+						Run:       &mlwh.Run{IDRun: 49001},
+					}, nil
+				},
+				runOverview: func(_ context.Context, _ string) (mlwh.RunOverview, error) {
+					return mlwh.RunOverview{
+						IDRun:       49001,
+						Samples:     96,
+						Studies:     2,
+						DataObjects: 480,
+					}, nil
+				},
+				runStatus: func(_ context.Context, _ string) (mlwh.RunStatusTimeline, error) {
+					return mlwh.RunStatusTimeline{
+						IDRun:    49001,
+						Platform: "Illumina",
+						Current:  "qc complete",
+						Events: []mlwh.RunStatusEvent{
+							{Phase: "run pending", EnteredAt: "2026-04-01T00:00:00Z"},
+						},
+					}, nil
+				},
+			}
+		}
+
+		convey.Convey("text output carries both run sections", func() {
+			withStubMLWHInfoClient(t, newStub())
+
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "49001", "--type", "run"})
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(output, convey.ShouldContainSubstring, "Run overview:")
+			convey.So(output, convey.ShouldContainSubstring, "samples: 96")
+			convey.So(output, convey.ShouldContainSubstring, "Run status:")
+			convey.So(output, convey.ShouldContainSubstring, "current: qc complete")
+			convey.So(output, convey.ShouldContainSubstring, "run pending")
+		})
+
+		convey.Convey("json output carries the structured run data", func() {
+			withStubMLWHInfoClient(t, newStub())
+
+			output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "49001", "--type", "run", "--json"})
+
+			convey.So(err, convey.ShouldBeNil)
+
+			decoded := map[string]any{}
+			convey.So(json.Unmarshal([]byte(output), &decoded), convey.ShouldBeNil)
+
+			overview := decoded["run_overview"].(map[string]any)
+			convey.So(overview["samples"], convey.ShouldEqual, 96)
+
+			status := decoded["run_status"].(map[string]any)
+			convey.So(status["current"], convey.ShouldEqual, "qc complete")
+		})
+	})
+}
+
+func TestMLWHInfoRunStatusNotTracked(t *testing.T) {
+	convey.Convey("Given a non-Illumina run with no NPG status, when wa mlwh info runs, then the status section renders cleanly and the command succeeds", t, func() {
+		stub := &stubMLWHInfoClient{
+			resolveRun: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindRunID,
+					Canonical: "70000",
+					Run:       &mlwh.Run{IDRun: 70000},
+				}, nil
+			},
+			runOverview: func(_ context.Context, _ string) (mlwh.RunOverview, error) {
+				return mlwh.RunOverview{IDRun: 70000, Samples: 1}, nil
+			},
+			runStatus: func(_ context.Context, _ string) (mlwh.RunStatusTimeline, error) {
+				return mlwh.RunStatusTimeline{}, mlwh.ErrNotFound
+			},
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "70000", "--type", "run"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "Run overview:")
+		convey.So(output, convey.ShouldContainSubstring, "Run status:")
+		convey.So(output, convey.ShouldContainSubstring, "none")
+	})
+}
+
+func TestMLWHInfoSinceFlagDocumented(t *testing.T) {
+	convey.Convey("wa mlwh info --help documents the --since flag", t, func() {
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "--help"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(output, convey.ShouldContainSubstring, "--since")
+	})
 }
 
 func TestMLWHInfoCommandCacheOnlyNeverSyncedDoesNotMentionSync(t *testing.T) {
