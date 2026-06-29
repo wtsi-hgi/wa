@@ -591,8 +591,9 @@ func writeStudySamplesBlock(out io.Writer, report infoReport, style infoStyle, l
 // infoStudySampleTotals reconciles the authoritative figures: the distinct
 // partition from StatusBreakdown sums to samples_total and supplies the with-data
 // count (so the summary line agrees with the distinct bars drawn from the same
-// ladder); the StudyOverview gives the total, the recency count, and the with-data
-// count only as a fallback when there is no StatusBreakdown.
+// ladder). The StudyOverview gives the total and recency count, and the
+// SamplesWithoutDataCount endpoint/overview aggregate gives the authoritative
+// without-data count when available (rather than the capped related-row length).
 func infoStudySampleTotals(report infoReport) (total, withData, withoutData, recency int) {
 	if report.StatusBreakdown != nil {
 		ladder := report.StatusBreakdown.Distinct
@@ -614,9 +615,16 @@ func infoStudySampleTotals(report infoReport) (total, withData, withoutData, rec
 		recency = overview.AddedLast7Days
 	}
 
-	withoutData = total - withData
-	if withoutData < 0 {
-		withoutData = 0
+	if report.SamplesWithoutDataCount != nil {
+		withoutData = report.SamplesWithoutDataCount.Count
+	} else {
+		withoutData = total - withData
+		if withoutData < 0 {
+			withoutData = 0
+		}
+	}
+	if total == 0 && (withData > 0 || withoutData > 0) {
+		total = withData + withoutData
 	}
 
 	return total, withData, withoutData, recency
@@ -1368,13 +1376,12 @@ func populateRunFeatures(ctx context.Context, client mlwhInfoClient, report *inf
 	// empty timeline ("none") rather than omitting it, mirroring the API's own
 	// not-tracked semantics.
 	status, err := client.RunStatus(ctx, idRun)
-	if err != nil && !errors.Is(err, mlwh.ErrNotFound) {
+	switch {
+	case err == nil || errors.Is(err, mlwh.ErrNotFound):
+		report.RunStatus = &status
+	default:
 		report.Warnings = append(report.Warnings, fmt.Sprintf("run status: %v", err))
-
-		return
 	}
-
-	report.RunStatus = &status
 
 	// An empty file type lists every data object for the run; a run with no
 	// iRODS rows yet yields an empty list rendered as "none".

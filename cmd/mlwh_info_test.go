@@ -934,9 +934,48 @@ func TestMLWHInfoStudyWithoutDataCountUsesOverviewAggregate(t *testing.T) {
 		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "5901", "--type", "study"})
 
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(output, convey.ShouldContainSubstring, "Samples without data:")
-		convey.So(output, convey.ShouldContainSubstring, "count: 57")
-		convey.So(output, convey.ShouldNotContainSubstring, "count: 50")
+		convey.So(output, convey.ShouldContainSubstring, "57 without data")
+		convey.So(output, convey.ShouldNotContainSubstring, "50 without data")
+	})
+}
+
+func TestMLWHInfoRunIRODSPathsRenderWhenRunStatusFails(t *testing.T) {
+	convey.Convey("Given run status fails with a non-not-found error, when wa mlwh info runs, then the independent run iRODS section is still queried and rendered with a warning", t, func() {
+		irodsQueried := false
+		stub := &stubMLWHInfoClient{
+			resolveRun: func(_ context.Context, _ string) (mlwh.Match, error) {
+				return mlwh.Match{
+					Kind:      mlwh.KindRunID,
+					Canonical: "52553",
+					Run:       &mlwh.Run{IDRun: 52553},
+				}, nil
+			},
+			runStatus: func(_ context.Context, _ string) (mlwh.RunStatusTimeline, error) {
+				return mlwh.RunStatusTimeline{}, errors.New("status unavailable")
+			},
+			irodsPathsForRun: func(_ context.Context, idRun, fileType string, limit, _ int) ([]mlwh.IRODSPath, error) {
+				irodsQueried = true
+				convey.So(idRun, convey.ShouldEqual, "52553")
+				convey.So(fileType, convey.ShouldEqual, "")
+				convey.So(limit, convey.ShouldEqual, infoMaxRelated)
+
+				return []mlwh.IRODSPath{{
+					IRODSPath: "/seq/illumina/runs/52/52553/plex1/52553.cram",
+					IDRun:     52553,
+					Platform:  "illumina",
+				}}, nil
+			},
+		}
+
+		withStubMLWHInfoClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "info", "52553", "--type", "run"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(irodsQueried, convey.ShouldBeTrue)
+		convey.So(output, convey.ShouldContainSubstring, "iRODS paths (1)")
+		convey.So(output, convey.ShouldContainSubstring, "/seq/illumina/runs/52/52553/plex1/52553.cram")
+		convey.So(output, convey.ShouldContainSubstring, "run status: status unavailable")
 	})
 }
 
@@ -1060,7 +1099,7 @@ func newStudyInfoStub() *stubMLWHInfoClient {
 				IDStudyLims:        id,
 				SamplesTotal:       100,
 				SamplesWithData:    80,
-				SamplesWithoutData: 2,
+				SamplesWithoutData: 20,
 				DataObjects:        1234,
 				Runs:               5,
 				Libraries:          12,
@@ -1139,7 +1178,7 @@ func TestMLWHInfoStudyFeatureSections(t *testing.T) {
 			convey.So(withData["since"], convey.ShouldNotEqual, "")
 
 			withoutData := decoded["samples_without_data_count"].(map[string]any)
-			convey.So(withoutData["count"], convey.ShouldEqual, 2)
+			convey.So(withoutData["count"], convey.ShouldEqual, 20)
 		})
 	})
 }
