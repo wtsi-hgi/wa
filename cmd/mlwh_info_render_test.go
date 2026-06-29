@@ -27,12 +27,32 @@ package cmd
 
 import (
 	"bytes"
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/wa/mlwh"
 )
+
+func TestInfoIntGroupsAndHandlesExtremes(t *testing.T) {
+	convey.Convey("Given non-negative values, infoInt groups thousands with commas", t, func() {
+		convey.So(infoInt(0), convey.ShouldEqual, "0")
+		convey.So(infoInt(12), convey.ShouldEqual, "12")
+		convey.So(infoInt(999), convey.ShouldEqual, "999")
+		convey.So(infoInt(1000), convey.ShouldEqual, "1,000")
+		convey.So(infoInt(1234567), convey.ShouldEqual, "1,234,567")
+	})
+
+	convey.Convey("Given negative values, infoInt groups the magnitude and keeps a single leading minus", t, func() {
+		convey.So(infoInt(-12), convey.ShouldEqual, "-12")
+		convey.So(infoInt(-1234567), convey.ShouldEqual, "-1,234,567")
+	})
+
+	convey.Convey("Given math.MinInt, infoInt returns without infinite recursion or overflow", t, func() {
+		convey.So(infoInt(math.MinInt), convey.ShouldEqual, "-9,223,372,036,854,775,808")
+	})
+}
 
 func TestInfoBarSegmentsProportional(t *testing.T) {
 	convey.Convey("Given weights and a width, infoBarSegments returns proportional cell counts", t, func() {

@@ -594,13 +594,14 @@ func infoStudySampleTotals(report infoReport) (total, withData, withoutData, rec
 // infoInt renders an integer with thousands separators for readability (text
 // only; the JSON contract is untouched).
 func infoInt(value int) string {
-	if value < 0 {
-		return "-" + infoInt(-value)
+	sign := ""
+	digits := fmt.Sprintf("%d", value)
+	if strings.HasPrefix(digits, "-") {
+		sign, digits = "-", digits[1:]
 	}
 
-	digits := fmt.Sprintf("%d", value)
 	if len(digits) <= 3 {
-		return digits
+		return sign + digits
 	}
 
 	var b strings.Builder
@@ -615,7 +616,7 @@ func infoInt(value int) string {
 		b.WriteString(digits[i : i+3])
 	}
 
-	return b.String()
+	return sign + b.String()
 }
 
 func writeStudyDistinctBars(out io.Writer, ladder mlwh.PhaseLadder, total int) {
