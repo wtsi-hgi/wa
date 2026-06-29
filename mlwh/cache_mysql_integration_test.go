@@ -1218,10 +1218,19 @@ func assertJ1RunIRODSIndexServed(t *testing.T, db *sql.DB) {
 }
 
 // assertJ1ManifestIndexServed asserts EXPLAIN of the with_irods+file_type manifest
-// query serves both the product-metrics mirror (alias ipm, scoped by
-// id_study_lims) and the iRODS-locations mirror (alias spi, the set-at-once LEFT
-// JOIN on id_iseq_product + id_study_lims) by a real index with no full scan and
-// no per-row dependent subquery.
+// query serves the product-metrics mirror (alias ipm, scoped by id_study_lims) and
+// the iRODS-locations mirror by a real index with no full scan and no per-row
+// dependent subquery. The iRODS pick is now a set-at-once LEFT JOIN to a DERIVED
+// TABLE that picks one coherent object per product via a window function; a window
+// function blocks derived-table merging, so MySQL materialises it and reports the
+// outer reference under a synthetic <derivedN> alias (NOT "spi"). The real
+// anti-full-scan guarantee therefore lives on the inner DERIVED scan of the actual
+// seq_product_irods_locations_mirror table, which must use the id_study_lims index
+// (type != ALL, real key) -- this still fails on a real full scan of the ~9M-row
+// mirror. The derived table is INDEPENDENT (it references only the id_study_lims /
+// file-type bound parameters, never an outer ipm column), so its select_type is
+// the set-at-once DERIVED, never the per-row DEPENDENT SUBQUERY / DEPENDENT DERIVED
+// (the correlated-subquery perf trap), which the loop asserts.
 func assertJ1ManifestIndexServed(t *testing.T, db *sql.DB) {
 	t.Helper()
 
@@ -1229,9 +1238,10 @@ func assertJ1ManifestIndexServed(t *testing.T, db *sql.DB) {
 	plans := explainPlanRows(t, db, query, args...)
 	for _, plan := range plans {
 		convey.So(strings.ToUpper(plan.selectType), convey.ShouldNotContainSubstring, "DEPENDENT SUBQUERY")
+		convey.So(strings.ToUpper(plan.selectType), convey.ShouldNotContainSubstring, "DEPENDENT DERIVED")
 	}
 	assertMirrorIndexServed(plans, "ipm")
-	assertMirrorIndexServed(plans, "spi")
+	assertMirrorIndexServed(plans, "seq_product_irods_locations_mirror")
 }
 
 // assertJ1FileTypeStudyIRODSIndexServed asserts EXPLAIN of the file-type-filtered

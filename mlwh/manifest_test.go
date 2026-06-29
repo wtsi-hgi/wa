@@ -187,6 +187,37 @@ func TestStudyManifestWithIRODSNoFileTypeDoesNotDefaultToCramC1(t *testing.T) {
 	})
 }
 
+func TestStudyManifestWithIRODSPicksOneCoherentRealObjectC1(t *testing.T) {
+	convey.Convey("Given study S1 where one product has two .cram iRODS objects in DIFFERENT collections", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedManifestS1Scenario(t, cache.DB())
+		// Product 2101 has TWO matching iRODS objects whose collections and file
+		// names sort oppositely: /seqB + aaa.cram and /seqA + zzz.cram. Two
+		// independent MINs would pick MIN(collection)=/seqA with
+		// MIN(file_name)=aaa.cram, fabricating /seqA/aaa.cram, which is neither
+		// real object. The path must be exactly one of the two REAL pairs.
+		seedIRODSLocationMirrorRow(t, cache.DB(), "2101", "/seqB", "aaa.cram", 21, "S1")
+		seedIRODSLocationMirrorRow(t, cache.DB(), "2101", "/seqA", "zzz.cram", 21, "S1")
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		manifest, err := client.StudyManifest(context.Background(), "S1", "cram", true, manifestAllRows, 0)
+
+		convey.Convey("when StudyManifest(\"S1\",\"cram\",true,all) is called, then the path is one real object, never a fabricated collection/file pair, and the count is unchanged", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(manifest.Rows, convey.ShouldHaveLength, 3)
+
+			convey.So(manifest.Rows[0].TagIndex, convey.ShouldEqual, 1)
+			convey.So(manifest.Rows[0].IRODSPath, convey.ShouldBeIn, "/seqB/aaa.cram", "/seqA/zzz.cram")
+			convey.So(manifest.Rows[0].IRODSPath, convey.ShouldNotEqual, "/seqA/aaa.cram")
+			convey.So(manifest.Rows[0].IRODSPath, convey.ShouldNotEqual, "/seqB/zzz.cram")
+			convey.So(manifest.Rows[1].IRODSPath, convey.ShouldEqual, "")
+			convey.So(manifest.Rows[2].IRODSPath, convey.ShouldEqual, "")
+		})
+	})
+}
+
 func TestStudyManifestHTTPPaginationHeadersC1(t *testing.T) {
 	convey.Convey("Given study S1 with 3 products served over HTTP with limit=2&offset=0", t, func() {
 		cache := openSQLiteSyncTestCache(t)

@@ -66,11 +66,14 @@ const (
 		`MIN(sm.name), MIN(sm.supplier_name), MIN(sm.accession_number), MIN(sm.sanger_sample_id)`
 
 	// manifestListIRODSSelect adds the per-product iRODS data-object columns
-	// (collection + file name) for the with_irods path. They are MIN-aggregated
-	// over the product's joined iRODS rows so the row stays product-grained; the
-	// full path is assembled in Go (the package avoids dialect-specific SQL string
-	// concatenation, cf. the iRODS list helpers).
-	manifestListIRODSSelect = `, MIN(spi.irods_collection), MIN(spi.irods_file_name)`
+	// (collection + file name) for the with_irods path. They come from spi, the
+	// derived table (manifestListIRODSJoin) that has already collapsed each
+	// product's iRODS rows to ONE coherent row, so the collection and file name are
+	// always from the SAME object (never two independent MINs that could fabricate
+	// a non-existent collection/file pair). The full path is assembled in Go (the
+	// package avoids dialect-specific SQL string concatenation, cf. the iRODS list
+	// helpers).
+	manifestListIRODSSelect = `, spi.irods_collection, spi.irods_file_name`
 
 	// manifestListBaseFrom is the base FROM/JOIN: the product-metrics rows LEFT
 	// JOINed to sample_mirror for identity. The iRODS join (when with_irods) slots
@@ -83,25 +86,41 @@ const (
 	// always FROM ... JOIN ... WHERE ... regardless of with_irods.
 	manifestListWhere = ` WHERE ipm.id_study_lims = ?`
 
-	// manifestListIRODSJoin is the set-at-once LEFT JOIN to the iRODS locations
-	// mirror on the shared id_iseq_product (and the same id_study_lims), added only
-	// for with_irods. It is a LEFT JOIN + GROUP BY product, NEVER a per-row
-	// correlated subquery (the per-platform-breakdown perf trap): a product with no
+	// manifestListIRODSJoinPrefix begins the set-at-once LEFT JOIN to a DERIVED
+	// TABLE (aliased spi) that pre-selects exactly ONE coherent iRODS row per
+	// id_iseq_product, ranked by ROW_NUMBER() OVER (PARTITION BY id_iseq_product
+	// ORDER BY irods_collection, irods_file_name). Because the chosen collection and
+	// file name come from the SAME ranked row, the assembled path is ALWAYS a real
+	// object (never two independent MINs that could pair a collection and a file
+	// name from different objects). It is a LEFT JOIN, NEVER a per-row correlated
+	// subquery (the per-platform-breakdown perf trap) and NOT a DEPENDENT SUBQUERY:
+	// the derived table is scoped by id_study_lims (index-served on the iRODS
+	// mirror) and joined on the shared id_iseq_product, so a product with no
 	// matching iRODS object survives with NULL iRODS columns (irods_path=""). The
-	// file-type restriction (when set) lives on the join's ON via
-	// manifestListIRODSFileTypeClause, so it narrows the LEFT-JOINed rows rather
-	// than dropping the product row.
-	manifestListIRODSJoin = ` LEFT JOIN seq_product_irods_locations_mirror spi` +
-		` ON spi.id_iseq_product = ipm.id_iseq_product AND spi.id_study_lims = ?`
+	// optional file-type restriction (manifestListIRODSFileTypeClause) slots into
+	// the derived table's WHERE before manifestListIRODSJoinSuffix closes it.
+	manifestListIRODSJoinPrefix = ` LEFT JOIN (` +
+		`SELECT id_iseq_product, irods_collection, irods_file_name FROM (` +
+		`SELECT id_iseq_product, irods_collection, irods_file_name,` +
+		` ROW_NUMBER() OVER (PARTITION BY id_iseq_product` +
+		` ORDER BY irods_collection, irods_file_name) AS rn` +
+		` FROM seq_product_irods_locations_mirror WHERE id_study_lims = ?`
 
-	// manifestListIRODSFileTypeClause restricts the joined iRODS rows to data
-	// objects whose irods_file_name ends in `.<file-type>`, case-insensitively. It
-	// is appended to the iRODS join's ON when a file_type is set, narrowing the
-	// LEFT-JOINed rows (so an unmatched product keeps irods_path="") rather than
-	// dropping the product row. The pattern is bound as a ? parameter
+	// manifestListIRODSJoinSuffix closes the derived table (keeping only the
+	// top-ranked row per product, rn = 1) and joins it to the product-metrics rows
+	// on the shared id_iseq_product. It follows manifestListIRODSJoinPrefix and the
+	// optional file-type clause.
+	manifestListIRODSJoinSuffix = `) ranked WHERE rn = 1) spi` +
+		` ON spi.id_iseq_product = ipm.id_iseq_product`
+
+	// manifestListIRODSFileTypeClause restricts the derived table's iRODS rows to
+	// data objects whose irods_file_name ends in `.<file-type>`, case-insensitively.
+	// It is appended to the derived table's WHERE when a file_type is set, so an
+	// unmatched product keeps irods_path="" (the LEFT JOIN finds no ranked row)
+	// rather than dropping the product row. The pattern is bound as a ? parameter
 	// (irodsFileTypeLikePattern), like irodsFileTypeFilterClause, so one SQL string
 	// stays valid on both sqlite and mysql.
-	manifestListIRODSFileTypeClause = ` AND LOWER(spi.irods_file_name) LIKE ?`
+	manifestListIRODSFileTypeClause = ` AND LOWER(irods_file_name) LIKE ?`
 
 	// manifestListSuffix groups by the product triple (collapsing the sample and
 	// iRODS fan-out to one row per product) and orders by (id_run, position,
@@ -127,11 +146,12 @@ var manifestFeedingTables = []string{
 // given study, with_irods flag and (validated) normalised file type. Without
 // with_irods it is the bare product+sample query (no iRODS join at all, so
 // irods_path stays empty), bound as id_study_lims, limit, offset. With with_irods
-// it adds the set-at-once iRODS LEFT JOIN and, when a file_type is set, appends
-// the filter clause to the join's ON and binds the LIKE pattern. The args are
-// bound in SQL-text order, matching the placeholders: the iRODS join's
-// id_study_lims (in the ON), [file-type pattern (also in the ON)], the WHERE's
-// id_study_lims, limit, offset.
+// it adds the set-at-once iRODS LEFT JOIN to the derived table that picks one
+// coherent object per product and, when a file_type is set, appends the filter
+// clause to the derived table's WHERE and binds the LIKE pattern. The args are
+// bound in SQL-text order, matching the placeholders: the derived table's
+// id_study_lims (in its WHERE), [file-type pattern (also in that WHERE)], the
+// outer WHERE's id_study_lims, limit, offset.
 func manifestListQuery(studyLimsID string, withIRODS bool, normalised string, limit, offset int) (string, []any) {
 	if !withIRODS {
 		query := manifestListSelectPrefix + manifestListBaseFrom + manifestListWhere + manifestListSuffix
@@ -139,15 +159,16 @@ func manifestListQuery(studyLimsID string, withIRODS bool, normalised string, li
 		return query, []any{studyLimsID, limit, offset}
 	}
 
-	// Bind args in SQL-text order: the iRODS join's id_study_lims (in the ON),
-	// then the file-type LIKE pattern when filtered (also in the ON), then the
-	// WHERE's id_study_lims, then limit/offset.
-	join := manifestListIRODSJoin
+	// Bind args in SQL-text order: the derived table's id_study_lims (in its
+	// WHERE), then the file-type LIKE pattern when filtered (also in that WHERE),
+	// then the outer WHERE's id_study_lims, then limit/offset.
+	join := manifestListIRODSJoinPrefix
 	args := []any{studyLimsID}
 	if normalised != "" {
 		join += manifestListIRODSFileTypeClause
 		args = append(args, irodsFileTypeLikePattern(normalised))
 	}
+	join += manifestListIRODSJoinSuffix
 	args = append(args, studyLimsID, limit, offset)
 
 	query := manifestListSelectPrefix + manifestListIRODSSelect + manifestListBaseFrom + join + manifestListWhere + manifestListSuffix
@@ -156,10 +177,12 @@ func manifestListQuery(studyLimsID string, withIRODS bool, normalised string, li
 }
 
 // scanManifestRow scans one manifest list row into a ManifestRow, applying the
-// nullable sample identity and (when withIRODS) assembling irods_path from the
-// MIN-aggregated collection/file-name in Go (the package builds iRODS paths in Go
-// rather than with dialect-specific SQL concatenation). A NULL collection or file
-// name (a product with no matching iRODS object) leaves irods_path empty.
+// nullable sample identity and (when withIRODS) assembling irods_path in Go from
+// the collection/file-name of the single coherent iRODS row the derived table
+// picked for the product (the package builds iRODS paths in Go rather than with
+// dialect-specific SQL concatenation), so the path is always a real object. A NULL
+// collection or file name (a product with no matching iRODS object) leaves
+// irods_path empty.
 func scanManifestRow(scan func(dest ...any) error, withIRODS bool) (ManifestRow, error) {
 	var (
 		row             ManifestRow
@@ -254,8 +277,9 @@ func (c *Client) countStudyManifestProducts(ctx context.Context, studyLimsID str
 // queryManifestRows runs the manifest list query and scans the product rows. The
 // sample-identity columns are LEFT-JOINed (and so nullable for a product whose
 // sample is absent from the mirror); the iRODS collection/file-name columns are
-// present only for the with_irods query and are MIN-aggregated, so they are NULL
-// for a product with no matching iRODS object, which yields irods_path="".
+// present only for the with_irods query and come from the LEFT-JOINed derived
+// table's single coherent row per product, so they are NULL for a product with no
+// matching iRODS object, which yields irods_path="".
 func (c *Client) queryManifestRows(ctx context.Context, query string, args []any, withIRODS bool) ([]ManifestRow, error) {
 	db := c.readCacheDB()
 	if db == nil {
