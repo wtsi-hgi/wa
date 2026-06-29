@@ -29,6 +29,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -130,7 +131,7 @@ func validateAllSupportedSyncTablesCovered(queries []SyncSourceQuery) {
 	covered := make(map[string]bool, len(queries))
 	for _, query := range queries {
 		for _, table := range supportedSyncTables {
-			if strings.Contains(query.Query, sourceTableForSyncTable(table)) {
+			if queryReferencesTable(query.Query, sourceTableForSyncTable(table)) {
 				covered[table] = true
 			}
 		}
@@ -141,9 +142,31 @@ func validateAllSupportedSyncTablesCovered(queries []SyncSourceQuery) {
 	}
 }
 
+// queryReferencesTable reports whether query references table as a whole SQL
+// identifier, rather than merely containing it as a substring. The table name
+// matches only when it is not immediately preceded or followed by an identifier
+// character ([A-Za-z0-9_]); schema qualifiers, whitespace, newlines and SQL
+// punctuation ('.', '(', ',', ';' ...) are all non-identifier characters and so
+// count as boundaries. This is what stops iseq_run_status from being falsely
+// reported as covered by a query that only mentions iseq_run_status_dict, or
+// sample by a query that only mentions id_sample_lims. Matching is
+// case-insensitive so the check is robust to SQL table refs varying in case.
+func queryReferencesTable(query, table string) bool {
+	return tableIdentifierRegexp(table).MatchString(query)
+}
+
+// tableIdentifierRegexp builds the boundary-aware, case-insensitive regexp used
+// by queryReferencesTable. A leading/trailing identifier character is required
+// to be absent, so the table name only matches as a whole identifier. Note that
+// \b is unusable here because '_' is a word character, so it would not treat the
+// boundary between iseq_run_status and _dict as a non-boundary.
+func tableIdentifierRegexp(table string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(table) + `($|[^A-Za-z0-9_])`)
+}
+
 // sourceTableForSyncTable maps a sync table name to the upstream source table its
-// query reads from, so coverage can be asserted by substring. They are identical
-// except the tracking table, which lives in the mlwh_reporting schema.
+// query reads from, so coverage can be asserted via queryReferencesTable. They are
+// identical except the tracking table, which lives in the mlwh_reporting schema.
 func sourceTableForSyncTable(table string) string {
 	if table == syncTableSeqOpsTrackingPerSample {
 		return "mlwh_reporting.seq_ops_tracking_per_sample"
