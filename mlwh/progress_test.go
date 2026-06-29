@@ -152,9 +152,12 @@ var (
 	f3UltimagenStatusBase = time.Date(2026, time.June, 23, 8, 0, 0, 0, time.UTC)
 )
 
-// f3UltimagenRunStatus is the Ultimagen native (open-vocabulary) run_status the
-// embedded timeline reports verbatim for both run-level dated columns.
-const f3UltimagenRunStatus = "Completed"
+// f3UltimagenRunInProgressPhase and f3UltimagenRunArchivedPhase are the lifecycle
+// labels derived from the real useq_run_metrics date columns.
+const (
+	f3UltimagenRunInProgressPhase = "run in progress"
+	f3UltimagenRunArchivedPhase   = "run archived"
+)
 
 // theNineMilestonesInOrder is the canonical milestone order the F3 tests assert
 // verbatim (the closed 9-name enum), independent of the production constant so a
@@ -782,9 +785,9 @@ func TestSampleProgressEmbedsElembioRunFromLaneMetrics(t *testing.T) {
 // SampleProgress embeds a correct RunStatusTimeline for its Ultimagen run, built
 // by joining useq_product_metrics_mirror.id_run -> useq_run_metrics_mirror.id_run
 // and turning the run-level dated columns (run_start, run_complete) into
-// date-ordered events labelled with the native run_status (open vocabulary,
-// verbatim) via the shared normalizeRunStatusTimeline -- platform Ultimagen, IDRun
-// 0, delta durations and a derived current.
+// date-ordered events labelled with the lifecycle phase each source date means:
+// run_in_progress then run_archived. Platform Ultimagen, IDRun 0, delta durations
+// and derived current.
 func TestSampleProgressEmbedsUltimagenRunFromRunMetrics(t *testing.T) {
 	convey.Convey("Given the F3 progress scenario with an Ultimagen product-bearing sample whose run metrics carry status+dates", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -817,11 +820,11 @@ func TestSampleProgressEmbedsUltimagenRunFromRunMetrics(t *testing.T) {
 				phases[i] = event.Phase
 				entered[i] = event.EnteredAt
 			}
-			convey.So(phases, convey.ShouldResemble, []string{f3UltimagenRunStatus, f3UltimagenRunStatus})
+			convey.So(phases, convey.ShouldResemble, []string{f3UltimagenRunInProgressPhase, f3UltimagenRunArchivedPhase})
 			convey.So(entered[0], convey.ShouldEqual, f3UltimagenStatusBase.Format(utcRFC3339Layout))
 			convey.So(ultimagen.Events[0].Duration, convey.ShouldEqual, "PT1H")
 			convey.So(ultimagen.Events[len(ultimagen.Events)-1].Duration, convey.ShouldEqual, "")
-			convey.So(ultimagen.Current, convey.ShouldEqual, f3UltimagenRunStatus)
+			convey.So(ultimagen.Current, convey.ShouldEqual, f3UltimagenRunArchivedPhase)
 		})
 	})
 }
@@ -1663,9 +1666,9 @@ func seedF3ElembioAndUltimagenRunStatus(t *testing.T, db *sql.DB) {
 	})
 
 	// Ultimagen: a product on run f3UltimagenIDRun, and the run metrics for that
-	// run carrying the native run_status plus run_start then run_complete.
+	// run carrying the derived lifecycle status plus run_start then run_complete.
 	seedUseqProductMetricsMirrorRow(t, db, "useq-"+formatInt(f3Ultimagen), f3UltimagenIDRun, f3Ultimagen, "S1")
-	seedUseqRunMetricsMirrorRow(t, db, f3UltimagenIDRun, f3UltimagenRunStatus, map[string]time.Time{
+	seedUseqRunMetricsMirrorRow(t, db, f3UltimagenIDRun, f3UltimagenRunArchivedPhase, map[string]time.Time{
 		"run_start":    f3UltimagenStatusBase,
 		"run_complete": f3UltimagenStatusBase.Add(time.Hour),
 	})
@@ -1773,5 +1776,68 @@ func seedUseqRunMetricsMirrorRow(t *testing.T, db *sql.DB, idRun int64, runStatu
 	)
 	if err != nil {
 		t.Fatalf("seedUseqRunMetricsMirrorRow(): %v", err)
+	}
+}
+
+func TestSampleProgressUsesSyncedUltimagenLifecyclePhases(t *testing.T) {
+	convey.Convey("Given a real-schema Ultimagen source with run_in_progress and run_archived dates", t, func() {
+		source := openRealMLWHSchemaSource(t)
+		base := time.Date(2026, time.June, 29, 11, 0, 0, 0, time.UTC)
+		runInProgress := base.Add(time.Hour)
+		runArchived := base.Add(2 * time.Hour)
+
+		seedRealMLWHSampleRow(t, source, 9901, "SQSCP", "9901", "uuid-sample-useq-9901", "sample-useq-sync", "ssid-useq-9901", "supplier-useq", "acc-useq", "donor-useq", 9606, "human", "useq sample", base)
+		seedRealMLWHStudyRow(t, source, 9902, "SQSCP", "9902", "uuid-study-useq-9902", "Study Ultimagen Sync", "acc-useq-study", base)
+		seedRealMLWHUseqWaferRow(t, source, 9903, 9901, 9902)
+		seedRealMLWHUseqProductMetricRow(t, source, "useq-sync-product", 9903, 9904, base.Add(time.Minute))
+		seedRealMLWHUseqRunMetricsRow(t, source, 9904, "useq-run-folder-9904", runInProgress, runArchived, base.Add(3*time.Hour))
+
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: sqliteJSONTableSource{db: source}, disableSyncLock: true}
+
+		reports, syncErr := syncSelectedTablesForTest(context.Background(), client, syncTableSample, syncTableUseqProductMetrics, syncTableUseqRunMetrics)
+		progress, progressErr := client.SampleProgress(context.Background(), "sample-useq-sync")
+
+		convey.Convey("when SampleProgress reads the synced mirrors, then the Ultimagen timeline has non-empty lifecycle phases and current", func() {
+			convey.So(syncErr, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 3)
+			convey.So(progressErr, convey.ShouldBeNil)
+
+			var mirroredStatus string
+			convey.So(cache.DB().QueryRow(`SELECT COALESCE(run_status, '') FROM useq_run_metrics_mirror WHERE id_run = ?`, 9904).Scan(&mirroredStatus), convey.ShouldBeNil)
+			convey.So(mirroredStatus, convey.ShouldEqual, f3UltimagenRunArchivedPhase)
+
+			ultimagenRuns := make([]RunStatusTimeline, 0, len(progress.Runs))
+			for _, run := range progress.Runs {
+				if run.Platform == "Ultimagen" {
+					ultimagenRuns = append(ultimagenRuns, run)
+				}
+			}
+			convey.So(ultimagenRuns, convey.ShouldHaveLength, 1)
+
+			ultimagen := ultimagenRuns[0]
+			convey.So(ultimagen.Current, convey.ShouldEqual, f3UltimagenRunArchivedPhase)
+			convey.So(ultimagen.Current, convey.ShouldNotEqual, "")
+			convey.So(ultimagen.Events, convey.ShouldHaveLength, 2)
+			convey.So(ultimagen.Events[0].Phase, convey.ShouldEqual, f3UltimagenRunInProgressPhase)
+			convey.So(ultimagen.Events[1].Phase, convey.ShouldEqual, f3UltimagenRunArchivedPhase)
+		})
+	})
+}
+
+func seedRealMLWHUseqRunMetricsRow(t *testing.T, db *sql.DB, idRun int64, runFolderName string, runInProgress, runArchived, lastChanged time.Time) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO useq_run_metrics(id_run, run_folder_name, run_in_progress, run_archived, last_changed) VALUES (?, ?, ?, ?, ?)`,
+		idRun,
+		runFolderName,
+		formatSyncTime(runInProgress),
+		formatSyncTime(runArchived),
+		formatSyncTime(lastChanged),
+	); err != nil {
+		t.Fatalf("seedRealMLWHUseqRunMetricsRow: %v", err)
 	}
 }

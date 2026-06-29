@@ -158,10 +158,11 @@ const sampleEseqLaneMetricsSQL = `SELECT DISTINCT l.run_started, l.run_complete 
 // sample's useq_product_metrics_mirror rows through the shared id_run
 // (useq_product_metrics.id_run -> useq_run_metrics.id_run, where id_run is the
 // run-metrics primary key), the same id_run-keyed model as the Elembio path.
-// Ultimagen carries a native run_status string, passed through verbatim (open
-// vocabulary) for both run-level dated columns. DISTINCT collapses the fan-out so
-// each id_run contributes one timeline source; ordered by id_run then run_start.
-const sampleUseqRunMetricsSQL = `SELECT DISTINCT r.run_status, r.run_start, r.run_complete ` +
+// Ultimagen's real source carries lifecycle dates rather than a native status
+// string, so each date column is labelled by its source lifecycle phase. DISTINCT
+// collapses the fan-out so each id_run contributes one timeline source; ordered by
+// id_run then run_start.
+const sampleUseqRunMetricsSQL = `SELECT DISTINCT r.run_start, r.run_complete ` +
 	`FROM useq_run_metrics_mirror AS r ` +
 	`JOIN useq_product_metrics_mirror AS p ON p.id_run = r.id_run ` +
 	`WHERE p.id_sample_tmp = ? ORDER BY r.id_run, r.run_start`
@@ -175,6 +176,15 @@ const sampleUseqRunMetricsSQL = `SELECT DISTINCT r.run_status, r.run_start, r.ru
 const (
 	elembioRunStartedPhase  = "run started"
 	elembioRunCompletePhase = "run complete"
+)
+
+// Ultimagen run-lifecycle phase labels (open vocabulary). The real
+// useq_run_metrics table has no native run_status column; run_in_progress and
+// run_archived are dated lifecycle columns, so each date's source column gives
+// the phase.
+const (
+	ultimagenRunInProgressPhase = "run in progress"
+	ultimagenRunArchivedPhase   = "run archived"
 )
 
 // sampleProgressFeedingTables are the sync tables whose oldest last_run defines a
@@ -510,16 +520,17 @@ func eseqLaneEvents(runStarted, runComplete any) ([]runStatusRawEvent, error) {
 }
 
 // useqRunEvents turns one Ultimagen run's dated lifecycle columns into date-ordered
-// raw status events the normalizer consumes: one event per non-NULL dated column
-// (run_start, run_complete), each labelled with the run's native run_status string
-// passed through verbatim (open vocabulary). It is the Ultimagen analogue of
-// pacBioWellEvents -- events are sorted by their date and NULL dates are skipped.
-func useqRunEvents(runStatus string, runStart, runComplete any) ([]runStatusRawEvent, error) {
+// raw status events the normalizer consumes: one event per non-NULL dated column,
+// labelled with the lifecycle phase that source column represents. It is the
+// Ultimagen analogue of eseqLaneEvents: events are sorted by their date and NULL
+// dates are skipped.
+func useqRunEvents(runStart, runComplete any) ([]runStatusRawEvent, error) {
 	dated := []struct {
-		raw any
+		phase string
+		raw   any
 	}{
-		{runStart},
-		{runComplete},
+		{ultimagenRunInProgressPhase, runStart},
+		{ultimagenRunArchivedPhase, runComplete},
 	}
 
 	events := make([]runStatusRawEvent, 0, len(dated))
@@ -533,7 +544,7 @@ func useqRunEvents(runStatus string, runStart, runComplete any) ([]runStatusRawE
 			return nil, fmt.Errorf("mlwh: parse useq run metrics date: %w", err)
 		}
 
-		events = append(events, runStatusRawEvent{Phase: runStatus, EnteredAt: entered})
+		events = append(events, runStatusRawEvent{Phase: entry.phase, EnteredAt: entered})
 	}
 
 	slices.SortStableFunc(events, func(a, b runStatusRawEvent) int {
@@ -1228,8 +1239,8 @@ func (c *Client) sampleEseqRunTimelines(ctx context.Context, idSampleTmp int64) 
 // sampleUseqRunTimelines builds the RunStatusTimeline for each Ultimagen run the
 // sample's products link to, joining useq_product_metrics_mirror.id_run ->
 // useq_run_metrics_mirror.id_run and feeding the run's dated lifecycle columns
-// (run_start, run_complete), each labelled with the native run_status (open
-// vocabulary, verbatim), through the shared normalizeRunStatusTimeline (platform
+// (run_start, run_complete), each labelled with the lifecycle phase its source
+// date represents, through the shared normalizeRunStatusTimeline (platform
 // Ultimagen, IDRun 0). A run with no dated columns yields no timeline.
 func (c *Client) sampleUseqRunTimelines(ctx context.Context, idSampleTmp int64) ([]RunStatusTimeline, error) {
 	db := c.readCacheDB()
@@ -1245,15 +1256,12 @@ func (c *Client) sampleUseqRunTimelines(ctx context.Context, idSampleTmp int64) 
 
 	timelines := make([]RunStatusTimeline, 0)
 	for rows.Next() {
-		var (
-			runStatus             sql.NullString
-			runStart, runComplete any
-		)
-		if err = rows.Scan(&runStatus, &runStart, &runComplete); err != nil {
+		var runStart, runComplete any
+		if err = rows.Scan(&runStart, &runComplete); err != nil {
 			return nil, fmt.Errorf("%w: scan sample useq run metrics: %w", ErrUpstreamImpaired, err)
 		}
 
-		events, eventsErr := useqRunEvents(runStatus.String, runStart, runComplete)
+		events, eventsErr := useqRunEvents(runStart, runComplete)
 		if eventsErr != nil {
 			return nil, eventsErr
 		}

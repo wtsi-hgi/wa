@@ -756,9 +756,10 @@ func eseqRunLaneMetricsWholesaleSpec() wholesaleMirrorSpec {
 // real table has NO id_useq_run_metrics_tmp (its primary key is id_run), NO
 // run_name, and NO run_status / run_start / run_complete columns: the run-level
 // lifecycle is the dated run_in_progress (start) and run_archived (the only later
-// run-level date) columns. run_folder_name supplies the mirror run_name; Ultimagen
-// has no native run-status string, so the mirror run_status is empty. last_changed
-// feeds the mirror last_updated.
+// run-level date) columns. run_folder_name supplies the mirror run_name; the
+// mirror run_status is the most advanced dated lifecycle phase present, so synced
+// rows have a meaningful status even though the real source has no status column.
+// last_changed feeds the mirror last_updated.
 func useqRunMetricsWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableUseqRunMetrics,
@@ -773,9 +774,20 @@ func useqRunMetricsWholesaleSpec() wholesaleMirrorSpec {
 				return nil, fmt.Errorf("mlwh: scan useq_run_metrics sync row: %w", err)
 			}
 
-			return []any{idRun, runFolderName, "", runInProgress, runArchived, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idRun, runFolderName, useqRunMetricsStatus(runInProgress, runArchived), runInProgress, runArchived, normalizeWholesaleTime(lastChanged)}, nil
 		},
 	}
+}
+
+func useqRunMetricsStatus(runInProgress, runArchived sql.NullString) string {
+	if runArchived.Valid && runArchived.String != "" {
+		return ultimagenRunArchivedPhase
+	}
+	if runInProgress.Valid && runInProgress.String != "" {
+		return ultimagenRunInProgressPhase
+	}
+
+	return ""
 }
 
 // normalizeWholesaleTime renders a nullable source timestamp as an RFC3339 string
