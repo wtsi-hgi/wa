@@ -3081,6 +3081,7 @@ func seqProductIRODSLocationsMirrorSecondaryIndexNames() []string {
 	return []string{
 		"seq_product_irods_locations_mirror_id_sample_tmp_idx",
 		"spi_mirror_study_lims_created_idx",
+		"spi_mirror_study_lims_iseq_product_idx",
 		"spi_mirror_study_lims_sample_tmp_idx",
 	}
 }

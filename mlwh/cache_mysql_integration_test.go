@@ -48,10 +48,12 @@ const (
 )
 
 // mysqlExplainRow is the subset of an EXPLAIN row this test asserts on: the chosen
-// index (key) and the access type (a full table scan reports type "ALL").
+// index (key), the candidate indexes (possibleKeys) and the access type (a full
+// table scan reports type "ALL").
 type mysqlExplainRow struct {
-	scanType string
-	key      string
+	scanType     string
+	key          string
+	possibleKeys string
 }
 
 // explainRunsForStudy runs EXPLAIN on the RunsForStudy cache query (the same SQL
@@ -185,6 +187,211 @@ func TestRealMySQLCacheReadQueriesExecuteAndIndexesApplied(t *testing.T) {
 			plan := explainRunsForStudy(t, writeDB, "S1")
 			convey.So(plan.key, convey.ShouldEqual, "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx")
 			convey.So(strings.ToLower(plan.scanType), convey.ShouldNotEqual, "all")
+		})
+	})
+}
+
+// seedF4StatusBreakdownScenarioMySQL seeds the same multi-platform + ONT status
+// breakdown fixture as seedF4StatusBreakdownScenario, but stamps sync_state with the
+// dialect-neutral plain-INSERT seedSyncStateRun instead of the SQLite-only ON
+// CONFLICT upsert seedSyncState, so the fixture builds against the real MySQL cache.
+// The data-row helpers it reuses are all plain INSERTs already MySQL-compatible.
+func seedF4StatusBreakdownScenarioMySQL(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedHierarchyStudy(t, db, f4StudyTmp, f4StudyLims)
+
+	for _, id := range []int64{f4Delivered1, f4Delivered2, f4MultiPlatform, f4SequencedNoData, f4ONT} {
+		seedHierarchySample(t, db, id, f4StudyLims, "sample-"+formatInt(id))
+		seedLibrarySample(t, db, "Standard", id, f4StudyLims)
+	}
+
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 40101, f4Delivered1, 54401, 1, 1, f4StudyLims, sql.NullInt64{Int64: 1, Valid: true})
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "40101", "/seq/54401", "54401_1#1.cram", f4Delivered1, f4StudyLims, f4DeliveredCreated, "illumina")
+
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 40201, f4Delivered2, 54401, 2, 1, f4StudyLims, sql.NullInt64{Int64: 1, Valid: true})
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "40201", "/seq/54401", "54401_2#1.cram", f4Delivered2, f4StudyLims, f4DeliveredCreated, "illumina")
+
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 40301, f4MultiPlatform, 54401, 3, 1, f4StudyLims, sql.NullInt64{Int64: 1, Valid: true})
+	seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, "40301", "/seq/54401", "54401_3#1.cram", f4MultiPlatform, f4StudyLims, f4DeliveredCreated, "illumina")
+	seedPacBioProductMetricsMirrorRow(t, db, "40302", f4MultiPlatform, f4StudyLims)
+
+	seedIseqProductMetricsMirrorRowWithQC(t, db, 40401, f4SequencedNoData, 54401, 4, 1, f4StudyLims, sql.NullInt64{})
+
+	seedOseqFlowcellMirrorRow(t, db, 40501, f4ONT, f4StudyLims)
+
+	// Filler iRODS rows for an unrelated study, so the mirror is large enough that
+	// the optimizer reports a real per-table access path for the linkage (a near-empty
+	// table is optimized away and never appears in EXPLAIN). They never match the F4
+	// study so they do not change the breakdown.
+	for i := range 400 {
+		product := formatInt(int64(900000 + i))
+		seedIRODSLocationMirrorRowWithCreatedPlatform(t, db, product, "/seq/99999", "99999_1#"+product+".cram", int64(900000+i), "other-study", f4DeliveredCreated, "illumina")
+	}
+
+	base := time.Date(2026, time.June, 27, 8, 0, 0, 0, time.UTC)
+	for i, table := range []string{
+		syncTableStudy, syncTableSample, syncTableIseqFlowcell, syncTableIseqProductMetrics,
+		syncTablePacBioProductMetrics, syncTableEseqProductMetrics, syncTableUseqProductMetrics,
+		syncTableSeqProductIRODSLocations, syncTableSeqOpsTrackingPerSample,
+	} {
+		seedSyncStateRun(t, db, table, base.Add(time.Duration(i)*time.Minute), base.Add(time.Duration(i)*time.Minute))
+	}
+
+	// Refresh InnoDB statistics so the optimizer sees the iRODS mirror as a real
+	// table and reports a per-table access path for the linkage (an unanalyzed tiny
+	// table can be estimated at ~0 rows and eliminated from the plan).
+	if _, err := db.Exec("ANALYZE TABLE seq_product_irods_locations_mirror"); err != nil {
+		t.Fatalf("ANALYZE seq_product_irods_locations_mirror: %v", err)
+	}
+}
+
+// perPlatformBreakdownExplain holds the EXPLAIN analysis of the per-platform
+// status-breakdown query: the access-plan rows that touch the iRODS-locations mirror
+// (one per product arm, each proving the linkage is index-served) and whether any
+// row is a per-row DEPENDENT SUBQUERY (the slow correlated-subquery shape the fix
+// removes).
+type perPlatformBreakdownExplain struct {
+	irodsPlans          []mysqlExplainRow
+	hasDependentSubquery bool
+}
+
+// explainPerPlatformBreakdown runs EXPLAIN on the per-platform status-breakdown
+// query (the exact SQL the read path uses) and extracts every plan row that touches
+// the seq_product_irods_locations_mirror plus whether any row is a dependent
+// subquery, so the test can prove the per-platform delivered linkage is index-served
+// (no full scan of the ~7M-row mirror) and is no longer a per-row correlated
+// subquery.
+func explainPerPlatformBreakdown(t *testing.T, db *sql.DB, studyLimsID string) perPlatformBreakdownExplain {
+	t.Helper()
+
+	args := make([]any, len(statusBreakdownProductPlatformArms)+1)
+	for i := range args {
+		args[i] = studyLimsID
+	}
+
+	rows, err := db.QueryContext(context.Background(), "EXPLAIN "+statusBreakdownPerPlatformSQL(), args...)
+	if err != nil {
+		t.Fatalf("EXPLAIN per-platform breakdown: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("EXPLAIN columns: %v", err)
+	}
+
+	var result perPlatformBreakdownExplain
+	for rows.Next() {
+		cells := make([]any, len(cols))
+		for i := range cells {
+			cells[i] = new(sql.NullString)
+		}
+		if err = rows.Scan(cells...); err != nil {
+			t.Fatalf("scan EXPLAIN row: %v", err)
+		}
+
+		var (
+			plan       mysqlExplainRow
+			table      string
+			selectType string
+		)
+		for i, name := range cols {
+			value := cells[i].(*sql.NullString).String
+			switch name {
+			case "type":
+				plan.scanType = value
+			case "key":
+				plan.key = value
+			case "possible_keys":
+				plan.possibleKeys = value
+			case "table":
+				table = value
+			case "select_type":
+				selectType = value
+			}
+		}
+
+		if strings.Contains(strings.ToUpper(selectType), "DEPENDENT SUBQUERY") {
+			result.hasDependentSubquery = true
+		}
+		// EXPLAIN reports the iRODS mirror under its query alias "spi" (the table the
+		// per-platform delivered linkage LEFT JOINs to in every product arm).
+		if table == "spi" {
+			result.irodsPlans = append(result.irodsPlans, plan)
+		}
+	}
+
+	return result
+}
+
+// TestRealMySQLPerPlatformBreakdownIsIndexServed is a runtime-skipped (NOT
+// build-tagged) integration test against the REAL MySQL cache server configured in
+// .env.development.local. It is the durable guard that the per-platform status
+// breakdown (the ~5s study page) stays index-served on MySQL: it builds the cache
+// schema in a UNIQUE throwaway database, seeds the multi-platform + ONT status
+// breakdown fixture, asserts the query EXECUTES and yields the same per-platform
+// ladders the SQLite-backed hermetic tests pin, and asserts EXPLAIN shows the
+// seq_product_irods_locations_mirror linkage served by the
+// (id_study_lims, id_iseq_product) index with no full-table scan and no per-row
+// dependent subquery over that ~7M-row mirror. The throwaway db is dropped in
+// t.Cleanup on success AND failure and never touches the configured cache db; the
+// test SKIPS cleanly when the cache env vars are absent or the server unreachable.
+func TestRealMySQLPerPlatformBreakdownIsIndexServed(t *testing.T) {
+	baseDSN, password := realMySQLCacheDSNOrSkip(t)
+
+	throwawayDSN := createThrowawayMySQLCacheDBOrSkip(t, baseDSN, password)
+
+	ctx := context.Background()
+	cache, err := OpenCacheOnly(ctx, CacheConfig{Path: throwawayDSN, Password: password})
+	if err != nil {
+		t.Fatalf("OpenCacheOnly() against throwaway MySQL cache: %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.cache.Dialect() != "mysql" {
+		t.Fatalf("throwaway cache dialect = %q, want mysql", cache.cache.Dialect())
+	}
+
+	writeDB := cache.cache.DB()
+	seedF4StatusBreakdownScenarioMySQL(t, writeDB)
+
+	convey.Convey("Given the status-breakdown fixture in a throwaway MySQL database", t, func() {
+		convey.Convey("the per-platform breakdown executes on MySQL with the pinned ladders", func() {
+			breakdown, err := cache.StatusBreakdown(ctx, f4StudyLims)
+			convey.So(err, convey.ShouldBeNil)
+
+			ladders := map[string]PlatformPhaseLadder{}
+			for _, ladder := range breakdown.PerPlatform {
+				ladders[ladder.Platform] = ladder
+			}
+
+			convey.So(ladders[platformIllumina].Ladder.WithData, convey.ShouldEqual, 3)
+			convey.So(ladders[platformIllumina].Ladder.SequencedNoData, convey.ShouldEqual, 1)
+			convey.So(ladders[platformPacBio].Ladder.WithData, convey.ShouldEqual, 0)
+			convey.So(ladders[platformPacBio].Ladder.SequencedNoData, convey.ShouldEqual, 1)
+			convey.So(ladders[platformONT].Ladder.Registered, convey.ShouldEqual, 1)
+		})
+
+		convey.Convey("the per-platform breakdown iRODS linkage is index-served, not a full scan or per-row dependent subquery", func() {
+			indexes, _, err := readMySQLTableIndexes(ctx, writeDB, "seq_product_irods_locations_mirror")
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(slices.Contains(indexes, "id_study_lims,id_iseq_product"), convey.ShouldBeTrue)
+
+			plan := explainPerPlatformBreakdown(t, writeDB, f4StudyLims)
+
+			// The fix replaces the per-row correlated subquery with a set-at-once LEFT
+			// JOIN: EXPLAIN must show NO dependent subquery, and every plan row that
+			// touches the iRODS mirror must be served by the (id_study_lims,
+			// id_iseq_product) index as a covering lookup (never a full "ALL" scan of the
+			// ~7M-row mirror). There is one such row per product arm.
+			convey.So(plan.hasDependentSubquery, convey.ShouldBeFalse)
+			convey.So(len(plan.irodsPlans), convey.ShouldEqual, len(statusBreakdownProductPlatformArms))
+			for _, irods := range plan.irodsPlans {
+				convey.So(strings.ToLower(irods.scanType), convey.ShouldNotEqual, "all")
+				convey.So(irods.key, convey.ShouldEqual, "spi_mirror_study_lims_iseq_product_idx")
+				convey.So(irods.possibleKeys, convey.ShouldContainSubstring, "spi_mirror_study_lims_iseq_product_idx")
+			}
 		})
 	})
 }

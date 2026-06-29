@@ -20,3 +20,6 @@ CREATE INDEX spi_mirror_study_lims_sample_tmp_idx
 
 CREATE INDEX spi_mirror_study_lims_created_idx
 	ON seq_product_irods_locations_mirror(id_study_lims, created);
+
+CREATE INDEX spi_mirror_study_lims_iseq_product_idx
+	ON seq_product_irods_locations_mirror(id_study_lims, id_iseq_product);

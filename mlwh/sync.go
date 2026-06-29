@@ -292,6 +292,7 @@ var iseqProductMetricsMirrorIndexSet = syncMirrorIndexSet{
 var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
+	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
 }
 
 // iseqProductMetricsMirrorReadIndexes is the subset of the iseq product-metrics
@@ -309,9 +310,19 @@ var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "iseq_product_metrics_mirror_id_study_lims_id_run_position_idx", Column: "id_study_lims, id_run, position"},
 }
 
+// seqProductIRODSLocationsMirrorReadIndexes is the subset of the iRODS-locations
+// mirror's secondary indexes that the sparse cold-load path recreates immediately
+// (the mirror is too large -- ~7M rows -- to rebuild every declared index inline).
+// It MUST include the (id_study_lims, id_iseq_product) index: the per-platform
+// status-breakdown query joins each platform's product id to spi.id_iseq_product
+// scoped by id_study_lims, and without this index that linkage full-scans the mirror
+// per study (the ~5s study page). Omitting it here would let the large-cold-load
+// schema-shape tolerance accept the missing index as expected drift, silently
+// recreating the slow path.
 var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
+	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
 }
 
 var seqProductIRODSLocationsMirrorIndexSet = syncMirrorIndexSet{

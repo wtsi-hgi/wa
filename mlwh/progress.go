@@ -303,15 +303,26 @@ func sampleProductMetricsQCUnion() string {
 // selects the study's oseq_flowcell samples, always tagged registered (ONT has no
 // product-metrics or iRODS). The platform name is a canonical literal per arm (never
 // the iRODS seq_platform_name string), matching platformsForStudySamplesSQL.
+//
+// Each product arm computes delivered-ness with a LEFT JOIN to the iRODS mirror
+// (the platform's product id = spi.id_iseq_product, and spi.id_study_lims =
+// pm.id_study_lims) rolled up to the sample with GROUP BY pm.id_sample_tmp, so the
+// linkage is evaluated set-at-once and index-served instead of as a correlated
+// subquery re-run per product-metrics row (the per-row EXISTS was the ~5s study
+// page). A sample is with_data when MAX(spi matched) is true for any of its products
+// on the platform, else sequenced_no_data -- identical (sample, platform) semantics
+// to the previous per-row EXISTS, including a sample with both a delivered and an
+// undelivered product landing in with_data.
 func statusBreakdownPerPlatformSQL() string {
 	productArm := func(arm statusBreakdownPlatformArm) string {
-		delivered := `EXISTS (SELECT 1 FROM seq_product_irods_locations_mirror spi ` +
-			`INNER JOIN ` + arm.table + ` pi ON pi.` + arm.productID + ` = spi.id_iseq_product ` +
-			`WHERE spi.id_study_lims = pm.id_study_lims AND pi.id_sample_tmp = pm.id_sample_tmp)`
+		delivered := `MAX(CASE WHEN spi.id_iseq_product IS NOT NULL THEN 1 ELSE 0 END) = 1`
 
-		return `SELECT DISTINCT pm.id_sample_tmp, '` + arm.platform + `' AS platform, ` +
+		return `SELECT pm.id_sample_tmp, '` + arm.platform + `' AS platform, ` +
 			`CASE WHEN ` + delivered + ` THEN 'with_data' ELSE 'sequenced_no_data' END AS bucket ` +
-			`FROM ` + arm.table + ` pm WHERE pm.id_study_lims = ?`
+			`FROM ` + arm.table + ` pm ` +
+			`LEFT JOIN seq_product_irods_locations_mirror spi ` +
+			`ON spi.id_iseq_product = pm.` + arm.productID + ` AND spi.id_study_lims = pm.id_study_lims ` +
+			`WHERE pm.id_study_lims = ? GROUP BY pm.id_sample_tmp`
 	}
 
 	arms := make([]string, 0, len(statusBreakdownProductPlatformArms)+1)
