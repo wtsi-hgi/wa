@@ -68,8 +68,31 @@ test:
 	$(MAKE) --no-print-directory clean-test-tmp; \
 	exit $$rc
 
+# LOAD_MLWH_SOURCE_CREDS surfaces ONLY the upstream MLWH SOURCE credentials
+# (WA_MLWH_DSN, WA_MLWH_PASSWORD) from .env.development.local, when that file
+# exists, so the mlwh source-schema integration test RUNS locally against the
+# real read-only source. It deliberately does NOT source the whole dev env (that
+# would clobber the hermetic test cache paths / ports and break other tests):
+# only those two SOURCE vars are extracted and exported, and ONLY for the ./mlwh
+# package run (so the cmd env-guard tests, which forbid WA_MLWH_DSN under
+# WA_ENV=test, still run in a clean environment). When the file or the vars are
+# absent, nothing is set and the integration test SKIPS (CI safety).
+LOAD_MLWH_SOURCE_CREDS = \
+	if [ -f ./.env.development.local ]; then \
+		for var in WA_MLWH_DSN WA_MLWH_PASSWORD; do \
+			line=$$(grep -E "^[[:space:]]*(export[[:space:]]+)?$$var=" ./.env.development.local | tail -n 1 | sed -E "s/^[[:space:]]*export[[:space:]]+//"); \
+			if [ -n "$$line" ]; then eval "export $$line"; fi; \
+		done; \
+	fi
+
+# test-go runs the whole suite in the hermetic test env. The ./mlwh package is run
+# separately WITH the upstream source creds surfaced so its source-schema
+# integration test runs locally; every other package is run WITHOUT them so the
+# cmd env-guard tests see a clean environment.
 test-go:
-	@$(LOAD_TEST_ENV); go test -tags netgo --count 1 ./...
+	@$(LOAD_TEST_ENV); \
+		go test -tags netgo --count 1 $$(go list ./... | grep -v '/mlwh$$') && \
+		( $(LOAD_MLWH_SOURCE_CREDS); go test -tags netgo --count 1 ./mlwh )
 
 test-frontend:
 	@$(LOAD_TEST_ENV); cd $(FRONTEND_DIR) && pnpm test

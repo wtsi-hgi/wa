@@ -4085,7 +4085,7 @@ func syncTableForQuery(query string) string {
 		return syncTableEseqRun
 	case strings.Contains(query, " FROM useq_run_metrics "):
 		return syncTableUseqRunMetrics
-	case strings.Contains(query, " FROM seq_ops_tracking_per_sample"):
+	case strings.Contains(query, "seq_ops_tracking_per_sample"):
 		return syncTableSeqOpsTrackingPerSample
 	default:
 		return "unknown"

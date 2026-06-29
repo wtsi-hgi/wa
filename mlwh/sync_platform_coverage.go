@@ -110,6 +110,16 @@ var useqProductMetricsMirrorColumns = []string{
 	"last_updated",
 }
 
+// allProductMetricsMirrorSpecs returns every per-platform product-metrics spec so
+// the source-schema validator can cover each one's source SELECT generically.
+func allProductMetricsMirrorSpecs() []productMetricsMirrorSpec {
+	return []productMetricsMirrorSpec{
+		pacBioProductMetricsSpec(),
+		eseqProductMetricsSpec(),
+		useqProductMetricsSpec(),
+	}
+}
+
 func pacBioProductMetricsSpec() productMetricsMirrorSpec {
 	return productMetricsMirrorSpec{
 		syncTable:     syncTablePacBioProductMetrics,
@@ -452,8 +462,15 @@ func iseqRunStatusResumeID(state syncStateRecord) (int64, error) {
 	return syncColdInitialAscendingID, nil
 }
 
+// iseqRunStatusPageQuery is the ascending-id page SELECT the iseq_run_status sync
+// issues against the source. It is shared with the source-schema validator so the
+// validated query is exactly the one sync runs.
+func iseqRunStatusPageQuery() string {
+	return `SELECT id_run_status, id_run, date, id_run_status_dict, iscurrent FROM iseq_run_status WHERE id_run_status > ? ORDER BY id_run_status LIMIT ` + strconv.Itoa(syncColdBatchSize)
+}
+
 func readIseqRunStatusPage(ctx context.Context, source Querier, lastID int64) ([]iseqRunStatusSyncRow, int64, error) {
-	query := `SELECT id_run_status, id_run, date, id_run_status_dict, iscurrent FROM iseq_run_status WHERE id_run_status > ? ORDER BY id_run_status LIMIT ` + strconv.Itoa(syncColdBatchSize)
+	query := iseqRunStatusPageQuery()
 
 	rows, err := source.QueryContext(ctx, query, lastID)
 	if err != nil {
@@ -562,6 +579,19 @@ type wholesaleMirrorSpec struct {
 	scan          func(*sql.Rows) ([]any, error)
 }
 
+// wholesaleMirrorTables lists every table mirrored wholesale, so the source-schema
+// validator covers each one's source SELECT generically.
+func wholesaleMirrorTables() []string {
+	return []string{
+		syncTableIseqRunStatusDict,
+		syncTableOseqFlowcell,
+		syncTablePacBioRunWellMetrics,
+		syncTableEseqRun,
+		syncTableEseqRunLaneMetrics,
+		syncTableUseqRunMetrics,
+	}
+}
+
 func wholesaleMirrorSpecFor(table string) wholesaleMirrorSpec {
 	switch table {
 	case syncTableIseqRunStatusDict:
@@ -644,59 +674,76 @@ func pacBioRunWellMetricsWholesaleSpec() wholesaleMirrorSpec {
 	}
 }
 
+// eseqRunWholesaleSpec mirrors eseq_run using its REAL columns. The real table
+// has NO run_status / run_start / run_complete columns: the run-level lifecycle is
+// expressed by run_type, date_started, date_completed and a free-text outcome. The
+// outcome maps to the mirror's run_status (the verbatim, open-vocabulary status
+// string) and the two dates to run_start / run_complete. eseq_run has no
+// last_changed; the mirror last_updated rides as the zero time.
 func eseqRunWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableEseqRun,
 		mirrorTable:   "eseq_run_mirror",
 		mirrorColumns: []string{"id_eseq_run_tmp", "run_name", "run_status", "run_start", "run_complete", "last_updated"},
-		sourceQuery:   `SELECT id_eseq_run_tmp, run_name, run_status, run_start, run_complete, last_changed FROM eseq_run ORDER BY id_eseq_run_tmp`,
+		sourceQuery:   `SELECT id_eseq_run_tmp, run_name, outcome, date_started, date_completed FROM eseq_run ORDER BY id_eseq_run_tmp`,
 		scan: func(rows *sql.Rows) ([]any, error) {
 			var idTmp int64
 			var runName string
-			var runStatus, runStart, runComplete, lastChanged sql.NullString
-			if err := rows.Scan(&idTmp, &runName, &runStatus, &runStart, &runComplete, &lastChanged); err != nil {
+			var outcome, dateStarted, dateCompleted sql.NullString
+			if err := rows.Scan(&idTmp, &runName, &outcome, &dateStarted, &dateCompleted); err != nil {
 				return nil, fmt.Errorf("mlwh: scan eseq_run sync row: %w", err)
 			}
 
-			return []any{idTmp, runName, runStatus, runStart, runComplete, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idTmp, runName, outcome, dateStarted, dateCompleted, normalizeWholesaleTime(sql.NullString{})}, nil
 		},
 	}
 }
 
+// eseqRunLaneMetricsWholesaleSpec mirrors eseq_run_lane_metrics using its REAL
+// columns. The real table has NO id_eseq_rlm_tmp (its primary key is the composite
+// (id_run, lane)) and NO run_name; its within-sequencing timeline is the dated
+// run_started / run_complete columns the Elembio progress path reads via id_run.
+// last_changed feeds the mirror last_updated.
 func eseqRunLaneMetricsWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableEseqRunLaneMetrics,
 		mirrorTable:   "eseq_run_lane_metrics_mirror",
-		mirrorColumns: []string{"id_eseq_rlm_tmp", "id_run", "run_name", "lane", "run_started", "run_complete", "last_updated"},
-		sourceQuery:   `SELECT id_eseq_rlm_tmp, id_run, run_name, lane, run_started, run_complete, last_changed FROM eseq_run_lane_metrics ORDER BY id_eseq_rlm_tmp`,
+		mirrorColumns: []string{"id_run", "lane", "run_started", "run_complete", "last_updated"},
+		sourceQuery:   `SELECT id_run, lane, run_started, run_complete, last_changed FROM eseq_run_lane_metrics ORDER BY id_run, lane`,
 		scan: func(rows *sql.Rows) ([]any, error) {
-			var idTmp, idRun, lane int64
-			var runName string
+			var idRun, lane int64
 			var runStarted, runComplete, lastChanged sql.NullString
-			if err := rows.Scan(&idTmp, &idRun, &runName, &lane, &runStarted, &runComplete, &lastChanged); err != nil {
+			if err := rows.Scan(&idRun, &lane, &runStarted, &runComplete, &lastChanged); err != nil {
 				return nil, fmt.Errorf("mlwh: scan eseq_run_lane_metrics sync row: %w", err)
 			}
 
-			return []any{idTmp, idRun, runName, lane, runStarted, runComplete, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idRun, lane, runStarted, runComplete, normalizeWholesaleTime(lastChanged)}, nil
 		},
 	}
 }
 
+// useqRunMetricsWholesaleSpec mirrors useq_run_metrics using its REAL columns. The
+// real table has NO id_useq_run_metrics_tmp (its primary key is id_run), NO
+// run_name, and NO run_status / run_start / run_complete columns: the run-level
+// lifecycle is the dated run_in_progress (start) and run_archived (the only later
+// run-level date) columns. run_folder_name supplies the mirror run_name; Ultimagen
+// has no native run-status string, so the mirror run_status is empty. last_changed
+// feeds the mirror last_updated.
 func useqRunMetricsWholesaleSpec() wholesaleMirrorSpec {
 	return wholesaleMirrorSpec{
 		syncTable:     syncTableUseqRunMetrics,
 		mirrorTable:   "useq_run_metrics_mirror",
-		mirrorColumns: []string{"id_useq_run_metrics_tmp", "id_run", "run_name", "run_status", "run_start", "run_complete", "last_updated"},
-		sourceQuery:   `SELECT id_useq_run_metrics_tmp, id_run, run_name, run_status, run_start, run_complete, last_changed FROM useq_run_metrics ORDER BY id_useq_run_metrics_tmp`,
+		mirrorColumns: []string{"id_run", "run_name", "run_status", "run_start", "run_complete", "last_updated"},
+		sourceQuery:   `SELECT id_run, run_folder_name, run_in_progress, run_archived, last_changed FROM useq_run_metrics ORDER BY id_run`,
 		scan: func(rows *sql.Rows) ([]any, error) {
-			var idTmp, idRun int64
-			var runName string
-			var runStatus, runStart, runComplete, lastChanged sql.NullString
-			if err := rows.Scan(&idTmp, &idRun, &runName, &runStatus, &runStart, &runComplete, &lastChanged); err != nil {
+			var idRun int64
+			var runFolderName string
+			var runInProgress, runArchived, lastChanged sql.NullString
+			if err := rows.Scan(&idRun, &runFolderName, &runInProgress, &runArchived, &lastChanged); err != nil {
 				return nil, fmt.Errorf("mlwh: scan useq_run_metrics sync row: %w", err)
 			}
 
-			return []any{idTmp, idRun, runName, runStatus, runStart, runComplete, normalizeWholesaleTime(lastChanged)}, nil
+			return []any{idRun, runFolderName, "", runInProgress, runArchived, normalizeWholesaleTime(lastChanged)}, nil
 		},
 	}
 }
@@ -865,7 +912,16 @@ func seqOpsTrackingPerSampleMirrorRowArgs(row seqOpsTrackingPerSampleSyncRow) []
 	}
 }
 
-const seqOpsTrackingPerSampleSourceQuery = `SELECT id_sample_lims, sanger_sample_id, sanger_sample_name, study_id, programme, faculty_sponsor, library_type, platform, manifest_created, manifest_uploaded, labware_received, order_made, working_dilution, library_start, library_complete, sequencing_run_start, sequencing_qc_complete FROM seq_ops_tracking_per_sample`
+// The tracking table lives in the mlwh_reporting schema (NOT mlwarehouse, which
+// the source connection defaults to), so the source name is schema-qualified.
+// The read-only upstream user has access to mlwh_reporting; the hermetic SQLite
+// source rewrites the qualifier away (it has no schemas).
+// The context/lookup string columns (everything except the id_sample_lims primary
+// key and the nullable milestone datetimes) are nullable in the real
+// mlwh_reporting table, so they are COALESCEd to '' to keep the plain-string scan
+// targets and the NOT NULL mirror columns happy rather than failing with
+// "converting NULL to string is unsupported".
+const seqOpsTrackingPerSampleSourceQuery = `SELECT id_sample_lims, COALESCE(sanger_sample_id, '') AS sanger_sample_id, COALESCE(sanger_sample_name, '') AS sanger_sample_name, COALESCE(study_id, '') AS study_id, COALESCE(programme, '') AS programme, COALESCE(faculty_sponsor, '') AS faculty_sponsor, COALESCE(library_type, '') AS library_type, COALESCE(platform, '') AS platform, manifest_created, manifest_uploaded, labware_received, order_made, working_dilution, library_start, library_complete, sequencing_run_start, sequencing_qc_complete FROM mlwh_reporting.seq_ops_tracking_per_sample`
 
 // syncSeqOpsTrackingPerSampleTable mirrors the tracking table by a full-table
 // refresh: it captures the refresh time, reads the whole source snapshot, and

@@ -190,7 +190,11 @@ const sampleSearchTokenPageQuery = `SELECT id_sample_tmp, name, supplier_name, c
 // id_sample_tmp/id_study_lims come from the per-platform recovery UNION; created
 // and seq_platform_name ride along from seq_product_irods_locations (spi) itself
 // so the mirror can store the iRODS creation time and the authoritative platform.
-const seqProductIRODSLocationsSelectColumns = `spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, spi.irods_data_relative_path, recovery.id_sample_tmp, recovery.id_study_lims, spi.last_changed, spi.created, spi.seq_platform_name`
+// irods_data_relative_path is nullable upstream (e.g. the Ultimagen iRODS rows
+// store NULL), so it is COALESCEd to '' to keep the string scan target and the
+// NOT NULL mirror column happy rather than failing with "converting NULL to
+// string is unsupported".
+const seqProductIRODSLocationsSelectColumns = `spi.id_seq_product_irods_locations_tmp, spi.id_product, spi.irods_root_collection, COALESCE(spi.irods_data_relative_path, '') AS irods_data_relative_path, recovery.id_sample_tmp, recovery.id_study_lims, spi.last_changed, spi.created, spi.seq_platform_name`
 
 // seqProductIRODSLocationsIlluminaCompositionRecovery is the Illumina
 // composition-expansion branch: it expands each product's iseq_composition_tmp
@@ -662,6 +666,56 @@ func seqProductIRODSLocationsLegacyColdSyncSourceQuery() string {
 func seqProductIRODSLocationsLegacySyncSourceQueryFromCursor() string {
 	return seqProductIRODSLocationsSourceQuery(seqProductIRODSLocationsIlluminaLegacyRecovery,
 		`WHERE (spi.last_changed > ?) OR (spi.last_changed = ? AND spi.id_seq_product_irods_locations_tmp > ?) ORDER BY spi.last_changed, spi.id_seq_product_irods_locations_tmp`)
+}
+
+// SyncSourceQuery names one source SELECT the sync issues against the upstream
+// MLWH so it can be validated independently (e.g. prepared / run with LIMIT 0
+// against the real source). ArgCount is the number of bound parameters the query
+// expects, so a validator can supply that many placeholders.
+type SyncSourceQuery struct {
+	Name     string
+	Query    string
+	ArgCount int
+}
+
+// AllSyncSourceQueries returns every distinct SELECT the sync issues against the
+// upstream MLWH source, across all supported tables and all watermark variants
+// (cold / incremental / from-cursor / legacy). It is the single source of truth
+// the source-schema integration test runs against the real MLWH so any missing
+// column, missing table or wrong schema fails the test generically. New sync
+// source queries MUST be added here so they stay covered.
+func AllSyncSourceQueries() []SyncSourceQuery {
+	queries := []SyncSourceQuery{
+		{Name: "sample cold", Query: sampleColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "sample incremental", Query: sampleSyncSourceQuery(), ArgCount: 1},
+		{Name: "sample from cursor", Query: sampleSyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "iseq_flowcell incremental", Query: flowcellSyncSourceQuery(), ArgCount: 1},
+		{Name: "iseq_flowcell from cursor", Query: flowcellSyncSourceQueryFromCursor(), ArgCount: 5},
+		{Name: "iseq_product_metrics incremental", Query: iseqProductMetricsSyncSourceQuery(), ArgCount: 1},
+		{Name: "iseq_product_metrics cold", Query: iseqProductMetricsColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "iseq_product_metrics from cursor", Query: iseqProductMetricsSyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "seq_product_irods_locations incremental", Query: seqProductIRODSLocationsSyncSourceQuery(), ArgCount: 1},
+		{Name: "seq_product_irods_locations cold", Query: seqProductIRODSLocationsColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "seq_product_irods_locations from cursor", Query: seqProductIRODSLocationsSyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "seq_product_irods_locations legacy incremental", Query: seqProductIRODSLocationsLegacySyncSourceQuery(), ArgCount: 1},
+		{Name: "seq_product_irods_locations legacy cold", Query: seqProductIRODSLocationsLegacyColdSyncSourceQuery(), ArgCount: 1},
+		{Name: "seq_product_irods_locations legacy from cursor", Query: seqProductIRODSLocationsLegacySyncSourceQueryFromCursor(), ArgCount: 3},
+		{Name: "iseq_run_status page", Query: iseqRunStatusPageQuery(), ArgCount: 1},
+		{Name: "seq_ops_tracking_per_sample", Query: seqOpsTrackingPerSampleSourceQuery, ArgCount: 0},
+		{Name: "study probe", Query: `SELECT * FROM study WHERE id_lims = 'SQSCP'`, ArgCount: 0},
+	}
+
+	for _, spec := range allProductMetricsMirrorSpecs() {
+		query, args := spec.sourceQuery(syncStateRecord{})
+		queries = append(queries, SyncSourceQuery{Name: spec.syncTable, Query: query, ArgCount: len(args)})
+	}
+
+	for _, table := range wholesaleMirrorTables() {
+		spec := wholesaleMirrorSpecFor(table)
+		queries = append(queries, SyncSourceQuery{Name: spec.syncTable, Query: spec.sourceQuery, ArgCount: 0})
+	}
+
+	return queries
 }
 
 type syncStateRecord struct {

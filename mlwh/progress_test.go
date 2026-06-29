@@ -1431,7 +1431,7 @@ func seedF3ElembioAndUltimagenRunStatus(t *testing.T, db *sql.DB) {
 	// Elembio: a product on run f3ElembioIDRun, and the lane metrics for that run
 	// with run_started then run_complete one hour apart (clean PT1H delta).
 	seedEseqProductMetricsMirrorRow(t, db, "eseq-"+formatInt(f3Elembio), f3ElembioIDRun, f3Elembio, "S1")
-	seedEseqRunLaneMetricsMirrorRow(t, db, 60101, f3ElembioIDRun, map[string]time.Time{
+	seedEseqRunLaneMetricsMirrorRow(t, db, f3ElembioIDRun, map[string]time.Time{
 		"run_started":  f3ElembioStatusBase,
 		"run_complete": f3ElembioStatusBase.Add(time.Hour),
 	})
@@ -1439,7 +1439,7 @@ func seedF3ElembioAndUltimagenRunStatus(t *testing.T, db *sql.DB) {
 	// Ultimagen: a product on run f3UltimagenIDRun, and the run metrics for that
 	// run carrying the native run_status plus run_start then run_complete.
 	seedUseqProductMetricsMirrorRow(t, db, "useq-"+formatInt(f3Ultimagen), f3UltimagenIDRun, f3Ultimagen, "S1")
-	seedUseqRunMetricsMirrorRow(t, db, 70101, f3UltimagenIDRun, f3UltimagenRunStatus, map[string]time.Time{
+	seedUseqRunMetricsMirrorRow(t, db, f3UltimagenIDRun, f3UltimagenRunStatus, map[string]time.Time{
 		"run_start":    f3UltimagenStatusBase,
 		"run_complete": f3UltimagenStatusBase.Add(time.Hour),
 	})
@@ -1474,7 +1474,7 @@ func seedEseqProductMetricsMirrorRow(t *testing.T, db *sql.DB, idEseqProduct str
 // lifecycle columns named in dates (RFC3339 via formatSyncTime) and leaving the
 // rest SQL NULL. Elembio carries no native run_status string, so the timeline's
 // phase is derived from the lifecycle column name.
-func seedEseqRunLaneMetricsMirrorRow(t *testing.T, db *sql.DB, idEseqRlmTmp, idRun int64, dates map[string]time.Time) {
+func seedEseqRunLaneMetricsMirrorRow(t *testing.T, db *sql.DB, idRun int64, dates map[string]time.Time) {
 	t.Helper()
 
 	dated := func(name string) any {
@@ -1486,10 +1486,8 @@ func seedEseqRunLaneMetricsMirrorRow(t *testing.T, db *sql.DB, idEseqRlmTmp, idR
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO eseq_run_lane_metrics_mirror(id_eseq_rlm_tmp, id_run, run_name, lane, run_started, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		idEseqRlmTmp,
+		`INSERT INTO eseq_run_lane_metrics_mirror(id_run, lane, run_started, run_complete, last_updated) VALUES (?, ?, ?, ?, ?)`,
 		idRun,
-		"eseq-run-"+formatInt(idRun),
 		int64(1),
 		dated("run_started"),
 		dated("run_complete"),
@@ -1527,7 +1525,7 @@ func seedUseqProductMetricsMirrorRow(t *testing.T, db *sql.DB, idUseqProduct str
 // id_run (the Ultimagen run-status join key), carrying the native run_status and
 // only the dated lifecycle columns named in dates (RFC3339 via formatSyncTime),
 // the rest left SQL NULL.
-func seedUseqRunMetricsMirrorRow(t *testing.T, db *sql.DB, idUseqRunMetricsTmp, idRun int64, runStatus string, dates map[string]time.Time) {
+func seedUseqRunMetricsMirrorRow(t *testing.T, db *sql.DB, idRun int64, runStatus string, dates map[string]time.Time) {
 	t.Helper()
 
 	dated := func(name string) any {
@@ -1539,8 +1537,7 @@ func seedUseqRunMetricsMirrorRow(t *testing.T, db *sql.DB, idUseqRunMetricsTmp, 
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO useq_run_metrics_mirror(id_useq_run_metrics_tmp, id_run, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		idUseqRunMetricsTmp,
+		`INSERT INTO useq_run_metrics_mirror(id_run, run_name, run_status, run_start, run_complete, last_updated) VALUES (?, ?, ?, ?, ?, ?)`,
 		idRun,
 		"useq-run-"+formatInt(idRun),
 		runStatus,
