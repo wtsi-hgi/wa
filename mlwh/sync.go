@@ -176,6 +176,14 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 	"platform",
 }
 
+var seqProductIRODSLocationsMirrorKeyColumns = []string{
+	"id_iseq_product",
+	"id_sample_tmp",
+	"id_study_lims",
+	"irods_collection",
+	"irods_file_name",
+}
+
 var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
 
 // sampleSearchTokenColumns are the sample_search_token columns written in
@@ -2791,7 +2799,7 @@ func insertSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, 
 }
 
 func replaceSeqProductIRODSLocationsMirrorBatch(ctx context.Context, tx *sql.Tx, dialect string, rows []seqProductIRODSLocationsSyncRow) error {
-	if err := deleteExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", []string{"id_iseq_product"}, seqProductIRODSLocationsBatchKeys(rows)); err != nil {
+	if err := deleteExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorKeyColumns, seqProductIRODSLocationsBatchKeys(rows)); err != nil {
 		return err
 	}
 
@@ -3296,7 +3304,7 @@ func dedupeSeqProductIRODSLocationsBatch(rows []seqProductIRODSLocationsSyncRow)
 }
 
 func seqProductIRODSLocationsKey(row seqProductIRODSLocationsSyncRow) string {
-	return fmt.Sprintf("%s\x00%d\x00%s", row.IDIseqProduct, row.IDSampleTmp, row.IDStudyLims)
+	return fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s", row.IDIseqProduct, row.IDSampleTmp, row.IDStudyLims, row.IRODSCollection, row.IRODSFileName)
 }
 
 func sampleBatchKeys(rows []sampleSyncRow) [][]any {
@@ -3338,7 +3346,7 @@ func iseqProductMetricsBatchKeys(rows []iseqProductMetricsSyncRow) [][]any {
 func seqProductIRODSLocationsBatchKeys(rows []seqProductIRODSLocationsSyncRow) [][]any {
 	keys := make([][]any, 0, len(rows))
 	for _, row := range rows {
-		keys = append(keys, []any{row.IDIseqProduct})
+		keys = append(keys, []any{row.IDIseqProduct, row.IDSampleTmp, row.IDStudyLims, row.IRODSCollection, row.IRODSFileName})
 	}
 
 	return keys
@@ -3531,7 +3539,7 @@ func writeSeqProductIRODSLocationsBatch(ctx context.Context, cache Cache, rows [
 		existing := 0
 		if !assumeInserted {
 			var err error
-			existing, err = countExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", []string{"id_iseq_product"}, seqProductIRODSLocationsBatchKeys(deduped))
+			existing, err = countExistingKeys(ctx, tx, "seq_product_irods_locations_mirror", seqProductIRODSLocationsMirrorKeyColumns, seqProductIRODSLocationsBatchKeys(deduped))
 			if err != nil {
 				return err
 			}
