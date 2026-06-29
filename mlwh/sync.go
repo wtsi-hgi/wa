@@ -164,6 +164,7 @@ var iseqProductMetricsMirrorColumns = []string{
 }
 
 var seqProductIRODSLocationsMirrorColumns = []string{
+	"id_seq_product_irods_locations_tmp",
 	"id_iseq_product",
 	"irods_root_collection",
 	"irods_data_relative_path",
@@ -177,11 +178,7 @@ var seqProductIRODSLocationsMirrorColumns = []string{
 }
 
 var seqProductIRODSLocationsMirrorKeyColumns = []string{
-	"id_iseq_product",
-	"id_sample_tmp",
-	"id_study_lims",
-	"irods_collection",
-	"irods_file_name",
+	"id_seq_product_irods_locations_tmp",
 }
 
 var syncStateColumns = []string{"table_name", "high_water", "last_run", "resume_cursor", "indexes_dropped"}
@@ -300,6 +297,7 @@ var iseqProductMetricsMirrorIndexSet = syncMirrorIndexSet{
 }
 
 var seqProductIRODSLocationsMirrorSecondaryIndexes = []syncIndexSpec{
+	{Name: "spi_mirror_source_row_idx", Column: "id_seq_product_irods_locations_tmp"},
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
@@ -324,6 +322,8 @@ var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 // seqProductIRODSLocationsMirrorReadIndexes is the subset of the iRODS-locations
 // mirror's secondary indexes that the sparse cold-load path recreates immediately
 // (the mirror is too large -- ~9M rows -- to rebuild every declared index inline).
+// It includes the upstream source-row index so warm incremental replacement can
+// remove stale cached paths by stable source identity without scanning the mirror.
 // It MUST include the (id_study_lims, id_iseq_product) index: the per-platform
 // status-breakdown query joins each platform's product id to spi.id_iseq_product
 // scoped by id_study_lims, and without this index that linkage full-scans the mirror
@@ -334,6 +334,7 @@ var iseqProductMetricsMirrorReadIndexes = []syncIndexSpec{
 // schema-shape tolerance accept the missing index as expected drift, silently
 // recreating the slow path.
 var seqProductIRODSLocationsMirrorReadIndexes = []syncIndexSpec{
+	{Name: "spi_mirror_source_row_idx", Column: "id_seq_product_irods_locations_tmp"},
 	{Name: "seq_product_irods_locations_mirror_id_sample_tmp_idx", Column: "id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_sample_tmp_idx", Column: "id_study_lims, id_sample_tmp"},
 	{Name: "spi_mirror_study_lims_iseq_product_idx", Column: "id_study_lims, id_iseq_product"},
@@ -2817,6 +2818,7 @@ func seqProductIRODSLocationsMirrorBatchArgs(rows []seqProductIRODSLocationsSync
 
 func seqProductIRODSLocationsMirrorRowArgs(row seqProductIRODSLocationsSyncRow) []any {
 	return []any{
+		row.SourceRowID,
 		row.IDIseqProduct,
 		row.IRODSRootCollection,
 		row.IRODSDataRelativePath,
@@ -3346,7 +3348,7 @@ func iseqProductMetricsBatchKeys(rows []iseqProductMetricsSyncRow) [][]any {
 func seqProductIRODSLocationsBatchKeys(rows []seqProductIRODSLocationsSyncRow) [][]any {
 	keys := make([][]any, 0, len(rows))
 	for _, row := range rows {
-		keys = append(keys, []any{row.IDIseqProduct, row.IDSampleTmp, row.IDStudyLims, row.IRODSCollection, row.IRODSFileName})
+		keys = append(keys, []any{row.SourceRowID})
 	}
 
 	return keys

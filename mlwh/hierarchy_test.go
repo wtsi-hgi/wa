@@ -2049,7 +2049,8 @@ func seedIRODSLocationMirrorRowWithCreatedPlatform(t *testing.T, db *sql.DB, idI
 	t.Helper()
 
 	_, err := db.Exec(
-		`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		int64(0),
 		idIseqProduct,
 		"/seq",
 		fileName,

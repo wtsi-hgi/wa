@@ -161,6 +161,10 @@ var (
 
 func TestSeqProductIRODSLocationsMirrorReadIndexesIncludeIseqProductIndex(t *testing.T) {
 	convey.Convey("Given the iRODS-locations mirror sparse cold-load read-index set", t, func() {
+		convey.Convey("when inspected, then it includes spi_mirror_source_row_idx (id_seq_product_irods_locations_tmp) so warm replacement can remove stale paths by upstream source identity after a sparse cold load", func() {
+			convey.So(seqProductIRODSLocationsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "spi_mirror_source_row_idx", Column: "id_seq_product_irods_locations_tmp"})
+		})
+
 		convey.Convey("when inspected, then it includes spi_mirror_iseq_product_idx (id_iseq_product) so the D1 run-scoped join and D2 manifest LEFT JOIN are index-served immediately after a cold load", func() {
 			convey.So(seqProductIRODSLocationsMirrorReadIndexes, convey.ShouldContain, syncIndexSpec{Name: "spi_mirror_iseq_product_idx", Column: "id_iseq_product"})
 		})
@@ -342,8 +346,8 @@ func TestClientSyncSeqProductIRODSLocationsIncrementalKeepsUnchangedSiblingDataO
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
 		base := time.Date(2026, time.June, 29, 10, 0, 0, 0, time.UTC)
-		seedSeqProductIRODSLocationsMirrorRow(t, cache.DB(), "product-siblings-2", "/seq/run", "sample.cram", base)
-		seedSeqProductIRODSLocationsMirrorRow(t, cache.DB(), "product-siblings-2", "/seq/run", "sample.crai", base)
+		seedSeqProductIRODSLocationsMirrorRow(t, cache.DB(), "product-siblings-2", "/seq/run", "sample.cram", base, 9201)
+		seedSeqProductIRODSLocationsMirrorRow(t, cache.DB(), "product-siblings-2", "/seq/run", "sample.crai", base, 9202)
 		seedSyncState(t, cache.DB(), syncTableSeqProductIRODSLocations, base)
 
 		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
@@ -366,6 +370,39 @@ func TestClientSyncSeqProductIRODSLocationsIncrementalKeepsUnchangedSiblingDataO
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "product-siblings-2"), convey.ShouldEqual, 2)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND irods_file_name = ?`, "product-siblings-2", "sample.cram"), convey.ShouldEqual, 1)
 			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND irods_file_name = ?`, "product-siblings-2", "sample.crai"), convey.ShouldEqual, 1)
+		})
+	})
+}
+
+func TestClientSyncSeqProductIRODSLocationsIncrementalReplacesOldPathForSourceRow(t *testing.T) {
+	convey.Convey("Given a cached iRODS object whose upstream source row later changes path", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		base := time.Date(2026, time.June, 29, 10, 30, 0, 0, time.UTC)
+		seedSeqProductIRODSLocationsMirrorRow(t, cache.DB(), "product-stale-path", "/seq/run-old", "sample.cram", base, 9301)
+		seedSyncState(t, cache.DB(), syncTableSeqProductIRODSLocations, base)
+
+		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
+			syncTableSeqProductIRODSLocations: {
+				columns: seqProductIRODSLocationsSyncSourceColumns,
+				rows: [][]driver.Value{
+					{int64(9301), "product-stale-path", "/seq", "run-new/sample.cram", int64(3001), "study-old", formatSyncTime(base.Add(time.Minute)), formatSyncTime(base), "illumina"},
+				},
+			},
+		})
+		defer func() { _ = source.Close() }()
+
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache), syncSource: source, disableSyncLock: true}
+
+		reports, err := syncSelectedTablesForTest(context.Background(), client, syncTableSeqProductIRODSLocations)
+
+		convey.Convey("when the incremental sync applies the changed source row, then the stale path is replaced", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(reports, convey.ShouldHaveLength, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ?`, "product-stale-path"), convey.ShouldEqual, 1)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND irods_collection = ?`, "product-stale-path", "/seq/run-old"), convey.ShouldEqual, 0)
+			convey.So(countRows(t, cache.DB(), `SELECT COUNT(*) FROM seq_product_irods_locations_mirror WHERE id_iseq_product = ? AND irods_collection = ?`, "product-stale-path", "/seq/run-new"), convey.ShouldEqual, 1)
 		})
 	})
 }
@@ -1851,7 +1888,7 @@ func TestClientSyncSeqProductIRODSLocationsIncrementalResumeReplacesExistingRows
 		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
 
 		base := time.Date(2026, time.May, 12, 11, 0, 0, 0, time.UTC)
-		seedSeqProductIRODSLocationsMirrorRow(t, cache.DB(), "product-loc-1", "/seq/new", "new.cram", base)
+		seedSeqProductIRODSLocationsMirrorRow(t, cache.DB(), "product-loc-1", "/seq/new", "new.cram", base, 9001)
 		seedSyncStateWithCursor(t, cache.DB(), syncTableSeqProductIRODSLocations, base, formatSyncTime(base)+"\t9000")
 
 		source := openSyncTestSourceDB(t, map[string]syncTestSourcePlan{
@@ -2197,8 +2234,8 @@ func TestClientSyncSparseMySQLProductMirrorsReplaceExistingKeys(t *testing.T) {
 		dropMirrorPrimaryKeyForTest(t, db, seqProductIRODSLocationsMirrorIndexSet)
 		seedSparseIseqProductMetricsMirrorRow(t, db, "product-1", 1001, 1, base)
 		seedSparseIseqProductMetricsMirrorRow(t, db, "product-1", 1002, 2, base)
-		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/old", "old-1.cram", base)
-		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/old", "old-2.cram", base)
+		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/old", "old-1.cram", base, 9001)
+		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/old", "old-2.cram", base, 9001)
 		convey.So(writeSyncState(context.Background(), db, cache.Dialect(), syncTableIseqProductMetrics, base, nil, true), convey.ShouldBeNil)
 		convey.So(writeSyncState(context.Background(), db, cache.Dialect(), syncTableSeqProductIRODSLocations, base, nil, true), convey.ShouldBeNil)
 
@@ -2325,8 +2362,8 @@ func TestReplaceSeqProductIRODSLocationsMirrorBatchDeletesDuplicateSparseRows(t 
 		db := openSparseProductMirrorReplacementDBForTest(t)
 		base := time.Date(2026, time.May, 12, 16, 45, 0, 0, time.UTC)
 		next := base.Add(time.Minute)
-		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/new", "new-1.cram", base)
-		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/new", "new-1.cram", base)
+		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/new", "new-1.cram", base, 9001)
+		seedSeqProductIRODSLocationsMirrorRow(t, db, "product-loc-1", "/seq/new", "new-1.cram", base, 9001)
 		row := seqProductIRODSLocationsSyncRow{SourceRowID: 9001, IDIseqProduct: "product-loc-1", IRODSRootCollection: "/seq", IRODSDataRelativePath: "new/new-1.cram", IRODSCollection: "/seq/new", IRODSFileName: "new-1.cram", IDSampleTmp: 3001, IDStudyLims: "study-old", LastUpdated: next}
 
 		tx, err := db.BeginTx(context.Background(), nil)
@@ -3125,7 +3162,7 @@ func openSparseProductMirrorReplacementDBForTest(t *testing.T) *sql.DB {
 
 	statements := []string{
 		`CREATE TABLE iseq_product_metrics_mirror(id_iseq_product TEXT NOT NULL, id_iseq_flowcell_tmp INTEGER NOT NULL, id_run INTEGER NOT NULL, position INTEGER NOT NULL, tag_index INTEGER NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, qc INTEGER NOT NULL, qc_lib INTEGER NOT NULL, qc_seq INTEGER NOT NULL, last_updated TEXT NOT NULL)`,
-		`CREATE TABLE seq_product_irods_locations_mirror(id_iseq_product TEXT NOT NULL, irods_root_collection TEXT NOT NULL, irods_data_relative_path TEXT NOT NULL, irods_collection TEXT NOT NULL, irods_file_name TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, last_updated TEXT NOT NULL, created TEXT, platform TEXT NOT NULL)`,
+		`CREATE TABLE seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp INTEGER NOT NULL, id_iseq_product TEXT NOT NULL, irods_root_collection TEXT NOT NULL, irods_data_relative_path TEXT NOT NULL, irods_collection TEXT NOT NULL, irods_file_name TEXT NOT NULL, id_sample_tmp INTEGER NOT NULL, id_study_lims TEXT NOT NULL, last_updated TEXT NOT NULL, created TEXT, platform TEXT NOT NULL)`,
 	}
 	for _, statement := range statements {
 		if _, err = db.Exec(statement); err != nil {
@@ -3167,11 +3204,17 @@ func seedSparseIseqProductMetricsMirrorRow(t *testing.T, db *sql.DB, productID s
 	}
 }
 
-func seedSeqProductIRODSLocationsMirrorRow(t *testing.T, db *sql.DB, productID, collection, fileName string, lastUpdated time.Time) {
+func seedSeqProductIRODSLocationsMirrorRow(t *testing.T, db *sql.DB, productID, collection, fileName string, lastUpdated time.Time, sourceRowIDs ...int64) {
 	t.Helper()
 
+	sourceRowID := int64(0)
+	if len(sourceRowIDs) > 0 {
+		sourceRowID = sourceRowIDs[0]
+	}
+
 	_, err := db.Exec(
-		`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sourceRowID,
 		productID,
 		"/seq",
 		fileName,
@@ -3244,13 +3287,14 @@ func iseqProductMetricsMirrorSecondaryIndexNames() []string {
 
 func seqProductIRODSLocationsMirrorSecondaryIndexNames() []string {
 	// The cold load drops and recreates the mirror's rebuild index set (which now
-	// includes the A2 (id_iseq_product) index for the D1 run-scoped join and D2
-	// manifest LEFT JOIN), but the table also carries the (id_study_lims, created)
-	// recency index, which is never dropped; mirrorIndexNames reads every physical
-	// index, sorted.
+	// includes the source-row replacement index and the A2 (id_iseq_product) index
+	// for the D1 run-scoped join and D2 manifest LEFT JOIN), but the table also
+	// carries the (id_study_lims, created) recency index, which is never dropped;
+	// mirrorIndexNames reads every physical index, sorted.
 	return []string{
 		"seq_product_irods_locations_mirror_id_sample_tmp_idx",
 		"spi_mirror_iseq_product_idx",
+		"spi_mirror_source_row_idx",
 		"spi_mirror_study_lims_created_idx",
 		"spi_mirror_study_lims_iseq_product_idx",
 		"spi_mirror_study_lims_sample_tmp_idx",

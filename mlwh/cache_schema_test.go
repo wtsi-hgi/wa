@@ -192,12 +192,15 @@ func TestSeqProductIRODSLocationsMirrorSQLiteShapeHasCreatedPlatformAndCreatedIn
 		shape, err := parseSchemaShape(stmts)
 		convey.So(err, convey.ShouldBeNil)
 
-		convey.Convey("when seq_product_irods_locations_mirror is inspected, then it has created and platform text columns and an index on (id_study_lims, created)", func() {
+		convey.Convey("when seq_product_irods_locations_mirror is inspected, then it has source identity, created and platform columns plus required indexes", func() {
 			columns := shape.Tables["seq_product_irods_locations_mirror"]
+			convey.So(columns, convey.ShouldContainKey, "id_seq_product_irods_locations_tmp")
 			convey.So(columns, convey.ShouldContainKey, "created")
 			convey.So(columns, convey.ShouldContainKey, "platform")
+			convey.So(columns["id_seq_product_irods_locations_tmp"], convey.ShouldEqual, "integer")
 			convey.So(columns["created"], convey.ShouldEqual, "text")
 			convey.So(columns["platform"], convey.ShouldEqual, "text")
+			convey.So(shape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, "id_seq_product_irods_locations_tmp")
 			convey.So(shape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, "id_study_lims,created")
 		})
 	})
@@ -215,12 +218,15 @@ func TestSeqProductIRODSLocationsMirrorMySQLShapeMatchesSQLite(t *testing.T) {
 		mysqlShape, err := parseSchemaShape(mysqlSchema)
 		convey.So(err, convey.ShouldBeNil)
 
-		convey.Convey("when seq_product_irods_locations_mirror is inspected, then it has the same created/platform columns and (id_study_lims, created) index, so the two dialects compare equal", func() {
+		convey.Convey("when seq_product_irods_locations_mirror is inspected, then it has the same source identity, created/platform columns and indexes, so the two dialects compare equal", func() {
 			columns := mysqlShape.Tables["seq_product_irods_locations_mirror"]
+			convey.So(columns, convey.ShouldContainKey, "id_seq_product_irods_locations_tmp")
 			convey.So(columns, convey.ShouldContainKey, "created")
 			convey.So(columns, convey.ShouldContainKey, "platform")
+			convey.So(columns["id_seq_product_irods_locations_tmp"], convey.ShouldEqual, "integer")
 			convey.So(columns["created"], convey.ShouldEqual, "text")
 			convey.So(columns["platform"], convey.ShouldEqual, "text")
+			convey.So(mysqlShape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, "id_seq_product_irods_locations_tmp")
 			convey.So(mysqlShape.Index["seq_product_irods_locations_mirror"], convey.ShouldContain, "id_study_lims,created")
 
 			convey.So(mysqlShape.Tables["seq_product_irods_locations_mirror"], convey.ShouldResemble, sqliteShape.Tables["seq_product_irods_locations_mirror"])
@@ -701,8 +707,8 @@ func TestSeqProductIRODSLocationsMirrorEphemeralInsertReadsBackCreatedAndPlatfor
 		created := "2026-06-25T09:30:00Z"
 		platform := "illumina"
 		_, err := db.Exec(
-			`INSERT INTO seq_product_irods_locations_mirror(id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			"product-a1", "/seq", "run/1.cram", "/seq/run", "1.cram", int64(101), "6568",
+			`INSERT INTO seq_product_irods_locations_mirror(id_seq_product_irods_locations_tmp, id_iseq_product, irods_root_collection, irods_data_relative_path, irods_collection, irods_file_name, id_sample_tmp, id_study_lims, last_updated, created, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			int64(7001), "product-a1", "/seq", "run/1.cram", "/seq/run", "1.cram", int64(101), "6568",
 			"2026-06-26T10:00:00Z", created, platform,
 		)
 		convey.So(err, convey.ShouldBeNil)

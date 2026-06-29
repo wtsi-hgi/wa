@@ -48,8 +48,8 @@ import (
 
 func TestCacheSchemaVersionConstant(t *testing.T) {
 	convey.Convey("Given the embedded cache schema version", t, func() {
-		convey.Convey("when read, then it equals 11 (A4: the single bump driving one full resync)", func() {
-			convey.So(CacheSchemaVersion, convey.ShouldEqual, 11)
+		convey.Convey("when read, then it equals 12 (source-row identity for iRODS replacement)", func() {
+			convey.So(CacheSchemaVersion, convey.ShouldEqual, 12)
 		})
 	})
 }
@@ -119,12 +119,12 @@ func TestAllowLargeMySQLColdLoadIndexShapeAllowsLegacySampleNameOnlyIndex(t *tes
 
 		expected := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
-			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"accession_number", "donor_id", "id_sample_lims", "last_updated", "name", "sanger_sample_id", "supplier_name", "uuid_sample_lims"},
 		}}
 		actual := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {"id_sample_tmp,id_run,position,tag_index"},
-			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"name"},
 		}}
 
@@ -240,8 +240,7 @@ func TestOpenCacheSQLitePreviousVersionRecreatesSampleSearchTokenTable(t *testin
 			convey.So(searchUsable, convey.ShouldBeNil)
 		})
 
-		convey.Convey("when OpenCache runs at the new version, then study_users_mirror is recreated clean, its sync_state row is cleared, and schema_version is stamped to 11 (A4)", func() {
-			convey.So(stampedVersion, convey.ShouldEqual, 11)
+		convey.Convey("when OpenCache runs at the new version, then study_users_mirror is recreated clean, its sync_state row is cleared, and schema_version is stamped current", func() {
 			convey.So(stampedVersion, convey.ShouldEqual, CacheSchemaVersion)
 			convey.So(studyUsersTables, convey.ShouldEqual, 1)
 			convey.So(studyUsersRows, convey.ShouldEqual, 0)
@@ -609,12 +608,12 @@ func TestAllowLargeMySQLColdLoadIndexShapeUsesDroppedSyncState(t *testing.T) {
 		highWater := time.Date(2026, time.May, 13, 9, 0, 0, 0, time.UTC)
 		expected := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position"},
-			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"name"},
 		}}
 		actual := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {},
-			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
 			"sample_mirror":                      {"name"},
 		}}
 
@@ -637,11 +636,11 @@ func TestAllowLargeMySQLColdLoadIndexShapeUsesMetadataEstimateWithoutCountingRow
 
 		expected := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {"id_run,position,tag_index", "id_sample_tmp,id_run,position,tag_index", "id_iseq_flowcell_tmp", "id_study_lims,id_run,position"},
-			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
 		}}
 		actual := schemaShape{Index: map[string][]string{
 			"iseq_product_metrics_mirror":        {},
-			"seq_product_irods_locations_mirror": {"id_sample_tmp", "id_study_lims,id_sample_tmp"},
+			"seq_product_irods_locations_mirror": {"id_iseq_product", "id_sample_tmp", "id_seq_product_irods_locations_tmp", "id_study_lims,id_iseq_product", "id_study_lims,id_sample_tmp"},
 		}}
 
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT high_water, indexes_dropped FROM sync_state WHERE table_name = ?`)).
