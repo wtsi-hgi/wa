@@ -718,8 +718,8 @@ func TestStudyDetailLeanOmitsNestedObjectsWithSmallerSizeE3(t *testing.T) {
 		// Lean drops the heavy nested per-sample objects.
 		_, hasLibraryDetails := lean["library_details"]
 		convey.So(hasLibraryDetails, convey.ShouldBeFalse)
-		_, hasSampleLookup := lean["sample_lookup"]
-		convey.So(hasSampleLookup, convey.ShouldBeFalse)
+		_, hasStudyLookup := lean["study_lookup"]
+		convey.So(hasStudyLookup, convey.ShouldBeFalse)
 
 		// Lean carries flat id lists.
 		sampleIDs, ok := lean["sample_ids"].([]any)

@@ -182,10 +182,6 @@ func (c *Client) countSamplesForEmptyStudy(ctx context.Context, studyLimsID stri
 	}
 
 	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {
-		if errors.Is(err, ErrCacheNeverSynced) {
-			return Count{}, err
-		}
-
 		return Count{}, err
 	}
 
