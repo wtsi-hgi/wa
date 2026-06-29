@@ -558,8 +558,10 @@ func writeStudySamplesBlock(out io.Writer, report infoReport, style infoStyle, l
 }
 
 // infoStudySampleTotals reconciles the authoritative figures: the distinct
-// partition from StatusBreakdown sums to samples_total; the StudyOverview gives
-// the total, the without-data superset and the recency count.
+// partition from StatusBreakdown sums to samples_total and supplies the with-data
+// count (so the summary line agrees with the distinct bars drawn from the same
+// ladder); the StudyOverview gives the total, the recency count, and the with-data
+// count only as a fallback when there is no StatusBreakdown.
 func infoStudySampleTotals(report infoReport) (total, withData, withoutData, recency int) {
 	if report.StatusBreakdown != nil {
 		ladder := report.StatusBreakdown.Distinct
@@ -572,7 +574,12 @@ func infoStudySampleTotals(report infoReport) (total, withData, withoutData, rec
 		if overview.SamplesTotal > 0 || total == 0 {
 			total = overview.SamplesTotal
 		}
-		withData = overview.SamplesWithData
+		// Only take with-data from the overview when no StatusBreakdown is present;
+		// otherwise the breakdown's with-data figure wins so the summary matches the
+		// rendered with-data bar even if the two endpoints disagree.
+		if report.StatusBreakdown == nil {
+			withData = overview.SamplesWithData
+		}
 		recency = overview.AddedLast7Days
 	}
 
@@ -990,7 +997,8 @@ func writeSampleProgressSection(out io.Writer, progress *mlwh.SampleProgress, st
 
 // writeRunStatusSection renders the within-sequencing status: the platform and
 // current phase headline plus a proportional event timeline (the same renderer
-// as the milestone bar), or "none" when the timeline is empty/not tracked.
+// as the milestone bar). When there are no events it shows the not-tracked reason
+// when one is given, else "none".
 func writeRunStatusSection(out io.Writer, status *mlwh.RunStatusTimeline, style infoStyle) {
 	if status == nil {
 		return
@@ -1004,7 +1012,12 @@ func writeRunStatusSection(out io.Writer, status *mlwh.RunStatusTimeline, style 
 	_, _ = fmt.Fprintf(out, "\n  %s  %s\n", style.section("Status"), headline)
 
 	if len(status.Events) == 0 {
-		_, _ = fmt.Fprintf(out, "    %s\n", style.dim("none"))
+		empty := "none"
+		if reason := strings.TrimSpace(status.NotTracked); reason != "" {
+			empty = reason
+		}
+
+		_, _ = fmt.Fprintf(out, "    %s\n", style.dim(empty))
 
 		return
 	}

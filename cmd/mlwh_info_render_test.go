@@ -247,6 +247,62 @@ func TestWriteInfoMilestoneDatesAreNotDimmed(t *testing.T) {
 	})
 }
 
+func TestWriteStudySamplesSummaryMatchesBars(t *testing.T) {
+	convey.Convey("Given a study whose overview with-data figure disagrees with the breakdown, the summary with-data figure matches the breakdown (and the bars)", t, func() {
+		report := infoReport{
+			Identifier: "5901",
+			Kind:       string(mlwh.KindStudyLimsID),
+			Canonical:  "5901",
+			Study:      &mlwh.Study{IDStudyLims: "5901", Name: "Lung cancer GWAS"},
+			StudyOverview: &mlwh.StudyOverview{
+				IDStudyLims:     "5901",
+				SamplesTotal:    100,
+				SamplesWithData: 90, // deliberately disagrees with the breakdown below
+			},
+			StatusBreakdown: &mlwh.StatusBreakdown{
+				IDStudyLims: "5901",
+				// Distinct sums to 100; with-data is 80 (NOT the overview's 90).
+				Distinct: mlwh.PhaseLadder{WithData: 80, SequencedNoData: 5, Registered: 15},
+			},
+		}
+
+		var buf bytes.Buffer
+		writeInfoReportText(&buf, report, infoStyle{colour: false, width: 100})
+		out := buf.String()
+
+		// The summary line quotes the breakdown's with-data figure, so it agrees
+		// with the rendered with-data bar; the overview's conflicting 90 is not used
+		// for with-data while a breakdown is present.
+		convey.So(out, convey.ShouldContainSubstring, "80 with data")
+		convey.So(out, convey.ShouldNotContainSubstring, "90 with data")
+		// without data = total(100) - withData(80) = 20, also consistent.
+		convey.So(out, convey.ShouldContainSubstring, "20 without data")
+		// The with-data bar uses the same 80 figure.
+		convey.So(out, convey.ShouldContainSubstring, "with data")
+	})
+
+	convey.Convey("Given a study with only an overview (no breakdown), the summary with-data figure falls back to the overview value", t, func() {
+		report := infoReport{
+			Identifier: "5901",
+			Kind:       string(mlwh.KindStudyLimsID),
+			Canonical:  "5901",
+			Study:      &mlwh.Study{IDStudyLims: "5901", Name: "Lung cancer GWAS"},
+			StudyOverview: &mlwh.StudyOverview{
+				IDStudyLims:     "5901",
+				SamplesTotal:    100,
+				SamplesWithData: 90,
+			},
+		}
+
+		var buf bytes.Buffer
+		writeInfoReportText(&buf, report, infoStyle{colour: false, width: 100})
+		out := buf.String()
+
+		convey.So(out, convey.ShouldContainSubstring, "90 with data")
+		convey.So(out, convey.ShouldContainSubstring, "10 without data")
+	})
+}
+
 func TestWriteStudyPanelShowsDimmedUUID(t *testing.T) {
 	convey.Convey("Given a study with a LIMS UUID, the study panel shows a UUID field rendered dim", t, func() {
 		report := infoReport{
@@ -407,6 +463,38 @@ func TestWriteSequencingSectionMergesRunsAndLanes(t *testing.T) {
 		writeSequencingSection(&buf, infoReport{}, infoStyle{colour: false, width: 100})
 
 		convey.So(buf.String(), convey.ShouldBeBlank)
+	})
+}
+
+func TestWriteRunStatusSectionNotTrackedReason(t *testing.T) {
+	convey.Convey("Given a run status with no events but a not-tracked reason, the Status section shows the reason rather than \"none\"", t, func() {
+		status := &mlwh.RunStatusTimeline{
+			IDRun:      49166,
+			Platform:   "PacBio",
+			Events:     nil,
+			NotTracked: "platform does not report within-sequencing status",
+		}
+
+		var buf bytes.Buffer
+		writeRunStatusSection(&buf, status, infoStyle{colour: false, width: 100})
+		out := buf.String()
+
+		convey.So(out, convey.ShouldContainSubstring, "Status")
+		convey.So(out, convey.ShouldContainSubstring, "platform does not report within-sequencing status")
+		convey.So(out, convey.ShouldNotContainSubstring, "none")
+	})
+
+	convey.Convey("Given a run status with no events and no not-tracked reason, the Status section still shows \"none\"", t, func() {
+		status := &mlwh.RunStatusTimeline{
+			IDRun:    49166,
+			Platform: "Illumina",
+			Events:   nil,
+		}
+
+		var buf bytes.Buffer
+		writeRunStatusSection(&buf, status, infoStyle{colour: false, width: 100})
+
+		convey.So(buf.String(), convey.ShouldContainSubstring, "none")
 	})
 }
 
