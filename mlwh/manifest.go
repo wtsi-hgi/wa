@@ -142,6 +142,24 @@ var manifestFeedingTables = []string{
 	syncTableSeqProductIRODSLocations,
 }
 
+// manifestEmptyRequiredSyncTables are the sync tables that must have ever synced
+// before a known study with no manifest products can be reported as a synced empty
+// result. sample + iseq_flowcell preserve the existing study/sample empty cascade;
+// iseq_product_metrics is the manifest's row-grain source, and the iRODS mirror is
+// additionally required when the caller asked for iRODS paths.
+func manifestEmptyRequiredSyncTables(withIRODS bool) []string {
+	if withIRODS {
+		return []string{
+			syncTableSample,
+			syncTableIseqFlowcell,
+			syncTableIseqProductMetrics,
+			syncTableSeqProductIRODSLocations,
+		}
+	}
+
+	return []string{syncTableSample, syncTableIseqFlowcell, syncTableIseqProductMetrics}
+}
+
 // manifestListQuery assembles the manifest list query and its bound args for the
 // given study, with_irods flag and (validated) normalised file type. Without
 // with_irods it is the bare product+sample query (no iRODS join at all, so
@@ -229,12 +247,12 @@ func scanManifestRow(scan func(dest ...any) error, withIRODS bool) (ManifestRow,
 // default), and a product with no matching iRODS object has irods_path="". An
 // invalid fileType (empty/whitespace or containing '%', '_' or '/') is rejected
 // with ErrUnsupportedIdentifier (the HTTP handler 400s first; this re-validates
-// defensively). The never-synced / unknown-study / synced-empty cascade matches
-// CountSamplesForStudy: a never-synced cache returns the zero value with an error
-// satisfying both ErrCacheNeverSynced and ErrNotFound, an unknown study returns
-// ErrNotFound, and a synced study with no products returns an envelope with the
-// study metadata, an empty Rows and a populated cache_synced_at. Every value is
-// read from the cache mirrors, so the manifest is complete only up to the feeding
+// defensively). The never-synced / unknown-study / synced-empty cascade follows
+// the same shape as CountSamplesForStudy, but a known study with no products is a
+// synced-empty manifest only after the manifest row-grain source
+// (iseq_product_metrics) has synced; withIRODS also requires the iRODS locations
+// mirror before returning rows or claiming synced empty paths. Every value is read
+// from the cache mirrors, so the manifest is complete only up to the feeding
 // tables' last sync (see /freshness).
 func (c *Client) StudyManifest(ctx context.Context, studyLimsID, fileType string, withIRODS bool, limit, offset int) (StudyManifest, error) {
 	normalised, err := normaliseFileType(fileType)
@@ -248,7 +266,13 @@ func (c *Client) StudyManifest(ctx context.Context, studyLimsID, fileType string
 		return StudyManifest{}, err
 	}
 	if len(rows) == 0 {
-		return c.studyManifestForEmptyStudy(ctx, studyLimsID)
+		return c.studyManifestForEmptyStudy(ctx, studyLimsID, withIRODS)
+	}
+
+	if withIRODS {
+		if err := c.requireAnySyncState(ctx, syncTableSeqProductIRODSLocations); err != nil {
+			return StudyManifest{}, err
+		}
 	}
 
 	manifest, err := c.studyManifestEnvelope(ctx, studyLimsID)
@@ -335,19 +359,18 @@ func (c *Client) studyManifestEnvelope(ctx context.Context, studyLimsID string) 
 }
 
 // studyManifestForEmptyStudy resolves the result when no products were found for a
-// study, mirroring CountSamplesForStudy's cascade so the manifest and the count
-// agree on a never-synced cache, an unknown study and a synced empty study: a
-// known study on a fully-synced cache returns an envelope with the study metadata,
-// an empty Rows and a populated cache_synced_at; a known study on a never-synced
-// cache returns the zero value joined with both sentinels; an unknown study
-// returns ErrNotFound.
-func (c *Client) studyManifestForEmptyStudy(ctx context.Context, studyLimsID string) (StudyManifest, error) {
+// study. It mirrors CountSamplesForStudy's cascade shape so the manifest and the
+// count agree on a never-synced cache, an unknown study and a synced empty study,
+// but it also requires the manifest's product-metrics row source (and the iRODS
+// locations mirror for withIRODS) before a known empty study can be reported as
+// synced-empty.
+func (c *Client) studyManifestForEmptyStudy(ctx context.Context, studyLimsID string, withIRODS bool) (StudyManifest, error) {
 	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
 	if err != nil {
 		return StudyManifest{}, err
 	}
 	if studyExists {
-		summary, err := c.requiredSyncStateSummary(ctx, syncTableSample, syncTableIseqFlowcell)
+		summary, err := c.requiredSyncStateSummary(ctx, manifestEmptyRequiredSyncTables(withIRODS)...)
 		if err != nil {
 			return StudyManifest{}, err
 		}

@@ -282,6 +282,65 @@ func TestStudyManifestSyncedStudyWithNoProductsReturnsEnvelopeC1(t *testing.T) {
 	})
 }
 
+func TestStudyManifestEmptyStudyRequiresProductMetricsSyncC1(t *testing.T) {
+	convey.Convey("Given study S1 with metadata and study/sample/flowcell sync but product metrics never synced", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), 211, "S1")
+		seedManifestIdentitySyncState(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		manifest, err := client.StudyManifest(context.Background(), "S1", "", false, manifestAllRows, 0)
+
+		convey.Convey("when StudyManifest sees no product rows, then it reports the manifest source as never synced instead of a synced empty envelope", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(manifest, convey.ShouldResemble, StudyManifest{})
+		})
+	})
+}
+
+func TestStudyManifestWithIRODSEmptyStudyRequiresIRODSSyncC1(t *testing.T) {
+	convey.Convey("Given study S1 with product metrics synced but iRODS locations never synced", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), 211, "S1")
+		seedManifestSyncStateWithoutIRODS(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		manifest, err := client.StudyManifest(context.Background(), "S1", "cram", true, manifestAllRows, 0)
+
+		convey.Convey("when StudyManifest with_irods sees no product rows, then it reports iRODS freshness as never synced instead of claiming synced empty paths", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(manifest, convey.ShouldResemble, StudyManifest{})
+		})
+	})
+}
+
+func TestStudyManifestWithIRODSRowsRequireIRODSSyncC1(t *testing.T) {
+	convey.Convey("Given study S1 with product rows but iRODS locations never synced", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), 211, "S1")
+		seedManifestSampleRow(t, cache.DB(), 21, "S1-sample-alpha", "supplier-alpha", "EGAN-alpha", "sanger-alpha")
+		seedIseqProductMetricsMirrorRow(t, cache.DB(), 2101, 21, 52553, 1, 1, "S1")
+		seedManifestSyncStateWithoutIRODS(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		manifest, err := client.StudyManifest(context.Background(), "S1", "cram", true, manifestAllRows, 0)
+
+		convey.Convey("when StudyManifest with_irods would otherwise return rows with empty paths, then it reports iRODS freshness as never synced", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(manifest, convey.ShouldResemble, StudyManifest{})
+		})
+	})
+}
+
 func TestStudyManifestInvalidFileTypeRejectedC1(t *testing.T) {
 	convey.Convey("Given a synced study S1", t, func() {
 		cache := openSQLiteSyncTestCache(t)
@@ -359,4 +418,27 @@ func seedManifestSyncState(t *testing.T, db *sql.DB) {
 	seedSyncStateRun(t, db, syncTableIseqFlowcell, highWater, oldest.Add(2*time.Hour))
 	seedSyncStateRun(t, db, syncTableIseqProductMetrics, highWater, oldest.Add(2*time.Hour))
 	seedSyncStateRun(t, db, syncTableSeqProductIRODSLocations, highWater, oldest.Add(3*time.Hour))
+}
+
+func seedManifestSyncStateWithoutIRODS(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	seedManifestIdentitySyncState(t, db)
+	seedSyncStateRun(
+		t,
+		db,
+		syncTableIseqProductMetrics,
+		time.Date(2026, time.June, 27, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, time.June, 27, 8, 0, 0, 0, time.UTC),
+	)
+}
+
+func seedManifestIdentitySyncState(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	highWater := time.Date(2026, time.June, 27, 0, 0, 0, 0, time.UTC)
+	oldest := time.Date(2026, time.June, 27, 6, 0, 0, 0, time.UTC)
+	seedSyncStateRun(t, db, syncTableStudy, highWater, oldest)
+	seedSyncStateRun(t, db, syncTableSample, highWater, oldest.Add(1*time.Hour))
+	seedSyncStateRun(t, db, syncTableIseqFlowcell, highWater, oldest.Add(2*time.Hour))
 }

@@ -315,6 +315,25 @@ func TestCountStudyManifestNeverSyncedReturnsJoinedSentinelC2(t *testing.T) {
 	})
 }
 
+func TestCountStudyManifestEmptyStudyRequiresProductMetricsSyncC2(t *testing.T) {
+	convey.Convey("Given study S1 with metadata and study/sample/flowcell sync but product metrics never synced", t, func() {
+		cache := openSQLiteSyncTestCache(t)
+		defer func() { convey.So(cache.Close(), convey.ShouldBeNil) }()
+
+		seedHierarchyStudy(t, cache.DB(), 211, "S1")
+		seedManifestIdentitySyncState(t, cache.DB())
+		client := &Client{cache: cache, cacheReader: cacheReadDB(cache)}
+
+		count, err := client.CountStudyManifest(context.Background(), "S1")
+
+		convey.Convey("when CountStudyManifest sees no product rows, then it reports the manifest source as never synced instead of Count{0}", func() {
+			convey.So(errors.Is(err, ErrCacheNeverSynced), convey.ShouldBeTrue)
+			convey.So(errors.Is(err, ErrNotFound), convey.ShouldBeTrue)
+			convey.So(count, convey.ShouldResemble, Count{})
+		})
+	})
+}
+
 // C2 acceptance test 2 (unknown-study half): an unknown study on a synced cache
 // returns ErrNotFound (and not the never-synced sentinel), matching
 // CountSamplesForStudy.

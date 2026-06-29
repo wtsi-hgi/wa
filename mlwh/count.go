@@ -336,9 +336,10 @@ func (c *Client) CountSamplesForLibraryType(ctx context.Context, pipelineIDLims 
 // standalone count and the list's sizing total cannot drift. The manifest is
 // product-grained, so the with_irods / file_type params (which this count does not
 // take) never change it: a product with no matching iRODS object is still one row.
-// The never-synced / unknown-study / synced-empty cascade matches
-// CountSamplesForStudy: a synced study with no products returns Count{Count: 0} and
-// no error, a never-synced cache returns Count{} with an error satisfying both
+// The never-synced / unknown-study / synced-empty cascade follows
+// CountSamplesForStudy's shape, but a known zero-product study returns
+// Count{Count: 0} only once iseq_product_metrics (the count's row-grain source)
+// has synced; a never-synced source returns Count{} with an error satisfying both
 // ErrCacheNeverSynced and ErrNotFound, and an unknown study returns ErrNotFound.
 func (c *Client) CountStudyManifest(ctx context.Context, studyLimsID string) (Count, error) {
 	count, err := c.countStudyManifestProducts(ctx, studyLimsID)
@@ -349,7 +350,35 @@ func (c *Client) CountStudyManifest(ctx context.Context, studyLimsID string) (Co
 		return Count{Count: count}, nil
 	}
 
-	return c.countSamplesForEmptyStudy(ctx, studyLimsID)
+	return c.countStudyManifestForEmptyStudy(ctx, studyLimsID)
+}
+
+// countStudyManifestForEmptyStudy resolves the result when no manifest products
+// were counted for a study. It follows the same known-study / unknown-study
+// cascade as CountSamplesForStudy, but also requires iseq_product_metrics because
+// that mirror is the manifest count's row-grain source.
+func (c *Client) countStudyManifestForEmptyStudy(ctx context.Context, studyLimsID string) (Count, error) {
+	studyExists, err := c.cacheStudyExists(ctx, studyLimsID)
+	if err != nil {
+		return Count{}, err
+	}
+	if studyExists {
+		summary, err := c.requiredSyncStateSummary(ctx, manifestEmptyRequiredSyncTables(false)...)
+		if err != nil {
+			return Count{}, err
+		}
+		if summary.allAbsent || !summary.allPresent {
+			return Count{}, neverSyncedReadErr()
+		}
+
+		return Count{Count: 0}, nil
+	}
+
+	if err := c.requireAnySyncState(ctx, syncTableStudy); err != nil {
+		return Count{}, err
+	}
+
+	return Count{}, ErrNotFound
 }
 
 // CountRunsForStudy counts the distinct runs for a study, the count counterpart
