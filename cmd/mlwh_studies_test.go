@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -118,27 +119,53 @@ func TestMLWHPeopleRequiresTerm(t *testing.T) {
 // assert the command routed to the right method and observe the raw role / paging
 // arguments passed through.
 type stubMLWHStudiesClient struct {
-	facultySponsor func(ctx context.Context, name string, limit, offset int) ([]mlwh.PersonStudy, error)
-	user           func(ctx context.Context, person, role string, limit, offset int) ([]mlwh.PersonStudy, error)
-	resolvePerson  func(ctx context.Context, term string, limit, offset int) ([]mlwh.PersonCandidate, error)
+	facultySponsor      func(ctx context.Context, name string, limit, offset int) ([]mlwh.PersonStudy, error)
+	countFacultySponsor func(ctx context.Context, name string) (mlwh.Count, error)
+	user                func(ctx context.Context, person, role string, limit, offset int) ([]mlwh.PersonStudy, error)
+	countUser           func(ctx context.Context, person, role string) (mlwh.Count, error)
+	resolvePerson       func(ctx context.Context, term string, limit, offset int) ([]mlwh.PersonCandidate, error)
 
-	closed bool
+	lastFacultySponsorPageLen int
+	lastUserPageLen           int
+	closed                    bool
 }
 
 func (s *stubMLWHStudiesClient) StudiesForFacultySponsor(ctx context.Context, name string, limit, offset int) ([]mlwh.PersonStudy, error) {
 	if s.facultySponsor != nil {
-		return s.facultySponsor(ctx, name, limit, offset)
+		studies, err := s.facultySponsor(ctx, name, limit, offset)
+		s.lastFacultySponsorPageLen = len(studies)
+
+		return studies, err
 	}
 
 	return nil, errors.New("faculty sponsor not stubbed")
 }
 
+func (s *stubMLWHStudiesClient) CountStudiesForFacultySponsor(ctx context.Context, name string) (mlwh.Count, error) {
+	if s.countFacultySponsor != nil {
+		return s.countFacultySponsor(ctx, name)
+	}
+
+	return mlwh.Count{Count: s.lastFacultySponsorPageLen}, nil
+}
+
 func (s *stubMLWHStudiesClient) StudiesForUser(ctx context.Context, person, role string, limit, offset int) ([]mlwh.PersonStudy, error) {
 	if s.user != nil {
-		return s.user(ctx, person, role, limit, offset)
+		studies, err := s.user(ctx, person, role, limit, offset)
+		s.lastUserPageLen = len(studies)
+
+		return studies, err
 	}
 
 	return nil, errors.New("user not stubbed")
+}
+
+func (s *stubMLWHStudiesClient) CountStudiesForUser(ctx context.Context, person, role string) (mlwh.Count, error) {
+	if s.countUser != nil {
+		return s.countUser(ctx, person, role)
+	}
+
+	return mlwh.Count{Count: s.lastUserPageLen}, nil
 }
 
 func (s *stubMLWHStudiesClient) ResolvePerson(ctx context.Context, term string, limit, offset int) ([]mlwh.PersonCandidate, error) {
@@ -191,6 +218,50 @@ func TestMLWHStudiesFacultySponsorPrintsStudies(t *testing.T) {
 		convey.So(output, convey.ShouldContainSubstring, "Carl")
 		convey.So(output, convey.ShouldContainSubstring, "3")
 		convey.So(stub.closed, convey.ShouldBeTrue)
+	})
+}
+
+func TestMLWHStudiesPaginationPrintsShownRangeAndTotal(t *testing.T) {
+	convey.Convey("Given total sponsor matches exceed the returned page, when wa mlwh studies runs, then the text output shows the current page range and total count", t, func() {
+		var capturedListName, capturedCountName string
+		var capturedLimit, capturedOffset int
+		page := make([]mlwh.PersonStudy, 50)
+		for i := range 50 {
+			page[i] = mlwh.PersonStudy{
+				Study: mlwh.Study{
+					IDStudyLims:    strconv.Itoa(1000 + i),
+					Name:           "Carl Page Study " + strconv.Itoa(i+1),
+					FacultySponsor: "Carl",
+				},
+			}
+		}
+
+		stub := &stubMLWHStudiesClient{
+			facultySponsor: func(_ context.Context, name string, limit, offset int) ([]mlwh.PersonStudy, error) {
+				capturedListName = name
+				capturedLimit = limit
+				capturedOffset = offset
+
+				return page, nil
+			},
+			countFacultySponsor: func(_ context.Context, name string) (mlwh.Count, error) {
+				capturedCountName = name
+
+				return mlwh.Count{Count: 91}, nil
+			},
+		}
+
+		withStubMLWHStudiesClient(t, stub)
+
+		output, err := executeRootCommandForTest(t, []string{"mlwh", "studies", "--faculty-sponsor", "carl"})
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(capturedListName, convey.ShouldEqual, "carl")
+		convey.So(capturedCountName, convey.ShouldEqual, "carl")
+		convey.So(capturedLimit, convey.ShouldEqual, 50)
+		convey.So(capturedOffset, convey.ShouldEqual, 0)
+		convey.So(output, convey.ShouldContainSubstring, "Studies (showing 1-50 of 91 total):")
+		convey.So(output, convey.ShouldNotContainSubstring, "Studies (50):")
 	})
 }
 

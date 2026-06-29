@@ -64,12 +64,63 @@ const (
 	studiesModeUser
 )
 
+func normaliseStudiesTotal(total, shown, offset int) int {
+	if offset < 0 {
+		offset = 0
+	}
+
+	if total < offset+shown {
+		return offset + shown
+	}
+
+	return total
+}
+
+func writePersonStudiesHeader(out io.Writer, shown, total, offset int) {
+	if shown == 0 {
+		_, _ = fmt.Fprintf(out, "Studies (showing 0 of %d total):\n", total)
+
+		return
+	}
+
+	if offset <= 0 && shown == total {
+		_, _ = fmt.Fprintf(out, "Studies (%d total):\n", total)
+
+		return
+	}
+
+	start := offset + 1
+	if start < 1 {
+		start = 1
+	}
+
+	end := offset + shown
+	if end < shown {
+		end = shown
+	}
+
+	_, _ = fmt.Fprintf(out, "Studies (showing %d-%d of %d total):\n", start, end, total)
+}
+
+func dispatchStudiesCount(ctx context.Context, client mlwhStudiesClient, mode studiesMode, query, role string) (mlwh.Count, error) {
+	switch mode {
+	case studiesModeFacultySponsor:
+		return client.CountStudiesForFacultySponsor(ctx, query)
+	case studiesModeUser:
+		return client.CountStudiesForUser(ctx, query, role)
+	default:
+		return mlwh.Count{}, fmt.Errorf("unknown studies mode %d", mode)
+	}
+}
+
 // mlwhStudiesClient is the subset of the MLWH query surface used by `wa mlwh
 // studies` and `wa mlwh people`. Both *mlwh.RemoteClient and the local *mlwh.Client
 // satisfy it.
 type mlwhStudiesClient interface {
 	StudiesForFacultySponsor(ctx context.Context, name string, limit, offset int) ([]mlwh.PersonStudy, error)
+	CountStudiesForFacultySponsor(ctx context.Context, name string) (mlwh.Count, error)
 	StudiesForUser(ctx context.Context, person, role string, limit, offset int) ([]mlwh.PersonStudy, error)
+	CountStudiesForUser(ctx context.Context, person, role string) (mlwh.Count, error)
 	ResolvePerson(ctx context.Context, term string, limit, offset int) ([]mlwh.PersonCandidate, error)
 	Close() error
 }
@@ -231,7 +282,16 @@ func runMLWHStudies(ctx context.Context, client mlwhStudiesClient, out io.Writer
 		return writePersonStudiesJSON(out, studies)
 	}
 
-	writePersonStudiesText(out, studies, mode == studiesModeUser)
+	total, err := dispatchStudiesCount(ctx, client, mode, query, role)
+	if err != nil {
+		if errors.Is(err, mlwh.ErrCacheNeverSynced) {
+			return writeStudiesCacheUnavailable(out, false)
+		}
+
+		return fmt.Errorf("count studies for %s: %w", query, err)
+	}
+
+	writePersonStudiesText(out, studies, total.Count, offset, mode == studiesModeUser)
 
 	return nil
 }
@@ -267,16 +327,18 @@ func writePersonStudiesJSON(out io.Writer, studies []mlwh.PersonStudy) error {
 
 // writePersonStudiesText renders the tabular text output: one line per study with
 // its id_study_lims, name and faculty_sponsor; in user mode each line also carries
-// its matched role. The total study count is printed. An empty result prints the
-// neutral no-match line (exit 0).
-func writePersonStudiesText(out io.Writer, studies []mlwh.PersonStudy, userMode bool) {
-	if len(studies) == 0 {
+// its matched role. The total matching study count is printed separately from the
+// shown page range. A genuinely empty result prints the neutral no-match line
+// (exit 0).
+func writePersonStudiesText(out io.Writer, studies []mlwh.PersonStudy, total, offset int, userMode bool) {
+	total = normaliseStudiesTotal(total, len(studies), offset)
+	if len(studies) == 0 && total == 0 {
 		_, _ = fmt.Fprintf(out, "%s\n", peopleNoMatchMessage)
 
 		return
 	}
 
-	_, _ = fmt.Fprintf(out, "Studies (%d):\n", len(studies))
+	writePersonStudiesHeader(out, len(studies), total, offset)
 	for _, personStudy := range studies {
 		_, _ = fmt.Fprintf(out, "  id_study_lims=%s name=%s faculty_sponsor=%s",
 			personStudy.Study.IDStudyLims, personStudy.Study.Name, personStudy.Study.FacultySponsor)
